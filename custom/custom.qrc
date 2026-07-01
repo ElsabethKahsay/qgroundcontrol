@@ -1,0 +1,73 @@
+<RCC>
+    <qresource prefix="custom/img">
+        <file alias="CustomAppIcon.png">res/Images/CustomAppIcon.png</file>
+    </qresource>
+    <qresource prefix="custom">
+        <file alias="TestPage.qml">res/TestPage.qml</file>
+        <file alias="PreflightToolbarIndicator.qml">qml/PreflightToolbarIndicator.qml</file>
+        <file alias="ArmedIndicator.qml">qml/ArmedIndicator.qml</file>
+        <file alias="MainStatusIndicator.qml">qml/MainStatusIndicator.qml</file>
+        <file alias="MainToolBarIndicators.qml">qml/MainToolBarIndicators.qml</file>
+    </qresource>
+    <qresource prefix="/qml/QGroundControl/FlyView">
+        <file alias="FlyViewCustomLayer.qml">qml/FlyViewCustomLayer.qml</file>
+        <file alias="FlyViewPreFlightChecklistPopup.qml">qml/FlyViewPreFlightChecklistPopup.qml</file>
+    </qresource>
+    <qresource prefix="/qml/QGroundControl/Toolbar">
+        <file alias="MainStatusIndicator.qml">qml/MainStatusIndicator.qml</file>
+    </qresource>
+    <qresource prefix="/qml/QGroundControl/FlightMap">
+        <file alias="QGCVideoBackground.qml">qml/QGCVideoBackground.qml</file>
+    </qresource>
+    <qresource prefix="qml/pages">
+        <file alias="Home.qml">qml/pages/Home.qml</file>
+        <file alias="VehicleSelect.qml">qml/pages/VehicleSelect.qml</file>
+        <file alias="PreFlightChecklist.qml">qml/pages/PreFlightChecklist.qml</file>
+        <file alias="PayloadCheck.qml">qml/pages/PayloadCheck.qml</file>
+        <file alias="FinalChecks.qml">qml/pages/FinalChecks.qml</file>
+        <file alias="LaunchReady.qml">qml/pages/LaunchReady.qml</file>
+        <file alias="GimbalTest.qml">qml/pages/GimbalTest.qml</file>
+        <file alias="MaintenancePage.qml">qml/pages/MaintenancePage.qml</file>
+        <file alias="TemplateEditor.qml">qml/pages/TemplateEditor.qml</file>
+        <file alias="TemplateManager.qml">qml/pages/TemplateManager.qml</file>
+        <file alias="PostFlightSummary.qml">qml/pages/PostFlightSummary.qml</file>
+        <file alias="PreflightSettings.qml">qml/pages/PreflightSettings.qml</file>
+    </qresource>
+    <qresource prefix="qml/singletons">
+        <file alias="Colors.qml">qml/singletons/Colors.qml</file>
+        <file alias="Config.qml">qml/singletons/Config.qml</file>
+        <file alias="VehicleTelemetry.qml">qml/singletons/VehicleTelemetry.qml</file>
+    </qresource>
+    <qresource prefix="qml/cpts">
+        <file alias="TestAnalyzePage.qml">qml/cpts/TestAnalyzePage.qml</file>
+        <file alias="TestModuleImport.qml">qml/cpts/TestModuleImport.qml</file>
+        <file alias="PreflightChecklistView.qml">qml/cpts/PreflightChecklistView.qml</file>
+        <file alias="ArmGateDialog.qml">qml/cpts/ArmGateDialog.qml</file>
+        <file alias="MotorTestPanel.qml">qml/cpts/MotorTestPanel.qml</file>
+        <file alias="PropInspector.qml">qml/cpts/PropInspector.qml</file>
+        <file alias="ActionCheckCard.qml">qml/cpts/ActionCheckCard.qml</file>
+        <file alias="AlertBanner.qml">qml/cpts/AlertBanner.qml</file>
+        <file alias="AlertPanel.qml">qml/cpts/AlertPanel.qml</file>
+        <file alias="AutoCheckCard.qml">qml/cpts/AutoCheckCard.qml</file>
+        <file alias="ChecklistItem.qml">qml/cpts/ChecklistItem.qml</file>
+        <file alias="CollapsibleSection.qml">qml/cpts/CollapsibleSection.qml</file>
+        <file alias="CustomButton.qml">qml/cpts/CustomButton.qml</file>
+        <file alias="HardwareTestCard.qml">qml/cpts/HardwareTestCard.qml</file>
+        <file alias="ManualCheckCard.qml">qml/cpts/ManualCheckCard.qml</file>
+        <file alias="MotorMonitor.qml">qml/cpts/MotorMonitor.qml</file>
+        <file alias="MotorTestCard.qml">qml/cpts/MotorTestCard.qml</file>
+        <file alias="ServoTestCard.qml">qml/cpts/ServoTestCard.qml</file>
+        <file alias="TelemetryBar.qml">qml/cpts/TelemetryBar.qml</file>
+        <file alias="TelemetrySection.qml">qml/cpts/TelemetrySection.qml</file>
+        <file alias="TelItem.qml">qml/cpts/TelItem.qml</file>
+        <file alias="TelemetryInfoBox.qml">qml/cpts/TelemetryInfoBox.qml</file>
+        <file alias="VideoPreview.qml">qml/cpts/VideoPreview.qml</file>
+        <file alias="WeatherPanel.qml">qml/cpts/WeatherPanel.qml</file>
+        <file alias="PriorityFixPanel.qml">qml/cpts/PriorityFixPanel.qml</file>
+        <file alias="ArmGatePanel.qml">qml/cpts/ArmGatePanel.qml</file>
+    </qresource>
+    <qresource prefix="qml/mission">
+        <file alias="AddWaypointByBearingDialog.qml">qml/mission/AddWaypointByBearingDialog.qml</file>
+        <file alias="DmsConverter.qml">qml/mission/DmsConverter.qml</file>
+    </qresource>
+</RCC>

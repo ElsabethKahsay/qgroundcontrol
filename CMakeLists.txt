@@ -526,6 +526,8 @@ if(QGC_CUSTOM_BUILD)
     target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${CUSTOM_SOURCES})
     target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE ${CUSTOM_LIBRARIES})
     target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CUSTOM_INCLUDE_DIRECTORIES})
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE ${CUSTOM_DEFINITIONS})
+    target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE "-include${CMAKE_SOURCE_DIR}/custom/include/qt6_meta_fixes.h")
 endif()
 
 file(GLOB TS_SOURCES ${CMAKE_SOURCE_DIR}/translations/qgc_*.ts)

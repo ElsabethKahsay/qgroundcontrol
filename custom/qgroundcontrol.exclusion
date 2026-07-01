@@ -1,0 +1,19 @@
+<qresource prefix="/checklists">
+<file alias="DefaultChecklist.qml">src/FlightDisplay/DefaultChecklist.qml</file>
+<file alias="MultiRotorChecklist.qml">src/FlightDisplay/MultiRotorChecklist.qml</file>
+<file alias="FixedWingChecklist.qml">src/FlightDisplay/FixedWingChecklist.qml</file>
+<file alias="VTOLChecklist.qml">src/FlightDisplay/VTOLChecklist.qml</file>
+<file alias="RoverChecklist.qml">src/FlightDisplay/RoverChecklist.qml</file>
+<file alias="SubChecklist.qml">src/FlightDisplay/SubChecklist.qml</file>
+</qresource>
+<file alias="PreFlightCheckList.qml">src/FlightDisplay/PreFlightCheckList.qml</file>
+<file alias="QGroundControl/Controls/PreFlightCheckButton.qml">src/QmlControls/PreFlightCheckButton.qml</file>
+<file alias="QGroundControl/Controls/PreFlightCheckGroup.qml">src/QmlControls/PreFlightCheckGroup.qml</file>
+<file alias="QGroundControl/Controls/PreFlightCheckModel.qml">src/QmlControls/PreFlightCheckModel.qml</file>
+<file alias="QGroundControl/FlightDisplay/FlyViewPreFlightChecklistPopup.qml">src/FlightDisplay/FlyViewPreFlightChecklistPopup.qml</file>
+<file alias="QGroundControl/FlightDisplay/PreFlightBatteryCheck.qml">src/FlightDisplay/PreFlightBatteryCheck.qml</file>
+<file alias="QGroundControl/FlightDisplay/PreFlightGPSCheck.qml">src/FlightDisplay/PreFlightGPSCheck.qml</file>
+<file alias="QGroundControl/FlightDisplay/PreFlightRCCheck.qml">src/FlightDisplay/PreFlightRCCheck.qml</file>
+<file alias="QGroundControl/FlightDisplay/PreFlightSensorsHealthCheck.qml">src/FlightDisplay/PreFlightSensorsHealthCheck.qml</file>
+<file alias="QGroundControl/FlightDisplay/PreFlightSoundCheck.qml">src/FlightDisplay/PreFlightSoundCheck.qml</file>
+<file alias="QGroundControl/FlightDisplay/PreFlightCheckListShowAction.qml">src/FlightDisplay/PreFlightCheckListShowAction.qml</file>
