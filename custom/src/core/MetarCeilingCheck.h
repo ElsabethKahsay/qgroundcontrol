@@ -6,4 +6,6 @@ class MetarCeilingCheck : public AbstractCheck {
 public:
     MetarCeilingCheck(TelemetryBridge *telemetry, QObject *parent = nullptr);
     void evaluate() override;
+private:
+    bool m_fetchTriggered = false;
 };

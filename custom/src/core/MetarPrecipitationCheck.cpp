@@ -23,23 +23,50 @@ void MetarPrecipitationCheck::evaluate()
     auto *wp = WeatherProvider::instance();
     auto *settings = PreflightSettingsManager::instance();
 
-    if (!wp || !settings || !settings->autoWeatherEnabled()) {
-        setStatus(CheckStatus::Skipped, QStringLiteral("Auto-weather disabled"));
+    if (settings && !settings->autoWeatherEnabled()) {
+        setStatus(CheckStatus::Skipped, QStringLiteral("Auto-weather disabled in settings"));
+        return;
+    }
+
+    if (!wp) {
+        setStatus(CheckStatus::Skipped, QStringLiteral("Weather service unavailable"));
         return;
     }
 
     if (!wp->metarFresh()) {
-        if (m_lastEvalTime.isValid() && m_lastEvalTime.secsTo(QDateTime::currentDateTime()) > 30) {
-            QString err = wp->lastError();
-            if (!err.isEmpty())
-                setStatus(CheckStatus::Skipped, QStringLiteral("Weather fetch failed: ") + err);
-            else
-                setStatus(CheckStatus::Skipped, QStringLiteral("No weather data — configure ICAO in Preflight Settings"));
+        if (!m_fetchTriggered) {
+            m_fetchTriggered = true;
+            if (settings && !settings->defaultIcao().isEmpty()) {
+                wp->fetchMetar(settings->defaultIcao());
+            } else if (m_telemetry) {
+                double lat = getTelemetryDouble("gpsLatitude");
+                double lon = getTelemetryDouble("gpsLongitude");
+                if (qAbs(lat) > 0.01 || qAbs(lon) > 0.01)
+                    wp->fetchWeather(lat, lon);
+            }
+            setStatus(CheckStatus::Pending, QStringLiteral("Fetching METAR data\u2026"));
+        }
+
+        if (m_lastEvalTime.isValid() && m_lastEvalTime.secsTo(QDateTime::currentDateTime()) > 10) {
+            if (!wp->precipitation().isEmpty()) {
+                setStatus(CheckStatus::Warning,
+                          QStringLiteral("Precipitation: %1 \u2014 STALE data")
+                              .arg(wp->precipitation().join(QStringLiteral(", "))));
+            } else {
+                m_fetchTriggered = false;
+                QString err = wp->lastError();
+                if (!err.isEmpty())
+                    setStatus(CheckStatus::Skipped, QStringLiteral("Weather fetch failed: ") + err);
+                else
+                    setStatus(CheckStatus::Skipped, QStringLiteral("No weather data \u2014 configure ICAO in Preflight Settings"));
+            }
         } else {
-            setStatus(CheckStatus::Pending, QStringLiteral("Waiting for METAR data"));
+            setStatus(CheckStatus::Pending, QStringLiteral("Fetching METAR data…"));
         }
         return;
     }
+
+    m_fetchTriggered = false;
 
     QStringList precip = wp->precipitation();
     if (precip.isEmpty()) {

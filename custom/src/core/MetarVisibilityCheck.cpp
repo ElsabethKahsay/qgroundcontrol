@@ -23,23 +23,61 @@ void MetarVisibilityCheck::evaluate()
     auto *wp = WeatherProvider::instance();
     auto *settings = PreflightSettingsManager::instance();
 
-    if (!wp || !settings || !settings->autoWeatherEnabled()) {
-        setStatus(CheckStatus::Skipped, QStringLiteral("Auto-weather disabled"));
+    if (settings && !settings->autoWeatherEnabled()) {
+        setStatus(CheckStatus::Skipped, QStringLiteral("Auto-weather disabled in settings"));
+        return;
+    }
+
+    if (!wp) {
+        setStatus(CheckStatus::Skipped, QStringLiteral("Weather service unavailable"));
         return;
     }
 
     if (!wp->metarFresh()) {
-        if (m_lastEvalTime.isValid() && m_lastEvalTime.secsTo(QDateTime::currentDateTime()) > 30) {
-            QString err = wp->lastError();
-            if (!err.isEmpty())
-                setStatus(CheckStatus::Skipped, QStringLiteral("Weather fetch failed: ") + err);
-            else
-                setStatus(CheckStatus::Skipped, QStringLiteral("No weather data — configure ICAO in Preflight Settings"));
+        if (!m_fetchTriggered) {
+            m_fetchTriggered = true;
+            if (settings && !settings->defaultIcao().isEmpty()) {
+                wp->fetchMetar(settings->defaultIcao());
+            } else if (m_telemetry) {
+                double lat = getTelemetryDouble("gpsLatitude");
+                double lon = getTelemetryDouble("gpsLongitude");
+                if (qAbs(lat) > 0.01 || qAbs(lon) > 0.01)
+                    wp->fetchWeather(lat, lon);
+            }
+            setStatus(CheckStatus::Pending, QStringLiteral("Fetching METAR data\u2026"));
+        }
+
+        if (m_lastEvalTime.isValid() && m_lastEvalTime.secsTo(QDateTime::currentDateTime()) > 10) {
+            // Timeout: check for cached data
+            if (wp->visibilityKm() > 0.0) {
+                double visKm = wp->visibilityKm();
+                double threshold = settings ? settings->visibilityThresholdKm() : 5.0;
+                if (visKm < 1.0) {
+                    setStatus(CheckStatus::Failed,
+                              QStringLiteral("Visibility %1 km — below minimum — STALE data").arg(visKm, 0, 'f', 1));
+                } else if (visKm < threshold) {
+                    setStatus(CheckStatus::Warning,
+                              QStringLiteral("Visibility %1 km — below %2 km threshold — STALE data")
+                                  .arg(visKm, 0, 'f', 1).arg(threshold, 0, 'f', 1));
+                } else {
+                    setStatus(CheckStatus::Warning,
+                              QStringLiteral("Visibility %1 km — STALE data").arg(visKm, 0, 'f', 1));
+                }
+            } else {
+                m_fetchTriggered = false;
+                QString err = wp->lastError();
+                if (!err.isEmpty())
+                    setStatus(CheckStatus::Skipped, QStringLiteral("Weather fetch failed: ") + err);
+                else
+                    setStatus(CheckStatus::Skipped, QStringLiteral("No weather data \u2014 configure ICAO in Preflight Settings"));
+            }
         } else {
-            setStatus(CheckStatus::Pending, QStringLiteral("Waiting for METAR data"));
+            setStatus(CheckStatus::Pending, QStringLiteral("Fetching METAR data…"));
         }
         return;
     }
+
+    m_fetchTriggered = false;
 
     double visKm = wp->visibilityKm();
     double threshold = settings->visibilityThresholdKm();

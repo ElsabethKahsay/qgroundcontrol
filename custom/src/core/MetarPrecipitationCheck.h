@@ -6,4 +6,6 @@ class MetarPrecipitationCheck : public AbstractCheck {
 public:
     MetarPrecipitationCheck(TelemetryBridge *telemetry, QObject *parent = nullptr);
     void evaluate() override;
+private:
+    bool m_fetchTriggered = false;
 };

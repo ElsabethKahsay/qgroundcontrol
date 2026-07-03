@@ -6,4 +6,6 @@ class MetarVisibilityCheck : public AbstractCheck {
 public:
     MetarVisibilityCheck(TelemetryBridge *telemetry, QObject *parent = nullptr);
     void evaluate() override;
+private:
+    bool m_fetchTriggered = false;
 };
