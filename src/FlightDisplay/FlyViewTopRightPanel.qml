@@ -35,13 +35,13 @@ Rectangle {
     property var   selectedVehicles:        QGroundControl.multiVehicleManager.selectedVehicles
     property real  contentWidth:            Math.max(
                                                 multiVehicleList.implicitWidth,
-                                                swipeViewContainer.implicitWidth
+                                                contentColumnLayout.implicitWidth
                                             ) + ScreenTools.defaultFontPixelHeight
     property real  contentHeight:           Math.min(
                                                 maximumHeight,
                                                 topRightPanelColumnLayout.implicitHeight + topRightPanelColumnLayout.spacing * ( topRightPanelColumnLayout.children.length - 1)
                                             )
-    property real  minimumHeight:           selectedVehiclesLabel.height + swipeViewContainer.height
+    property real  minimumHeight:           selectedVehiclesLabel.height + contentColumnLayout.height
     property real  maximumHeight
 
     QGCPalette { id: qgcPal }
@@ -106,147 +106,101 @@ Rectangle {
 
         }
 
-        Rectangle {
-            id:                     swipeViewContainer
+        ColumnLayout {
+            id:                     contentColumnLayout
             Layout.fillWidth:       true
-            implicitHeight:         swipePages.implicitHeight
-            implicitWidth:          swipePages.implicitWidth
-            color:                  "transparent"
+            anchors.left:           parent.left
+            anchors.right:          parent.right
+            spacing:                ScreenTools.defaultFontPixelHeight
 
-            QGCSwipeView {
-                id:                swipePages
-                anchors.fill:      parent
-                spacing:           ScreenTools.defaultFontPixelHeight
-                implicitHeight:    Math.max(buttonsPage.implicitHeight, photoVideoPage.implicitHeight)
-                implicitWidth:     Math.max(buttonsPage.implicitWidth, photoVideoPage.implicitWidth)
+            Loader {
+                id:                         photoVideoControlLoader
+                Layout.alignment:           Qt.AlignHCenter
+                sourceComponent:            globals.activeVehicle ? photoVideoControlComponent : undefined
 
-                MvPanelPage {
-                    id:                buttonsPage
-                    implicitHeight:    buttonsColumnLayout.implicitHeight + ScreenTools.defaultFontPixelHeight * 2
-                    implicitWidth:     buttonsColumnLayout.implicitWidth + ScreenTools.defaultFontPixelHeight * 2
+                property real rightEdgeCenterInset: visible ? parent.width - x : 0
 
-                    ColumnLayout {
-                        id:                     buttonsColumnLayout
-                        anchors.right:          parent.right
-                        anchors.left:           parent.left
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing:                ScreenTools.defaultFontPixelHeight / 2
-                        implicitHeight:         Math.max(selectionRowLayout.height, actionRowLayout.height) + ScreenTools.defaultFontPixelHeight * 2
-                        implicitWidth:          Math.max(selectionRowLayout.width, actionRowLayout.width) + ScreenTools.defaultFontPixelHeight * 4
+                Component {
+                    id: photoVideoControlComponent
 
-                        QGCLabel {
-                            text:               qsTr("Multi Vehicle Selection")
-                            Layout.alignment:   Qt.AlignHCenter
-                        }
-
-                        RowLayout {
-                            id:                 selectionRowLayout
-                            Layout.alignment:   Qt.AlignHCenter
-
-                            QGCButton {
-                                text:                  qsTr("Select All")
-                                enabled:               multiVehicleList.selectedVehicles && multiVehicleList.selectedVehicles.count !== QGroundControl.multiVehicleManager.vehicles.count
-                                onClicked:             multiVehicleList.selectAll()
-                            }
-
-                            QGCButton {
-                                text:                  qsTr("Deselect All")
-                                enabled:               multiVehicleList.selectedVehicles && multiVehicleList.selectedVehicles.count > 0
-                                onClicked:             multiVehicleList.deselectAll()
-                            }
-
-                        }
-
-
-                        QGCLabel {
-                            text:              qsTr("Multi Vehicle Actions")
-                            Layout.alignment:  Qt.AlignHCenter
-                        }
-
-                        RowLayout {
-                            id:                actionRowLayout
-                            Layout.alignment:  Qt.AlignHCenter
-
-                            QGCButton {
-                                text:                  qsTr("Arm")
-                                enabled:               multiVehicleList.armAvailable()
-                                onClicked:             _guidedController.confirmAction(_guidedController.actionMVArm)
-                                Layout.preferredWidth: ScreenTools.defaultFontPixelHeight * 2.75
-                                leftPadding:           0
-                                rightPadding:          0
-                            }
-
-                            QGCButton {
-                                text:                  qsTr("Disarm")
-                                enabled:               multiVehicleList.disarmAvailable()
-                                onClicked:             _guidedController.confirmAction(_guidedController.actionMVDisarm)
-                                Layout.preferredWidth: ScreenTools.defaultFontPixelHeight * 2.75
-                                leftPadding:           0
-                                rightPadding:          0
-                            }
-
-                            QGCButton {
-                                text:                  qsTr("Start")
-                                enabled:               multiVehicleList.startAvailable()
-                                onClicked:             _guidedController.confirmAction(_guidedController.actionMVStartMission)
-                                Layout.preferredWidth: ScreenTools.defaultFontPixelHeight * 2.75
-                                leftPadding:           0
-                                rightPadding:          0
-                            }
-
-                            QGCButton {
-                                text:                  qsTr("Pause")
-                                enabled:               multiVehicleList.pauseAvailable()
-                                onClicked:             _guidedController.confirmAction(_guidedController.actionMVPause)
-                                Layout.preferredWidth: ScreenTools.defaultFontPixelHeight * 2.75
-                                leftPadding:           0
-                                rightPadding:          0
-                            }
-                        }
+                    PhotoVideoControl {
                     }
-                } // Page 1
+                }
+            }
 
-                MvPanelPage {
+            ColumnLayout {
+                id:                     buttonsColumnLayout
+                Layout.fillWidth:       true
+                spacing:                ScreenTools.defaultFontPixelHeight / 2
+                implicitHeight:         Math.max(selectionRowLayout.height, actionRowLayout.height) + ScreenTools.defaultFontPixelHeight * 2
+                implicitWidth:          Math.max(selectionRowLayout.width, actionRowLayout.width) + ScreenTools.defaultFontPixelHeight * 4
 
-                    id:                  photoVideoPage
-                    implicitHeight:      photoVideoControlLoader.implicitHeight + ScreenTools.defaultFontPixelHeight * 2
-                    implicitWidth:       photoVideoControlLoader.implicitWidth + ScreenTools.defaultFontPixelHeight * 2
+                QGCLabel {
+                    text:               qsTr("Multi Vehicle Selection")
+                    Layout.alignment:   Qt.AlignHCenter
+                }
 
-                    // We use a Loader to load the photoVideoControlComponent only when the active vehicle is not null
-                    // This make it easier to implement PhotoVideoControl without having to check for the mavlink camera
-                    // to be null all over the place
+                RowLayout {
+                    id:                 selectionRowLayout
+                    Layout.alignment:   Qt.AlignHCenter
 
-                    Loader {
-                        id:                         photoVideoControlLoader
-                        anchors.horizontalCenter:   parent.horizontalCenter
-                        sourceComponent:            globals.activeVehicle ? photoVideoControlComponent : undefined
-
-                        property real rightEdgeCenterInset: visible ? parent.width - x : 0
-
-                        Component {
-                            id: photoVideoControlComponent
-
-                            PhotoVideoControl {
-                            }
-                        }
+                    QGCButton {
+                        text:                  qsTr("Select All")
+                        enabled:               multiVehicleList.selectedVehicles && multiVehicleList.selectedVehicles.count !== QGroundControl.multiVehicleManager.vehicles.count
+                        onClicked:             multiVehicleList.selectAll()
                     }
-                } // Page 2
-            } // QGCSwipeView
 
-            QGCPageIndicator {
-                id:                       pageIndicator
-                count:                    swipePages.count
-                currentIndex:             swipePages.currentIndex
-                anchors.bottom:           parent.bottom
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.margins:          ScreenTools.defaultFontPixelHeight / 4
+                    QGCButton {
+                        text:                  qsTr("Deselect All")
+                        enabled:               multiVehicleList.selectedVehicles && multiVehicleList.selectedVehicles.count > 0
+                        onClicked:             multiVehicleList.deselectAll()
+                    }
+                }
 
-                delegate: Rectangle {
-                    height:    ScreenTools.defaultFontPixelHeight  / 2
-                    width:     height
-                    radius:    width / 2
-                    color:     model.index === pageIndicator.currentIndex ? qgcPal.text : qgcPal.button
-                    opacity:   model.index === pageIndicator.currentIndex ? 0.9 : 0.3
+                QGCLabel {
+                    text:              qsTr("Multi Vehicle Actions")
+                    Layout.alignment:  Qt.AlignHCenter
+                }
+
+                RowLayout {
+                    id:                actionRowLayout
+                    Layout.alignment:  Qt.AlignHCenter
+
+                    QGCButton {
+                        text:                  qsTr("Arm")
+                        enabled:               multiVehicleList.armAvailable()
+                        onClicked:             _guidedController.confirmAction(_guidedController.actionMVArm)
+                        Layout.preferredWidth: ScreenTools.defaultFontPixelHeight * 2.75
+                        leftPadding:           0
+                        rightPadding:          0
+                    }
+
+                    QGCButton {
+                        text:                  qsTr("Disarm")
+                        enabled:               multiVehicleList.disarmAvailable()
+                        onClicked:             _guidedController.confirmAction(_guidedController.actionMVDisarm)
+                        Layout.preferredWidth: ScreenTools.defaultFontPixelHeight * 2.75
+                        leftPadding:           0
+                        rightPadding:          0
+                    }
+
+                    QGCButton {
+                        text:                  qsTr("Start")
+                        enabled:               multiVehicleList.startAvailable()
+                        onClicked:             _guidedController.confirmAction(_guidedController.actionMVStartMission)
+                        Layout.preferredWidth: ScreenTools.defaultFontPixelHeight * 2.75
+                        leftPadding:           0
+                        rightPadding:          0
+                    }
+
+                    QGCButton {
+                        text:                  qsTr("Pause")
+                        enabled:               multiVehicleList.pauseAvailable()
+                        onClicked:             _guidedController.confirmAction(_guidedController.actionMVPause)
+                        Layout.preferredWidth: ScreenTools.defaultFontPixelHeight * 2.75
+                        leftPadding:           0
+                        rightPadding:          0
+                    }
                 }
             }
         }
