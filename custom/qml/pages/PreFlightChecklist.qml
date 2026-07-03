@@ -9,6 +9,17 @@ Page {
     // ── Responsive layout ──
     readonly property bool isSingle: width < Config.breakpointSingle
 
+    // ── Auto-fetch weather on page load ──
+    Component.onCompleted: {
+        if (typeof WeatherProvider !== 'undefined' && TelemetryProvider) {
+            var lat = TelemetryProvider.gpsLatitude
+            var lon = TelemetryProvider.gpsLongitude
+            if (lat !== 0 || lon !== 0) {
+                WeatherProvider.fetchWeather(lat, lon)
+            }
+        }
+    }
+
     // ── Collapsible group state ──
     property var _collapsed: ({})
     function _clone(obj) { var c = {}; for (var k in obj) c[k] = obj[k]; return c }
@@ -76,12 +87,12 @@ Page {
     }
 
     readonly property var _catGroups: [
-        { label: "Power & Propulsion",     icon: "\u26A1", cats: [0, 1], accent: Colors.pastelGreen },
-        { label: "Navigation & Sensors",   icon: "\uD83D\uDEE0", cats: [2],    accent: Colors.pastelBlue },
-        { label: "Communication & Control", icon: "\uD83D\uDCF6", cats: [3],    accent: Colors.pastelPurple },
-        { label: "Safety & Failsafes",     icon: "\uD83D\uDEE1", cats: [5],    accent: Colors.warning },
-        { label: "Airframe & Physical",    icon: "\uD83D\uDEE9", cats: [4],    accent: Colors.pastelPink },
-        { label: "Environment & Mission",  icon: "\uD83C\uDF2C", cats: [6, 7], accent: Colors.info }
+        { label: "Power \u0026 Propulsion",     icon: "\u26A1", cats: [0, 1], accent: Colors.pastelGreen },
+        { label: "GPS/Navigation \u0026 Sensors", icon: "\uD83D\uDEE0", cats: [2],    accent: Colors.pastelBlue },
+        { label: "Communication \u0026 Control", icon: "\uD83D\uDCF6", cats: [3],    accent: Colors.pastelPurple },
+        { label: "Airframe \u0026 Physical",    icon: "\uD83D\uDEE9", cats: [4],    accent: Colors.pastelPink },
+        { label: "Safety \u0026 Failsafes",     icon: "\uD83D\uDEE1", cats: [5],    accent: Colors.warning },
+        { label: "Environment \u0026 Mission",  icon: "\uD83C\uDF2C", cats: [6, 7], accent: Colors.info }
     ]
 
     readonly property int _nPending: {
@@ -157,6 +168,102 @@ Page {
         onRejected: console.log("Override cancelled")
     }
 
+    // ── Critical Issues Dialog ──
+    Dialog {
+        id: criticalIssuesDialog2
+        title: "Critical Issues"
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(520, parent.width * 0.9)
+        height: Math.min(420, parent.height * 0.8)
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        background: Rectangle { color: Colors.surface; border.color: "#9333ea"; border.width: 2; radius: 12 }
+        padding: 0
+
+        header: Rectangle {
+            height: 48; color: "#2D1B4E"; radius: 12
+            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 12; color: parent.color }
+            RowLayout {
+                anchors.fill: parent; anchors.leftMargin: 16; anchors.rightMargin: 16
+                Text { text: "\u26A0 Critical / Blocking Issues"; font.pixelSize: 15; font.bold: true; color: "#F8BBD0"; Layout.fillWidth: true }
+                Text { text: _nCritical + " issue" + (_nCritical !== 1 ? "s" : ""); font.pixelSize: 12; color: "#CE93D8" }
+            }
+        }
+
+        contentItem: Flickable {
+            clip: true
+            contentHeight: issueCol2.implicitHeight + 16
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            boundsBehavior: Flickable.StopAtBounds
+
+            ColumnLayout {
+                id: issueCol2
+                width: parent.width; spacing: 6
+
+                Repeater {
+                    model: PreflightManager.blockingChecks
+
+                    delegate: Rectangle {
+                        required property var modelData
+                        required property int index
+                        readonly property var chk: modelData
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 12; Layout.rightMargin: 12
+                        Layout.topMargin: index === 0 ? 8 : 0
+                        height: 60; radius: 8
+                        color: Colors.errorDim
+                        border.color: Colors.error; border.width: 1
+
+                        RowLayout {
+                            anchors.fill: parent; anchors.margins: 10; spacing: 10
+
+                            Rectangle {
+                                width: 28; height: 28; radius: 14; color: Colors.error
+                                Text { anchors.centerIn: parent; text: (index + 1).toString(); font.pixelSize: 11; font.bold: true; color: "#fff" }
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true; spacing: 1
+                                Text { text: chk ? chk.label : ""; font.pixelSize: 13; font.bold: true; color: Colors.textPrimary; elide: Text.ElideRight; Layout.fillWidth: true }
+                                Text { text: chk ? chk.message : ""; font.pixelSize: 11; color: Colors.textSecondary; elide: Text.ElideRight; maximumLineCount: 1; Layout.fillWidth: true }
+                            }
+
+                            Rectangle {
+                                width: 72; height: 26; radius: 6; color: "#9333ea"
+                                Text { anchors.centerIn: parent; text: "Go to Check"; font.pixelSize: 9; font.bold: true; color: "#fff" }
+                                MouseArea {
+                                    anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                    onClicked: criticalIssuesDialog2.close()
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    visible: _nCritical === 0
+                    text: "\u2713 No critical issues"
+                    font.pixelSize: 14; color: Colors.success
+                    Layout.alignment: Qt.AlignHCenter; Layout.topMargin: 20
+                }
+            }
+        }
+
+        footer: Rectangle {
+            height: 44; color: Colors.surfaceLight; radius: 12
+            Rectangle { anchors.top: parent.top; width: parent.width; height: 12; color: parent.color }
+            RowLayout {
+                anchors.fill: parent; anchors.margins: 12
+                Item { Layout.fillWidth: true }
+                Rectangle {
+                    width: 80; height: 28; radius: 6; color: "#9333ea"
+                    Text { anchors.centerIn: parent; text: "Close"; font.pixelSize: 12; font.bold: true; color: "#fff" }
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: criticalIssuesDialog2.close() }
+                }
+            }
+        }
+    }
+
     Component.onCompleted: {
         if (TelemetryProvider.motorConfigWarning.length > 0)
             motorConfigDialog.open()
@@ -216,12 +323,6 @@ Page {
                         anchors.margins: 10
 
                         // ── Telemetry cards ──
-                        TelRow { label: "Link"; accent: Colors.info
-                            TelVal { text: VehicleTelemetry.connectionQuality + "%"; color: VehicleTelemetry.connectionQuality >= Config.connQualityGood ? Colors.success : VehicleTelemetry.connectionQuality > Config.connQualityDegraded ? Colors.warning : Colors.error; bold: true }
-                            TelSep {}
-                            TelVal { text: TelemetryProvider.isConnected ? TelemetryProvider.autopilotType : "Disconnected"; color: TelemetryProvider.isConnected ? Colors.success : Colors.error }
-                        }
-
                         TelRow { label: "Power"; accent: Colors.pastelGreen
                             TelVal { text: TelemetryProvider.batteryVoltage.toFixed(2) + " V"; color: TelemetryProvider.batteryVoltage >= 15.0 ? Colors.success : TelemetryProvider.batteryVoltage >= 13.5 ? Colors.warning : Colors.error; bold: true }
                             TelSep {}
@@ -230,6 +331,20 @@ Page {
                             TelVal { text: TelemetryProvider.batteryPercent + "%" }
                             TelSep {}
                             TelVal { text: (TelemetryProvider.batteryVoltage / 4.2).toFixed(0) + "S"; bold: true }
+                        }
+
+                        TelRow { label: "GPS"; accent: Colors.pastelBlue
+                            TelVal { text: TelemetryProvider.gpsFixTypeString; color: TelemetryProvider.gpsFixType >= 3 ? Colors.success : Colors.warning; bold: true }
+                            TelSep {}
+                            TelVal { text: TelemetryProvider.gpsSatellites + " sats"; color: TelemetryProvider.gpsSatellites >= 8 ? Colors.success : TelemetryProvider.gpsSatellites >= 5 ? Colors.warning : Colors.error }
+                            TelSep {}
+                            TelVal { text: "HDOP " + TelemetryProvider.gpsHdop.toFixed(1); color: TelemetryProvider.gpsHdop < 1.0 ? Colors.success : TelemetryProvider.gpsHdop < 2.0 ? Colors.warning : Colors.error }
+                        }
+
+                        TelRow { label: "Link"; accent: Colors.info
+                            TelVal { text: VehicleTelemetry.connectionQuality + "%"; color: VehicleTelemetry.connectionQuality >= Config.connQualityGood ? Colors.success : VehicleTelemetry.connectionQuality > Config.connQualityDegraded ? Colors.warning : Colors.error; bold: true }
+                            TelSep {}
+                            TelVal { text: TelemetryProvider.isConnected ? TelemetryProvider.autopilotType : "Disconnected"; color: TelemetryProvider.isConnected ? Colors.success : Colors.error }
                         }
 
                         // ── Payload weight entry ──
@@ -260,14 +375,6 @@ Page {
                             TelVal { text: "kg"; bold: false }
                         }
 
-                        TelRow { label: "GPS"; accent: Colors.pastelBlue
-                            TelVal { text: TelemetryProvider.gpsFixTypeString; color: TelemetryProvider.gpsFixType >= 3 ? Colors.success : Colors.warning; bold: true }
-                            TelSep {}
-                            TelVal { text: TelemetryProvider.gpsSatellites + " sats"; color: TelemetryProvider.gpsSatellites >= 8 ? Colors.success : TelemetryProvider.gpsSatellites >= 5 ? Colors.warning : Colors.error }
-                            TelSep {}
-                            TelVal { text: "HDOP " + TelemetryProvider.gpsHdop.toFixed(1); color: TelemetryProvider.gpsHdop < 1.0 ? Colors.success : TelemetryProvider.gpsHdop < 2.0 ? Colors.warning : Colors.error }
-                        }
-
                         TelRow { label: "Attitude"; accent: Colors.pastelPurple
                             TelVal { text: "R " + TelemetryProvider.roll.toFixed(1) + "\u00B0"; bold: true }
                             TelSep {}
@@ -294,8 +401,6 @@ Page {
                             TelVal { text: TelemetryProvider.rcConnected ? "\u2713 Link" : "\u2717 No RC"; color: TelemetryProvider.rcConnected ? Colors.success : Colors.error; bold: true }
                             TelSep {}
                             TelVal { text: "RSSI " + TelemetryProvider.rcRssi + "%"; color: TelemetryProvider.rcRssi >= 50 ? Colors.success : TelemetryProvider.rcRssi >= 30 ? Colors.warning : Colors.error }
-                            TelSep {}
-                            TelVal { text: TelemetryProvider.rcFailsafe ? "FS" : "OK"; color: TelemetryProvider.rcFailsafe ? Colors.error : Colors.success; bold: true }
                         }
 
                         TelRow { label: "State"; accent: Colors.info
@@ -306,20 +411,32 @@ Page {
                             TelVal { text: TelemetryProvider.armed ? Math.floor(TelemetryProvider.flightTime / 60) + "m " + Math.floor(TelemetryProvider.flightTime % 60) + "s" : "0m 0s" }
                         }
 
-                        TelRow { label: "Wind"; accent: Colors.pastelGreen
-                            TelVal { text: TelemetryProvider.windSpeed.toFixed(1) + " m/s"; bold: true }
+                        TelRow { label: "Weather"; accent: Colors.warning
+                            TelVal { text: WeatherProvider.loading ? "..." : (WeatherProvider.temperature.toFixed(1) + "\u00B0C"); bold: true }
                             TelSep {}
-                            TelVal { text: TelemetryProvider.windDirection.toFixed(0) + "\u00B0" }
+                            TelVal { text: WeatherProvider.loading ? "..." : WeatherProvider.weatherDescription; color: Colors.info }
+                            TelSep {}
+                            TelVal { text: WeatherProvider.loading ? "..." : (WeatherProvider.humidity.toFixed(0) + "% RH") }
+                        }
+
+                        TelRow { label: "Wind"; accent: Colors.pastelGreen
+                            TelVal { text: WeatherProvider.loading ? "..." : (WeatherProvider.windSpeed.toFixed(1) + " m/s"); bold: true }
+                            TelSep {}
+                            TelVal { text: WeatherProvider.loading ? "..." : (WeatherProvider.windDirection.toFixed(0) + "\u00B0") }
+                            TelSep {}
+                            TelVal { text: "Gust " + (WeatherProvider.windGust > 0 ? WeatherProvider.windGust.toFixed(1) + " m/s" : "N/A") }
+                        }
+
+                        TelRow { label: "Visibility"; accent: Colors.pastelPurple
+                            TelVal { text: WeatherProvider.loading ? "..." : (WeatherProvider.visibilityKm.toFixed(1) + " km"); bold: true }
+                            TelSep {}
+                            TelVal { text: WeatherProvider.loading ? "..." : (WeatherProvider.ceilingFt > 0 ? WeatherProvider.ceilingFt + " ft ceiling" : "No ceiling data") }
                         }
 
                         TelRow { label: "Speed"; accent: Colors.pastelBlue
                             TelVal { text: "Air " + TelemetryProvider.airspeed.toFixed(1); bold: true }
                             TelSep {}
                             TelVal { text: "Gnd " + TelemetryProvider.groundSpeed.toFixed(1); bold: true }
-                        }
-
-                        TelRow { label: "Terrain"; accent: Colors.pastelPurple
-                            TelVal { text: TelemetryProvider.terrainHeight.toFixed(1) + " m" }
                         }
 
                         TelRow { label: "Health"; accent: Colors.success
@@ -373,6 +490,66 @@ Page {
                             color: VehicleTelemetry.connectionQuality >= Config.connQualityGood ? Colors.successDim : Colors.errorDim
                             border.color: VehicleTelemetry.connectionQuality >= Config.connQualityGood ? Colors.success : Colors.error; border.width: 1
                             Text { anchors.centerIn: parent; text: "\uD83D\uDCE1 " + VehicleTelemetry.connectionQuality + "%"; font.pixelSize: Config.fontSizeSmall; font.bold: true; color: VehicleTelemetry.connectionQuality >= Config.connQualityGood ? Colors.success : Colors.error }
+                        }
+                    }
+                }
+
+                // \u2500\u2500 Top-level summary box (pink/purple theme) \u2500\u2500
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 52
+                    Layout.leftMargin: Config.spacingSmall
+                    Layout.rightMargin: Config.spacingSmall
+                    Layout.topMargin: 4
+                    radius: 10
+                    visible: PreflightManager.totalChecks > 0
+
+                    gradient: Gradient {
+                        orientation: Gradient.Horizontal
+                        GradientStop { position: 0.0; color: "#2D1B4E" }
+                        GradientStop { position: 0.5; color: "#4A1942" }
+                        GradientStop { position: 1.0; color: "#6B1D5E" }
+                    }
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 14; anchors.rightMargin: 10
+                        spacing: 12
+
+                        ColumnLayout {
+                            spacing: 1
+                            Text {
+                                text: PreflightManager.passedChecks + "/" + PreflightManager.totalChecks + " checks passed"
+                                font.pixelSize: 14; font.bold: true; color: "#F8BBD0"
+                            }
+                            Text {
+                                text: _nCritical > 0 ? _nCritical + " critical issue" + (_nCritical !== 1 ? "s" : "") : "No critical issues"
+                                font.pixelSize: 11
+                                color: _nCritical > 0 ? "#EF9A9A" : "#A5D6A7"
+                            }
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        Rectangle {
+                            width: 32; height: 32; radius: 16
+                            color: "transparent"
+                            border.color: "#CE93D8"; border.width: 2
+                            Text {
+                                anchors.centerIn: parent
+                                text: PreflightManager.completionPercent + "%"
+                                font.pixelSize: 9; font.bold: true; color: "#CE93D8"
+                            }
+                        }
+
+                        Rectangle {
+                            width: 56; height: 26; radius: 6
+                            color: _nCritical > 0 ? "#E91E63" : "#9333ea"
+                            Text { anchors.centerIn: parent; text: "Show"; font.pixelSize: 11; font.bold: true; color: "#fff" }
+                            MouseArea {
+                                anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                onClicked: criticalIssuesDialog2.open()
+                            }
                         }
                     }
                 }
@@ -435,8 +612,10 @@ Page {
                                         anchors.fill: parent; anchors.margins: Config.spacingMedium
                                         spacing: Config.spacingSmall
 
+                                        Item { Layout.fillWidth: true }
                                         Text { text: modelData.icon; font.pixelSize: 14 }
-                                        Text { text: modelData.label; font.pixelSize: Config.fontSizeBody; font.bold: true; color: Colors.textPrimary; Layout.fillWidth: true; elide: Text.ElideRight }
+                                        Text { text: modelData.label; font.pixelSize: Config.fontSizeBody; font.bold: true; color: Colors.textPrimary; horizontalAlignment: Text.AlignHCenter }
+                                        Item { Layout.fillWidth: true }
 
                                         Text { text: root.groupIcon(index); font.pixelSize: 14; color: root.groupColor(index); font.bold: true }
                                         Text { text: root.groupPassedCount(index); font.pixelSize: Config.fontSizeSmall; color: Colors.textSecondary }
@@ -726,7 +905,7 @@ Page {
             spacing: Config.spacingSmall
 
             Rectangle { width: 3; height: 18; radius: 1.5; color: accent; Layout.alignment: Qt.AlignVCenter }
-            Text { text: label; font.pixelSize: Config.fontSizeBody; color: Colors.textSecondary; font.bold: true; Layout.preferredWidth: 60; leftPadding: Config.spacingSmall }
+            Text { text: label; font.pixelSize: Config.fontSizeBody; color: Colors.textSecondary; font.bold: true; Layout.preferredWidth: 100; horizontalAlignment: Text.AlignHCenter }
             Item { Layout.fillWidth: true }
         }
     }

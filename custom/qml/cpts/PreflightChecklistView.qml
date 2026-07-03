@@ -25,18 +25,18 @@ Rectangle {
     })
 
     readonly property var catInfo: ({
-        0: { label: "Propulsion",    icon: "\u2699" },
-        1: { label: "Power",         icon: "\u26A1" },
-        2: { label: "Navigation",    icon: "\uD83D\uDEE0" },
-        3: { label: "Communication", icon: "\uD83D\uDCF6" },
-        4: { label: "Airframe",      icon: "\uD83D\uDEE9" },
-        5: { label: "Safety",        icon: "\uD83D\uDEE1" },
-        6: { label: "Environment",   icon: "\uD83C\uDF2C" },
-        7: { label: "Arming Gate",   icon: "\u2699" }
+        0: { label: "Propulsion",      icon: "\u2699" },
+        1: { label: "Power",           icon: "\u26A1" },
+        2: { label: "GPS/Navigation",  icon: "\uD83D\uDEE0" },
+        3: { label: "Communication",   icon: "\uD83D\uDCF6" },
+        4: { label: "Airframe",        icon: "\uD83D\uDEE9" },
+        5: { label: "Safety",          icon: "\uD83D\uDEE1" },
+        6: { label: "Environment",     icon: "\uD83C\uDF2C" },
+        7: { label: "Arming Gate",     icon: "\u2699" }
     })
 
-    // Match screenshot section order: Communication, Airframe, Safety, Environment first
-    readonly property var catOrder: [3, 4, 5, 6, 0, 1, 2, 7]
+    // Enforced category display order: Power, GPS/Navigation, Communication, Airframe, Safety, Environment
+    readonly property var catOrder: [1, 2, 3, 4, 5, 6, 0, 7]
 
     readonly property var typeNames: ["Auto", "Manual", "Action"]
 
@@ -105,55 +105,207 @@ Rectangle {
         return item && item.label ? item.label : ""
     }
 
+    // ── Critical issues dialog ──
+    Dialog {
+        id: criticalIssuesDialog
+        title: "Critical Issues"
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(520, parent.width * 0.9)
+        height: Math.min(420, parent.height * 0.8)
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        background: Rectangle { color: Colors.surface; border.color: "#9333ea"; border.width: 2; radius: 12 }
+        padding: 0
+
+        header: Rectangle {
+            height: 48
+            color: "#2D1B4E"
+            radius: 12
+            // Flatten bottom corners
+            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 12; color: parent.color }
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 16; anchors.rightMargin: 16
+                Text { text: "\u26A0 Critical / Blocking Issues"; font.pixelSize: 15; font.bold: true; color: "#F8BBD0"; Layout.fillWidth: true }
+                Text { text: _issueCount + " issue" + (_issueCount !== 1 ? "s" : ""); font.pixelSize: 12; color: "#CE93D8" }
+            }
+        }
+
+        contentItem: Flickable {
+            clip: true
+            contentHeight: issueCol.implicitHeight + 16
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            boundsBehavior: Flickable.StopAtBounds
+
+            ColumnLayout {
+                id: issueCol
+                width: parent.width
+                spacing: 6
+                anchors.margins: 12
+
+                Repeater {
+                    model: typeof PreflightManager !== "undefined" ? PreflightManager.blockingChecks : []
+
+                    delegate: Rectangle {
+                        required property var modelData
+                        required property int index
+                        readonly property var chk: modelData
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 12; Layout.rightMargin: 12
+                        Layout.topMargin: index === 0 ? 8 : 0
+                        height: 60
+                        radius: 8
+                        color: Colors.errorDim
+                        border.color: Colors.error; border.width: 1
+
+                        RowLayout {
+                            anchors.fill: parent; anchors.margins: 10
+                            spacing: 10
+
+                            Rectangle {
+                                width: 28; height: 28; radius: 14
+                                color: Colors.error
+                                Text { anchors.centerIn: parent; text: (index + 1).toString(); font.pixelSize: 11; font.bold: true; color: "#fff" }
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true; spacing: 1
+                                Text { text: chk ? chk.label : ""; font.pixelSize: 13; font.bold: true; color: Colors.textPrimary; elide: Text.ElideRight; Layout.fillWidth: true }
+                                Text { text: chk ? chk.message : ""; font.pixelSize: 11; color: Colors.textSecondary; elide: Text.ElideRight; maximumLineCount: 1; Layout.fillWidth: true }
+                            }
+
+                            Rectangle {
+                                width: 72; height: 26; radius: 6
+                                color: "#9333ea"
+                                Text { anchors.centerIn: parent; text: "Go to Check"; font.pixelSize: 9; font.bold: true; color: "#fff" }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        criticalIssuesDialog.close()
+                                        // Scroll to category containing this check
+                                        if (chk) {
+                                            var catId = chk.checkCategory
+                                            for (var i = 0; i < catOrder.length; ++i) {
+                                                if (catOrder[i] === catId) {
+                                                    var yPos = i * 180
+                                                    checklistFlickable.contentY = Math.min(yPos, checklistFlickable.contentHeight - checklistFlickable.height)
+                                                    break
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Empty state
+                Text {
+                    visible: _issueCount === 0
+                    text: "\u2713 No critical issues"
+                    font.pixelSize: 14; color: Colors.success
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.topMargin: 20
+                }
+            }
+        }
+
+        footer: Rectangle {
+            height: 44
+            color: Colors.surfaceLight
+            radius: 12
+            Rectangle { anchors.top: parent.top; width: parent.width; height: 12; color: parent.color }
+            RowLayout {
+                anchors.fill: parent; anchors.margins: 12
+                Item { Layout.fillWidth: true }
+                Rectangle {
+                    width: 80; height: 28; radius: 6
+                    color: "#9333ea"
+                    Text { anchors.centerIn: parent; text: "Close"; font.pixelSize: 12; font.bold: true; color: "#fff" }
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: criticalIssuesDialog.close() }
+                }
+            }
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
 
-        // Multicolor progress bar
+        // ── Top-level summary box (pink/purple themed) ──
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 4
-            visible: _total > 0
-
-            readonly property real total: _total
-            readonly property int nPassed: _passed
-            readonly property int nFailed: PreflightManager.failedChecks
-            readonly property int nWarn: PreflightChecklistModel.warnCount
-            readonly property int nPend: _total - nPassed - nFailed - nWarn
-            readonly property real pPassed: total > 0 ? nPassed / total : 0
-            readonly property real pFailed: total > 0 ? nFailed / total : 0
-            readonly property real pWarn:   total > 0 ? nWarn / total : 0
-            readonly property real pPend:  total > 0 ? nPend / total : 0
-
-            clip: true
-
-            Rectangle { height: parent.height; width: parent.width; color: Colors.borderLight; radius: 2 }
-            Rectangle { height: parent.height; width: parent.width * parent.pPassed; color: Colors.success; radius: 2
-                Behavior on width { NumberAnimation { duration: 300 } } }
-            Rectangle { height: parent.height; x: parent.width * parent.pPassed; width: parent.width * parent.pWarn; color: Colors.warning
-                Behavior on x { NumberAnimation { duration: 300 } }
-                Behavior on width { NumberAnimation { duration: 300 } } }
-            Rectangle { height: parent.height; x: parent.width * (parent.pPassed + parent.pWarn); width: parent.width * parent.pFailed; color: Colors.error
-                Behavior on x { NumberAnimation { duration: 300 } }
-                Behavior on width { NumberAnimation { duration: 300 } } }
-            Rectangle { height: parent.height; x: parent.width * (parent.pPassed + parent.pWarn + parent.pFailed); width: parent.width * parent.pPend; color: Colors.textDisabled; opacity: 0.4
-                Behavior on x { NumberAnimation { duration: 300 } }
-                Behavior on width { NumberAnimation { duration: 300 } } }
-        }
-
-        // Progress label
-        Text {
-            Layout.fillWidth: true
-            Layout.topMargin: 6
+            Layout.preferredHeight: 56
             Layout.leftMargin: Config.spacingMedium
             Layout.rightMargin: Config.spacingMedium
-            text: _passed + "/" + _total + " checks passed (" + _pct + "%)"
-                + (_blockers > 0 ? " \u2014 " + _blockers + " blocking " + (_blockers === 1 ? "issue" : "issues") + " prevent arming"
-                   : _pend > 0 ? " \u2014 " + _pend + " item(s) pending"
-                   : " \u2014 all checks complete")
-            font.pixelSize: Config.fontSizeSmall
-            color: _blockers > 0 ? Colors.error : _pend > 0 ? Colors.warning : Colors.success
-            elide: Text.ElideRight
+            Layout.topMargin: Config.spacingSmall
+            radius: 10
+            visible: _total > 0
+
+            gradient: Gradient {
+                orientation: Gradient.Horizontal
+                GradientStop { position: 0.0; color: "#2D1B4E" }
+                GradientStop { position: 0.5; color: "#4A1942" }
+                GradientStop { position: 1.0; color: "#6B1D5E" }
+            }
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 16; anchors.rightMargin: 12
+                spacing: 16
+
+                // Pass count
+                ColumnLayout {
+                    spacing: 1
+                    Text {
+                        text: _passed + "/" + _total + " checks passed"
+                        font.pixelSize: 15; font.bold: true; color: "#F8BBD0"
+                    }
+                    Text {
+                        text: _issueCount > 0 ? _issueCount + " critical issue" + (_issueCount !== 1 ? "s" : "") : "No critical issues"
+                        font.pixelSize: 12
+                        color: _issueCount > 0 ? "#EF9A9A" : "#A5D6A7"
+                    }
+                }
+
+                Item { Layout.fillWidth: true }
+
+                // Circular progress indicator
+                Rectangle {
+                    width: 36; height: 36; radius: 18
+                    color: "transparent"
+                    border.color: "#CE93D8"; border.width: 2
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: _pct + "%"
+                        font.pixelSize: 10; font.bold: true; color: "#CE93D8"
+                    }
+                }
+
+                // Show button
+                Rectangle {
+                    width: 64; height: 30; radius: 8
+                    color: _issueCount > 0 ? "#E91E63" : "#9333ea"
+                    opacity: showBtnMa.containsMouse ? 0.9 : 1.0
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "Show"
+                        font.pixelSize: 12; font.bold: true; color: "#fff"
+                    }
+
+                    MouseArea {
+                        id: showBtnMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: criticalIssuesDialog.open()
+                    }
+                }
+            }
         }
 
         // Blocking banner with integrated issue list toggle
@@ -332,15 +484,16 @@ Rectangle {
                                 anchors.rightMargin: Config.spacingSmall
                                 spacing: Config.spacingSmall
 
+                                Item { Layout.fillWidth: true }
                                 Text { text: info.icon; font.pixelSize: Config.fontSizeBody }
                                 Text {
                                     text: info.label
                                     font.pixelSize: Config.fontSizeH3
                                     font.bold: true
                                     color: Colors.textPrimary
-                                    Layout.fillWidth: true
-                                    elide: Text.ElideRight
+                                    horizontalAlignment: Text.AlignHCenter
                                 }
+                                Item { Layout.fillWidth: true }
                                 Text {
                                     text: catSummary(catId)
                                     font.pixelSize: Config.fontSizeSmall
