@@ -27,6 +27,7 @@ qt_add_qml_module(FlightDisplayModule
         FlyViewPreFlightChecklistPopup.qml
         FlyViewToolStrip.qml
         FlyViewToolStripActionList.qml
+        FlyViewTelemetryStrip.qml
         FlyViewTopRightColumnLayout.qml
         FlyViewTopRightPanel.qml
         FlyViewVideo.qml

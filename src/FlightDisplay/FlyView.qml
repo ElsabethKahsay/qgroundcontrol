@@ -75,8 +75,8 @@ Item {
 
     QGCToolInsets {
         id:                     _toolInsets
-        leftEdgeBottomInset:    _pipView.leftEdgeBottomInset
-        bottomEdgeLeftInset:    _pipView.bottomEdgeLeftInset
+        leftEdgeBottomInset:    0
+        bottomEdgeLeftInset:    0
     }
 
     FlyViewToolBar {
@@ -91,36 +91,35 @@ Item {
         anchors.left:       parent.left
         anchors.right:      parent.right
 
+        // Left panel: Map
         FlyViewMap {
             id:                     mapControl
+            anchors.top:            parent.top
+            anchors.bottom:         parent.bottom
+            anchors.left:           parent.left
+            anchors.right:          videoControl.left
             planMasterController:   _planController
             rightPanelWidth:        ScreenTools.defaultFontPixelHeight * 9
-            pipView:                _pipView
-            pipMode:                !_mainWindowIsMap
+            pipView:                null
+            pipMode:                false
             toolInsets:             customOverlay.totalToolInsets
             mapName:                "FlightDisplayView"
             enabled:                !viewer3DWindow.isOpen
+
+            property real leftEdgeBottomInset: 0
+            property real bottomEdgeLeftInset: 0
         }
 
+        // Right panel: Video
         FlyViewVideo {
-            id:         videoControl
-            pipView:    _pipView
-        }
-
-        PipView {
-            id:                     _pipView
-            anchors.left:           parent.left
+            id:                     videoControl
+            anchors.top:            parent.top
             anchors.bottom:         parent.bottom
-            anchors.margins:        _toolsMargin
-            item1IsFullSettingsKey: "MainFlyWindowIsMap"
-            item1:                  mapControl
-            item2:                  QGroundControl.videoManager.hasVideo ? videoControl : null
-            show:                   QGroundControl.videoManager.hasVideo && !QGroundControl.videoManager.fullScreen &&
-                                        (videoControl.pipState.state === videoControl.pipState.pipState || mapControl.pipState.state === mapControl.pipState.pipState)
-            z:                      QGroundControl.zOrderWidgets
+            anchors.right:          parent.right
+            width:                  parent.width * 0.35
 
-            property real leftEdgeBottomInset: visible ? width + anchors.margins : 0
-            property real bottomEdgeLeftInset: visible ? height + anchors.margins : 0
+            property real leftEdgeBottomInset: 0
+            property real bottomEdgeLeftInset: 0
         }
 
         FlyViewWidgetLayer {

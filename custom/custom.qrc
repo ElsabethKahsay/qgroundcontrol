@@ -13,6 +13,9 @@
         <file alias="FlyViewCustomLayer.qml">qml/FlyViewCustomLayer.qml</file>
         <file alias="FlyViewPreFlightChecklistPopup.qml">qml/FlyViewPreFlightChecklistPopup.qml</file>
     </qresource>
+    <qresource prefix="/qml/QGroundControl/FlightDisplay">
+        <file alias="FlyView.qml">qml/FlyView.qml</file>
+    </qresource>
     <qresource prefix="/qml/QGroundControl/Toolbar">
         <file alias="MainStatusIndicator.qml">qml/MainStatusIndicator.qml</file>
     </qresource>
@@ -39,8 +42,7 @@
         <file alias="VehicleTelemetry.qml">qml/singletons/VehicleTelemetry.qml</file>
     </qresource>
     <qresource prefix="qml/cpts">
-        <file alias="TestAnalyzePage.qml">qml/cpts/TestAnalyzePage.qml</file>
-        <file alias="TestModuleImport.qml">qml/cpts/TestModuleImport.qml</file>
+        <file alias="FlyViewTelemetryStrip.qml">qml/cpts/FlyViewTelemetryStrip.qml</file>
         <file alias="PreflightChecklistView.qml">qml/cpts/PreflightChecklistView.qml</file>
         <file alias="ArmGateDialog.qml">qml/cpts/ArmGateDialog.qml</file>
         <file alias="MotorTestPanel.qml">qml/cpts/MotorTestPanel.qml</file>
