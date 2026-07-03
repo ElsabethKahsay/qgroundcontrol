@@ -1,12 +1,9 @@
 // Component: FlyViewCustomLayer
-// Purpose: Custom Fly View overlay layer for the Enterprise GCS plugin.
-//   Hosts the TelemetryInfoBox (draggable/collapsible telemetry panel),
-//   a prominent Preflight Checklist shortcut button, and the preflight
-//   status badge. All overlays keep the map/video feed fully visible.
-// Properties:
-//   parentToolInsets (var) — insets from the parent Fly View
-//   totalToolInsets  (var) — combined insets for child layout
-//   mapControl       (var) — reference to the map control
+// Purpose: Custom Fly View overlay for the Enterprise GCS plugin.
+//   - Telemetry strip: top-left, overlaid on the video half
+//   - Compass widget: bottom-right, overlaid on the map half
+//   - Preflight checklist button (bottom-left of video half)
+//   - Preflight status badge (top-right of map half)
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 UAV Preflight Contributors
 
@@ -19,6 +16,7 @@ import QGroundControl.Controls
 import QGroundControl.MultiVehicleManager
 import QGroundControl.ScreenTools
 import QGroundControl.Palette
+import QGroundControl.FlightMap
 
 Item {
     id: _root
@@ -27,7 +25,18 @@ Item {
     property var totalToolInsets:   _toolInsets
     property var mapControl
 
+    // Passed from FlyView.qml so we know where each half is
+    property real videoHalfWidth:   width * 0.5   // fallback if not bound
+    property bool videoOnLeft:      true           // true = video on left
+
     property var _activeVehicle: QGroundControl.multiVehicleManager.activeVehicle
+
+    // Derived geometry — the "video panel" left edge and the "map panel" left edge
+    readonly property real _videoPanelLeft: videoOnLeft ? 0 : (width - videoHalfWidth)
+    readonly property real _mapPanelLeft:   videoOnLeft ? videoHalfWidth : 0
+    readonly property real _panelWidth:     videoHalfWidth
+
+    QGCPalette { id: qgcPal; colorGroupEnabled: enabled }
 
     QGCToolInsets {
         id:                     _toolInsets
@@ -45,30 +54,87 @@ Item {
         bottomEdgeRightInset:   parentToolInsets.bottomEdgeRightInset
     }
 
-    // ═══════════════════  PREFLIGHT STATUS BADGE  ════════════════════
-    // Compact pill badge showing preflight check status (top-right corner)
+    // ═══════════════════════════════════════════════════════════════════
+    //  TELEMETRY STRIP — top-left, overlaid on the video panel
+    // ═══════════════════════════════════════════════════════════════════
+    FlyViewTelemetryStrip {
+        id:             telemetryStrip
+        x:              _videoPanelLeft + ScreenTools.defaultFontPixelWidth
+        y:              ScreenTools.defaultFontPixelHeight * 0.4
+        width:          _panelWidth - ScreenTools.defaultFontPixelWidth * 2
+        activeVehicle:  _activeVehicle
+        z:              QGroundControl.zOrderWidgets + 1
+        opacity:        0.96
+
+        // Subtle drop-shadow feel via an extra underline
+        Rectangle {
+            anchors.left:   parent.left
+            anchors.right:  parent.right
+            anchors.bottom: parent.bottom
+            height:         1
+            color:          Qt.rgba(0, 0.83, 1, 0.25)
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  COMPASS — bottom-right corner of the map panel
+    // ═══════════════════════════════════════════════════════════════════
+    Item {
+        id:     compassContainer
+        x:      _mapPanelLeft + _panelWidth - compassWidget.size - _compassMargin
+        y:      parent.height - compassWidget.size - _compassMargin
+        width:  compassWidget.size
+        height: compassWidget.size
+        z:      QGroundControl.zOrderWidgets + 1
+
+        readonly property real _compassMargin: ScreenTools.defaultFontPixelWidth * 1.5
+
+        // Semi-transparent dark backdrop
+        Rectangle {
+            anchors.fill:   parent
+            radius:         parent.width / 2
+            color:          Qt.rgba(0.05, 0.05, 0.10, 0.60)
+            border.color:   Qt.rgba(0, 0.83, 1, 0.25)
+            border.width:   1
+        }
+
+        QGCCompassWidget {
+            id:       compassWidget
+            vehicle:  _activeVehicle
+            size:     ScreenTools.defaultFontPixelHeight * 9
+            anchors.centerIn: parent
+
+            // Override background to be transparent (backdrop above handles it)
+            color:          Qt.rgba(0, 0, 0, 0)
+            border.width:   0
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  PREFLIGHT STATUS BADGE — top-right of map panel
+    // ═══════════════════════════════════════════════════════════════════
     Rectangle {
-        id: statusBadge
-        anchors.top: parent.top
-        anchors.right: parent.right
-        anchors.margins: ScreenTools.defaultFontPixelWidth * 0.75
-        width: badgeRow.width + ScreenTools.defaultFontPixelWidth * 1.5
-        height: badgeRow.height + ScreenTools.defaultFontPixelWidth
-        radius: height / 2
-        color: qgcPal.window
-        border.color: qgcPal.text
-        visible: _activeVehicle && typeof PreflightManager !== 'undefined'
+        id:                 statusBadge
+        x:                  _mapPanelLeft + _panelWidth - width - ScreenTools.defaultFontPixelWidth
+        y:                  ScreenTools.defaultFontPixelHeight * 0.4
+        width:              badgeRow.width + ScreenTools.defaultFontPixelWidth * 1.5
+        height:             badgeRow.height + ScreenTools.defaultFontPixelWidth
+        radius:             height / 2
+        color:              Qt.rgba(0.05, 0.05, 0.12, 0.90)
+        border.color:       Qt.rgba(0.25, 0.30, 0.50, 0.50)
+        border.width:       1
+        visible:            _activeVehicle && typeof PreflightManager !== 'undefined'
+        z:                  QGroundControl.zOrderWidgets + 1
 
         Row {
-            id: badgeRow
-            anchors.centerIn: parent
-            spacing: ScreenTools.defaultFontPixelWidth * 0.5
+            id:                 badgeRow
+            anchors.centerIn:   parent
+            spacing:            ScreenTools.defaultFontPixelWidth * 0.5
 
             Rectangle {
-                id: statusDot
-                width: ScreenTools.defaultFontPixelHeight * 0.6
-                height: width
-                radius: width / 2
+                width:                  ScreenTools.defaultFontPixelHeight * 0.6
+                height:                 width
+                radius:                 width / 2
                 anchors.verticalCenter: parent.verticalCenter
                 color: {
                     if (typeof PreflightChecklistModel === 'undefined') return "#9E9E9E"
@@ -81,7 +147,6 @@ Item {
             }
 
             QGCLabel {
-                id: statusLabel
                 anchors.verticalCenter: parent.verticalCenter
                 text: {
                     if (typeof PreflightManager === 'undefined') return ""
@@ -94,7 +159,7 @@ Item {
                     return "\u2713 Ready"
                 }
                 font.pointSize: ScreenTools.defaultFontPointSize
-                color: qgcPal.text
+                color:          "#E8ECF4"
             }
         }
 
@@ -107,65 +172,58 @@ Item {
         }
     }
 
-    // ═══════════════  PREFLIGHT CHECKLIST SHORTCUT BUTTON  ═══════════
-    // Prominent floating action button on the left side of the Fly View.
-    // Opens the full preflight checklist popup. Disabled when no vehicle.
+    // ═══════════════════════════════════════════════════════════════════
+    //  PREFLIGHT BUTTON — bottom-left of the video panel
+    // ═══════════════════════════════════════════════════════════════════
     Rectangle {
-        id: preflightBtn
-        anchors.left:   parent.left
-        anchors.bottom: parent.bottom
-        anchors.leftMargin:   ScreenTools.defaultFontPixelWidth * 1.5
-        anchors.bottomMargin: ScreenTools.defaultFontPixelHeight * 5
+        id:                     preflightBtn
+        x:                      _videoPanelLeft + ScreenTools.defaultFontPixelWidth * 1.5
+        y:                      parent.height - height - ScreenTools.defaultFontPixelHeight * 1.5
+        width:                  btnRow.width + ScreenTools.defaultFontPixelWidth * 2
+        height:                 ScreenTools.defaultFontPixelHeight * 2.6
+        radius:                 height / 2
+        z:                      QGroundControl.zOrderWidgets + 1
 
-        width:  btnRow.width + ScreenTools.defaultFontPixelWidth * 2
-        height: ScreenTools.defaultFontPixelHeight * 2.8
-        radius: height / 2
-
-        // Gradient-like appearance
         color: {
-            if (!_activeVehicle) return Qt.rgba(0.3, 0.3, 0.35, 0.7)
-            if (_btnMA.containsPress) return "#065F7C"
-            if (_btnMA.containsMouse) return "#0AA8D6"
-            return "#0891B2"                           // primary accent
+            if (!_activeVehicle) return Qt.rgba(0.3, 0.3, 0.35, 0.70)
+            if (_btnMA.containsPress)  return "#065F7C"
+            if (_btnMA.containsMouse)  return "#0AA8D6"
+            return "#0891B2"
         }
         border.color: _activeVehicle ? "#00D4FF" : Qt.rgba(0.5, 0.5, 0.55, 0.5)
         border.width: 1
 
         Behavior on color { ColorAnimation { duration: 120 } }
 
-        // subtle shadow
         layer.enabled: true
 
         Row {
-            id: btnRow
-            anchors.centerIn: parent
-            spacing: ScreenTools.defaultFontPixelWidth * 0.6
+            id:                 btnRow
+            anchors.centerIn:   parent
+            spacing:            ScreenTools.defaultFontPixelWidth * 0.6
 
-            // Checklist icon (unicode clipboard)
             Text {
                 anchors.verticalCenter: parent.verticalCenter
-                text: "📋"
-                font.pixelSize: ScreenTools.defaultFontPixelHeight * 1.1
-                opacity: _activeVehicle ? 1.0 : 0.4
+                text:                   "📋"
+                font.pixelSize:         ScreenTools.defaultFontPixelHeight * 1.1
+                opacity:                _activeVehicle ? 1.0 : 0.4
             }
 
             Text {
                 anchors.verticalCenter: parent.verticalCenter
-                text: qsTr("Preflight Checklist")
-                font.pointSize: ScreenTools.defaultFontPointSize * 0.95
-                font.weight:    Font.DemiBold
-                color: _activeVehicle ? "#FFFFFF" : "#888888"
+                text:                   qsTr("Preflight Checklist")
+                font.pointSize:         ScreenTools.defaultFontPointSize * 0.95
+                font.weight:            Font.DemiBold
+                color:                  _activeVehicle ? "#FFFFFF" : "#888888"
             }
 
-            // Badge showing failed/pending count
             Rectangle {
-                id: countBadge
                 anchors.verticalCenter: parent.verticalCenter
-                width:  badgeText.width + ScreenTools.defaultFontPixelWidth
-                height: ScreenTools.defaultFontPixelHeight * 1.2
-                radius: height / 2
-                visible: _activeVehicle && typeof PreflightManager !== 'undefined'
-                         && (typeof PreflightChecklistModel !== 'undefined')
+                width:                  badgeText.width + ScreenTools.defaultFontPixelWidth
+                height:                 ScreenTools.defaultFontPixelHeight * 1.2
+                radius:                 height / 2
+                visible:                _activeVehicle && typeof PreflightManager !== 'undefined'
+                                        && (typeof PreflightChecklistModel !== 'undefined')
                 color: {
                     if (typeof PreflightChecklistModel === 'undefined') return "transparent"
                     var f = PreflightChecklistModel.blockingFailedCount
@@ -176,8 +234,8 @@ Item {
                 }
 
                 Text {
-                    id: badgeText
-                    anchors.centerIn: parent
+                    id:                 badgeText
+                    anchors.centerIn:   parent
                     text: {
                         if (typeof PreflightChecklistModel === 'undefined') return ""
                         var f = PreflightChecklistModel.blockingFailedCount
@@ -187,18 +245,18 @@ Item {
                         return "✓"
                     }
                     font.pointSize: ScreenTools.defaultFontPointSize * 0.8
-                    font.weight: Font.Bold
-                    color: "#FFFFFF"
+                    font.weight:    Font.Bold
+                    color:          "#FFFFFF"
                 }
             }
         }
 
         MouseArea {
-            id: _btnMA
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: _activeVehicle ? Qt.PointingHandCursor : Qt.ForbiddenCursor
-            enabled: !!_activeVehicle
+            id:             _btnMA
+            anchors.fill:   parent
+            hoverEnabled:   true
+            cursorShape:    _activeVehicle ? Qt.PointingHandCursor : Qt.ForbiddenCursor
+            enabled:        !!_activeVehicle
 
             ToolTip.visible: containsMouse
             ToolTip.text:    _activeVehicle ? qsTr("Open Preflight Test Page")
@@ -212,41 +270,19 @@ Item {
         }
     }
 
-    // ═══════════════════  TELEMETRY INFO BOX  ════════════════════════
-    // Draggable, collapsible, resizable telemetry panel — positioned
-    // upper-right, below the status badge. Shows altitude, speed,
-    // battery, GPS, link quality, heading, flight mode.
-    property bool _telemetryVisible: true
-
-    Loader {
-        id: telemetryBoxLoader
-        anchors.top:    statusBadge.bottom
-        anchors.right:  parent.right
-        anchors.topMargin:   ScreenTools.defaultFontPixelWidth * 0.5
-        anchors.rightMargin: ScreenTools.defaultFontPixelWidth * 0.75
-
-        active: !!_activeVehicle && _telemetryVisible
-        source: "qrc:/qml/cpts/TelemetryInfoBox.qml"
-
-        onLoaded: {
-            item.activeVehicle = Qt.binding(function() { return _activeVehicle })
-            item.closed.connect(function() { _telemetryVisible = false })
-        }
-    }
-
-    // ═══════════════════  CHECKLIST DIALOG  ══════════════════════════
+    // ═══════════════════════════════════════════════════════════════════
+    //  CHECKLIST DIALOG
+    // ═══════════════════════════════════════════════════════════════════
     Component {
         id: checklistDialog
         QGCPopupDialog {
-            id: dialog
-            title: qsTr("Preflight Checklist")
+            title:   qsTr("Preflight Checklist")
             buttons: StandardButton.Close
-            modal: true
+            modal:   true
 
             Loader {
-                id: checklistLoader
                 source: "qrc:/qml/cpts/PreflightChecklistView.qml"
-                width: ScreenTools.defaultFontPixelWidth * 80
+                width:  ScreenTools.defaultFontPixelWidth * 80
                 height: ScreenTools.defaultFontPixelHeight * 40
             }
         }
