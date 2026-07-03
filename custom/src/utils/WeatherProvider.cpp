@@ -135,6 +135,8 @@ void WeatherProvider::fetchWeather(double latitude, double longitude)
         m_windDirection = current.value(QStringLiteral("wind_direction_10m")).toDouble();
         m_visibility = current.value(QStringLiteral("visibility")).toDouble();
         m_visibilityKm = m_visibility / 1000.0;
+        m_metarTimestamp = QDateTime::currentDateTimeUtc();
+        m_lastError.clear();
 
         emit weatherUpdated();
         emit loadingChanged();

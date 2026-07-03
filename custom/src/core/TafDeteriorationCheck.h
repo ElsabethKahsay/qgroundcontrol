@@ -6,4 +6,6 @@ class TafDeteriorationCheck : public AbstractCheck {
 public:
     TafDeteriorationCheck(TelemetryBridge *telemetry, QObject *parent = nullptr);
     void evaluate() override;
+private:
+    bool m_fetchTriggered = false;
 };

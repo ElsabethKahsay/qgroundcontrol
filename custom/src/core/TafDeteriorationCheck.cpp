@@ -23,16 +23,45 @@ void TafDeteriorationCheck::evaluate()
     auto *wp = WeatherProvider::instance();
     auto *settings = PreflightSettingsManager::instance();
 
-    if (!wp || !settings || !settings->autoWeatherEnabled()) {
-        setStatus(CheckStatus::Skipped, QStringLiteral("Auto-weather disabled"));
+    if (settings && !settings->autoWeatherEnabled()) {
+        setStatus(CheckStatus::Skipped, QStringLiteral("Auto-weather disabled in settings"));
+        return;
+    }
+
+    if (!wp) {
+        setStatus(CheckStatus::Skipped, QStringLiteral("Weather service unavailable"));
         return;
     }
 
     QString taf = wp->tafString();
     if (taf.isEmpty()) {
-        setStatus(CheckStatus::Skipped, QStringLiteral("No TAF data"));
+        if (!m_fetchTriggered) {
+            m_fetchTriggered = true;
+            if (settings && !settings->defaultIcao().isEmpty()) {
+                wp->fetchTaf(settings->defaultIcao());
+            } else if (m_telemetry) {
+                double lat = getTelemetryDouble("gpsLatitude");
+                double lon = getTelemetryDouble("gpsLongitude");
+                if (qAbs(lat) > 0.01 || qAbs(lon) > 0.01)
+                    wp->fetchWeather(lat, lon);
+            }
+            setStatus(CheckStatus::Pending, QStringLiteral("Fetching TAF data\u2026"));
+        }
+
+        if (m_lastEvalTime.isValid() && m_lastEvalTime.secsTo(QDateTime::currentDateTime()) > 10) {
+            m_fetchTriggered = false;
+            QString err = wp->lastError();
+            if (!err.isEmpty())
+                setStatus(CheckStatus::Skipped, QStringLiteral("Weather fetch failed: ") + err);
+            else
+                setStatus(CheckStatus::Skipped, QStringLiteral("No TAF data \u2014 configure ICAO in Preflight Settings"));
+        } else {
+            setStatus(CheckStatus::Pending, QStringLiteral("Fetching TAF data\u2026"));
+        }
         return;
     }
+
+    m_fetchTriggered = false;
 
     if (wp->tafDeteriorating()) {
         QStringList summary = wp->tafSummary();
