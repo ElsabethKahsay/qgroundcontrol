@@ -712,7 +712,6 @@ void PreflightManager::createPhase1Checks() {
   m_checks.append(new RedundantPowerCheck(m_telemetry, 10.0, this));
 
   // Tier 1 — Communication
-  m_checks.append(new RcFailsafeCheck(m_telemetry, 50, this));
   m_checks.append(new TelemetryDropRateCheck(m_telemetry, 10, 5, this));
   m_checks.append(new RcThrottleMinCheck(m_telemetry, this));
   m_checks.append(new RcChannelCountCheck(m_telemetry, this));

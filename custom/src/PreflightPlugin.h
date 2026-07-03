@@ -13,6 +13,7 @@ class PreflightChecklistFilterModel;
 class TelemetryBridge;
 class ArmingGate;
 class WeatherProvider;
+class PreflightSettingsManager;
 class VehicleProfileManager;
 class PowerModel;
 class ExportHelper;
@@ -56,6 +57,7 @@ private:
     TelemetryBridge *_telemetryBridge = nullptr;
     ArmingGate *_armingGate = nullptr;
     WeatherProvider *_weatherProvider = nullptr;
+    PreflightSettingsManager *_preflightSettingsManager = nullptr;
     ExportHelper *_exportHelper = nullptr;
     PowerModel *_powerModel = nullptr;
     HardwareTestController *_hardwareTestController = nullptr;

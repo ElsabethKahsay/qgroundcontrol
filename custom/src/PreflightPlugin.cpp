@@ -126,6 +126,7 @@ void PreflightPlugin::init()
     }
 
     _weatherProvider = new WeatherProvider(this);
+    _preflightSettingsManager = new PreflightSettingsManager(this);
     connect(&_weatherRefreshTimer, &QTimer::timeout, this, &PreflightPlugin::_refreshWeather);
 
     _hardwareTestController = new HardwareTestController(this);
@@ -181,12 +182,15 @@ QQmlApplicationEngine *PreflightPlugin::createQmlApplicationEngine(QObject *pare
     qmlRegisterUncreatableType<AbstractCheck>("com.uav.preflight", 1, 0, "AbstractCheck", QStringLiteral("Cannot create AbstractCheck from QML"));
     qmlRegisterSingletonType<PreflightSettingsManager>("com.uav.preflight", 1, 0, "PreflightSettingsManager",
         [](QQmlEngine *engine, QJSEngine *jsEngine) -> QObject * {
-            Q_UNUSED(jsEngine)
-            return new PreflightSettingsManager(engine);
+            Q_UNUSED(engine) Q_UNUSED(jsEngine)
+            return PreflightSettingsManager::instance();
         });
 
     if (_weatherProvider) {
         qmlEngine->rootContext()->setContextProperty(QStringLiteral("WeatherProvider"), _weatherProvider);
+    }
+    if (_telemetryBridge) {
+        qmlEngine->rootContext()->setContextProperty(QStringLiteral("TelemetryProvider"), _telemetryBridge);
     }
     if (_preflightManager) {
         qmlEngine->rootContext()->setContextProperty(QStringLiteral("PreflightManager"), _preflightManager);
@@ -289,18 +293,6 @@ const QVariantList &PreflightPlugin::analyzePages()
         }
 
 #ifdef QT_DEBUG
-        _analyzePages.append(QVariant::fromValue(
-            new QmlComponentInfo(
-                tr("Test Page"),
-                QUrl(QStringLiteral("qrc:/qml/cpts/TestAnalyzePage.qml")),
-                QUrl(),
-                this)));
-        _analyzePages.append(QVariant::fromValue(
-            new QmlComponentInfo(
-                tr("Module Test"),
-                QUrl(QStringLiteral("qrc:/qml/cpts/TestModuleImport.qml")),
-                QUrl(),
-                this)));
 #endif
 
         _analyzePages.append(QVariant::fromValue(
