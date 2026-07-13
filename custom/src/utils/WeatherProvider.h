@@ -68,6 +68,7 @@ public:
     Q_INVOKABLE void loadNotamGeoJson(const QString &filePath);
     Q_INVOKABLE void clearCache();
     Q_INVOKABLE void refreshAll(const QString &icaoCode);
+    static QString lookupIcao(double latitude, double longitude, QString *errorMessage = nullptr);
 
 signals:
     void weatherUpdated();
@@ -76,6 +77,8 @@ signals:
     void tafUpdated();
 
 private:
+    friend class WeatherProviderTest;
+
     QString describeCode(int code) const;
     void handleMetarJson(const QByteArray &data);
     void handleTafJson(const QByteArray &data);

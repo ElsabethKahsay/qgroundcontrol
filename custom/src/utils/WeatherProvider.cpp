@@ -1,12 +1,14 @@
 #include "WeatherProvider.h"
 
 #include <QDir>
+#include <QEventLoop>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QStandardPaths>
+#include <QTimer>
 #include <QtMath>
 #include <QUrlQuery>
 
@@ -25,7 +27,7 @@ WeatherProvider::WeatherProvider(QObject *parent)
                        + QStringLiteral("/weather");
     QDir().mkpath(cacheDir);
     m_cache->setCacheDirectory(cacheDir);
-    m_cache->setMaximumCacheSize(5 * 1024 * 1024); // 5 MB
+    m_cache->setMaximumCacheSize(50 * 1024 * 1024); // 50 MB
     m_nam.setCache(m_cache);
     s_instance = this;
 }
@@ -34,7 +36,7 @@ bool WeatherProvider::metarFresh() const
 {
     if (!m_metarTimestamp.isValid())
         return false;
-    return m_metarTimestamp.secsTo(QDateTime::currentDateTimeUtc()) < 900; // 15 min
+    return m_metarTimestamp.secsTo(QDateTime::currentDateTimeUtc()) < 3600; // 60 min
 }
 
 QString WeatherProvider::weatherDescription() const
@@ -101,7 +103,7 @@ void WeatherProvider::fetchWeather(double latitude, double longitude)
     url.setQuery(query);
 
     QNetworkRequest req(url);
-    req.setTransferTimeout(15000);
+    req.setTransferTimeout(4000);
     req.setAttribute(QNetworkRequest::CacheLoadControlAttribute,
                      QNetworkRequest::PreferCache);
     req.setAttribute(QNetworkRequest::CacheSaveControlAttribute, true);
@@ -112,6 +114,8 @@ void WeatherProvider::fetchWeather(double latitude, double longitude)
         m_loading = false;
 
         if (reply->error() != QNetworkReply::NoError) {
+            if (reply->error() == QNetworkReply::ContentNotFoundError)
+                return;
             m_lastError = reply->errorString();
             emit loadingChanged();
             return;
@@ -161,7 +165,7 @@ void WeatherProvider::fetchMetar(const QString &icaoCode)
     url.setQuery(query);
 
     QNetworkRequest req(url);
-    req.setTransferTimeout(15000);
+    req.setTransferTimeout(4000);
     req.setAttribute(QNetworkRequest::CacheLoadControlAttribute,
                      QNetworkRequest::PreferCache);
     req.setAttribute(QNetworkRequest::CacheSaveControlAttribute, true);
@@ -328,7 +332,7 @@ void WeatherProvider::fetchTaf(const QString &icaoCode)
     url.setQuery(query);
 
     QNetworkRequest req(url);
-    req.setTransferTimeout(15000);
+    req.setTransferTimeout(4000);
     req.setAttribute(QNetworkRequest::CacheLoadControlAttribute,
                      QNetworkRequest::PreferCache);
     req.setAttribute(QNetworkRequest::CacheSaveControlAttribute, true);
@@ -445,7 +449,7 @@ void WeatherProvider::fetchNotam(const QString &icaoCode)
     QUrl url(QStringLiteral("https://notams.aim.faa.gov/notamSearch/search"));
     QNetworkRequest req(url);
     req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-    req.setTransferTimeout(20000);
+    req.setTransferTimeout(4000);
 
     QJsonObject body;
     QJsonArray icaos;
@@ -540,4 +544,47 @@ void WeatherProvider::loadNotamGeoJson(const QString &filePath)
     emit notamsChanged();
     if (m_notams.isEmpty())
         m_lastError = QStringLiteral("GeoJSON has no NOTAM features");
+}
+
+QString WeatherProvider::lookupIcao(double latitude, double longitude, QString *errorMessage)
+{
+    QNetworkAccessManager nam;
+    QUrl url(QStringLiteral("https://aviationweather.gov/api/data/station"));
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("lat"), QString::number(latitude, 'f', 6));
+    query.addQueryItem(QStringLiteral("lon"), QString::number(longitude, 'f', 6));
+    query.addQueryItem(QStringLiteral("radius"), QStringLiteral("50"));
+    url.setQuery(query);
+
+    QNetworkRequest req(url);
+    req.setTransferTimeout(2500);
+
+    QNetworkReply *reply = nam.get(req);
+    QEventLoop loop;
+    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    QTimer::singleShot(3000, &loop, &QEventLoop::quit);
+    loop.exec();
+
+    if (reply->error() != QNetworkReply::NoError) {
+        if (errorMessage) *errorMessage = reply->errorString();
+        reply->deleteLater();
+        return {};
+    }
+
+    QByteArray data = reply->readAll();
+    reply->deleteLater();
+
+    QJsonDocument doc = QJsonDocument::fromJson(data);
+    if (!doc.isArray()) {
+        if (errorMessage) *errorMessage = QStringLiteral("Invalid station response");
+        return {};
+    }
+
+    QJsonArray arr = doc.array();
+    if (arr.isEmpty()) {
+        if (errorMessage) *errorMessage = QStringLiteral("No stations found near coordinates");
+        return {};
+    }
+
+    return arr.first().toObject().value(QStringLiteral("icaoId")).toString();
 }

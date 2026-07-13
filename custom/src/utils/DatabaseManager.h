@@ -11,6 +11,23 @@
 #include <QStringList>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QDateTime>
+
+struct VehicleRecord {
+    int sysid = 0;
+    int compid = 0;
+    QString fingerprint;
+    QString autopilotType;
+    QString vehicleType;
+    QString firmwareVersion;
+    quint64 uid = 0;
+    QString boardVersion;
+    QString displayName;
+    QDateTime firstSeen;
+    QDateTime lastSeen;
+    int totalFlightCount = 0;
+    double totalFlightHours = 0.0;
+};
 
 class DatabaseManager : public QObject {
     Q_OBJECT
@@ -60,6 +77,21 @@ public:
     Q_INVOKABLE bool incrementFlightCount(const QString &deviceUid);
     Q_INVOKABLE bool updateFlightHours(const QString &deviceUid, double hours);
 
+    // ── Vehicle registry (fingerprint-based) ─────────────────────────
+    Q_INVOKABLE QString lookupVehicleByFingerprint(const QString &fingerprint);
+    Q_INVOKABLE bool registerNewVehicle(const QString &fingerprint, int sysid, int compid,
+                                        const QString &autopilotType, const QString &vehicleType,
+                                        const QString &firmwareVersion, quint64 uid,
+                                        const QString &boardVersion, const QString &displayName);
+    Q_INVOKABLE bool updateVehicleLastSeen(const QString &fingerprint);
+    Q_INVOKABLE bool updateVehicleFirmware(const QString &fingerprint, const QString &firmwareVersion);
+    Q_INVOKABLE bool updateVehicleName(const QString &fingerprint, const QString &name);
+    Q_INVOKABLE QString getAllVehiclesJson();
+
+    // ── Vehicle check config ──────────────────────────────────────────
+    Q_INVOKABLE bool saveVehicleConfig(const QString &fingerprint, const QString &configJson);
+    Q_INVOKABLE QString loadVehicleConfig(const QString &fingerprint);
+
     // ── Battery CRUD ──────────────────────────────────────────────────
     Q_INVOKABLE bool upsertBattery(const QString &serialNumber, const QString &operatorLabel);
     Q_INVOKABLE QString getBattery(const QString &serialNumber);
@@ -70,12 +102,16 @@ public:
                                       double capacityAtFullMah, double voltageSagV,
                                       double restingVoltageV, int cycleCount);
     Q_INVOKABLE QString getBatteryCycles(const QString &serialNumber, int limit = 20);
+    Q_INVOKABLE int getBatteryCycleCount(const QString &serialNumber);
     Q_INVOKABLE QString getBatteryHealthTrend(const QString &serialNumber);
+    Q_INVOKABLE bool incrementBatteryCycle(int flightSessionId, const QString &batterySerial = QString());
 
     // ── Flight session CRUD ───────────────────────────────────────────
     Q_INVOKABLE int startFlightSession(const QString &deviceUid, const QString &batterySerial,
                                         double payloadWeightKg = 0.0);
     Q_INVOKABLE bool updateFlightSessionPayload(int sessionId, double payloadWeightKg);
+    Q_INVOKABLE bool updateFlightSessionLocation(int sessionId, const QString &locationName);
+    Q_INVOKABLE bool updateFlightSessionPlanLocation(int sessionId, double lat, double lon);
     Q_INVOKABLE bool endFlightSession(int sessionId, double durationSeconds);
     Q_INVOKABLE QString getFlightSessions(const QString &deviceUid, int limit = 10);
     Q_INVOKABLE QString getVehicleHistory(const QString &deviceUid);
@@ -87,6 +123,9 @@ public:
     Q_INVOKABLE QString getCheckResults(int flightSessionId);
 
     int schemaVersion() const;
+    Q_INVOKABLE int storedSchemaVersion() const;
+    Q_INVOKABLE bool migrateSchema();
+    void reset();
 
 private:
     DatabaseManager(QObject *parent = nullptr);
