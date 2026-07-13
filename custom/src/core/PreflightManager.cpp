@@ -16,6 +16,7 @@
 #include "AccelConsistencyCheck.h"
 #include "AhrsHealthCheck.h"
 #include "AirspeedCheck.h"
+#include "AmbientTemperatureCheck.h"
 #include "AlertManager.h"
 #include "AttitudeCheck.h"
 #include "BaroAltConsistencyCheck.h"
@@ -197,10 +198,16 @@ void PreflightManager::setTelemetryBridge(TelemetryBridge *bridge) {
     connect(m_telemetry, &TelemetryBridge::parametersReadyChanged, this,
             [this](bool ready) {
               if (ready) {
+                _initialParamRefresh();
                 m_stateMachine.transitionTo(
                     PreflightStateMachine::ChecklistInProgress);
                 evaluateAll();
               }
+            });
+    connect(m_telemetry, &TelemetryBridge::parameterUpdated, this,
+            [this](const QString &name, float value) {
+              m_paramManager.notifyParamReceived(name);
+              m_paramManager.storeParam(name, value);
             });
   }
 }
@@ -503,29 +510,13 @@ void PreflightManager::tick() {
   Vehicle *vehicle = m_telemetry ? m_telemetry->vehicle() : nullptr;
 
   // ── SYS-001: Parameter loading state machine ──
-  if (vehicle && vehicle->parameterManager()) {
-    ParameterManager *pm = vehicle->parameterManager();
-    int compId = vehicle->defaultComponentId();
-    const QSet<QString> watchlist = ParameterWatchlist::names();
+    if (vehicle && vehicle->parameterManager()) {
+        ParameterManager *pm = vehicle->parameterManager();
+        int compId = vehicle->defaultComponentId();
+        const QSet<QString> watchlist = ParameterWatchlist::names();
 
-    if (pm->parametersReady()) {
-      const int t = QDateTime::currentMSecsSinceEpoch();
-
-      // Refresh stale params every 30s
-      if (t - m_lastParamRefreshMs > 30000) {
-        m_lastParamRefreshMs = t;
-        for (const QString &name : watchlist) {
-          Fact *fact = pm->getParameter(compId, name);
-          if (fact) {
-            double val = fact->rawValue().toDouble();
-            m_telemetry->setParameterValue(name, static_cast<float>(val));
-            m_paramManager.notifyParamReceived(name);
-            m_paramManager.storeParam(name, static_cast<float>(val));
-          }
-        }
-      }
-
-      // Transition state machine on param readiness
+        if (pm->parametersReady()) {
+          // Transition state machine on param readiness
       if (m_stateMachine.state() <= PreflightStateMachine::Connecting) {
         m_stateMachine.transitionTo(PreflightStateMachine::ParamLoading);
       }
@@ -665,6 +656,28 @@ void PreflightManager::tick() {
   }
 }
 
+void PreflightManager::_initialParamRefresh()
+{
+    Vehicle *v = m_telemetry ? m_telemetry->vehicle() : nullptr;
+    if (!v || !v->parameterManager())
+        return;
+    ParameterManager *pm = v->parameterManager();
+    if (!pm->parametersReady())
+        return;
+    const int compId = v->defaultComponentId();
+    const QSet<QString> watchlist = ParameterWatchlist::names();
+
+    for (const QString &name : watchlist) {
+        Fact *fact = pm->getParameter(compId, name);
+        if (fact) {
+            float val = fact->rawValue().toFloat();
+            m_paramManager.notifyParamReceived(name);
+            m_paramManager.storeParam(name, val);
+        }
+    }
+    qCDebug(preflightLog) << "Initial parameter refresh completed for" << watchlist.size() << "params";
+}
+
 void PreflightManager::addCheck(AbstractCheck *check) {
   if (!check) return;
   m_checks.append(check);
@@ -744,6 +757,7 @@ void PreflightManager::createPhase1Checks() {
   m_checks.append(new MetarPrecipitationCheck(m_telemetry, this));
   m_checks.append(new MetarTemperatureCheck(m_telemetry, this));
   m_checks.append(new TafDeteriorationCheck(m_telemetry, this));
+  m_checks.append(new AmbientTemperatureCheck(m_telemetry, 50.0, -10.0, this));
   m_checks.append(new MotorCountCheck(m_telemetry, this));
   m_checks.append(new RtlTerrainCheck(m_telemetry, this));
   m_checks.append(new VibrationFailsafeCheck(m_telemetry, this));

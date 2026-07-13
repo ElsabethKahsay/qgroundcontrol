@@ -1,14 +1,23 @@
 #include "CompassOrientationCheck.h"
 
+#include <QJsonObject>
+
 #include "TelemetryBridge.h"
 
 CompassOrientationCheck::CompassOrientationCheck(TelemetryBridge *telemetry,
                                                  QObject *parent)
     : AbstractCheck(QStringLiteral("nav.compass.orientation"),
                     QStringLiteral("Compass Orientation"),
-                    CheckCategory::Navigation, CheckType::Manual, true, false, parent)
+                    CheckCategory::Navigation, CheckType::Auto, true, true, parent)
 {
     m_telemetry = telemetry;
+}
+
+void CompassOrientationCheck::applyVehicleConfig(const QJsonObject &config)
+{
+    if (config.contains(QStringLiteral("expectedRotation"))) {
+        m_expectedRotation = config.value(QStringLiteral("expectedRotation")).toInt(-1);
+    }
 }
 
 void CompassOrientationCheck::evaluate()
@@ -60,8 +69,23 @@ void CompassOrientationCheck::evaluate()
 
     setCurrentValue(QStringLiteral("%1=%2").arg(orientParam).arg(orientStr));
 
-    // Manual — operator must confirm physical match
-    setStatus(CheckStatus::Pending,
-              QStringLiteral("Confirm compass orientation: %1=%2")
-                  .arg(orientParam).arg(orientStr));
+    // If vehicle config has an expected rotation and it matches, auto-pass
+    if (m_expectedRotation >= 0 && orient == m_expectedRotation) {
+        setStatus(CheckStatus::Passed,
+                  QStringLiteral("Compass orientation: %1 (%2) — matches vehicle profile")
+                      .arg(orientParam).arg(orientStr));
+        return;
+    }
+
+    if (orient == 0) {
+        // Most airframes have compass at ROTATION_NONE — auto-pass
+        setStatus(CheckStatus::Passed,
+                  QStringLiteral("Compass orientation: %1 (%2) — default orientation")
+                      .arg(orientParam).arg(orientStr));
+    } else {
+        // Non-default orientation requires operator confirmation
+        setStatus(CheckStatus::Pending,
+                  QStringLiteral("Confirm compass orientation: %1=%2")
+                      .arg(orientParam).arg(orientStr));
+    }
 }

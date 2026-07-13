@@ -2,6 +2,7 @@
 
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QtMath>
 
 #include "PowerModel.h"
 #include "TelemetryBridge.h"
@@ -14,8 +15,8 @@ MissionEnergyCheck::MissionEnergyCheck(PowerModel *powerModel,
                     QStringLiteral("Mission Energy Feasibility"),
                     CheckCategory::Safety,
                     CheckType::Auto,
-                    false,   // mandatory = informational/warning
-                    false,   // canOverride = factual computation
+                    false,
+                    false,
                     parent)
     , m_powerModel(powerModel)
     , m_batterySafetyFraction(batterySafetyFraction)
@@ -51,7 +52,7 @@ void MissionEnergyCheck::evaluate()
     QString deviceUid = m_vehicleProfileMgr ? m_vehicleProfileMgr->currentDeviceUid() : QString();
     double payloadKg = m_vehicleProfileMgr ? m_vehicleProfileMgr->currentPayloadWeightKg() : 0.0;
 
-    // Determine airframe type from vehicle profile
+    // ── Airframe detection ──
     QString airframe = QStringLiteral("MultiRotor");
     if (m_vehicleProfileMgr && !deviceUid.isEmpty()) {
         QString hist = m_vehicleProfileMgr->currentVehicleHistoryJson();
@@ -64,37 +65,69 @@ void MissionEnergyCheck::evaluate()
     PowerEstimate est = m_powerModel->estimate(deviceUid, payloadKg,
                                                 batteryCapacityWh, missionDistance, airframe);
 
-    // Check if mission is feasible with safety fraction of battery capacity
+    // ── Read MOT_THST_HOVER for actual hover throttle ──
+    double hoverThrottle = 0.0;
+    bool haveHoverThrottle = false;
+    if (isParamAvailable(QStringLiteral("MOT_THST_HOVER"))) {
+        hoverThrottle = getTelemetryDouble(QStringLiteral("MOT_THST_HOVER"));
+        if (hoverThrottle > 0.01) {
+            haveHoverThrottle = true;
+        }
+    } else if (m_telemetry->hasParameter(QStringLiteral("MOT_THST_HOVER"))) {
+        hoverThrottle = static_cast<double>(m_telemetry->parameterValue(QStringLiteral("MOT_THST_HOVER")));
+        if (hoverThrottle > 0.01) {
+            haveHoverThrottle = true;
+        }
+    }
+
+    // Hover power: use actual param if available, otherwise default
+    double hoverWhPerMin;
+    if (haveHoverThrottle) {
+        // Scale default hover power by actual throttle fraction / typical 0.15
+        hoverWhPerMin = PowerModel::defaultHoverWhPerMin(airframe) * (hoverThrottle / 0.15);
+    } else {
+        hoverWhPerMin = PowerModel::defaultHoverWhPerMin(airframe);
+    }
+
+    // ── Energy calculation (single safety margin applied here) ──
     double cruiseWh = missionDistance * est.whPerKm;
-    double hoverWh = 2.0 * PowerModel::defaultHoverWhPerMin(airframe);
+    // 2 minutes hover for takeoff + landing
+    double hoverWh = 2.0 * hoverWhPerMin;
     double requiredWh = cruiseWh + hoverWh;
-    double availableWh = batteryCapacityWh * m_batterySafetyFraction;
+    double safetyWh = batteryCapacityWh * m_batterySafetyFraction;
     double requiredPct = (requiredWh / batteryCapacityWh) * 100.0;
 
-    if (requiredWh > availableWh) {
+    QString throttleNote;
+    if (haveHoverThrottle)
+        throttleNote = QStringLiteral("MOT_THST_HOVER=%1").arg(hoverThrottle, 0, 'f', 3);
+
+    if (requiredWh > safetyWh) {
         setStatus(CheckStatus::Failed,
                   QStringLiteral("Mission requires %1 Wh (%2% of battery). "
-                                 "Safety limit: %3% (%4 Wh). %5")
+                                 "Safety limit: %3% (%4 Wh). %5%6")
                       .arg(requiredWh, 0, 'f', 0)
                       .arg(requiredPct, 0, 'f', 1)
                       .arg(m_batterySafetyFraction * 100, 0, 'f', 0)
-                      .arg(availableWh, 0, 'f', 0)
-                      .arg(est.sourceLabel));
+                      .arg(safetyWh, 0, 'f', 0)
+                      .arg(est.sourceLabel)
+                      .arg(throttleNote.isEmpty() ? QString() : QStringLiteral(" · ") + throttleNote));
     } else if (requiredPct > 50.0) {
         setStatus(CheckStatus::Warning,
                   QStringLiteral("Mission uses %1% of battery (limit %2%). "
-                                 "Est. range: %3 km. %4")
+                                 "Est. range: %3 km. %4%5")
                       .arg(requiredPct, 0, 'f', 1)
                       .arg(m_batterySafetyFraction * 100, 0, 'f', 0)
                       .arg(est.rangeKm, 0, 'f', 1)
-                      .arg(est.sourceLabel));
+                      .arg(est.sourceLabel)
+                      .arg(throttleNote.isEmpty() ? QString() : QStringLiteral(" · ") + throttleNote));
     } else {
         setStatus(CheckStatus::Passed,
                   QStringLiteral("Mission feasible: %1% of battery. "
-                                 "Est. range: %2 km. %3")
+                                 "Est. range: %2 km. %3%4")
                       .arg(requiredPct, 0, 'f', 1)
                       .arg(est.rangeKm, 0, 'f', 1)
-                      .arg(est.sourceLabel));
+                      .arg(est.sourceLabel)
+                      .arg(throttleNote.isEmpty() ? QString() : QStringLiteral(" · ") + throttleNote));
     }
 }
 
@@ -102,13 +135,13 @@ double MissionEnergyCheck::readBatteryCapacityWh() const
 {
     if (!m_telemetry) return -1;
 
-    // Try MAVLink parameter BATT_CAPACITY (mAh)
     double capacityMah = -1.0;
-    if (m_telemetry->hasParameter(QStringLiteral("BATT_CAPACITY"))) {
+    if (isParamAvailable(QStringLiteral("BATT_CAPACITY"))) {
+        capacityMah = getTelemetryDouble(QStringLiteral("BATT_CAPACITY"));
+    } else if (m_telemetry->hasParameter(QStringLiteral("BATT_CAPACITY"))) {
         capacityMah = static_cast<double>(m_telemetry->parameterValue(QStringLiteral("BATT_CAPACITY")));
     }
     if (capacityMah > 0) {
-        // Convert mAh to Wh using nominal voltage (3.7V per cell)
         double voltage = m_telemetry->batteryVoltage();
         if (voltage > 0) {
             double cellCount = qRound(voltage / 4.2);
@@ -118,11 +151,10 @@ double MissionEnergyCheck::readBatteryCapacityWh() const
         return capacityMah * 6.0 * 3.7 / 1000.0;
     }
 
-    // Fallback: estimate from battery voltage and typical capacity
     double voltage = m_telemetry->batteryVoltage();
     if (voltage > 0) {
         double cellCount = qRound(voltage / 4.2);
-        double estimatedMah = 5000.0; // typical 5000 mAh
+        double estimatedMah = 5000.0;
         return estimatedMah * cellCount * 3.7 / 1000.0;
     }
     return -1;
@@ -132,17 +164,21 @@ double MissionEnergyCheck::estimateMissionDistanceKm() const
 {
     if (!m_telemetry) return -1;
 
+    // Use total Haversine distance from TelemetryBridge if available
+    double total = m_telemetry->missionTotalDistance();
+    if (total > 0)
+        return total / 1000.0;
+
+    // Fallback: use first WP distance heuristic
     int count = m_telemetry->missionCount();
     if (count < 2) return -1;
 
     double firstWpDist = m_telemetry->missionFirstWpDistance();
     if (firstWpDist > 0) {
-        // Rough: assume average leg = first leg * 0.7, legs = count - 1
         double avgLeg = firstWpDist * 0.7;
         return (avgLeg * (count - 1)) / 1000.0;
     }
 
-    // No first WP distance: assume 100m average leg
     return (100.0 * (count - 1)) / 1000.0;
 }
 
@@ -171,7 +207,10 @@ QString MissionEnergyCheck::getThreshold() const
 QString MissionEnergyCheck::getCurrentValueString() const
 {
     if (!m_telemetry) return QStringLiteral("No telemetry");
-    return QStringLiteral("%1 waypoints, battery %2%")
+    return QStringLiteral("%1 waypoints (total %2 km), battery %3%")
         .arg(m_telemetry->missionCount())
+        .arg(m_telemetry->missionTotalDistance() > 0
+                 ? QString::number(m_telemetry->missionTotalDistance() / 1000.0, 'f', 2)
+                 : QStringLiteral("?"))
         .arg(m_telemetry->batteryPercent());
 }

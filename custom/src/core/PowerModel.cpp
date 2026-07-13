@@ -112,8 +112,8 @@ PowerEstimate PowerModel::estimate(const QString &deviceUid, double payloadKg,
         whPerMinHover = whPerMinHover * (1.0 + 0.05 * qMax(0.0, payloadKg));
     }
 
-    // Estimate: 80% usable battery (safety reserve)
-    double usableWh = batteryCapacityWh * 0.80;
+    // Full battery capacity — safety margin applied by caller (MissionEnergyCheck)
+    double usableWh = batteryCapacityWh;
 
     // Cruise consumption
     double cruiseWh = distance * whPerKm;

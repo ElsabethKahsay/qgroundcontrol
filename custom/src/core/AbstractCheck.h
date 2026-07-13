@@ -137,6 +137,7 @@ public:
     virtual QString getCurrentValueString() const;
     /// Threshold or limit description for pass/fail criteria.
     virtual QString getThreshold() const;
+    virtual void applyVehicleConfig(const QJsonObject &config);
     /// Whether this check blocks arming (same as mandatory).
     bool isBlocking() const { return m_mandatory; }
     /// Whether this check is evaluated automatically.
@@ -179,6 +180,7 @@ protected:
     QVariant getTelemetryVariant(const QString &prop) const;
 
     friend class PreflightManager;
+    friend class MissionEnergyCheckTest;
 
     QString m_id;
     QString m_label;
@@ -199,6 +201,9 @@ private:
 
 #ifdef QT_DEBUG
     friend class CheckSmokeTest;
+    friend class RcCalibrationCheckTest;
+    friend class CompassOrientationCheckTest;
+    friend class WeatherProviderTest;
     QHash<QString, QVariant> m_testOverrides;
     Q_INVOKABLE void setTestValue(const QString &prop, const QVariant &val) {
         m_testOverrides[prop] = val;

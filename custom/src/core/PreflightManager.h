@@ -160,6 +160,7 @@ private:
     void attemptStateTransition();
     void createPhase1Checks();
     void connectCheckSignals(AbstractCheck *check);
+    void _initialParamRefresh();
 
     uint8_t m_sysId;
     TelemetryBridge *m_telemetry = nullptr;
@@ -170,8 +171,6 @@ private:
     bool m_active = false;
     int m_evalIntervalMs = 1000;
     QString m_lastBlocker;
-    qint64 m_lastParamRefreshMs = 0;
-
     PreflightStateMachine m_stateMachine;
     UavParameterManager m_paramManager;
     AutopilotInfoDetector m_autopilotDetector;

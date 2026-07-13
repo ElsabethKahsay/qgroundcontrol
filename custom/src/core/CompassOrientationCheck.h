@@ -8,4 +8,8 @@ class CompassOrientationCheck : public AbstractCheck {
 public:
     CompassOrientationCheck(TelemetryBridge *telemetry, QObject *parent = nullptr);
     void evaluate() override;
+    void applyVehicleConfig(const QJsonObject &config) override;
+
+private:
+    int m_expectedRotation = -1; // -1 = not configured per vehicle
 };

@@ -1,6 +1,7 @@
 #include "AbstractCheck.h"
 
 #include <QDebug>
+#include <QJsonObject>
 #include <QMetaObject>
 #include <QMetaProperty>
 
@@ -19,6 +20,11 @@ AbstractCheck::AbstractCheck(const QString &id, const QString &label,
     , m_mandatory(mandatory)
     , m_canOverride(canOverride)
 {
+}
+
+void AbstractCheck::applyVehicleConfig(const QJsonObject &config)
+{
+    Q_UNUSED(config)
 }
 
 QString AbstractCheck::statusText() const
