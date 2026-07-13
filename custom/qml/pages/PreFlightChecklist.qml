@@ -14,9 +14,30 @@ Page {
         if (typeof WeatherProvider !== 'undefined' && TelemetryProvider) {
             var lat = TelemetryProvider.gpsLatitude
             var lon = TelemetryProvider.gpsLongitude
-            if (lat !== 0 || lon !== 0) {
+            if (lat !== 0 || lon !== 0)
                 WeatherProvider.fetchWeather(lat, lon)
-            }
+        }
+    }
+
+    property real _lastFetchLat: 0
+    property real _lastFetchLon: 0
+    property real _lastFetchTime: 0
+
+    Connections {
+        target: TelemetryProvider
+        function onGpsLatitudeChanged() {
+            var lat = TelemetryProvider.gpsLatitude
+            var lon = TelemetryProvider.gpsLongitude
+            if (lat === 0 && lon === 0) return
+            var now = Date.now()
+            if (now - _lastFetchTime < 30000) return
+            var dLat = lat - _lastFetchLat
+            var dLon = lon - _lastFetchLon
+            if (dLat * dLat + dLon * dLon < 0.0001) return
+            _lastFetchLat = lat
+            _lastFetchLon = lon
+            _lastFetchTime = now
+            WeatherProvider.fetchWeather(lat, lon)
         }
     }
 
@@ -129,7 +150,7 @@ Page {
         Text {
             wrapMode: Text.Wrap
             color: Colors.textPrimary
-            font.pixelSize: Config.fontSizeBody
+            font.pixelSize: Config.fontSizeBody * 1.2
             text: TelemetryProvider.motorConfigWarning + "\n\n" +
                   "Setup will apply:\n" +
                   "\u2022 FRAME_CLASS = 1 (Quad)\n" +
@@ -158,110 +179,14 @@ Page {
         padding: Config.spacingMedium
         ColumnLayout {
             spacing: Config.spacingMedium
-            Text { text: "There are " + _nCritical + " critical failure(s) and " + _nPending + " pending check(s).  Override will bypass all safety gates and arm the vehicle."; color: Colors.textPrimary; font.pixelSize: Config.fontSizeBody; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-            Text { text: "This should only be used in controlled testing environments."; color: Colors.error; font.pixelSize: Config.fontSizeSmall; font.bold: true }
+            Text { text: "There are " + _nCritical + " critical failure(s) and " + _nPending + " pending check(s).  Override will bypass all safety gates and arm the vehicle."; color: Colors.textPrimary; font.pixelSize: Config.fontSizeBody * 1.2; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            Text { text: "This should only be used in controlled testing environments."; color: Colors.error; font.pixelSize: Config.fontSizeBody * 1.2; font.bold: true }
         }
         onAccepted: {
             ArmingGate.overrideGate("Operator override via dialog")
             TelemetryProvider.arm()
         }
         onRejected: console.log("Override cancelled")
-    }
-
-    // ── Critical Issues Dialog ──
-    Dialog {
-        id: criticalIssuesDialog2
-        title: "Critical Issues"
-        modal: true
-        anchors.centerIn: parent
-        width: Math.min(520, parent.width * 0.9)
-        height: Math.min(420, parent.height * 0.8)
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        background: Rectangle { color: Colors.surface; border.color: "#9333ea"; border.width: 2; radius: 12 }
-        padding: 0
-
-        header: Rectangle {
-            height: 48; color: "#2D1B4E"; radius: 12
-            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 12; color: parent.color }
-            RowLayout {
-                anchors.fill: parent; anchors.leftMargin: 16; anchors.rightMargin: 16
-                Text { text: "\u26A0 Critical / Blocking Issues"; font.pixelSize: 15; font.bold: true; color: "#F8BBD0"; Layout.fillWidth: true }
-                Text { text: _nCritical + " issue" + (_nCritical !== 1 ? "s" : ""); font.pixelSize: 12; color: "#CE93D8" }
-            }
-        }
-
-        contentItem: Flickable {
-            clip: true
-            contentHeight: issueCol2.implicitHeight + 16
-            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-            boundsBehavior: Flickable.StopAtBounds
-
-            ColumnLayout {
-                id: issueCol2
-                width: parent.width; spacing: 6
-
-                Repeater {
-                    model: PreflightManager.blockingChecks
-
-                    delegate: Rectangle {
-                        required property var modelData
-                        required property int index
-                        readonly property var chk: modelData
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 12; Layout.rightMargin: 12
-                        Layout.topMargin: index === 0 ? 8 : 0
-                        height: 60; radius: 8
-                        color: Colors.errorDim
-                        border.color: Colors.error; border.width: 1
-
-                        RowLayout {
-                            anchors.fill: parent; anchors.margins: 10; spacing: 10
-
-                            Rectangle {
-                                width: 28; height: 28; radius: 14; color: Colors.error
-                                Text { anchors.centerIn: parent; text: (index + 1).toString(); font.pixelSize: 11; font.bold: true; color: "#fff" }
-                            }
-
-                            ColumnLayout {
-                                Layout.fillWidth: true; spacing: 1
-                                Text { text: chk ? chk.label : ""; font.pixelSize: 13; font.bold: true; color: Colors.textPrimary; elide: Text.ElideRight; Layout.fillWidth: true }
-                                Text { text: chk ? chk.message : ""; font.pixelSize: 11; color: Colors.textSecondary; elide: Text.ElideRight; maximumLineCount: 1; Layout.fillWidth: true }
-                            }
-
-                            Rectangle {
-                                width: 72; height: 26; radius: 6; color: "#9333ea"
-                                Text { anchors.centerIn: parent; text: "Go to Check"; font.pixelSize: 9; font.bold: true; color: "#fff" }
-                                MouseArea {
-                                    anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                                    onClicked: criticalIssuesDialog2.close()
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Text {
-                    visible: _nCritical === 0
-                    text: "\u2713 No critical issues"
-                    font.pixelSize: 14; color: Colors.success
-                    Layout.alignment: Qt.AlignHCenter; Layout.topMargin: 20
-                }
-            }
-        }
-
-        footer: Rectangle {
-            height: 44; color: Colors.surfaceLight; radius: 12
-            Rectangle { anchors.top: parent.top; width: parent.width; height: 12; color: parent.color }
-            RowLayout {
-                anchors.fill: parent; anchors.margins: 12
-                Item { Layout.fillWidth: true }
-                Rectangle {
-                    width: 80; height: 28; radius: 6; color: "#9333ea"
-                    Text { anchors.centerIn: parent; text: "Close"; font.pixelSize: 12; font.bold: true; color: "#fff" }
-                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: criticalIssuesDialog2.close() }
-                }
-            }
-        }
     }
 
     Component.onCompleted: {
@@ -302,8 +227,8 @@ Page {
                     radius: Config.radiusSmall
                     RowLayout {
                         anchors.fill: parent; anchors.leftMargin: Config.spacingMedium; anchors.rightMargin: Config.spacingMedium
-                        Text { text: "\uD83D\uDCCA Live Telemetry"; font.pixelSize: Config.fontSizeBody; font.bold: true; color: Colors.textPrimary; Layout.fillWidth: true }
-                        Text { text: TelemetryProvider.isConnected ? "\u25CF Connected" : "\u25CB Disconnected"; font.pixelSize: Config.fontSizeSmall; color: TelemetryProvider.isConnected ? Colors.success : Colors.error; font.bold: true }
+                        Text { text: "\uD83D\uDCCA Live Telemetry"; font.pixelSize: Config.fontSizeBody * 1.2; font.bold: true; color: Colors.textPrimary; Layout.fillWidth: true }
+                        Text { text: TelemetryProvider.isConnected ? "\u25CF Connected" : "\u25CB Disconnected"; font.pixelSize: Config.fontSizeBody * 1.2; color: TelemetryProvider.isConnected ? Colors.success : Colors.error; font.bold: true }
                     }
                 }
 
@@ -347,32 +272,26 @@ Page {
                             TelVal { text: TelemetryProvider.isConnected ? TelemetryProvider.autopilotType : "Disconnected"; color: TelemetryProvider.isConnected ? Colors.success : Colors.error }
                         }
 
-                        // ── Payload weight entry ──
-                        TelRow { label: "Payload"; accent: Colors.pastelPink
+                        // ── Launch location entry ──
+                        TelRow { label: "Location"; accent: Colors.pastelPink
                             Rectangle {
-                                Layout.preferredWidth: 60; Layout.preferredHeight: 28
+                                Layout.preferredWidth: 160; Layout.preferredHeight: 28
                                 radius: Config.radiusSmall
                                 border.color: Colors.border; border.width: 1
                                 color: Colors.surfaceLight
                                 TextInput {
-                                    id: payloadInput
+                                    id: locationInput
                                     anchors.fill: parent; anchors.margins: 2
-                                    font.pixelSize: Config.fontSizeBody; font.family: "monospace"
-                                    horizontalAlignment: TextInput.AlignHCenter; verticalAlignment: TextInput.AlignVCenter
+                                    font.pixelSize: Config.fontSizeBody * 1.2; font.family: "monospace"
+                                    horizontalAlignment: TextInput.AlignLeft; verticalAlignment: TextInput.AlignVCenter
                                     color: Colors.textPrimary
-                                    inputMethodHints: Qt.ImhFormattedNumbersOnly
-                                    text: VehicleProfileManager.currentPayloadWeightKg.toFixed(1)
+                                    text: VehicleProfileManager.currentLocationName
+                                    placeholderText: "e.g. North Field"
                                     onEditingFinished: {
-                                        var v = parseFloat(text)
-                                        if (!isNaN(v) && v >= 0) {
-                                            VehicleProfileManager.setPayloadWeightKg(v)
-                                        } else {
-                                            text = VehicleProfileManager.currentPayloadWeightKg.toFixed(1)
-                                        }
+                                        VehicleProfileManager.setLocationName(text)
                                     }
                                 }
                             }
-                            TelVal { text: "kg"; bold: false }
                         }
 
                         TelRow { label: "Attitude"; accent: Colors.pastelPurple
@@ -482,14 +401,14 @@ Page {
                         anchors.fill: parent; anchors.margins: Config.spacingMedium
                         spacing: Config.spacingMedium
 
-                        Text { text: "\uD83D\uDD0D Checklist"; font.pixelSize: Config.fontSizeBody; font.bold: true; color: Colors.textPrimary }
-                        Text { text: PreflightManager.passedChecks + "/" + PreflightManager.totalChecks; font.pixelSize: Config.fontSizeSmall; color: Colors.textSecondary }
+                        Text { text: "\uD83D\uDD0D Checklist"; font.pixelSize: Config.fontSizeBody * 1.2; font.bold: true; color: Colors.textPrimary }
+                        Text { text: PreflightManager.passedChecks + "/" + PreflightManager.totalChecks; font.pixelSize: Config.fontSizeBody * 1.2; color: Colors.textSecondary }
                         Item { Layout.fillWidth: true }
                         Rectangle {
                             width: 60; height: 24; radius: Config.radiusSmall
                             color: VehicleTelemetry.connectionQuality >= Config.connQualityGood ? Colors.successDim : Colors.errorDim
                             border.color: VehicleTelemetry.connectionQuality >= Config.connQualityGood ? Colors.success : Colors.error; border.width: 1
-                            Text { anchors.centerIn: parent; text: "\uD83D\uDCE1 " + VehicleTelemetry.connectionQuality + "%"; font.pixelSize: Config.fontSizeSmall; font.bold: true; color: VehicleTelemetry.connectionQuality >= Config.connQualityGood ? Colors.success : Colors.error }
+                            Text { anchors.centerIn: parent; text: "\uD83D\uDCE1 " + VehicleTelemetry.connectionQuality + "%"; font.pixelSize: Config.fontSizeBody * 1.2; font.bold: true; color: VehicleTelemetry.connectionQuality >= Config.connQualityGood ? Colors.success : Colors.error }
                         }
                     }
                 }
@@ -520,13 +439,12 @@ Page {
                             spacing: 1
                             Text {
                                 text: PreflightManager.passedChecks + "/" + PreflightManager.totalChecks + " checks passed"
-                                font.pixelSize: 14; font.bold: true; color: "#F8BBD0"
+                                font.pixelSize: Config.fontSizeBody * 1.2; font.bold: true; color: "#F8BBD0"
                             }
                             Text {
                                 text: _nCritical > 0 ? _nCritical + " critical issue" + (_nCritical !== 1 ? "s" : "") : "No critical issues"
-                                font.pixelSize: 11
+                                font.pixelSize: Config.fontSizeBody * 1.2
                                 color: _nCritical > 0 ? "#EF9A9A" : "#A5D6A7"
-                            }
                         }
 
                         Item { Layout.fillWidth: true }
@@ -538,19 +456,11 @@ Page {
                             Text {
                                 anchors.centerIn: parent
                                 text: PreflightManager.completionPercent + "%"
-                                font.pixelSize: 9; font.bold: true; color: "#CE93D8"
+                                font.pixelSize: Config.fontSizeBody * 1.2; font.bold: true; color: "#CE93D8"
                             }
                         }
 
-                        Rectangle {
-                            width: 56; height: 26; radius: 6
-                            color: _nCritical > 0 ? "#E91E63" : "#9333ea"
-                            Text { anchors.centerIn: parent; text: "Show"; font.pixelSize: 11; font.bold: true; color: "#fff" }
-                            MouseArea {
-                                anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                                onClicked: criticalIssuesDialog2.open()
-                            }
-                        }
+                        Item { Layout.fillWidth: true }
                     }
                 }
 
@@ -562,8 +472,8 @@ Page {
                     visible: VehicleTelemetry.telemetryStale && !VehicleTelemetry.disconnectGuardActive
                     RowLayout {
                         anchors.fill: parent; anchors.margins: Config.spacingMedium
-                        Text { text: "\u26A0 Stale data"; font.pixelSize: Config.fontSizeSmall; color: Colors.checkWarn; font.bold: true }
-                        Text { text: Math.floor((new Date() - VehicleTelemetry.lastTelemetryUpdate) / 1000) + "s ago"; font.pixelSize: Config.fontSizeSmall; color: Colors.checkWarn }
+                        Text { text: "\u26A0 Stale data"; font.pixelSize: Config.fontSizeBody * 1.2; color: Colors.checkWarn; font.bold: true }
+                        Text { text: Math.floor((new Date() - VehicleTelemetry.lastTelemetryUpdate) / 1000) + "s ago"; font.pixelSize: Config.fontSizeBody * 1.2; color: Colors.checkWarn }
                     }
                 }
 
@@ -613,16 +523,16 @@ Page {
                                         spacing: Config.spacingSmall
 
                                         Item { Layout.fillWidth: true }
-                                        Text { text: modelData.icon; font.pixelSize: 14 }
-                                        Text { text: modelData.label; font.pixelSize: Config.fontSizeBody; font.bold: true; color: Colors.textPrimary; horizontalAlignment: Text.AlignHCenter }
+                                        Text { text: modelData.icon; font.pixelSize: Config.fontSizeBody * 1.2
+                                        Text { text: modelData.label; font.pixelSize: Config.fontSizeBody * 1.2; font.bold: true; color: Colors.textPrimary; horizontalAlignment: Text.AlignHCenter }
                                         Item { Layout.fillWidth: true }
 
-                                        Text { text: root.groupIcon(index); font.pixelSize: 14; color: root.groupColor(index); font.bold: true }
-                                        Text { text: root.groupPassedCount(index); font.pixelSize: Config.fontSizeSmall; color: Colors.textSecondary }
+                                        Text { text: root.groupIcon(index); font.pixelSize: Config.fontSizeBody * 1.2; color: root.groupColor(index); font.bold: true }
+                                        Text { text: root.groupPassedCount(index); font.pixelSize: Config.fontSizeBody * 1.2; color: Colors.textSecondary }
 
                                         Text {
                                             text: isOpen ? "\u25B2" : "\u25BC"
-                                            font.pixelSize: 10; color: Colors.textSecondary
+                                            font.pixelSize: Config.fontSizeBody * 1.2; color: Colors.textSecondary
                                         }
                                     }
                                 }
@@ -679,22 +589,22 @@ Page {
 
                                                     Text {
                                                         text: isPassed ? "\u2713" : isFailed ? "\u2717" : isWarning ? "\u26A0" : "\u25CF"
-                                                        font.pixelSize: 16
+                                                        font.pixelSize: Config.fontSizeBody * 1.2
                                                         color: isPassed ? Colors.success : isFailed ? Colors.error : isWarning ? Colors.checkWarn : Colors.textDisabled
                                                         Layout.alignment: Qt.AlignVCenter
                                                     }
 
                                                     ColumnLayout {
                                                         Layout.fillWidth: true; spacing: 1
-                                                        Text { text: chk.label; font.pixelSize: Config.fontSizeBody; font.bold: true; color: Colors.textPrimary; elide: Text.ElideRight }
-                                                        Text { visible: chk.message.length > 0; text: chk.message; font.pixelSize: Config.fontSizeSmall; color: Colors.textSecondary; elide: Text.ElideRight; maximumLineCount: 1 }
+                                                        Text { text: chk.label; font.pixelSize: Config.fontSizeBody * 1.2; font.bold: true; color: Colors.textPrimary; elide: Text.ElideRight }
+                                                        Text { visible: chk.message.length > 0; text: chk.message; font.pixelSize: Config.fontSizeBody * 1.2; color: Colors.textSecondary; elide: Text.ElideRight; maximumLineCount: 1 }
                                                     }
 
                                                     Button {
                                                         visible: (isManual || isAction) && !isPassed
                                                         text: isManual ? "Confirm" : "Run"
                                                         highlighted: true
-                                                        font.pixelSize: Config.fontSizeSmall
+                                                        font.pixelSize: Config.fontSizeBody * 1.2
                                                         Layout.preferredHeight: 28
                                                         Layout.preferredWidth: 56
                                                         onClicked: {
@@ -709,7 +619,7 @@ Page {
                                                         visible: isPassed
                                                         color: Colors.success; radius: Config.radiusSmall
                                                         Layout.preferredHeight: 24; Layout.preferredWidth: 48
-                                                        Text { anchors.centerIn: parent; text: "PASSED"; color: Colors.background; font.pixelSize: Config.fontSizeSmall; font.bold: true }
+                                                        Text { anchors.centerIn: parent; text: "PASSED"; color: Colors.background; font.pixelSize: Config.fontSizeBody * 1.2; font.bold: true }
                                                     }
                                                 }
                                             }
@@ -725,7 +635,7 @@ Page {
                         Text {
                             visible: PreflightManager.totalChecks === 0
                             text: "No checks loaded\nConnect to a vehicle"
-                            font.pixelSize: Config.fontSizeBody; color: Colors.textDisabled
+                            font.pixelSize: Config.fontSizeBody * 1.2; color: Colors.textDisabled
                             Layout.alignment: Qt.AlignHCenter; horizontalAlignment: Text.AlignHCenter
                             Layout.fillWidth: true; Layout.preferredHeight: 80
                         }
@@ -754,7 +664,7 @@ Page {
                             text: _nCritical > 0 ? _nCritical + " CRITICAL FAILURES"
                                  : _nPending > 0 ? _nPending + " ITEMS PENDING"
                                  : PreflightManager.totalChecks > 0 ? "ALL CHECKS PASSED" : "NO CHECKS"
-                            font.pixelSize: Config.fontSizeSmall; font.bold: true
+                            font.pixelSize: Config.fontSizeBody * 1.2; font.bold: true
                             color: _nCritical > 0 ? Colors.error : _nPending > 0 ? Colors.warning : Colors.success
                             elide: Text.ElideRight
                         }
@@ -764,12 +674,12 @@ Page {
                             Layout.alignment: Qt.AlignCenter
                             spacing: Config.spacingSmall
 
-                            Text { text: "GATE:"; font.pixelSize: Config.fontSizeSmall; color: Colors.textSecondary; font.bold: true }
+                            Text { text: "GATE:"; font.pixelSize: Config.fontSizeBody * 1.2; color: Colors.textSecondary; font.bold: true }
                             Text {
                                 text: ArmingGate.mode === 0 ? "PASSIVE"
                                      : ArmingGate.mode === 1 ? "ACTIVE"
                                      : "HYBRID"
-                                font.pixelSize: Config.fontSizeSmall; font.bold: true
+                                font.pixelSize: Config.fontSizeBody * 1.2; font.bold: true
                                 color: ArmingGate.mode === 0 ? Colors.warning : ArmingGate.mode === 1 ? Colors.success : Colors.info
                             }
 
@@ -809,7 +719,7 @@ Page {
                             Button {
                                 id: overrideBtn
                                 text: "Override && Arm"
-                                font.pixelSize: Config.fontSizeSmall; font.bold: true
+                                font.pixelSize: Config.fontSizeBody * 1.2; font.bold: true
                                 implicitHeight: 32; implicitWidth: 120
                                 enabled: _nCritical > 0 || _nPending > 0
                                 highlighted: true
@@ -820,7 +730,7 @@ Page {
 
                             Text {
                                 text: "Iteration 1 v1.0"
-                                font.pixelSize: Config.fontSizeSmall; color: Colors.textSecondary
+                                font.pixelSize: Config.fontSizeBody * 1.2; color: Colors.textSecondary
                             }
                         }
                     }
@@ -842,11 +752,11 @@ Page {
                 Layout.alignment: Qt.AlignHCenter
                 Layout.preferredWidth: 72; Layout.preferredHeight: 72; radius: 36
                 color: Colors.surface; border.color: Colors.error; border.width: 2
-                Text { anchors.centerIn: parent; text: "\u26A0"; font.pixelSize: 36; color: Colors.error }
+                Text { anchors.centerIn: parent; text: "\u26A0"; font.pixelSize: Config.fontSizeBody * 1.2; color: Colors.error }
             }
-            Text { text: "Connection Lost"; font.pixelSize: Config.fontSizeH1; font.bold: true; color: Colors.error; Layout.alignment: Qt.AlignHCenter }
-            Text { text: VehicleTelemetry.disconnectGuardMessage; font.pixelSize: Config.fontSizeBody; color: Colors.textSecondary; Layout.alignment: Qt.AlignHCenter }
-            Text { text: "Checks suspended \u2014 reconnecting..."; font.pixelSize: Config.fontSizeSmall; color: Colors.textDisabled; Layout.alignment: Qt.AlignHCenter }
+            Text { text: "Connection Lost"; font.pixelSize: Config.fontSizeBody * 1.2; font.bold: true; color: Colors.error; Layout.alignment: Qt.AlignHCenter }
+            Text { text: VehicleTelemetry.disconnectGuardMessage; font.pixelSize: Config.fontSizeBody * 1.2; color: Colors.textSecondary; Layout.alignment: Qt.AlignHCenter }
+            Text { text: "Checks suspended \u2014 reconnecting..."; font.pixelSize: Config.fontSizeBody * 1.2; color: Colors.textDisabled; Layout.alignment: Qt.AlignHCenter }
         }
     }
 
@@ -864,11 +774,11 @@ Page {
             ColumnLayout {
                 width: parent.width; spacing: Config.spacingMedium
                 anchors.margins: Config.spacingMedium
-                Text { text: "\uD83D\uDCCA Telemetry"; font.pixelSize: Config.fontSizeH2; font.bold: true; color: Colors.accent; Layout.alignment: Qt.AlignHCenter }
-                Text { text: "Connection: " + (TelemetryProvider.isConnected ? "\u2713 Connected" : "\u2717 Disconnected"); font.pixelSize: Config.fontSizeSmall; color: Colors.textPrimary }
-                Text { text: "Voltage: " + TelemetryProvider.batteryVoltage.toFixed(2) + " V"; font.pixelSize: Config.fontSizeSmall; color: root.batteryColor(TelemetryProvider.batteryVoltage) }
-                Text { text: "GPS: " + TelemetryProvider.gpsSatellites + " sats, " + TelemetryProvider.gpsFixTypeString; font.pixelSize: Config.fontSizeSmall; color: root.gpsColor(TelemetryProvider.gpsSatellites) }
-                Text { text: "Attitude: R:" + TelemetryProvider.roll.toFixed(1) + "\u00B0 P:" + TelemetryProvider.pitch.toFixed(1) + "\u00B0"; font.pixelSize: Config.fontSizeSmall; color: Colors.textPrimary }
+                Text { text: "\uD83D\uDCCA Telemetry"; font.pixelSize: Config.fontSizeBody * 1.2; font.bold: true; color: Colors.accent; Layout.alignment: Qt.AlignHCenter }
+                Text { text: "Connection: " + (TelemetryProvider.isConnected ? "\u2713 Connected" : "\u2717 Disconnected"); font.pixelSize: Config.fontSizeBody * 1.2; color: Colors.textPrimary }
+                Text { text: "Voltage: " + TelemetryProvider.batteryVoltage.toFixed(2) + " V"; font.pixelSize: Config.fontSizeBody * 1.2; color: root.batteryColor(TelemetryProvider.batteryVoltage) }
+                Text { text: "GPS: " + TelemetryProvider.gpsSatellites + " sats, " + TelemetryProvider.gpsFixTypeString; font.pixelSize: Config.fontSizeBody * 1.2; color: root.gpsColor(TelemetryProvider.gpsSatellites) }
+                Text { text: "Attitude: R:" + TelemetryProvider.roll.toFixed(1) + "\u00B0 P:" + TelemetryProvider.pitch.toFixed(1) + "\u00B0"; font.pixelSize: Config.fontSizeBody * 1.2; color: Colors.textPrimary }
                 Item { Layout.fillHeight: true }
             }
         }
@@ -894,32 +804,32 @@ Page {
         property list<Item> _vals: valRow.data
 
         Layout.fillWidth: true
-        Layout.preferredHeight: 42
+        Layout.preferredHeight: 40
         color: Colors.surface
-        radius: Config.radiusSmall
-        border.color: Colors.borderLight; border.width: 1
+        radius: 4
+        border.color: Colors.border; border.width: 1
 
         RowLayout {
             id: valRow
-            anchors.fill: parent; anchors.leftMargin: Config.spacingMedium; anchors.rightMargin: Config.spacingSmall
+            anchors.fill: parent; anchors.leftMargin: Config.spacingSmall; anchors.rightMargin: Config.spacingSmall
             spacing: Config.spacingSmall
 
-            Rectangle { width: 3; height: 18; radius: 1.5; color: accent; Layout.alignment: Qt.AlignVCenter }
-            Text { text: label; font.pixelSize: Config.fontSizeBody; color: Colors.textSecondary; font.bold: true; Layout.preferredWidth: 100; horizontalAlignment: Text.AlignHCenter }
+            Rectangle { width: 3; height: 16; radius: 1.5; color: accent; Layout.alignment: Qt.AlignVCenter }
+            Text { text: label; font.pixelSize: Config.fontSizeBody * 1.2; color: Colors.textSecondary; font.bold: true; Layout.preferredWidth: 90; horizontalAlignment: Text.AlignHCenter }
             Item { Layout.fillWidth: true }
         }
     }
 
     component TelVal: Text {
         property bool bold: false
-        font.pixelSize: Config.fontSizeBody
+        font.pixelSize: Config.fontSizeBody * 1.2
         font.family: "monospace"
         font.bold: bold
         color: Colors.textPrimary
     }
 
     component TelSep: Rectangle {
-        width: 1; height: 16; color: Colors.borderLight; Layout.alignment: Qt.AlignVCenter; visible: true
+        width: 1; height: 14; color: Colors.border; Layout.alignment: Qt.AlignVCenter; visible: true
     }
 
     component TelHealth: Rectangle {
@@ -933,8 +843,8 @@ Page {
 
         ColumnLayout {
             anchors.centerIn: parent; spacing: 2
-            Text { text: ok ? "\u2713" : "\u2717"; font.pixelSize: 16; color: ok ? Colors.success : Colors.error; Layout.alignment: Qt.AlignHCenter }
-            Text { text: label; font.pixelSize: Config.fontSizeSmall; color: Colors.textPrimary; font.bold: true; Layout.alignment: Qt.AlignHCenter }
+            Text { text: ok ? "\u2713" : "\u2717"; font.pixelSize: Config.fontSizeBody * 1.2; color: ok ? Colors.success : Colors.error; Layout.alignment: Qt.AlignHCenter }
+            Text { text: label; font.pixelSize: Config.fontSizeBody * 1.2; color: Colors.textPrimary; font.bold: true; Layout.alignment: Qt.AlignHCenter }
         }
     }
 }
