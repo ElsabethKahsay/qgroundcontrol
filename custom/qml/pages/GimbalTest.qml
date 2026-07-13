@@ -235,7 +235,7 @@ Page {
 
                             Rectangle {
                                 Layout.fillWidth: true; Layout.fillHeight: true
-                                color: "#0f172a"; radius: Config.radiusSmall; border.color: Colors.border; clip: true
+                                color: Colors.surface; radius: Config.radiusSmall; border.color: Colors.border; clip: true
                                 Rectangle { anchors.centerIn: parent; width: parent.width - 24; height: 1; color: "#22334155" }
                                 Rectangle { anchors.centerIn: parent; width: 1; height: parent.height - 24; color: "#22334155" }
 

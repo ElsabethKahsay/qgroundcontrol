@@ -3,19 +3,19 @@ import QtQuick
 import QtQuick.Window
 
 QtObject {
-    // Enterprise GCS — 8dp baseline grid, Roboto/Inter scale
-    readonly property int fontSizeH1: 20
-    readonly property int fontSizeH2: 16
-    readonly property int fontSizeH3: 14
-    readonly property int fontSizeBody: 13
-    readonly property int fontSizeSmall: 12
-    readonly property int spacingSmall: 8
-    readonly property int spacingMedium: 12
-    readonly property int spacingLarge: 16
-    readonly property int spacingXLarge: 24
-    readonly property int radiusSmall: 4
-    readonly property int radiusMedium: 8
-    readonly property int radiusLarge: 12
+    // Compact GCS — smaller fonts, tighter grid, unique styling
+    readonly property int fontSizeH1: 16
+    readonly property int fontSizeH2: 13
+    readonly property int fontSizeH3: 12
+    readonly property int fontSizeBody: 11
+    readonly property int fontSizeSmall: 10
+    readonly property int spacingSmall: 6
+    readonly property int spacingMedium: 10
+    readonly property int spacingLarge: 14
+    readonly property int spacingXLarge: 20
+    readonly property int radiusSmall: 3
+    readonly property int radiusMedium: 6
+    readonly property int radiusLarge: 10
 
     // Animation durations (ms)
     readonly property int animFast: 150
@@ -36,6 +36,9 @@ QtObject {
     readonly property real fontScale: typeof Screen !== 'undefined' && Screen !== null && Screen.pixelDensity > 0
         ? Math.min(1.3, Math.max(0.8, Screen.pixelDensity / 4.0))
         : 1.0
+
+    // Font family (loaded from C++ at startup)
+    readonly property string fontFamily: "Abel"
 
     // Connection quality thresholds
     readonly property int connQualityGood: 80

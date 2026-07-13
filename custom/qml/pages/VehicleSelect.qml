@@ -322,6 +322,14 @@ Page {
             }
 
             CustomButton {
+                text: "Manage Vehicles"
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: parent.width - 2 * Config.spacingLarge
+                baseColor: Colors.surface
+                onClicked: Window.window.mainStackView.push("VehicleManagement.qml")
+            }
+
+            CustomButton {
                 text: "← Back"
                 anchors.horizontalCenter: parent.horizontalCenter
                 width: parent.width - 2 * Config.spacingLarge

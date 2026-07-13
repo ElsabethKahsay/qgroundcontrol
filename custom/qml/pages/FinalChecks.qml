@@ -156,6 +156,7 @@ Page {
                         anchors.verticalCenter: parent.verticalCenter
                     }
                     TextField {
+                        id: aircraftRegField
                         text: VehicleTelemetry.aircraftReg
                         placeholderText: "Tail number (N-XXXXX)"
                         font.pixelSize: Config.fontSizeSmall
@@ -165,6 +166,26 @@ Page {
                             VehicleTelemetry.aircraftReg = text
                             PreflightSettingsManager.aircraftReg = text
                         }
+                        function generateNNumber() {
+                            var letters = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+                            var digits = "0123456789"
+                            var n = "N"
+                            for (var i = 0; i < 5; i++)
+                                n += digits.charAt(Math.floor(Math.random() * digits.length))
+                            n += letters.charAt(Math.floor(Math.random() * letters.length))
+                            return n
+                        }
+                        Component.onCompleted: {
+                            if (text === "")
+                                text = generateNNumber()
+                        }
+                    }
+                    CustomButton {
+                        text: "\u21BA"
+                        implicitWidth: 28
+                        implicitHeight: 28
+                        baseColor: Colors.surface
+                        onClicked: aircraftRegField.text = aircraftRegField.generateNNumber()
                     }
                 }
             }

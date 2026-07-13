@@ -1,25 +1,39 @@
-// Component: CustomButton
-// Purpose: Styled button component based on QML Button with a configurable background color.
-//   Shows a darker shade when pressed.
-// Properties:
-//   baseColor (color) — background color of the button (default: Colors.primary)
 import QtQuick
 import QtQuick.Controls
 import com.uav.preflight 1.0
 Button {
     id: control
-    property color baseColor: Colors.primary
+    property color baseColor: Colors.secondary
+    property color textColor: "#ffffff"
+    property bool rounded: false
+
     contentItem: Text {
         text: control.text
         font.pixelSize: Config.fontSizeBody
-        color: Colors.textPrimary
+        font.bold: true
+        font.letterSpacing: 0.5
+        color: control.enabled ? textColor : "#94a3b8"
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
     }
+
     background: Rectangle {
         implicitWidth: 200
-        implicitHeight: 50
-        radius: Config.radiusMedium
-        color: control.down ? Qt.darker(baseColor, 1.2) : baseColor
+        implicitHeight: 40
+        radius: rounded ? height / 2 : Config.radiusMedium
+        color: {
+            if (!control.enabled) return Colors.surfaceLight
+            if (control.down) return Qt.darker(baseColor, 1.3)
+            return baseColor
+        }
+        border.width: 0
+        Rectangle {
+            anchors.bottom: parent.bottom
+            anchors.left: parent.left
+            anchors.right: parent.right
+            height: 2
+            radius: 1
+            color: Qt.rgba(0, 0, 0, 0.15)
+        }
     }
 }
