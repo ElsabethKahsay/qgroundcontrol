@@ -1,7 +1,7 @@
 // Component: FlyViewCustomLayer
 // Purpose: Custom Fly View overlay for the Enterprise GCS plugin.
-//   - Telemetry strip: top-left, overlaid on the video half
-//   - Compass widget: bottom-right, overlaid on the map half
+//   - Telemetry strip: bottom, spanning full width
+//   - Compass widget: top-right, overlaid on the map half
 //   - Preflight checklist button (bottom-left of video half)
 //   - Preflight status badge (top-right of map half)
 // SPDX-License-Identifier: GPL-3.0-or-later
@@ -55,34 +55,24 @@ Item {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //  TELEMETRY STRIP — top-left, overlaid on the video panel
+    //  TELEMETRY FLOATING BOX — self-positioning, draggable
+    //  The component manages its own x/y via QSettings and internal
+    //  drag logic. We fill the parent so relative coordinates work.
     // ═══════════════════════════════════════════════════════════════════
     FlyViewTelemetryStrip {
-        id:             telemetryStrip
-        x:              _videoPanelLeft + ScreenTools.defaultFontPixelWidth
-        y:              ScreenTools.defaultFontPixelHeight * 0.4
-        width:          _panelWidth - ScreenTools.defaultFontPixelWidth * 2
-        activeVehicle:  _activeVehicle
-        z:              QGroundControl.zOrderWidgets + 1
-        opacity:        0.96
-
-        // Subtle drop-shadow feel via an extra underline
-        Rectangle {
-            anchors.left:   parent.left
-            anchors.right:  parent.right
-            anchors.bottom: parent.bottom
-            height:         1
-            color:          Qt.rgba(0, 0.83, 1, 0.25)
-        }
+        id:            telemetryStrip
+        anchors.fill:  parent
+        activeVehicle: _activeVehicle
+        z:             QGroundControl.zOrderWidgets + 1
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //  COMPASS — bottom-right corner of the map panel
+    //  COMPASS — top-right corner of the map panel
     // ═══════════════════════════════════════════════════════════════════
     Item {
         id:     compassContainer
         x:      _mapPanelLeft + _panelWidth - compassWidget.size - _compassMargin
-        y:      parent.height - compassWidget.size - _compassMargin
+        y:      _compassMargin
         width:  compassWidget.size
         height: compassWidget.size
         z:      QGroundControl.zOrderWidgets + 1
@@ -107,6 +97,120 @@ Item {
             // Override background to be transparent (backdrop above handles it)
             color:          Qt.rgba(0, 0, 0, 0)
             border.width:   0
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  NEW VEHICLE BANNER — top-center, dismissed on tap
+    // ═══════════════════════════════════════════════════════════════════
+    Rectangle {
+        id:                 newVehicleBanner
+        x:                  (parent.width - width) / 2
+        y:                  ScreenTools.defaultFontPixelHeight * 0.4
+        width:              bannerRow.width + ScreenTools.defaultFontPixelWidth * 2
+        height:             bannerRow.height + ScreenTools.defaultFontPixelWidth
+        radius:             height / 2
+        color:              Qt.rgba(0.05, 0.05, 0.12, 0.92)
+        border.color:       "#00D4FF"
+        border.width:       1
+        visible:            false
+        z:                  QGroundControl.zOrderWidgets + 2
+
+        Row {
+            id:             bannerRow
+            anchors.centerIn: parent
+            spacing:        ScreenTools.defaultFontPixelWidth * 0.5
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text:                   "🆕"
+                font.pixelSize:         ScreenTools.defaultFontPixelHeight * 1.0
+            }
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text:                   VehicleRegistry.isKnownVehicle
+                                        ? "Known vehicle connected: " + VehicleRegistry.vehicleName
+                                        : "New vehicle registered — tap to rename"
+                font.pointSize:         ScreenTools.defaultFontPointSize
+                color:                  "#E8ECF4"
+            }
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            onClicked: {
+                newVehicleBanner.visible = false
+                if (!VehicleRegistry.isKnownVehicle) {
+                    renameDialog.open()
+                }
+            }
+        }
+
+        Timer {
+            id:             bannerTimer
+            interval:       60000
+            onTriggered:    newVehicleBanner.visible = false
+        }
+
+        // ── Inline rename dialog for new vehicles ──────────────────────
+        Dialog {
+            id:                renameDialog
+            title:             "Rename Vehicle"
+            standardButtons:   Dialog.Save | Dialog.Cancel
+            modal:             true
+            closePolicy:       Popup.CloseOnEscape
+            x:                 Math.round((parent.width - width) / 2)
+            y:                 Math.round((parent.height - height) / 2)
+            width:             300
+            height:            column.implicitHeight + header.implicitHeight + footer.implicitHeight + 40
+
+            Column {
+                id:   column
+                anchors.fill: parent
+                spacing: 8
+
+                Text {
+                    text:          "Enter a friendly name for this vehicle:"
+                    font.pointSize: ScreenTools.defaultFontPointSize * 0.9
+                    color:         "#E8ECF4"
+                    wrapMode:      Text.WordWrap
+                    width:         parent.width
+                }
+
+                TextField {
+                    id:                nameField
+                    width:             parent.width
+                    text:              VehicleRegistry.vehicleName
+                    color:             "#FFFFFF"
+                    background: Rectangle {
+                        color:  Qt.rgba(0.12, 0.12, 0.20, 0.95)
+                        radius: 4
+                        border.color: "#00D4FF"
+                        border.width: 1
+                    }
+                }
+            }
+
+            onAccepted: {
+                var fp = VehicleRegistry.currentFingerprint
+                if (fp.length > 0 && nameField.text.trim().length > 0) {
+                    Database.updateVehicleName(fp, nameField.text.trim())
+                }
+            }
+        }
+    }
+
+    Connections {
+        target: VehicleRegistry
+        function onNewVehicleRegistered(vehicleId) {
+            newVehicleBanner.visible = true
+            bannerTimer.restart()
+        }
+        function onKnownVehicleConnected(vehicleId) {
+            if (!VehicleRegistry.isKnownVehicle) return
+            newVehicleBanner.visible = true
+            bannerTimer.restart()
         }
     }
 
@@ -178,7 +282,7 @@ Item {
     Rectangle {
         id:                     preflightBtn
         x:                      _videoPanelLeft + ScreenTools.defaultFontPixelWidth * 1.5
-        y:                      parent.height - height - ScreenTools.defaultFontPixelHeight * 1.5
+        y:                      parent.height - height - ScreenTools.defaultFontPixelHeight * 2
         width:                  btnRow.width + ScreenTools.defaultFontPixelWidth * 2
         height:                 ScreenTools.defaultFontPixelHeight * 2.6
         radius:                 height / 2
@@ -277,7 +381,7 @@ Item {
         id: checklistDialog
         QGCPopupDialog {
             title:   qsTr("Preflight Checklist")
-            buttons: StandardButton.Close
+            buttons: Dialog.Close
             modal:   true
 
             Loader {

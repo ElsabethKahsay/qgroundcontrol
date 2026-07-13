@@ -17,7 +17,7 @@ import com.uav.preflight 1.0
 Rectangle {
     id: root
     anchors.fill: parent
-    color: Colors.surface
+    color: "#0a0a1a"
 
     readonly property var catModels: ({
         0: CatModel0, 1: CatModel1, 2: CatModel2, 3: CatModel3,
@@ -401,38 +401,7 @@ Rectangle {
             }
         }
 
-        // Ready callout
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: visible ? 36 : 0
-            Layout.topMargin: 6
-            Layout.leftMargin: Config.spacingMedium
-            Layout.rightMargin: Config.spacingMedium
-            color: Colors.successDim
-            radius: Config.radiusSmall
-            visible: _blockers === 0 && _total > 0
 
-            RowLayout {
-                anchors.fill: parent
-                anchors.margins: Config.spacingSmall
-                spacing: Config.spacingSmall
-                Text {
-                    text: _pend > 0 ? "\u2713 All critical checks passed. " + _pend + " item(s) pending."
-                         : _pct === 100 ? "\u2713 Ready to arm. " + _total + "/" + _total + " checks passed."
-                         : "\u2713 " + _passed + "/" + _total + " checks passed"
-                    font.pixelSize: Config.fontSizeSmall
-                    color: Colors.success
-                    Layout.fillWidth: true
-                    elide: Text.ElideRight
-                }
-                Text {
-                    text: _pend > 0 ? "Review warnings before arming." : ""
-                    font.pixelSize: Config.fontSizeSmall
-                    color: Colors.warning
-                    visible: _pend > 0
-                }
-            }
-        }
 
         // Scrollable categories
         Flickable {

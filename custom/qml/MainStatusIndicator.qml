@@ -285,16 +285,41 @@ RowLayout {
                     id:         mainLayout
                     spacing:    _spacing
 
-                    QGCButton {
+                    Button {
+                        id:                 armBtn
                         Layout.leftMargin:  _healthAndArmingChecksSupported ? width / 2 : 0
                         Layout.alignment:   _healthAndArmingChecksSupported ? Qt.AlignLeft : Qt.AlignHCenter
-                        // FIXME: forceArm is not possible anymore if _healthAndArmingChecksSupported == true
-                        enabled:            _armed || forceArm || !_healthAndArmingChecksSupported || _activeVehicle.healthAndArmingCheckReport.canArm
-                        text:               _armed ?  qsTr("Disarm") : (forceArm ? qsTr("Force Arm") : qsTr("Arm"))
+                        enabled:            _armed || (_activeVehicle !== null)
+                        text:               _armed ?  qsTr("Disarm") : qsTr("Arm")
 
                         property bool forceArm: false
 
                         onPressAndHold: forceArm = true
+
+                        contentItem: Text {
+                            text: armBtn.text
+                            font.pixelSize: ScreenTools.defaultFontPixelSize
+                            font.bold: true
+                            font.letterSpacing: 0.5
+                            color: armBtn.enabled ? "#ffffff" : "#94a3b8"
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+
+                        background: Rectangle {
+                            implicitWidth: 160
+                            implicitHeight: 36
+                            radius: 18
+                            color: {
+                                if (!armBtn.enabled) return "#2d3144"
+                                if (armBtn.down) return Qt.darker(_armed ? "#dc2626" : "#7c3aed", 1.3)
+                                return _armed ? "#dc2626" : "#7c3aed"
+                            }
+                            Rectangle {
+                                anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
+                                height: 2; radius: 1; color: Qt.rgba(0,0,0,0.15)
+                            }
+                        }
 
                         onClicked: {
                             if (_armed) {
@@ -390,7 +415,7 @@ RowLayout {
                                     wrapMode:     Text.WordWrap
                                     textFormat:   TextEdit.RichText
                                     width:        parent.width - arrowDownIndicator.width
-                                    color:        object.severity == 'error' ? qgcPal.colorRed : object.severity == 'warning' ? qgcPal.colorOrange : qgcPal.text
+                                    color:        object.severity == 'error' ? qgcPal.colorRed : object.severity == 'warning' ? qgcPal.colorYellow : qgcPal.text
                                     MouseArea {
                                         anchors.fill: parent
                                         onClicked: {

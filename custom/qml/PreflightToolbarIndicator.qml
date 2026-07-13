@@ -28,7 +28,7 @@ Item {
         if (!_pfm) return qgcPal.colorGrey
         switch (_pfm.state) {
         case 0: return qgcPal.colorGrey
-        case 1: return qgcPal.colorOrange
+        case 1: return qgcPal.buttonHighlight
         case 2: return "#9B59B6"
         case 3: return "#E91E63"
         case 4: return qgcPal.colorGreen
