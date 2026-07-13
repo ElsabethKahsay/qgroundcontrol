@@ -3,6 +3,10 @@
 #include <QObject>
 #include <QTimer>
 #include <QElapsedTimer>
+#include <QVector>
+
+#include "QGCMAVLink.h"
+#include "HardwareTestProfile.h"
 
 class Vehicle;
 
@@ -29,7 +33,12 @@ public:
 
     Q_INVOKABLE void runMotorTest();
     Q_INVOKABLE void runServoSweep();
+    Q_INVOKABLE bool runProfile(const QString &filePath);
     Q_INVOKABLE void abortSequence();
+
+    // Tolerance for PWM matching (µs)
+    static constexpr int kPwmTolerance = 50;
+    static constexpr int kServoCount = 16;
 
 signals:
     void isRunningChanged();
@@ -41,12 +50,16 @@ signals:
 private slots:
     void _advanceStep();
     void _onCommandResult(int cmdId, int compId, int mavResult);
+    void _onMavlinkMessage(const mavlink_message_t &message);
 
 private:
     void _startTest();
     void _finishTest(bool passed, const QString &error);
     void _sendMotorStep(int motorInstance, int throttlePct, int durationSec);
     void _sendServoStep(int servoInstance, int pwmValue, int durationSec);
+    bool _verifyServoFeedback(int servoInstance, int expectedPwm) const;
+    bool _verifyServoFeedbackRange(int servoInstance, int expectedMin, int expectedMax) const;
+    bool _verifyMotorFeedback(int motorInstance) const;
 
     Vehicle *_vehicle = nullptr;
     bool _running = false;
@@ -57,12 +70,11 @@ private:
     qreal _progress = 0.0;
     QString _lastError;
     bool _isMotorTest = false;
+    QString _profileName;
     QTimer _stepTimer;
 
-    struct Step {
-        int instance;
-        int value;
-        int durationMs;
-    };
-    QVector<Step> _steps;
+    // Latest SERVO_OUTPUT_RAW feedback values (port 0)
+    uint16_t _feedbackPwm[kServoCount] = {};
+
+    QVector<TestStep> _profileSteps;
 };

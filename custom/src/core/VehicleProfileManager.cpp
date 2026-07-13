@@ -24,6 +24,9 @@ void VehicleProfileManager::setTelemetryBridge(TelemetryBridge *bridge)
     m_telemetry = bridge;
     if (m_telemetry) {
         connect(m_telemetry, &TelemetryBridge::isConnectedChanged, this, &VehicleProfileManager::onConnectionChanged);
+        connect(m_telemetry, &TelemetryBridge::armedChanged, this, [this]() {
+            _onArmedChanged(m_telemetry->armed());
+        });
     }
 }
 
@@ -151,6 +154,62 @@ void VehicleProfileManager::setPayloadWeightKg(double kg)
         DatabaseManager::instance().updateFlightSessionPayload(m_flightSessionId, m_payloadWeightKg);
     }
     emit payloadWeightChanged();
+}
+
+void VehicleProfileManager::setLocationName(const QString &name)
+{
+    if (m_locationName == name) return;
+    m_locationName = name;
+    if (m_flightSessionId > 0) {
+        DatabaseManager::instance().updateFlightSessionLocation(m_flightSessionId, m_locationName);
+    }
+    emit locationNameChanged();
+}
+
+void VehicleProfileManager::setPlanLatitude(double lat)
+{
+    if (qFuzzyCompare(m_planLat, lat)) return;
+    m_planLat = lat;
+    if (m_flightSessionId > 0) {
+        DatabaseManager::instance().updateFlightSessionPlanLocation(m_flightSessionId, m_planLat, m_planLon);
+    }
+    emit planLatitudeChanged();
+}
+
+void VehicleProfileManager::setPlanLongitude(double lon)
+{
+    if (qFuzzyCompare(m_planLon, lon)) return;
+    m_planLon = lon;
+    if (m_flightSessionId > 0) {
+        DatabaseManager::instance().updateFlightSessionPlanLocation(m_flightSessionId, m_planLat, m_planLon);
+    }
+    emit planLongitudeChanged();
+}
+
+void VehicleProfileManager::_onArmedChanged(bool armed)
+{
+    if (armed == m_wasArmed)
+        return;
+    m_wasArmed = armed;
+
+    if (armed) {
+        m_armedTimer.start();
+    } else {
+        // Disarm — check if it was a real flight (not just a test arm)
+        if (m_armedTimer.isValid() && m_armedTimer.elapsed() > 30000) {
+            if (!m_batterySerial.isEmpty() && m_flightSessionId > 0) {
+                double capacityAtFull = m_telemetry
+                    ? m_telemetry->property("batteryPercent").toDouble() / 100.0
+                    : 0.0;
+                DatabaseManager::instance().saveBatteryCycle(
+                    m_batterySerial, m_flightSessionId,
+                    capacityAtFull, 0.0, 0.0, 0);
+                qDebug().noquote()
+                    << QStringLiteral("Battery cycle recorded for %1 (session %2)")
+                           .arg(m_batterySerial).arg(m_flightSessionId);
+            }
+        }
+    }
 }
 
 

@@ -22,6 +22,7 @@ struct TestStep {
     int settleMs;               // Time to wait for physical movement before reading feedback
     bool needsVisualConfirm;    // If true, pause for operator YES/NO after feedback validation
     bool useRcOverride = false; // If true, use RC_CHANNELS_OVERRIDE instead of DO_SET_SERVO
+    int throttlePct = -1;       // Throttle percentage (0-100) for motor_test; -1 = use targetPwm
 };
 
 /**

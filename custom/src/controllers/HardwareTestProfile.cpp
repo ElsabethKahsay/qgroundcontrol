@@ -19,8 +19,15 @@ bool HardwareTestProfile::isValid() const
     }
 
     for (const TestStep &step : steps) {
-        if (step.targetPwm < kServoDefaultMinPwm || step.targetPwm > kServoDefaultMaxPwm) {
-            return false;
+        const bool isMotor = step.testType == QStringLiteral("motor");
+        if (isMotor && step.throttlePct >= 0) {
+            if (step.throttlePct < 0 || step.throttlePct > 100) {
+                return false;
+            }
+        } else {
+            if (step.targetPwm < kServoDefaultMinPwm || step.targetPwm > kServoDefaultMaxPwm) {
+                return false;
+            }
         }
         if (step.expectedMin < kServoDefaultMinPwm || step.expectedMin > kServoDefaultMaxPwm) {
             return false;
@@ -33,7 +40,7 @@ bool HardwareTestProfile::isValid() const
         }
         // For motor_test, validate motorInstance (0-8, where 0=all)
         // For servo_test, validate servoInstance (1-16)
-        if (step.testType == QStringLiteral("motor")) {
+        if (isMotor) {
             if (step.motorInstance < 0 || step.motorInstance > 8) {
                 return false;
             }
@@ -101,6 +108,7 @@ HardwareTestProfile HardwareTestProfile::loadFromJsonFile(const QString &filePat
          step.settleMs = stepObj.value(QStringLiteral("settle_ms")).toInt(1000);
          step.needsVisualConfirm = stepObj.value(QStringLiteral("visual")).toBool(true);
          step.useRcOverride = stepObj.value(QStringLiteral("use_rc_override")).toBool(false);
+         step.throttlePct = stepObj.value(QStringLiteral("throttle_pct")).toInt(-1);
          profile.steps.append(step);
      }
 

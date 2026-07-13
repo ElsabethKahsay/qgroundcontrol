@@ -14,6 +14,9 @@ class VehicleProfileManager : public QObject {
     Q_PROPERTY(QString currentBatterySerial READ currentBatterySerial NOTIFY currentBatteryChanged)
     Q_PROPERTY(int currentFlightSessionId READ currentFlightSessionId NOTIFY currentVehicleChanged)
     Q_PROPERTY(double currentPayloadWeightKg READ currentPayloadWeightKg WRITE setPayloadWeightKg NOTIFY payloadWeightChanged)
+    Q_PROPERTY(QString currentLocationName READ currentLocationName WRITE setLocationName NOTIFY locationNameChanged)
+    Q_PROPERTY(double planLatitude READ planLatitude WRITE setPlanLatitude NOTIFY planLatitudeChanged)
+    Q_PROPERTY(double planLongitude READ planLongitude WRITE setPlanLongitude NOTIFY planLongitudeChanged)
 
 public:
     explicit VehicleProfileManager(QObject *parent = nullptr);
@@ -28,6 +31,14 @@ public:
     double currentPayloadWeightKg() const { return m_payloadWeightKg; }
     void setPayloadWeightKg(double kg);
 
+    QString currentLocationName() const { return m_locationName; }
+    void setLocationName(const QString &name);
+
+    double planLatitude() const { return m_planLat; }
+    void setPlanLatitude(double lat);
+    double planLongitude() const { return m_planLon; }
+    void setPlanLongitude(double lon);
+
     Q_INVOKABLE void setBatterySerial(const QString &serial, const QString &operatorLabel = {});
     Q_INVOKABLE QString loadVehicleHistory(const QString &deviceUid);
     Q_INVOKABLE QStringList knownVehicles();
@@ -36,10 +47,14 @@ signals:
     void currentVehicleChanged();
     void currentBatteryChanged();
     void payloadWeightChanged();
+    void locationNameChanged();
+    void planLatitudeChanged();
+    void planLongitudeChanged();
     void vehicleReconnected(const QString &deviceUid, const QString &friendlyName);
 
 private slots:
     void onConnectionChanged();
+    void _onArmedChanged(bool armed);
 
 private:
     QString resolveDeviceUid();
@@ -52,5 +67,10 @@ private:
     QString m_batterySerial;
     int m_flightSessionId = -1;
     double m_payloadWeightKg = 0.0;
+    QString m_locationName;
+    double m_planLat = 0.0;
+    double m_planLon = 0.0;
     QElapsedTimer m_sessionTimer;
+    bool m_wasArmed = false;
+    QElapsedTimer m_armedTimer;
 };
