@@ -141,6 +141,7 @@ class TelemetryBridge : public QObject {
     // -- Mission --
     Q_PROPERTY(int missionCount READ missionCount NOTIFY missionCountChanged)
     Q_PROPERTY(double missionFirstWpDistance READ missionFirstWpDistance NOTIFY missionFirstWpDistanceChanged)
+    Q_PROPERTY(double missionTotalDistance READ missionTotalDistance NOTIFY missionTotalDistanceChanged)
 
     // -- Accelerometers --
     Q_PROPERTY(double accelerometerX READ accelerometerX NOTIFY accelerometerChanged)
@@ -178,7 +179,7 @@ public:
     virtual bool isConnected() const;
     virtual int connectionQuality() const { return _connectionQuality; }
 
-    double batteryVoltage() const { return _batteryVoltage; }
+    virtual double batteryVoltage() const { return _batteryVoltage; }
     int batteryPercent() const { return _batteryPercent; }
     double batteryCurrent() const { return _batteryCurrent; }
     double batteryTemperature() const { return _batteryTemperature; }
@@ -276,8 +277,9 @@ public:
     int motorCount() const { return _motorCount; }
     QVariantList motorOutputs() const { return _motorOutputs; }
 
-    int missionCount() const { return _missionCount; }
-    double missionFirstWpDistance() const { return _missionFirstWpDistance; }
+    virtual int missionCount() const { return _missionCount; }
+    virtual double missionFirstWpDistance() const { return _missionFirstWpDistance; }
+    virtual double missionTotalDistance() const { return _missionTotalDistance; }
 
     double accelerometerX() const { return _accelerometerX; }
     double accelerometerY() const { return _accelerometerY; }
@@ -311,6 +313,8 @@ public:
 signals:
     /// Emitted when the parameter cache ready state changes.
     void parametersReadyChanged(bool ready);
+    /// Emitted when a watchlist parameter value changes (subscription).
+    void parameterUpdated(const QString &name, float value);
     void isConnectedChanged();
     void connectionQualityChanged();
     void batteryVoltageChanged();
@@ -370,6 +374,7 @@ signals:
     void servoOutputsChanged();
     void missionCountChanged();
     void missionFirstWpDistanceChanged();
+    void missionTotalDistanceChanged();
     void accelerometerChanged();
     void accelerometer2Changed();
     void escTelemetryChanged();
@@ -491,6 +496,7 @@ private:
 
     int _missionCount = 0;
     double _missionFirstWpDistance = -1.0;
+    double _missionTotalDistance = -1.0;
 
     double _accelerometerX = qQNaN();
     double _accelerometerY = qQNaN();
@@ -513,5 +519,6 @@ private:
     double _magFieldZ = qQNaN();
 
     QMap<QString, float> _parameterCache;
+    QVector<QMetaObject::Connection> _paramConnections;
     bool _parametersReady = false;
 };

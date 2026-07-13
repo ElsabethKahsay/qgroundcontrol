@@ -1,0 +1,169 @@
+#include "VehicleRegistry.h"
+
+#include <QDebug>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QtCore/QCryptographicHash>
+#include <QtCore/QApplicationStatic>
+#include <QtCore/QLoggingCategory>
+
+#include "Vehicle/Vehicle.h"
+#include "MultiVehicleManager.h"
+#include "utils/DatabaseManager.h"
+
+Q_APPLICATION_STATIC(VehicleRegistry, _vehicleRegistryInstance)
+
+Q_LOGGING_CATEGORY(vehicleRegistryLog, "vehicle.registry")
+
+VehicleRegistry *VehicleRegistry::instance()
+{
+    return _vehicleRegistryInstance();
+}
+
+VehicleRegistry::VehicleRegistry(QObject *parent)
+    : QObject(parent)
+{
+    connect(MultiVehicleManager::instance(), &MultiVehicleManager::vehicleAdded,
+            this, &VehicleRegistry::_onVehicleAdded);
+    connect(MultiVehicleManager::instance(), &MultiVehicleManager::vehicleRemoved,
+            this, &VehicleRegistry::_onVehicleRemoved);
+    connect(MultiVehicleManager::instance(), &MultiVehicleManager::activeVehicleChanged,
+            this, &VehicleRegistry::_onActiveVehicleChanged);
+
+    Vehicle *activeVehicle = MultiVehicleManager::instance()->activeVehicle();
+    if (activeVehicle) {
+        _extractVehicleInfo(activeVehicle);
+    }
+}
+
+void VehicleRegistry::_onVehicleAdded(Vehicle *vehicle)
+{
+    if (!vehicle) return;
+    qCDebug(vehicleRegistryLog) << "Vehicle added: sysid" << vehicle->id();
+
+    _extractVehicleInfo(vehicle);
+
+    QString json = DatabaseManager::instance().lookupVehicleByFingerprint(m_currentFingerprint);
+    if (!json.isEmpty()) {
+        QJsonObject obj = QJsonDocument::fromJson(json.toUtf8()).object();
+        m_isKnownVehicle = true;
+        m_vehicleName = obj.value(QStringLiteral("friendlyName")).toString();
+        DatabaseManager::instance().updateVehicleLastSeen(m_currentFingerprint);
+
+        qCDebug(vehicleRegistryLog) << "Known vehicle connected:" << m_vehicleName;
+        emit knownVehicleConnected(m_currentVehicleId);
+    } else {
+        m_isKnownVehicle = false;
+        m_vehicleName = QStringLiteral("UAV-%1-%2")
+                            .arg(m_currentVehicleId)
+                            .arg(m_currentFingerprint.left(8));
+
+        DatabaseManager::instance().registerNewVehicle(
+            m_currentFingerprint, m_currentVehicleId, m_currentCompid,
+            autopilotTypeString(m_currentAutopilotType),
+            vehicleTypeString(m_currentVehicleType),
+            m_currentFirmwareVersion, m_currentUid, m_currentBoardVersion,
+            m_vehicleName);
+
+        qCDebug(vehicleRegistryLog) << "New vehicle registered:" << m_vehicleName;
+        emit newVehicleRegistered(m_currentVehicleId);
+    }
+
+    emit knownVehicleChanged();
+}
+
+void VehicleRegistry::_onVehicleRemoved(Vehicle *vehicle)
+{
+    if (!vehicle) return;
+    qCDebug(vehicleRegistryLog) << "Vehicle removed: sysid" << vehicle->id();
+
+    if (!m_currentFingerprint.isEmpty()) {
+        DatabaseManager::instance().updateVehicleLastSeen(m_currentFingerprint);
+    }
+
+    m_currentVehicleId = 0;
+    m_currentFingerprint.clear();
+    m_isKnownVehicle = false;
+    m_vehicleName.clear();
+    emit currentVehicleChanged(0);
+    emit knownVehicleChanged();
+}
+
+void VehicleRegistry::_onActiveVehicleChanged(Vehicle *vehicle)
+{
+    if (vehicle) {
+        _extractVehicleInfo(vehicle);
+    } else {
+        m_currentVehicleId = 0;
+        m_currentFingerprint.clear();
+        m_isKnownVehicle = false;
+        m_vehicleName.clear();
+        emit currentVehicleChanged(0);
+        emit knownVehicleChanged();
+    }
+}
+
+void VehicleRegistry::_extractVehicleInfo(Vehicle *vehicle)
+{
+    if (!vehicle) return;
+
+    m_currentVehicleId = vehicle->id();
+    m_currentCompid = vehicle->defaultComponentId();
+    m_currentAutopilotType = static_cast<int>(vehicle->firmwareType());
+    m_currentVehicleType = static_cast<int>(vehicle->vehicleType());
+    m_currentUid = vehicle->vehicleUID();
+    m_currentBoardVersion = QString::number(vehicle->firmwareBoardProductId());
+
+    int majorVer = vehicle->firmwareMajorVersion();
+    int minorVer = vehicle->firmwareMinorVersion();
+    int patchVer = vehicle->firmwarePatchVersion();
+    m_currentFirmwareVersion = QStringLiteral("%1.%2.%3")
+                                   .arg(majorVer)
+                                   .arg(minorVer)
+                                   .arg(patchVer);
+
+    m_currentFingerprint = generateFingerprint(m_currentUid, m_currentAutopilotType, m_currentBoardVersion);
+
+    qCDebug(vehicleRegistryLog)
+        << "Vehicle fingerprint:"
+        << "\n  sysid:" << m_currentVehicleId
+        << "\n  compid:" << m_currentCompid
+        << "\n  autopilot:" << autopilotTypeString(m_currentAutopilotType)
+        << "\n  type:" << vehicleTypeString(m_currentVehicleType)
+        << "\n  firmware:" << m_currentFirmwareVersion
+        << "\n  uid:" << m_currentUid
+        << "\n  board:" << m_currentBoardVersion
+        << "\n  fingerprint:" << m_currentFingerprint;
+}
+
+QString VehicleRegistry::generateFingerprint(quint64 uid, int autopilotType, const QString &boardVersion)
+{
+    QByteArray data;
+    data.append(QString::number(uid).toUtf8());
+    data.append(QByteArray::number(autopilotType));
+    data.append(boardVersion.toUtf8());
+    return QString::fromLatin1(QCryptographicHash::hash(data, QCryptographicHash::Sha256).toHex());
+}
+
+QString VehicleRegistry::autopilotTypeString(int autopilotType)
+{
+    switch (autopilotType) {
+    case 0:  return QStringLiteral("Generic");
+    case 1:  return QStringLiteral("PX4");
+    case 2:  return QStringLiteral("ArduPilot");
+    default: return QStringLiteral("Unknown(%1)").arg(autopilotType);
+    }
+}
+
+QString VehicleRegistry::vehicleTypeString(int vehicleType)
+{
+    switch (vehicleType) {
+    case 0:  return QStringLiteral("Generic");
+    case 1:  return QStringLiteral("FixedWing");
+    case 2:  return QStringLiteral("MultiRotor");
+    case 3:  return QStringLiteral("VTOL");
+    case 4:  return QStringLiteral("Rover");
+    case 5:  return QStringLiteral("Sub");
+    default: return QStringLiteral("Unknown(%1)").arg(vehicleType);
+    }
+}

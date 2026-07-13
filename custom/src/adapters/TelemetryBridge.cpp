@@ -314,6 +314,11 @@ void TelemetryBridge::_loadParameters()
     int compId = _vehicle->defaultComponentId();
 
     _parameterCache.clear();
+    if (!_paramConnections.isEmpty()) {
+        for (auto &c : _paramConnections)
+            disconnect(c);
+        _paramConnections.clear();
+    }
     int loadedCount = 0;
 
     QStringList availableParams = paramMgr->parameterNames(compId);
@@ -328,6 +333,21 @@ void TelemetryBridge::_loadParameters()
         double val = fact->rawValue().toDouble();
         _parameterCache[name] = static_cast<float>(val);
         setProperty(name.toLatin1().constData(), val);
+        QString paramName = name;
+        _paramConnections.append(
+            connect(fact, &Fact::valueChanged, this, [this, paramName]() {
+                Vehicle *v = _vehicle;
+                if (!v) return;
+                auto *pm = v->parameterManager();
+                if (!pm) return;
+                int cid = v->defaultComponentId();
+                Fact *f = pm->getParameter(cid, paramName);
+                if (!f) return;
+                float val = f->rawValue().toFloat();
+                _parameterCache[paramName] = val;
+                setProperty(paramName.toLatin1().constData(), static_cast<double>(val));
+                emit parameterUpdated(paramName, val);
+            }));
         ++loadedCount;
     }
 
@@ -676,19 +696,40 @@ void TelemetryBridge::_updateMissionInfo()
     if (!_vehicle) return;
     auto* mgr = _vehicle->missionManager();
     if (!mgr) return;
-    int count = mgr->missionItems().size();
+    const auto &items = mgr->missionItems();
+    int count = items.size();
     if (count != _missionCount) {
         _missionCount = count;
         emit missionCountChanged();
     }
+
+    // Distance from home to first waypoint
     const QGeoCoordinate home(_homeLatitude, _homeLongitude);
     if (count > 0 && home.isValid() && !qFuzzyIsNull(_homeLatitude) && !qFuzzyIsNull(_homeLongitude)) {
-        const MissionItem* first = mgr->missionItems().first();
+        const MissionItem* first = items.first();
         double dist = home.distanceTo(first->coordinate());
         if (qAbs(dist - _missionFirstWpDistance) > 0.5) {
             _missionFirstWpDistance = dist;
             emit missionFirstWpDistanceChanged();
         }
+    }
+
+    // Total Haversine distance between consecutive waypoints
+    double totalDist = 0.0;
+    QGeoCoordinate prev;
+    bool firstValid = false;
+    for (const auto *item : items) {
+        QGeoCoordinate coord = item->coordinate();
+        if (!coord.isValid())
+            continue;
+        if (firstValid)
+            totalDist += prev.distanceTo(coord);
+        prev = coord;
+        firstValid = true;
+    }
+    if (qAbs(totalDist - _missionTotalDistance) > 0.5) {
+        _missionTotalDistance = totalDist;
+        emit missionTotalDistanceChanged();
     }
 }
 
