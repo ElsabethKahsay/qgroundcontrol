@@ -6,8 +6,8 @@
 # Application Branding
 # ----------------------------------------------------------------------------
 set(QGC_APP_NAME "PreflightQGroundControl" CACHE STRING "App Name" FORCE)
-set(QGC_APP_DESCRIPTION "UAV Preflight Checklist Plugin for QGroundControl" CACHE STRING "Application description" FORCE)
-set(QGC_APP_COPYRIGHT "Copyright (C) 2026 UAVPreflight. All rights reserved." CACHE STRING "Copyright notice" FORCE)
+set(QGC_APP_DESCRIPTION "Skywin Aeronautical Ground Control Station" CACHE STRING "Application description" FORCE)
+set(QGC_APP_COPYRIGHT "Copyright (C) 2026 Skywin Aeronautical. All rights reserved." CACHE STRING "Copyright notice" FORCE)
 set(QGC_ORG_NAME "UAVPreflight" CACHE STRING "Organization name" FORCE)
 set(QGC_ORG_DOMAIN "org.uavpreflight" CACHE STRING "Organization domain" FORCE)
 set(QGC_PACKAGE_NAME "org.uavpreflight.qgroundcontrol" CACHE STRING "Package identifier" FORCE)

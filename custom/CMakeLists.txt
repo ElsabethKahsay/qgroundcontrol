@@ -73,6 +73,8 @@ set(CUSTOM_SOURCE_REL
     src/core/AhrsHealthCheck.h
     src/core/AirspeedCheck.cpp
     src/core/AirspeedCheck.h
+    src/core/AmbientTemperatureCheck.cpp
+    src/core/AmbientTemperatureCheck.h
     src/core/ArmingGate.cpp
     src/core/ArmingGate.h
     src/core/AttitudeCheck.cpp
@@ -276,6 +278,8 @@ set(CUSTOM_SOURCE_REL
     src/utils/VideoManager.h
     src/utils/WeatherProvider.cpp
     src/utils/WeatherProvider.h
+    src/detection/VehicleRegistry.cpp
+    src/detection/VehicleRegistry.h
 )
 
 foreach(_src IN LISTS CUSTOM_SOURCE_REL)
@@ -296,6 +300,7 @@ set(CUSTOM_INCLUDE_DIRECTORIES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/adapters
     ${CMAKE_CURRENT_SOURCE_DIR}/src/controllers
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mission
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/detection
     CACHE INTERNAL "" FORCE
 )
 
@@ -329,8 +334,11 @@ if(QGC_BUILD_TESTING)
     if(_custom_test_src)
         list(APPEND CUSTOM_SOURCES ${_custom_test_src})
         set(CUSTOM_SOURCES ${CUSTOM_SOURCES} CACHE INTERNAL "" FORCE)
-        message(STATUS "QGC: PreflightPlugin tests enabled")
+        message(STATUS "QGC: PreflightPlugin tests enabled (${_custom_test_src} source files)")
     endif()
+    list(APPEND CUSTOM_INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/tests/mocks)
+    set(CUSTOM_INCLUDE_DIRECTORIES ${CUSTOM_INCLUDE_DIRECTORIES} CACHE INTERNAL "" FORCE)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tests)
 endif()
 
 message(STATUS "QGC: UAVPreflight plugin configured successfully")

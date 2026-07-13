@@ -1,16 +1,24 @@
 #include "PreflightPlugin.h"
 
+#include <QCoreApplication>
+#include <QDateTime>
 #include <QDebug>
+#include <QFontDatabase>
 #include <QJSEngine>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QTimer>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QRegularExpression>
 #include <QtCore/QApplicationStatic>
 
 #include "MultiVehicleManager.h"
 #include "QGCApplication.h"
 #include "QmlComponentInfo.h"
 #include "Vehicle/Vehicle.h"
+#include "AppSettings.h"
+#include "FactMetaData.h"
 
 Q_DECLARE_METATYPE(Vehicle*)
 
@@ -34,21 +42,21 @@ void qml_register_types_QGroundControl_VehicleSetup();
 int qInitResources_qmlcache_AnalyzeViewModule();
 int qInitResources_qmlcache_AppSettingsModule();
 int qInitResources_qmlcache_FactControlsModule();
-int qInitResources_qmlcache_FlightDisplayModule();
-int qInitResources_qmlcache_FlightMapModule();
 int qInitResources_qmlcache_MainWindowModule();
 int qInitResources_qmlcache_QGroundControlControlsModule();
-int qInitResources_qmlcache_ScreenToolsModule();
-int qInitResources_qmlcache_ToolbarModule();
+
 int qInitResources_qmlcache_VehicleSetupModule();
 
 #include "AbstractCheck.h"
 #include "adapters/TelemetryBridge.h"
 #include "core/ArmingGate.h"
 #include "core/BatteryHealthCheck.h"
+#include "core/ChecklistEngine.h"
+#include "core/ChecklistItemModel.h"
 #include "core/MissionEnergyCheck.h"
 #include "core/PowerModel.h"
 #include "core/VehicleProfileManager.h"
+#include "utils/DatabaseManager.h"
 #include "PreflightChecklistFilterModel.h"
 #include "PreflightChecklistModel.h"
 #include "PreflightManager.h"
@@ -56,6 +64,8 @@ int qInitResources_qmlcache_VehicleSetupModule();
 #include "controllers/HardwareTestController.h"
 #include "utils/Config.h"
 #include "utils/DatabaseManager.h"
+#include "detection/VehicleRegistry.h"
+#include "core/AbstractCheck.h"
 #include "utils/ExportHelper.h"
 #include "utils/WeatherProvider.h"
 
@@ -68,8 +78,6 @@ extern int qInitResources_custom();
 PreflightPlugin::PreflightPlugin(QObject *parent)
     : QGCCorePlugin(parent)
 {
-    qInitResources_custom();
-
     // Force-link all module type registrations and qmlcache objects from static libs
     qml_register_types_QGroundControl();
     qml_register_types_QGroundControl_FlightDisplay();
@@ -84,18 +92,16 @@ PreflightPlugin::PreflightPlugin(QObject *parent)
     qml_register_types_QGroundControl_ScreenTools();
     qml_register_types_QGroundControl_Vehicle();
     qInitResources_qmlcache_AnalyzeViewModule();
-    qInitResources_qmlcache_FlightMapModule();
-    qInitResources_qmlcache_FlightDisplayModule();
-    qInitResources_qmlcache_ToolbarModule();
     qInitResources_qmlcache_VehicleSetupModule();
     qInitResources_qmlcache_FactControlsModule();
     qInitResources_qmlcache_AppSettingsModule();
     qInitResources_qmlcache_QGroundControlControlsModule();
     qInitResources_qmlcache_MainWindowModule();
-    qInitResources_qmlcache_ScreenToolsModule();
-
     // Register Vehicle with QML so Q_PROPERTY(Vehicle* ...) with REQUIRED works
     qmlRegisterUncreatableType<Vehicle>("QGroundControl", 1, 0, "Vehicle", QStringLiteral("Cannot create Vehicle from QML"));
+
+    // Register custom resources last to ensure they override any duplicate stock paths
+    qInitResources_custom();
 
     qCDebug(preflightPluginLog) << "PreflightPlugin: Constructed";
 }
@@ -113,6 +119,19 @@ PreflightPlugin *PreflightPlugin::instance()
 void PreflightPlugin::init()
 {
     QGCCorePlugin::init();
+
+    int fontId = QFontDatabase::addApplicationFont(QStringLiteral(":/fonts/Abel-Regular"));
+    if (fontId < 0) {
+        qCWarning(preflightPluginLog) << "Could not load Abel-Regular font";
+    } else {
+        QStringList families = QFontDatabase::applicationFontFamilies(fontId);
+        if (!families.isEmpty()) {
+            QFont appFont(families.first());
+            appFont.setPixelSize(12);
+            qApp->setFont(appFont);
+            qCDebug(preflightPluginLog) << "Set application font to" << families.first();
+        }
+    }
 
     _preflightManager = new PreflightManager(1, this);
     _checklistModel = new PreflightChecklistModel(this);
@@ -134,6 +153,10 @@ void PreflightPlugin::init()
     _powerModel = new PowerModel(this);
     _exportHelper = new ExportHelper(this);
 
+    DatabaseManager::instance().initialize();
+
+    QCoreApplication::setApplicationName(QStringLiteral("Skywin GCS"));
+
     _vehicleProfileManager = new VehicleProfileManager(this);
     _vehicleProfileManager->setTelemetryBridge(_telemetryBridge);
 
@@ -151,12 +174,29 @@ void PreflightPlugin::init()
 
     _preflightManager->setTelemetryBridge(_telemetryBridge);
 
+    _checklistItemModel = new ChecklistItemModel(this);
+    _populateChecklistModel();
+    _checklistEngine = new ChecklistEngine(this);
+    _checklistEngine->setModel(_checklistItemModel);
+    _checklistEngine->setTelemetryBridge(_telemetryBridge);
+
     connect(_telemetryBridge, &TelemetryBridge::batteryVoltageChanged, this, [this]() {
         if (!_telemetryBridge || !_vehicleProfileManager) return;
         if (!_vehicleProfileManager->currentBatterySerial().isEmpty()) return;
         QString sysId = QStringLiteral("batt:%1").arg(_telemetryBridge->vehicle() ? _telemetryBridge->vehicle()->id() : 0);
         _vehicleProfileManager->setBatterySerial(sysId);
     });
+
+    auto *registry = VehicleRegistry::instance();
+    connect(registry, &VehicleRegistry::knownVehicleConnected,
+            this, &PreflightPlugin::_onKnownVehicleConnected);
+    connect(registry, &VehicleRegistry::newVehicleRegistered,
+            this, &PreflightPlugin::_onNewVehicleRegistered);
+
+    connect(_armingGate, &ArmingGate::gateOpened,
+            this, &PreflightPlugin::_onGateOpened);
+    connect(_armingGate, &ArmingGate::gateClosed,
+            this, &PreflightPlugin::_onGateClosed);
 
     qCDebug(preflightPluginLog) << "PreflightPlugin: init complete,"
                                 << _preflightManager->totalChecks() << "checks";
@@ -213,6 +253,13 @@ QQmlApplicationEngine *PreflightPlugin::createQmlApplicationEngine(QObject *pare
     if (_hardwareTestController) {
         qmlEngine->rootContext()->setContextProperty(QStringLiteral("HardwareTestController"), _hardwareTestController);
     }
+    if (_checklistItemModel) {
+        qmlEngine->rootContext()->setContextProperty(QStringLiteral("PreflightModel"), _checklistItemModel);
+    }
+    if (_checklistEngine) {
+        qmlEngine->rootContext()->setContextProperty(QStringLiteral("ChecklistEngine"), _checklistEngine);
+    }
+    qmlEngine->rootContext()->setContextProperty(QStringLiteral("VehicleRegistry"), VehicleRegistry::instance());
     qmlEngine->rootContext()->setContextProperty(QStringLiteral("Database"), &DatabaseManager::instance());
 
     for (int i = 0; i < 8; ++i) {
@@ -222,6 +269,23 @@ QQmlApplicationEngine *PreflightPlugin::createQmlApplicationEngine(QObject *pare
 
     qCDebug(preflightPluginLog) << "PreflightPlugin: QML context properties and singletons registered";
     return qmlEngine;
+}
+
+void PreflightPlugin::_populateChecklistModel()
+{
+    if (!_checklistItemModel || !_preflightManager)
+        return;
+    QJsonArray items;
+    const auto checks = _preflightManager->checks();
+    for (const auto *check : checks) {
+        QJsonObject obj;
+        obj[QStringLiteral("id")] = check->id();
+        obj[QStringLiteral("label")] = check->label();
+        obj[QStringLiteral("isManual")] = (check->checkType() == CheckType::Manual);
+        obj[QStringLiteral("category")] = check->categoryInt();
+        items.append(obj);
+    }
+    _checklistItemModel->loadFromJson(items);
 }
 
 void PreflightPlugin::_onActiveVehicleChanged(Vehicle *vehicle)
@@ -234,7 +298,94 @@ void PreflightPlugin::_onActiveVehicleChanged(Vehicle *vehicle)
     } else {
         _telemetryBridge->setVehicle(nullptr);
         _weatherRefreshTimer.stop();
+        if (_checklistEngine)
+            _checklistEngine->stop();
     }
+}
+
+void PreflightPlugin::_onKnownVehicleConnected(int vehicleId)
+{
+    Q_UNUSED(vehicleId)
+    if (!_preflightManager) return;
+
+    QString fingerprint = VehicleRegistry::instance()->currentFingerprint();
+    if (fingerprint.isEmpty()) return;
+
+    QString configJson = DatabaseManager::instance().loadVehicleConfig(fingerprint);
+    if (configJson.isEmpty()) return;
+
+    QJsonDocument doc = QJsonDocument::fromJson(configJson.toUtf8());
+    if (!doc.isObject()) return;
+
+    QJsonObject config = doc.object();
+    for (auto it = config.begin(); it != config.end(); ++it) {
+        AbstractCheck *check = _preflightManager->checkById(it.key());
+        if (check) {
+            QJsonObject checkConfig = it.value().toObject();
+            check->applyVehicleConfig(checkConfig);
+        }
+    }
+    qCDebug(preflightPluginLog) << "Vehicle config loaded for fingerprint" << fingerprint.left(16);
+}
+
+void PreflightPlugin::_onNewVehicleRegistered(int vehicleId)
+{
+    Q_UNUSED(vehicleId)
+    qCDebug(preflightPluginLog) << "New vehicle registered:" << vehicleId;
+
+    // Save initial vehicle config with known compass orientation
+    QString fingerprint = VehicleRegistry::instance()->currentFingerprint();
+    if (fingerprint.isEmpty()) return;
+
+    AbstractCheck *compassCheck = _preflightManager
+        ? _preflightManager->checkById(QStringLiteral("nav.compass.orientation"))
+        : nullptr;
+    if (!compassCheck) return;
+
+    QJsonObject config;
+    QJsonObject compassConfig;
+
+    // Determine the current actual orientation from the check's current value
+    // Format: "CAL_MAG0_ROT=Yaw180 (4)" → extract rotation value (4)
+    QString cv = compassCheck->getCurrentValueString();
+    QRegularExpression re(QStringLiteral("\\((\\d+)\\)$"));
+    auto match = re.match(cv);
+    if (match.hasMatch()) {
+        int rot = match.captured(1).toInt();
+        if (rot > 0) {
+            compassConfig[QStringLiteral("expectedRotation")] = rot;
+            config[QStringLiteral("nav.compass.orientation")] = compassConfig;
+            DatabaseManager::instance().saveVehicleConfig(
+                fingerprint,
+                QString::fromUtf8(QJsonDocument(config).toJson(QJsonDocument::Compact)));
+            qCDebug(preflightPluginLog)
+                << "Saved initial compass config for" << fingerprint.left(16)
+                << "expectedRotation =" << rot;
+        }
+    }
+}
+
+void PreflightPlugin::_onGateOpened()
+{
+    if (_currentSessionId >= 0) return;
+    QString fp = VehicleRegistry::instance()->currentFingerprint();
+    if (fp.isEmpty()) return;
+    _currentSessionId = DatabaseManager::instance().startFlightSession(fp, QString());
+    _sessionStartTime = QDateTime::currentDateTime();
+    qCDebug(preflightPluginLog) << "Flight session started:" << _currentSessionId;
+}
+
+void PreflightPlugin::_onGateClosed(const QString &reason)
+{
+    Q_UNUSED(reason)
+    if (_currentSessionId < 0) return;
+    double duration = _sessionStartTime.isValid()
+        ? _sessionStartTime.secsTo(QDateTime::currentDateTime())
+        : 0.0;
+    DatabaseManager::instance().endFlightSession(_currentSessionId, duration);
+    DatabaseManager::instance().incrementBatteryCycle(_currentSessionId);
+    qCDebug(preflightPluginLog) << "Flight session ended:" << _currentSessionId << "duration:" << duration << "s";
+    _currentSessionId = -1;
 }
 
 void PreflightPlugin::_setupForVehicle(Vehicle *vehicle)
@@ -246,6 +397,8 @@ void PreflightPlugin::_setupForVehicle(Vehicle *vehicle)
         _hardwareTestController->setVehicle(vehicle);
     }
     _preflightManager->startEvaluation(1000);
+    if (_checklistEngine)
+        _checklistEngine->start();
 
     if (_weatherProvider) {
         auto *settings = PreflightSettingsManager::instance();
@@ -301,14 +454,173 @@ const QVariantList &PreflightPlugin::analyzePages()
                 QUrl(QStringLiteral("qrc:/qml/cpts/PreflightChecklistView.qml")),
                 QUrl(),
                 this)));
+
+        _analyzePages.append(QVariant::fromValue(
+            new QmlComponentInfo(
+                tr("Vehicles"),
+                QUrl(QStringLiteral("qrc:/qml/analyze/VehiclesPage.qml")),
+                QUrl(),
+                this)));
     }
     return _analyzePages;
 }
 
 void PreflightPlugin::paletteOverride(const QString &colorName, QGCPalette::PaletteColorInfo_t &colorInfo)
 {
-    Q_UNUSED(colorName)
-    Q_UNUSED(colorInfo)
+    // ══════════════════════════════════════════════════════════════════════
+    //  Skywin GCS Theme — Steel Blue accent (#3B82A0)
+    //  Near-black backgrounds, off-white text, single accent throughout.
+    //  Safety colors (colorGreen, colorRed, colorYellow) are NOT overridden.
+    //  colorOrange replaced with accent for decorative use.
+    //  Dark theme only — light theme left at defaults.
+    // ══════════════════════════════════════════════════════════════════════
+
+    static const QColor kAccent         ("#3B82A0");   // steel blue — ONE value
+    static const QColor kAccentDim      ("#2A5F78");   // darker shade for disabled
+    static const QColor kBgWindow       ("#0B0D12");   // near-black with blue tint
+    static const QColor kBgShade        ("#080A0F");
+    static const QColor kBgShadeDark    ("#060810");
+    static const QColor kBgShadeLight   ("#12151C");
+    static const QColor kTextEnabled    ("#E0E4EC");   // slightly off-white
+    static const QColor kTextDisabled   ("#5A6272");
+    static const QColor kTextMuted      ("#6B7A8F");   // muted blue-grey for idle icons
+    static const QColor kBtnBg          ("#0E1018");
+    static const QColor kBtnBorder      ("#1A1E28");
+    static const QColor kBtnBorderAct   ("#3B82A0");
+
+    // ── Backgrounds ────────────────────────────────────────────────────────
+    if (colorName == QStringLiteral("window")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kBgWindow;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = kBgWindow;
+    } else if (colorName == QStringLiteral("windowShade")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kBgShade;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = kBgShade;
+    } else if (colorName == QStringLiteral("windowShadeDark")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kBgShadeDark;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = kBgShadeDark;
+    } else if (colorName == QStringLiteral("windowShadeLight")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kBgShadeLight;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = kBgShadeLight;
+
+    // ── Text ───────────────────────────────────────────────────────────────
+    } else if (colorName == QStringLiteral("text")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kTextDisabled;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = kTextEnabled;
+    } else if (colorName == QStringLiteral("warningText")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kAccentDim;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = kAccent;
+
+    // ── Buttons ────────────────────────────────────────────────────────────
+    } else if (colorName == QStringLiteral("button")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kBtnBg;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = kBtnBg;
+    } else if (colorName == QStringLiteral("buttonBorder")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kBtnBorder;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = kBtnBorderAct;
+    } else if (colorName == QStringLiteral("buttonText")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kTextDisabled;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = kTextMuted;
+    } else if (colorName == QStringLiteral("buttonHighlight")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kAccentDim;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = kAccent;
+    } else if (colorName == QStringLiteral("buttonHighlightText")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kTextDisabled;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = kAccent;
+    } else if (colorName == QStringLiteral("primaryButton")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kAccentDim;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = kAccent;
+    } else if (colorName == QStringLiteral("primaryButtonText")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kTextEnabled;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = QColor("#000000");
+
+    // ── Text fields ────────────────────────────────────────────────────────
+    } else if (colorName == QStringLiteral("textField")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kBgShadeDark;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = kBgWindow;
+    } else if (colorName == QStringLiteral("textFieldText")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kTextDisabled;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = kTextEnabled;
+
+    // ── Map ────────────────────────────────────────────────────────────────
+    } else if (colorName == QStringLiteral("mapButton")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kBgWindow;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = kBgWindow;
+    } else if (colorName == QStringLiteral("mapButtonHighlight")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kAccentDim;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = kAccent;
+    } else if (colorName == QStringLiteral("mapIndicator")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kAccentDim;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = kAccent;
+    } else if (colorName == QStringLiteral("mapIndicatorChild")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kAccentDim;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = kAccent;
+
+    // ── Accent colors — replace decorative orange with accent ─────────────
+    } else if (colorName == QStringLiteral("colorOrange")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kAccentDim;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = kAccent;
+    } else if (colorName == QStringLiteral("colorBlue")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kAccentDim;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = kAccent;
+    } else if (colorName == QStringLiteral("colorGrey")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = QColor("#4B5563");
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = QColor("#8B95A8");
+
+    // ── Branding — accent-derived ──────────────────────────────────────────
+    } else if (colorName == QStringLiteral("brandingPurple")) {
+        colorInfo[QGCPalette::Light][QGCPalette::ColorGroupDisabled]  = kAccentDim;
+        colorInfo[QGCPalette::Light][QGCPalette::ColorGroupEnabled]   = kAccent;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]   = kAccentDim;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]    = kAccent;
+    } else if (colorName == QStringLiteral("brandingBlue")) {
+        colorInfo[QGCPalette::Light][QGCPalette::ColorGroupDisabled]  = kAccentDim;
+        colorInfo[QGCPalette::Light][QGCPalette::ColorGroupEnabled]   = kAccent;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]   = kAccentDim;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]    = kAccent;
+
+    // ── Toolbar ────────────────────────────────────────────────────────────
+    } else if (colorName == QStringLiteral("toolbarBackground")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kBgShadeDark;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = QColor("#090B10");
+    } else if (colorName == QStringLiteral("toolStripHoverColor")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kBgShadeLight;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = QColor("#1E3040");
+
+    // ── Status text ────────────────────────────────────────────────────────
+    } else if (colorName == QStringLiteral("statusPassedText")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kTextDisabled;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = kTextEnabled;
+    } else if (colorName == QStringLiteral("statusFailedText")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kAccentDim;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = kAccent;
+    } else if (colorName == QStringLiteral("statusPendingText")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = QColor("#4B5563");
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = QColor("#8B95A8");
+
+    // ── Mission editor ────────────────────────────────────────────────────
+    } else if (colorName == QStringLiteral("missionItemEditor")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kBgWindow;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = kBgShadeLight;
+    } else if (colorName == QStringLiteral("groupBorder")) {
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kBtnBorder;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = kBtnBorderAct;
+    }
+}
+
+bool PreflightPlugin::adjustSettingMetaData(const QString &settingsGroup, FactMetaData &metaData)
+{
+    if (settingsGroup == AppSettings::settingsGroup) {
+        if (metaData.name() == AppSettings::appFontPointSizeName) {
+            QVariant curDefault = metaData.rawDefaultValue();
+            double scaledDefault = curDefault.toDouble() * 0.75;
+            double minVal = metaData.rawMin().toDouble();
+            if (scaledDefault < minVal)
+                scaledDefault = minVal;
+            metaData.setRawDefaultValue(scaledDefault);
+            return true;
+        }
+    }
+    return QGCCorePlugin::adjustSettingMetaData(settingsGroup, metaData);
 }
 
 bool PreflightPlugin::mavlinkMessage(Vehicle *vehicle, LinkInterface *link, const mavlink_message_t &message)

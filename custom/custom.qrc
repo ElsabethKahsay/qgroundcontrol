@@ -1,6 +1,12 @@
 <RCC>
     <qresource prefix="custom/img">
-        <file alias="CustomAppIcon.png">res/Images/CustomAppIcon.png</file>
+        <file alias="CustomAppIcon.jpg">res/Images/CustomAppIcon.jpg</file>
+    </qresource>
+    <qresource prefix="/fonts">
+        <file alias="Abel-Regular">res/fonts/Abel-Regular.ttf</file>
+    </qresource>
+    <qresource prefix="/qml">
+        <file alias="QGroundControl/ScreenTools/ScreenTools.qml">qml/QGroundControl/ScreenTools/ScreenTools.qml</file>
     </qresource>
     <qresource prefix="custom">
         <file alias="TestPage.qml">res/TestPage.qml</file>
@@ -9,15 +15,18 @@
         <file alias="MainStatusIndicator.qml">qml/MainStatusIndicator.qml</file>
         <file alias="MainToolBarIndicators.qml">qml/MainToolBarIndicators.qml</file>
     </qresource>
-    <qresource prefix="/qml/QGroundControl/FlyView">
-        <file alias="FlyViewCustomLayer.qml">qml/FlyViewCustomLayer.qml</file>
-        <file alias="FlyViewPreFlightChecklistPopup.qml">qml/FlyViewPreFlightChecklistPopup.qml</file>
-    </qresource>
     <qresource prefix="/qml/QGroundControl/FlightDisplay">
         <file alias="FlyView.qml">qml/FlyView.qml</file>
+        <file alias="FlyViewCustomLayer.qml">qml/FlyViewCustomLayer.qml</file>
+        <file alias="FlyViewPreFlightChecklistPopup.qml">qml/FlyViewPreFlightChecklistPopup.qml</file>
+        <file alias="FlyViewWidgetLayer.qml">qml/FlyViewWidgetLayer.qml</file>
+        <file alias="FlyViewTelemetryStrip.qml">qml/cpts/FlyViewTelemetryStrip.qml</file>
     </qresource>
     <qresource prefix="/qml/QGroundControl/Toolbar">
         <file alias="MainStatusIndicator.qml">qml/MainStatusIndicator.qml</file>
+    </qresource>
+    <qresource prefix="/qml/QGroundControl/Controls">
+        <file alias="FlyViewToolBar.qml">qml/QGroundControl/Controls/FlyViewToolBar.qml</file>
     </qresource>
     <qresource prefix="/qml/QGroundControl/FlightMap">
         <file alias="QGCVideoBackground.qml">qml/QGCVideoBackground.qml</file>
@@ -35,11 +44,15 @@
         <file alias="TemplateManager.qml">qml/pages/TemplateManager.qml</file>
         <file alias="PostFlightSummary.qml">qml/pages/PostFlightSummary.qml</file>
         <file alias="PreflightSettings.qml">qml/pages/PreflightSettings.qml</file>
+        <file alias="VehicleManagement.qml">qml/pages/VehicleManagement.qml</file>
     </qresource>
     <qresource prefix="qml/singletons">
         <file alias="Colors.qml">qml/singletons/Colors.qml</file>
         <file alias="Config.qml">qml/singletons/Config.qml</file>
         <file alias="VehicleTelemetry.qml">qml/singletons/VehicleTelemetry.qml</file>
+    </qresource>
+    <qresource prefix="qml/analyze">
+        <file alias="VehiclesPage.qml">qml/analyze/VehiclesPage.qml</file>
     </qresource>
     <qresource prefix="qml/cpts">
         <file alias="FlyViewTelemetryStrip.qml">qml/cpts/FlyViewTelemetryStrip.qml</file>
@@ -67,6 +80,9 @@
         <file alias="WeatherPanel.qml">qml/cpts/WeatherPanel.qml</file>
         <file alias="PriorityFixPanel.qml">qml/cpts/PriorityFixPanel.qml</file>
         <file alias="ArmGatePanel.qml">qml/cpts/ArmGatePanel.qml</file>
+    </qresource>
+    <qresource prefix="custom/brand">
+        <file alias="logo">res/Images/white_bg_logo.jpg</file>
     </qresource>
     <qresource prefix="qml/mission">
         <file alias="AddWaypointByBearingDialog.qml">qml/mission/AddWaypointByBearingDialog.qml</file>
