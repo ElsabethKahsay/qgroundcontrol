@@ -77,6 +77,7 @@ Rectangle {
                                            ? activeVehicle.batteries.get(0).percentRemaining.rawValue : -1
     readonly property real   _batV:    activeVehicle && activeVehicle.batteries && activeVehicle.batteries.count > 0
                                            ? activeVehicle.batteries.get(0).voltage.rawValue : 0
+    readonly property real   _distHome: activeVehicle ? activeVehicle.distanceToHome.rawValue : 0
 
     // ── Color helpers ────────────────────────────────────────────────
     function _battColor(p) { return p < 0 ? _label : p >= 50 ? _good : p >= 20 ? _warn : _crit }
@@ -228,6 +229,12 @@ Rectangle {
             val: (_rssi > 0 && _rssi <= 100) ? _rssi + "%" : "N/A"
             valColor: _rssiColor(_rssi)
         }
+
+        Rectangle { width: parent.width; height: 1; color: _divider }
+
+        // ── Navigation ───────────────────────────────────────────────
+        TelRow { lbl: "FROM HOME"; val: _distHome.toFixed(0) + " m"; valColor: _info }
+        TelRow { lbl: "TO TARGET"; val: "--"; valColor: _label }
     }
 
     // ═══════════════════════  RESIZE HANDLE  ════════════════════════

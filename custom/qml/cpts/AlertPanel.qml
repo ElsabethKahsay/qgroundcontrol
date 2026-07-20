@@ -120,7 +120,7 @@ Rectangle {
         }
 
         CustomButton {
-            text: "Close Alerts"
+            text: qsTr("Close Alerts")
             anchors.horizontalCenter: parent.horizontalCenter
             width: parent.width
             onClicked: root.close()

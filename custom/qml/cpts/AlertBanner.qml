@@ -86,7 +86,7 @@ Rectangle {
         }
 
         ToolButton {
-            text: "\u2715"
+            text: qsTr("\u2715")
             font.pixelSize: 12
             onClicked: root.dismissed()
             contentItem: Text {

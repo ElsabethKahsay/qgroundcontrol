@@ -28,7 +28,7 @@ Item {
                 spacing: 8
 
                 Text {
-                    text: "Weather"
+                    text: qsTr("Weather")
                     font.pixelSize: Config.fontSizeH3
                     font.bold: true
                     color: Colors.textPrimary
@@ -45,7 +45,7 @@ Item {
                 Item { Layout.fillWidth: true }
 
                 CustomButton {
-                    text: "\u21bb"
+                    text: qsTr("\u21bb")
                     implicitWidth: 28
                     implicitHeight: 28
                     baseColor: Colors.surface
@@ -56,7 +56,7 @@ Item {
                             WeatherProvider.fetchWeather(VehicleTelemetry.gpsLatitude, VehicleTelemetry.gpsLongitude)
                     }
                     ToolTip.visible: hovered
-                    ToolTip.text: "Refresh weather"
+                    ToolTip.text: qsTr("Refresh weather")
                 }
             }
 
@@ -213,7 +213,7 @@ Item {
                 wrapMode: Text.WordWrap
                 width: parent.width
                 ToolTip.visible: mouseArea.containsMouse
-                ToolTip.text: "Latest METAR for station"
+                ToolTip.text: qsTr("Latest METAR for station")
                 MouseArea {
                     id: mouseArea
                     anchors.fill: parent
@@ -228,7 +228,7 @@ Item {
 
                 TextField {
                     id: icaoInput
-                    placeholderText: "ICAO (e.g. KLAX)"
+                    placeholderText: qsTr("ICAO (e.g. KLAX)")
                     font.pixelSize: Config.fontSizeSmall
                     maximumLength: 4
                     implicitWidth: 100
@@ -242,7 +242,7 @@ Item {
                 }
 
                 CustomButton {
-                    text: "METAR"
+                    text: qsTr("METAR")
                     implicitHeight: 24
                     font.pixelSize: Config.fontSizeSmall
                     baseColor: Colors.surface
@@ -251,7 +251,7 @@ Item {
                 }
 
                 CustomButton {
-                    text: "NOTAM"
+                    text: qsTr("NOTAM")
                     implicitHeight: 24
                     font.pixelSize: Config.fontSizeSmall
                     baseColor: Colors.surface
@@ -297,7 +297,7 @@ Item {
             }
 
             Text {
-                text: "No active NOTAMs"
+                text: qsTr("No active NOTAMs")
                 font.pixelSize: Config.fontSizeSmall
                 color: Colors.textSecondary
                 visible: WeatherProvider.notams.length === 0 && !WeatherProvider.loading

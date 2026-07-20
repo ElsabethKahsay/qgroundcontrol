@@ -24,7 +24,7 @@ Rectangle {
         visible: !linkActive
 
         Text {
-            text: "No Video Stream"
+            text: qsTr("No Video Stream")
             color: Colors.textSecondary
             font.pixelSize: Config.fontSizeBody
             anchors.horizontalCenter: parent.horizontalCenter
@@ -93,7 +93,7 @@ Rectangle {
         visible: linkActive
 
         Button {
-            text: "Test Gimbal"
+            text: qsTr("Test Gimbal")
             onClicked: {
                 VideoManager.startGimbalTest()
                 if (Window.window && Window.window.mainStackView) {

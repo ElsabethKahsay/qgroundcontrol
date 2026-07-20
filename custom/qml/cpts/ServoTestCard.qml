@@ -15,7 +15,7 @@ Rectangle {
                  : Colors.border
     border.width: status === "passed" || status === "failed" || isRunning ? 2 : 1
 
-    property string title: "Control Surface Sweep"
+    property string title: qsTr("Control Surface Sweep")
     property string status: "pending"
     property string evaluationMessage: ""
     property string progressText: ""
@@ -118,7 +118,7 @@ Rectangle {
 
             Label {
                 anchors.centerIn: parent
-                text: "Vehicle is ARMED \u2014 disarm before sweep"
+                text: qsTr("Vehicle is ARMED \u2014 disarm before sweep")
                 color: Colors.background
                 font.pixelSize: 13
                 font.bold: true
@@ -135,7 +135,7 @@ Rectangle {
 
             Label {
                 anchors.centerIn: parent
-                text: "Re-arm failed \u2014 arm manually"
+                text: qsTr("Re-arm failed \u2014 arm manually")
                 color: Colors.background
                 font.pixelSize: 13
                 font.bold: true

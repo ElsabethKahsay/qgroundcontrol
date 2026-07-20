@@ -145,7 +145,7 @@ Rectangle {
 
             Label {
                 visible: root.reArmFailed
-                text: "Re-arm failed"
+                text: qsTr("Re-arm failed")
                 color: Colors.error
                 font.pixelSize: Config.fontSizeSmall
                 font.bold: true

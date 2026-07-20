@@ -21,7 +21,7 @@ Dialog {
 
     signal reviewChecksRequested()
 
-    title: "Arm Gate — Preflight Review"
+    title: qsTr("Arm Gate — Preflight Review")
     modal: true
     anchors.centerIn: parent
     width: Math.min(520, parent.width * 0.92)
@@ -48,7 +48,7 @@ Dialog {
             spacing: Config.spacingSmall
 
             Text {
-                text: "\u26A0"
+                text: qsTr("\u26A0")
                 font.pixelSize: 20
                 color: Colors.error
             }
@@ -106,7 +106,7 @@ Dialog {
                         width: parent.width
                         spacing: Config.spacingSmall
                         Text {
-                            text: "\u2717"
+                            text: qsTr("\u2717")
                             font.pixelSize: 12
                             color: Colors.error
                         }
@@ -142,7 +142,7 @@ Dialog {
                 spacing: Config.spacingSmall
 
                 Text {
-                    text: "\u26A0 Override will bypass all safety gates"
+                    text: qsTr("\u26A0 Override will bypass all safety gates")
                     font.pixelSize: Config.fontSizeSmall
                     font.bold: true
                     color: Colors.checkWarn
@@ -159,7 +159,7 @@ Dialog {
             Layout.fillWidth: true
 
             Text {
-                text: "Pilot Name:"
+                text: qsTr("Pilot Name:")
                 font.pixelSize: Config.fontSizeBody
                 color: Colors.textPrimary
                 Layout.alignment: Qt.AlignRight
@@ -167,7 +167,7 @@ Dialog {
             TextField {
                 id: pilotNameField
                 Layout.fillWidth: true
-                placeholderText: "Enter pilot name"
+                placeholderText: qsTr("Enter pilot name")
                 font.pixelSize: Config.fontSizeBody
                 color: Colors.textPrimary
                 background: Rectangle {
@@ -179,7 +179,7 @@ Dialog {
             }
 
             Text {
-                text: "Reason:"
+                text: qsTr("Reason:")
                 font.pixelSize: Config.fontSizeBody
                 color: Colors.textPrimary
                 Layout.alignment: Qt.AlignRight
@@ -187,7 +187,7 @@ Dialog {
             TextField {
                 id: reasonField
                 Layout.fillWidth: true
-                placeholderText: "Override reason"
+                placeholderText: qsTr("Override reason")
                 font.pixelSize: Config.fontSizeBody
                 color: Colors.textPrimary
                 background: Rectangle {
@@ -204,7 +204,7 @@ Dialog {
             spacing: Config.spacingMedium
 
             Button {
-                text: "Review Checks"
+                text: qsTr("Review Checks")
                 font.pixelSize: Config.fontSizeSmall
                 Layout.preferredHeight: 36
                 Layout.preferredWidth: 120
@@ -217,7 +217,7 @@ Dialog {
             Item { Layout.fillWidth: true }
 
             Button {
-                text: "Cancel"
+                text: qsTr("Cancel")
                 font.pixelSize: Config.fontSizeSmall
                 Layout.preferredHeight: 36
                 Layout.preferredWidth: 80
@@ -226,7 +226,7 @@ Dialog {
 
             Button {
                 id: overrideBtn
-                text: "Acknowledge & Arm"
+                text: qsTr("Acknowledge & Arm")
                 font.pixelSize: Config.fontSizeSmall
                 font.bold: true
                 highlighted: true

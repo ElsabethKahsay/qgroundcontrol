@@ -43,7 +43,7 @@ Rectangle {
         ColumnLayout {
             spacing: 0
             Text {
-                text: "Arming Gate"
+                text: qsTr("Arming Gate")
                 font.pixelSize: Config.fontSizeSmall
                 font.bold: true
                 color: Colors.textPrimary
@@ -95,7 +95,7 @@ Rectangle {
             visible: !gateOpen
             Text {
                 anchors.centerIn: parent
-                text: "Override"
+                text: qsTr("Override")
                 font.pixelSize: 11
                 font.bold: true
                 color: Colors.background
@@ -115,7 +115,7 @@ Rectangle {
             color: Colors.warning
             Text {
                 anchors.centerIn: parent
-                text: "Force Arm"
+                text: qsTr("Force Arm")
                 font.pixelSize: 11
                 font.bold: true
                 color: Colors.background

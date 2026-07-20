@@ -33,7 +33,7 @@ AnalyzePage {
                 Item { Layout.fillWidth: true }
 
                 Button {
-                    text: "↻ Refresh"
+                    text: qsTr("↻ Refresh")
                     onClicked: refresh()
                     flat: true
                 }
@@ -129,7 +129,7 @@ AnalyzePage {
                                     }
 
                                     Button {
-                                        text: "UID"
+                                        text: qsTr("UID")
                                         onClicked: {
                                             uidDialog.fp = modelData.fingerprint || "N/A"
                                             uidDialog.uid = modelData.deviceUid || "N/A"
@@ -143,7 +143,7 @@ AnalyzePage {
 
                             Dialog {
                                 id: uidDialog
-                                title: "Vehicle Details"
+                                title: qsTr("Vehicle Details")
                                 standardButtons: Dialog.Ok
                                 modal: true
                                 x: Math.round((parent.width - width) / 2)

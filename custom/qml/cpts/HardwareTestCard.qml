@@ -9,7 +9,7 @@ Rectangle {
     color: Colors.surface
     radius: Config.radiusMedium
     
-    property string title: "Hardware Test"
+    property string title: qsTr("Hardware Test")
     property string status: "pending"
     
     Row {

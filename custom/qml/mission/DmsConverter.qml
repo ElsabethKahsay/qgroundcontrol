@@ -69,7 +69,7 @@ Rectangle {
             spacing: 8
 
             Text {
-                text: "DMS Converter"
+                text: qsTr("DMS Converter")
                 font.pixelSize: 18
                 font.bold: true
                 color: "#FFFFFF"
@@ -110,7 +110,7 @@ Rectangle {
                     spacing: 8
 
                     Text {
-                        text: "Decimal Degrees"
+                        text: qsTr("Decimal Degrees")
                         font.pixelSize: 14
                         font.bold: true
                         color: "#E91E63"
@@ -121,7 +121,7 @@ Rectangle {
                         id: latDecimalField
                         Layout.fillWidth: true
                         Layout.preferredHeight: 32
-                        text: "33.125055"
+                        text: qsTr("33.125055")
                         color: "#FFFFFF"
                         font.pixelSize: 14
                         font.family: "monospace"
@@ -139,7 +139,7 @@ Rectangle {
                         id: lonDecimalField
                         Layout.fillWidth: true
                         Layout.preferredHeight: 32
-                        text: "118.852360"
+                        text: qsTr("118.852360")
                         color: "#FFFFFF"
                         font.pixelSize: 14
                         font.family: "monospace"
@@ -213,7 +213,7 @@ Rectangle {
                     spacing: 8
 
                     Text {
-                        text: "Degrees Minutes Seconds"
+                        text: qsTr("Degrees Minutes Seconds")
                         font.pixelSize: 14
                         font.bold: true
                         color: "#9B59B6"

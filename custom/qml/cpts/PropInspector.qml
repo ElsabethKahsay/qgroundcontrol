@@ -35,7 +35,7 @@ Rectangle {
             spacing: Config.spacingSmall
 
             Text {
-                text: "\u2699 Propeller Inspection"
+                text: qsTr("\u2699 Propeller Inspection")
                 font.pixelSize: Config.fontSizeH2
                 font.bold: true
                 color: Colors.accent
@@ -61,7 +61,7 @@ Rectangle {
         }
 
         Text {
-            text: "Visually inspect each propeller for cracks, chips, and secure mounting"
+            text: qsTr("Visually inspect each propeller for cracks, chips, and secure mounting")
             font.pixelSize: Config.fontSizeSmall
             color: Colors.textSecondary
             wrapMode: Text.WordWrap

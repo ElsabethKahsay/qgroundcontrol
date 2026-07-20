@@ -24,7 +24,7 @@ Item {
     property real minValue: 0
     property real maxValue: 100
     property string unit: ""
-    property string label: "GAUGE"
+    property string label: qsTr("GAUGE")
     property int precision: 1           // decimal places shown
 
     property color arcColor: Colors.primary

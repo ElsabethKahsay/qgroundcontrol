@@ -29,7 +29,7 @@ Dialog {
         return waypointMath.bearingBetweenCoordinates(previewCoord, ref)
     }
 
-    title: "Add Waypoint by Bearing & Distance"
+    title: qsTr("Add Waypoint by Bearing & Distance")
     modal: true
     anchors.centerIn: parent
     width: Math.min(560, parent.width * 0.92)
@@ -51,7 +51,7 @@ Dialog {
         RowLayout {
             anchors.fill: parent; anchors.margins: 12
             Text {
-                text: "\u279C Add Waypoint"
+                text: qsTr("\u279C Add Waypoint")
                 font.pixelSize: 16; font.bold: true; color: "#FFFFFF"
             }
         }
@@ -73,7 +73,7 @@ Dialog {
                 contentItem: Text { text: refCombo.displayText; color: "#FFFFFF"; verticalAlignment: Text.AlignVCenter; leftPadding: 8 }
             }
             Button {
-                text: "\u21C4"
+                text: qsTr("\u21C4")
                 font.pixelSize: 14
                 implicitWidth: 32; implicitHeight: 32
                 background: Rectangle { color: "#2D1B4E"; border.color: "#E91E63"; border.width: 1; radius: 4 }
@@ -237,7 +237,7 @@ Dialog {
             Layout.fillWidth: true; spacing: 8
             Item { Layout.fillWidth: true }
             Button {
-                text: "Cancel"
+                text: qsTr("Cancel")
                 Layout.preferredHeight: 36; Layout.preferredWidth: 80
                 background: Rectangle { color: "#2D1B4E"; border.color: "#9B59B6"; border.width: 1; radius: 4 }
                 contentItem: Text { text: "Cancel"; color: "#FFFFFF"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
@@ -245,7 +245,7 @@ Dialog {
             }
             Button {
                 id: addBtn
-                text: "Add Waypoint"
+                text: qsTr("Add Waypoint")
                 highlighted: true
                 Layout.preferredHeight: 36; Layout.preferredWidth: 120
                 background: Rectangle { color: "#E91E63"; radius: 4 }

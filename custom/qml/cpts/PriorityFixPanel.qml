@@ -166,7 +166,7 @@ ColumnLayout {
             spacing: Config.spacingSmall
 
             Text {
-                text: "Quick Actions:"
+                text: qsTr("Quick Actions:")
                 font.pixelSize: Config.fontSizeSmall
                 font.bold: true
                 color: Colors.textSecondary
@@ -183,7 +183,7 @@ ColumnLayout {
                 border.width: 1
                 Text {
                     anchors.centerIn: parent
-                    text: "Run All Auto"
+                    text: qsTr("Run All Auto")
                     font.pixelSize: 9
                     font.bold: true
                     color: Colors.success
@@ -204,7 +204,7 @@ ColumnLayout {
                 border.width: 1
                 Text {
                     anchors.centerIn: parent
-                    text: "Override Gate"
+                    text: qsTr("Override Gate")
                     font.pixelSize: 9
                     font.bold: true
                     color: Colors.background

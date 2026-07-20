@@ -20,7 +20,7 @@ Item {
         spacing: 6
 
         Text {
-            text: "Motor Outputs"
+            text: qsTr("Motor Outputs")
             font.pixelSize: Config.fontSizeH3
             font.bold: true
             color: Colors.textPrimary
@@ -121,7 +121,7 @@ Item {
         }
 
         Text {
-            text: "No motor data — connect to vehicle"
+            text: qsTr("No motor data — connect to vehicle")
             font.pixelSize: Config.fontSizeSmall
             color: Colors.textSecondary
             visible: barRepeater.count === 0
