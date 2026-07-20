@@ -16,6 +16,7 @@ void PreflightChecklistFilterModel::setCategoryId(int id)
     if (m_categoryId != id) {
         m_categoryId = id;
         emit categoryIdChanged();
+        invalidateFilter();
         beginResetModel();
         endResetModel();
     }

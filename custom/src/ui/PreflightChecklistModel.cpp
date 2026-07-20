@@ -61,7 +61,7 @@ QVariant PreflightChecklistModel::data(const QModelIndex &index, int role) const
             if (chk->statusInt() == 1) return QStringLiteral("Test Passed \u2713");
             if (chk->statusInt() == 2) return QStringLiteral("Test Failed \u2014 Retry");
             if (chk->id() == QStringLiteral("propulsion.motors.spin"))
-                return QStringLiteral("Run Motor Test");
+                return QStringLiteral("Motor Test Panel");
             return QStringLiteral("Run %1").arg(chk->label());
         }
         return QString();
@@ -201,7 +201,7 @@ QVariantMap PreflightChecklistModel::get(int row) const
         else if (chk->statusInt() == 2)
             map[QStringLiteral("actionButtonText")] = QStringLiteral("Test Failed \u2014 Retry");
         else if (chk->id() == QStringLiteral("propulsion.motors.spin"))
-            map[QStringLiteral("actionButtonText")] = QStringLiteral("Run Motor Test");
+            map[QStringLiteral("actionButtonText")] = QStringLiteral("Motor Test Panel");
         else
             map[QStringLiteral("actionButtonText")] = QStringLiteral("Run %1").arg(chk->label());
     }
