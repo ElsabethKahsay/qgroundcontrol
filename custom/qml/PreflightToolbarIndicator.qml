@@ -85,7 +85,7 @@ Item {
             spacing: 0
 
             Text {
-                text: "Preflight"
+                text: qsTr("Preflight")
                 font.pointSize: ScreenTools.smallFontPointSize
                 color: qgcPal.text
             }

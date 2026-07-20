@@ -63,11 +63,11 @@ Item {
     readonly property color _warn:    "#FBBF24"
     readonly property color _crit:    "#F87171"
 
-    readonly property real _pad:       16 // Increased padding
-    readonly property real _colGap:    16 // Increased gap between columns
-    readonly property real _labelSize: ScreenTools.defaultFontPointSize * 0.82
-    readonly property real _valSize:   ScreenTools.defaultFontPointSize * 1.15
-    readonly property real _unitSize:  ScreenTools.defaultFontPointSize * 0.85
+    readonly property real _pad:       18 // Increased padding (15% bigger)
+    readonly property real _colGap:    18 // Increased gap between columns
+    readonly property real _labelSize: ScreenTools.defaultFontPointSize * 0.94
+    readonly property real _valSize:   ScreenTools.defaultFontPointSize * 1.32
+    readonly property real _unitSize:  ScreenTools.defaultFontPointSize * 0.98
 
     // ── Vehicle data (bind directly to trigger QML notifications) ──────
     readonly property real   _altRel:   activeVehicle ? activeVehicle.altitudeRelative.rawValue : 0
@@ -269,7 +269,9 @@ Item {
                     { label: "Flight", value: _formatVal(_flightDist, 0),
                       unit: "m",    vcolor: _accent },
                     { label: "Plan",  value: _planDist > 0 ? _formatVal(_planDist, 0) : "--",
-                      unit: _planDist > 0 ? "m" : "", vcolor: _accent }
+                      unit: _planDist > 0 ? "m" : "", vcolor: _accent },
+                    { label: "Tgt",  value: "--",
+                      vcolor: _label }
                 ]
             }
 
@@ -311,7 +313,13 @@ Item {
                       vcolor: _gpsColor(_lock) },
                     { label: "Link",
                       value: activeVehicle && _rssi > 0 && _rssi <= 100 ? _rssi + "%" : "N/A",
-                      vcolor: _rssiColor(_rssi) }
+                      vcolor: _rssiColor(_rssi) },
+                    { label: "Home",
+                      value: _formatVal(_distHome, 0),
+                      unit: "m",    vcolor: _accent },
+                    { label: "Tgt",
+                      value: "--",
+                      vcolor: _label }
                 ]
             }
         }
@@ -322,7 +330,7 @@ Item {
             anchors.right: parent.right
             anchors.margins: 4
             text:          _settings.locked ? "🔒" : ""
-            font.pixelSize: ScreenTools.defaultFontPixelHeight * 0.75
+            font.pixelSize: ScreenTools.defaultFontPixelHeight * 0.85
             opacity:       0.5
         }
     }

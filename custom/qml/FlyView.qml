@@ -167,7 +167,7 @@ Item {
 
                 Text {
                     anchors.centerIn: parent
-                    text: "⇄"
+                    text: qsTr("⇄")
                     font.pixelSize: ScreenTools.defaultFontPixelHeight * 1.2
                     color: "#00D4FF"
                 }
@@ -282,7 +282,7 @@ Item {
                 spacing: ScreenTools.defaultFontPixelHeight * 0.6
 
                 Text {
-                    text: "📹"
+                    text: qsTr("📹")
                     font.pixelSize: ScreenTools.defaultFontPixelHeight * 2.4
                     color: "#374151"
                     anchors.horizontalCenter: parent.horizontalCenter

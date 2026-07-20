@@ -123,7 +123,7 @@ Item {
 
             Text {
                 anchors.verticalCenter: parent.verticalCenter
-                text:                   "🆕"
+                text:                   qsTr("🆕")
                 font.pixelSize:         ScreenTools.defaultFontPixelHeight * 1.0
             }
 
@@ -156,7 +156,7 @@ Item {
         // ── Inline rename dialog for new vehicles ──────────────────────
         Dialog {
             id:                renameDialog
-            title:             "Rename Vehicle"
+            title:             qsTr("Rename Vehicle")
             standardButtons:   Dialog.Save | Dialog.Cancel
             modal:             true
             closePolicy:       Popup.CloseOnEscape
@@ -171,7 +171,7 @@ Item {
                 spacing: 8
 
                 Text {
-                    text:          "Enter a friendly name for this vehicle:"
+                    text:          qsTr("Enter a friendly name for this vehicle:")
                     font.pointSize: ScreenTools.defaultFontPointSize * 0.9
                     color:         "#E8ECF4"
                     wrapMode:      Text.WordWrap
@@ -308,7 +308,7 @@ Item {
 
             Text {
                 anchors.verticalCenter: parent.verticalCenter
-                text:                   "📋"
+                text:                   qsTr("📋")
                 font.pixelSize:         ScreenTools.defaultFontPixelHeight * 1.1
                 opacity:                _activeVehicle ? 1.0 : 0.4
             }
