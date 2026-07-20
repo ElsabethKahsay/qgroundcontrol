@@ -63,7 +63,6 @@ int qInitResources_qmlcache_VehicleSetupModule();
 #include "PreflightSettingsManager.h"
 #include "controllers/HardwareTestController.h"
 #include "utils/Config.h"
-#include "utils/DatabaseManager.h"
 #include "detection/VehicleRegistry.h"
 #include "core/AbstractCheck.h"
 #include "utils/ExportHelper.h"
@@ -452,14 +451,14 @@ const QVariantList &PreflightPlugin::analyzePages()
             new QmlComponentInfo(
                 tr("Preflight Checklist"),
                 QUrl(QStringLiteral("qrc:/qml/cpts/PreflightChecklistView.qml")),
-                QUrl(),
+                QUrl::fromUserInput(QStringLiteral("qrc:/qmlimages/check.svg")),
                 this)));
 
         _analyzePages.append(QVariant::fromValue(
             new QmlComponentInfo(
                 tr("Vehicles"),
                 QUrl(QStringLiteral("qrc:/qml/analyze/VehiclesPage.qml")),
-                QUrl(),
+                QUrl::fromUserInput(QStringLiteral("qrc:/qmlimages/Plan.svg")),
                 this)));
     }
     return _analyzePages;

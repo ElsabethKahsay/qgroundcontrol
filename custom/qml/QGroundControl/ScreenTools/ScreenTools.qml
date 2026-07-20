@@ -130,12 +130,12 @@ Item {
 
     Text {
         id:     _defaultFont
-        text:   "X"
+        text:   qsTr("X")
     }
 
     Text {
         id:     _textMeasure
-        text:   "X"
+        text:   qsTr("X")
         font.family:    normalFontFamily
         property real   fontWidth:    contentWidth
         property real   fontHeight:   contentHeight

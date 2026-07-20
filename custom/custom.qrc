@@ -27,6 +27,7 @@
     </qresource>
     <qresource prefix="/qml/QGroundControl/Controls">
         <file alias="FlyViewToolBar.qml">qml/QGroundControl/Controls/FlyViewToolBar.qml</file>
+        <file alias="SubMenuButton.qml">qml/QGroundControl/Controls/SubMenuButton.qml</file>
     </qresource>
     <qresource prefix="/qml/QGroundControl/FlightMap">
         <file alias="QGCVideoBackground.qml">qml/QGCVideoBackground.qml</file>
@@ -58,7 +59,6 @@
         <file alias="FlyViewTelemetryStrip.qml">qml/cpts/FlyViewTelemetryStrip.qml</file>
         <file alias="PreflightChecklistView.qml">qml/cpts/PreflightChecklistView.qml</file>
         <file alias="ArmGateDialog.qml">qml/cpts/ArmGateDialog.qml</file>
-        <file alias="MotorTestPanel.qml">qml/cpts/MotorTestPanel.qml</file>
         <file alias="PropInspector.qml">qml/cpts/PropInspector.qml</file>
         <file alias="ActionCheckCard.qml">qml/cpts/ActionCheckCard.qml</file>
         <file alias="AlertBanner.qml">qml/cpts/AlertBanner.qml</file>
@@ -80,6 +80,7 @@
         <file alias="WeatherPanel.qml">qml/cpts/WeatherPanel.qml</file>
         <file alias="PriorityFixPanel.qml">qml/cpts/PriorityFixPanel.qml</file>
         <file alias="ArmGatePanel.qml">qml/cpts/ArmGatePanel.qml</file>
+        <file alias="MotorCheckPanel.qml">qml/cpts/MotorCheckPanel.qml</file>
     </qresource>
     <qresource prefix="custom/brand">
         <file alias="logo">res/Images/white_bg_logo.jpg</file>

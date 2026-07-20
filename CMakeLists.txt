@@ -98,6 +98,7 @@ if(QGC_USE_CACHE)
         find_program(CCACHE_PROGRAM ccache)
         if(CCACHE_PROGRAM)
             set(CCACHE_CMD
+                ${CMAKE_COMMAND} -E env
                 CCACHE_BASEDIR=${CMAKE_BINARY_DIR}
                 CCACHE_COMPRESSLEVEL=6
                 CCACHE_SLOPPINESS=pch_defines,time_macros,include_file_mtime,include_file_ctime

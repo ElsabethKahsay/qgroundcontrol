@@ -4,11 +4,11 @@ import QtQuick.Window
 
 QtObject {
     // Compact GCS — smaller fonts, tighter grid, unique styling
-    readonly property int fontSizeH1: 16
-    readonly property int fontSizeH2: 13
-    readonly property int fontSizeH3: 12
-    readonly property int fontSizeBody: 11
-    readonly property int fontSizeSmall: 10
+    readonly property int fontSizeH1: 19
+    readonly property int fontSizeH2: 17
+    readonly property int fontSizeH3: 15
+    readonly property int fontSizeBody: 13
+    readonly property int fontSizeSmall: 13
     readonly property int spacingSmall: 6
     readonly property int spacingMedium: 10
     readonly property int spacingLarge: 14
@@ -33,9 +33,7 @@ QtObject {
     readonly property int kExpandedItemHeight: 60
 
     // Font scaling factor (guarded — Screen not always available outside Window context)
-    readonly property real fontScale: typeof Screen !== 'undefined' && Screen !== null && Screen.pixelDensity > 0
-        ? Math.min(1.3, Math.max(0.8, Screen.pixelDensity / 4.0))
-        : 1.0
+    readonly property real fontScale: typeof Screen !== 'undefined' && Screen !== null && Screen.pixelDensity > 0 ? Math.min(1.3, Math.max(0.8, Screen.pixelDensity / 4.0)) : 1.0
 
     // Font family (loaded from C++ at startup)
     readonly property string fontFamily: "Abel"
