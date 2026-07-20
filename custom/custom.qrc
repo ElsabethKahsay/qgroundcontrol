@@ -81,6 +81,7 @@
         <file alias="PriorityFixPanel.qml">qml/cpts/PriorityFixPanel.qml</file>
         <file alias="ArmGatePanel.qml">qml/cpts/ArmGatePanel.qml</file>
         <file alias="MotorCheckPanel.qml">qml/cpts/MotorCheckPanel.qml</file>
+        <file alias="PreflightToolbarIndicator.qml">qml/PreflightToolbarIndicator.qml</file>
     </qresource>
     <qresource prefix="custom/brand">
         <file alias="logo">res/Images/white_bg_logo.jpg</file>

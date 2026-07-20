@@ -19,7 +19,7 @@ Rectangle {
     property bool isOpen: false
 
     Behavior on x {
-        NumberAnimation { duration: Config.animationDuration }
+        NumberAnimation { duration: Config.animNormal }
     }
 
     Column {

@@ -73,7 +73,7 @@ ColumnLayout {
 
         Behavior on height {
             NumberAnimation {
-                duration: Config.animationDuration
+                duration: Config.animNormal
                 easing.type: Easing.InOutQuad
             }
         }

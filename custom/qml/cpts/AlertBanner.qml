@@ -37,7 +37,7 @@ Rectangle {
     border.width: 1
 
     Behavior on height {
-        NumberAnimation { duration: Config.animationDuration; easing.type: Easing.InOutQuad }
+        NumberAnimation { duration: Config.animNormal; easing.type: Easing.InOutQuad }
     }
 
     RowLayout {

@@ -8,7 +8,7 @@ Item {
 
     property int barHeight: 20
     property int barRadius: 3
-    property color barIdle: Colors.disabled
+    property color barIdle: Colors.textDisabled
     property color barNormal: Colors.success
     property color barWarning: "#e6a817"
     property color barError: Colors.danger
