@@ -18,7 +18,7 @@ import QtQuick.Layouts
 import QGroundControl
 import QGroundControl.Controls
 import QGroundControl.ScreenTools
-import QGroundControl.Palette
+import com.uav.preflight 1.0
 
 Rectangle {
     id: root
@@ -26,19 +26,6 @@ Rectangle {
     property var  activeVehicle: null
     property bool collapsed:     false
     signal closed()
-
-    // ── Panel dark theme (sunlight-readable) ─────────────────────────
-    readonly property color _bg:        Qt.rgba(0.06, 0.06, 0.14, 0.93)
-    readonly property color _headerBg:  Qt.rgba(0.08, 0.09, 0.20, 0.96)
-    readonly property color _border:    Qt.rgba(0.30, 0.35, 0.55, 0.45)
-    readonly property color _text:      "#E8ECF4"
-    readonly property color _label:     "#8B93A7"
-    readonly property color _divider:   Qt.rgba(0.30, 0.35, 0.50, 0.30)
-    readonly property color _accent:    "#00D4FF"
-    readonly property color _good:      "#4ADE80"
-    readonly property color _warn:      "#FBBF24"
-    readonly property color _crit:      "#F87171"
-    readonly property color _info:      "#60A5FA"
 
     readonly property real _hdrH: ScreenTools.defaultFontPixelHeight * 2.2
     readonly property real _fs:   ScreenTools.defaultFontPointSize * 0.92
@@ -58,8 +45,8 @@ Rectangle {
     property real _savedWidth: ScreenTools.defaultFontPixelWidth * 22
 
     radius: 8
-    color:  _bg
-    border.color: _border
+    color:  Colors.surface
+    border.color: Colors.border
     border.width: 1
     clip:   true
 
@@ -80,9 +67,9 @@ Rectangle {
     readonly property real   _distHome: activeVehicle ? activeVehicle.distanceToHome.rawValue : 0
 
     // ── Color helpers ────────────────────────────────────────────────
-    function _battColor(p) { return p < 0 ? _label : p >= 50 ? _good : p >= 20 ? _warn : _crit }
-    function _rssiColor(r) { return (r <= 0 || r > 100) ? _label : r >= 70 ? _good : r >= 40 ? _warn : _crit }
-    function _gpsColor(l)  { return l >= 3 ? _good : l >= 2 ? _warn : _crit }
+    function _battColor(p) { return p < 0 ? Colors.textSecondary : p >= 50 ? Colors.pass : p >= 20 ? Colors.warning : Colors.fail }
+    function _rssiColor(r) { return (r <= 0 || r > 100) ? Colors.textSecondary : r >= 70 ? Colors.pass : r >= 40 ? Colors.warning : Colors.fail }
+    function _gpsColor(l)  { return l >= 3 ? Colors.pass : l >= 2 ? Colors.warning : Colors.fail }
     function _fixStr(l) {
         var m = { 0:"No GPS", 1:"No Fix", 2:"2D", 3:"3D", 4:"DGPS", 5:"RTK Flt", 6:"RTK Fix" }
         return m[l] || "?"
@@ -92,7 +79,7 @@ Rectangle {
     Rectangle {
         id: header
         anchors { top: parent.top; left: parent.left; right: parent.right }
-        height: _hdrH;  radius: 8;  color: _headerBg
+        height: _hdrH;  radius: 8;  color: Colors.surfaceLight
 
         // flatten bottom corners when expanded
         Rectangle {
@@ -115,7 +102,7 @@ Rectangle {
 
             Rectangle {
                 width: 8; height: 8; radius: 4
-                color: activeVehicle ? _accent : _label
+                color: activeVehicle ? Colors.accentCyan : Colors.textSecondary
                 SequentialAnimation on opacity {
                     loops: Animation.Infinite; running: !!activeVehicle
                     NumberAnimation { to: 0.4; duration: 1000 }
@@ -126,7 +113,7 @@ Rectangle {
             Text {
                 text: "TELEMETRY"; Layout.fillWidth: true
                 font.pointSize: _fsL; font.weight: Font.DemiBold
-                font.letterSpacing: 1.2; color: _accent
+                font.letterSpacing: 1.2; color: Colors.accentCyan
             }
 
             // Close button
@@ -135,7 +122,7 @@ Rectangle {
                 color: _closeMA.containsMouse ? Qt.rgba(1,1,1,0.15) : "transparent"
                 Text {
                     anchors.centerIn: parent
-                    text: "\u2715"; font.pixelSize: 11; color: _label
+                    text: "\u2715"; font.pixelSize: 11; color: Colors.textSecondary
                 }
                 MouseArea {
                     id: _closeMA; anchors.fill: parent
@@ -151,7 +138,7 @@ Rectangle {
                 Text {
                     anchors.centerIn: parent
                     text: root.collapsed ? "\u25BC" : "\u25B2"
-                    font.pixelSize: 10; color: _label
+                    font.pixelSize: 10; color: Colors.textSecondary
                 }
                 MouseArea {
                     id: _collapseMA; anchors.fill: parent
@@ -180,34 +167,34 @@ Rectangle {
             RowLayout {
                 anchors.fill: parent
                 anchors.leftMargin: 8; anchors.rightMargin: 8
-                Text { text: "\u2708"; font.pixelSize: 14; color: _accent }
+                Text { text: "\u2708"; font.pixelSize: 14; color: Colors.accentCyan }
                 Text {
                     text: _mode; Layout.fillWidth: true
-                    font.pointSize: _fs; font.weight: Font.DemiBold; color: _text
+                    font.pointSize: _fs; font.weight: Font.DemiBold; color: Colors.textInverse
                 }
-                Text { text: "HDG"; font.pointSize: _fsL; color: _label }
+                Text { text: "HDG"; font.pointSize: _fsL; color: Colors.textSecondary }
                 Text {
                     text: _hdg.toFixed(0) + "\u00B0"
                     font.pointSize: _fs; font.family: "monospace"
-                    font.weight: Font.DemiBold; color: _info
+                    font.weight: Font.DemiBold; color: Colors.info
                 }
             }
         }
 
         // divider
-        Rectangle { width: parent.width; height: 1; color: _divider }
+        Rectangle { width: parent.width; height: 1; color: Colors.borderLight }
 
         // ── Altitude ─────────────────────────────────────────────────
-        TelRow { lbl: "ALT AGL"; val: _altRel.toFixed(1) + " m"; valColor: _text }
-        TelRow { lbl: "ALT MSL"; val: _altMSL.toFixed(1) + " m"; valColor: _text }
+        TelRow { lbl: "ALT AGL"; val: _altRel.toFixed(1) + " m"; valColor: Colors.textInverse }
+        TelRow { lbl: "ALT MSL"; val: _altMSL.toFixed(1) + " m"; valColor: Colors.textInverse }
 
-        Rectangle { width: parent.width; height: 1; color: _divider }
+        Rectangle { width: parent.width; height: 1; color: Colors.borderLight }
 
         // ── Speed ────────────────────────────────────────────────────
-        TelRow { lbl: "GND SPD"; val: _gndSpd.toFixed(1) + " m/s"; valColor: _text }
-        TelRow { lbl: "AIR SPD"; val: _airSpd.toFixed(1) + " m/s"; valColor: _text }
+        TelRow { lbl: "GND SPD"; val: _gndSpd.toFixed(1) + " m/s"; valColor: Colors.textInverse }
+        TelRow { lbl: "AIR SPD"; val: _airSpd.toFixed(1) + " m/s"; valColor: Colors.textInverse }
 
-        Rectangle { width: parent.width; height: 1; color: _divider }
+        Rectangle { width: parent.width; height: 1; color: Colors.borderLight }
 
         // ── Battery ──────────────────────────────────────────────────
         TelRow {
@@ -230,11 +217,11 @@ Rectangle {
             valColor: _rssiColor(_rssi)
         }
 
-        Rectangle { width: parent.width; height: 1; color: _divider }
+        Rectangle { width: parent.width; height: 1; color: Colors.borderLight }
 
         // ── Navigation ───────────────────────────────────────────────
-        TelRow { lbl: "FROM HOME"; val: _distHome.toFixed(0) + " m"; valColor: _info }
-        TelRow { lbl: "TO TARGET"; val: "--"; valColor: _label }
+        TelRow { lbl: "FROM HOME"; val: _distHome.toFixed(0) + " m"; valColor: Colors.info }
+        TelRow { lbl: "TO TARGET"; val: "--"; valColor: Colors.textSecondary }
     }
 
     // ═══════════════════════  RESIZE HANDLE  ════════════════════════
@@ -284,7 +271,7 @@ Rectangle {
     component TelRow: Item {
         property string lbl
         property string val
-        property color  valColor: _text
+        property color  valColor: Colors.textInverse
 
         width:  parent.width
         height: ScreenTools.defaultFontPixelHeight * 1.4
@@ -293,7 +280,7 @@ Rectangle {
             anchors.left: parent.left; anchors.leftMargin: 8
             anchors.verticalCenter: parent.verticalCenter
             text: lbl; font.pointSize: _fsL; font.weight: Font.Medium
-            color: _label
+            color: Colors.textSecondary
         }
         Text {
             anchors.right: parent.right; anchors.rightMargin: 8

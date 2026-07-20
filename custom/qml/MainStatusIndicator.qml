@@ -23,8 +23,8 @@ import QGroundControl
 import QGroundControl.Controls
 import QGroundControl.MultiVehicleManager
 import QGroundControl.ScreenTools
-import QGroundControl.Palette
 import QGroundControl.FactSystem
+import com.uav.preflight 1.0
 
 RowLayout {
     id:         _root
@@ -43,7 +43,7 @@ RowLayout {
 
     // Phase 7: Estimated flight time/range from power model
     property string _estRangeText: ""
-    property string _estLabelColor: "#888888"
+    property string _estLabelColor: Colors.textDisabled
 
     Loader {
         id: armGateDialogLoader
@@ -146,7 +146,7 @@ RowLayout {
                         }
                     }
                 } else {
-                    _mainStatusBGColor = qgcPal.brandingPurple
+                    _mainStatusBGColor = Colors.dialogAccent
                     return mainStatusLabel._disconnectedText
                 }
             }
@@ -210,11 +210,11 @@ RowLayout {
             var dataPts = est["dataPointCount"]
 
             if (calibrated) {
-                _estLabelColor = "#4CAF50"  // green
+                _estLabelColor = Colors.success  // green
             } else if (dataPts > 0) {
-                _estLabelColor = "#FF9800"  // amber
+                _estLabelColor = Colors.warning  // amber
             } else {
-                _estLabelColor = "#888888"  // gray
+                _estLabelColor = Colors.textDisabled  // gray
             }
 
             _estRangeText = "Est. " + range.toFixed(1) + " km / " + flightTime.toFixed(0) + " min"
@@ -267,8 +267,8 @@ RowLayout {
             width:          flickable.width + (_margins * 2)
             height:         flickable.height + (_margins * 2)
             radius:         ScreenTools.defaultFontPixelHeight * 0.5
-            color:          qgcPal.window
-            border.color:   qgcPal.text
+            color:          Colors.surface
+            border.color:   Colors.textPrimary
 
             QGCFlickable {
                 id:                 flickable
@@ -301,7 +301,7 @@ RowLayout {
                             font.pixelSize: ScreenTools.defaultFontPixelSize
                             font.bold: true
                             font.letterSpacing: 0.5
-                            color: armBtn.enabled ? "#ffffff" : "#94a3b8"
+                            color: armBtn.enabled ? Colors.dialogText : Colors.textDisabled
                             horizontalAlignment: Text.AlignHCenter
                             verticalAlignment: Text.AlignVCenter
                         }
@@ -311,9 +311,9 @@ RowLayout {
                             implicitHeight: 36
                             radius: 18
                             color: {
-                                if (!armBtn.enabled) return "#2d3144"
-                                if (armBtn.down) return Qt.darker(_armed ? "#dc2626" : "#7c3aed", 1.3)
-                                return _armed ? "#dc2626" : "#7c3aed"
+                                if (!armBtn.enabled) return Colors.surfaceLight
+                                if (armBtn.down) return Qt.darker(_armed ? Colors.error : Colors.dialogAccent, 1.3)
+                                return _armed ? Colors.error : Colors.dialogAccent
                             }
                             Rectangle {
                                 anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
@@ -415,7 +415,7 @@ RowLayout {
                                     wrapMode:     Text.WordWrap
                                     textFormat:   TextEdit.RichText
                                     width:        parent.width - arrowDownIndicator.width
-                                    color:        object.severity == 'error' ? qgcPal.colorRed : object.severity == 'warning' ? qgcPal.colorYellow : qgcPal.text
+                                    color:        object.severity == 'error' ? Colors.error : object.severity == 'warning' ? Colors.warning : Colors.textPrimary
                                     MouseArea {
                                         anchors.fill: parent
                                         onClicked: {
@@ -430,7 +430,7 @@ RowLayout {
                                     height:                 1.5 * ScreenTools.defaultFontPixelWidth
                                     width:                  height
                                     source:                 "/qmlimages/arrow-down.png"
-                                    color:                  qgcPal.text
+                                    color:                  Colors.textPrimary
                                     visible:                object.description != ""
                                     MouseArea {
                                         anchors.fill:       parent
@@ -443,7 +443,7 @@ RowLayout {
                                 id:                       descriptionRect
                                 width:                    parent.width
                                 height:                   description.height + margin
-                                color:                    qgcPal.windowShade
+                                color:                    Colors.surfaceLight
                                 visible:                  false
                                 Connections {
                                     target:               object
@@ -513,8 +513,8 @@ RowLayout {
             width:          mainLayout.width   + (_margins * 2)
             height:         mainLayout.height  + (_margins * 2)
             radius:         ScreenTools.defaultFontPixelHeight * 0.5
-            color:          qgcPal.window
-            border.color:   qgcPal.text
+            color:          Colors.surface
+            border.color:   Colors.textPrimary
 
             QGCButton {
                 id:                 mainLayout

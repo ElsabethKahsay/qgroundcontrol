@@ -8,7 +8,7 @@ QtObject {
     readonly property int fontSizeH2: 17
     readonly property int fontSizeH3: 15
     readonly property int fontSizeBody: 13
-    readonly property int fontSizeSmall: 13
+    readonly property int fontSizeSmall: 11
     readonly property int spacingSmall: 6
     readonly property int spacingMedium: 10
     readonly property int spacingLarge: 14

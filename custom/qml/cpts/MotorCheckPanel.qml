@@ -340,7 +340,7 @@ Rectangle {
                             implicitHeight: mc.implicitHeight + 16
                             radius: Config.radiusSmall
                             border.width: 2
-                            border.color: st === HardwareTestController.Testing  ? "#FFD700"
+                            border.color: st === HardwareTestController.Testing  ? Colors.testing
                                         : st === HardwareTestController.Pass     ? Colors.success
                                         : st === HardwareTestController.Fail     ? Colors.error
                                         : st === HardwareTestController.Cooldown ? Colors.borderLight
@@ -381,7 +381,7 @@ Rectangle {
                                         Layout.preferredHeight: 18
                                         Layout.preferredWidth: chipTxt.implicitWidth + 10
                                         radius: 9
-                                        color: mcard.st === HardwareTestController.Testing  ? "#FFD700"
+                                        color: mcard.st === HardwareTestController.Testing  ? Colors.testing
                                              : mcard.st === HardwareTestController.Pass     ? Colors.success
                                              : mcard.st === HardwareTestController.Fail     ? Colors.error
                                              : mcard.st === HardwareTestController.Cooldown ? Colors.border
@@ -568,14 +568,14 @@ Rectangle {
                 Text {
                     visible: HardwareTestController.activeMotor > 0
                     text: qsTr("Testing M") + HardwareTestController.activeMotor + "\u2026"
-                    font.pixelSize: Config.fontSizeSmall; color: "#FFD700"; font.bold: true
+                    font.pixelSize: Config.fontSizeSmall; color: Colors.testing; font.bold: true
                     Layout.fillWidth: true
                 }
                 Item { Layout.fillWidth: true; visible: HardwareTestController.activeMotor <= 0 }
 
                 Rectangle {
                     Layout.preferredHeight: 34; Layout.preferredWidth: 120
-                    radius: Config.radiusSmall; color: "#7B1C1C"
+                    radius: Config.radiusSmall; color: Colors.errorDim
 
                     SequentialAnimation on opacity {
                         loops: Animation.Infinite; running: HardwareTestController.activeMotor > 0

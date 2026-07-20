@@ -18,6 +18,8 @@ import QGroundControl.ScreenTools
 import QGroundControl.Palette
 import QGroundControl.FlightMap
 
+import com.uav.preflight 1.0
+
 Item {
     id: _root
 
@@ -35,8 +37,6 @@ Item {
     readonly property real _videoPanelLeft: videoOnLeft ? 0 : (width - videoHalfWidth)
     readonly property real _mapPanelLeft:   videoOnLeft ? videoHalfWidth : 0
     readonly property real _panelWidth:     videoHalfWidth
-
-    QGCPalette { id: qgcPal; colorGroupEnabled: enabled }
 
     QGCToolInsets {
         id:                     _toolInsets
@@ -83,8 +83,8 @@ Item {
         Rectangle {
             anchors.fill:   parent
             radius:         parent.width / 2
-            color:          Qt.rgba(0.05, 0.05, 0.10, 0.60)
-            border.color:   Qt.rgba(0, 0.83, 1, 0.25)
+            color:          Qt.rgba(Colors.background.r, Colors.background.g, Colors.background.b, 0.60)
+            border.color:   Qt.rgba(Colors.accentCyan.r, Colors.accentCyan.g, Colors.accentCyan.b, 0.25)
             border.width:   1
         }
 
@@ -95,7 +95,7 @@ Item {
             anchors.centerIn: parent
 
             // Override background to be transparent (backdrop above handles it)
-            color:          Qt.rgba(0, 0, 0, 0)
+            color:          Colors.transparent
             border.width:   0
         }
     }
@@ -110,8 +110,8 @@ Item {
         width:              bannerRow.width + ScreenTools.defaultFontPixelWidth * 2
         height:             bannerRow.height + ScreenTools.defaultFontPixelWidth
         radius:             height / 2
-        color:              Qt.rgba(0.05, 0.05, 0.12, 0.92)
-        border.color:       "#00D4FF"
+        color:              Qt.rgba(Colors.background.r, Colors.background.g, Colors.background.b, 0.92)
+        border.color:       Colors.accentCyan
         border.width:       1
         visible:            false
         z:                  QGroundControl.zOrderWidgets + 2
@@ -133,7 +133,7 @@ Item {
                                         ? "Known vehicle connected: " + VehicleRegistry.vehicleName
                                         : "New vehicle registered — tap to rename"
                 font.pointSize:         ScreenTools.defaultFontPointSize
-                color:                  "#E8ECF4"
+                color:                  Colors.textInverse
             }
         }
 
@@ -173,7 +173,7 @@ Item {
                 Text {
                     text:          qsTr("Enter a friendly name for this vehicle:")
                     font.pointSize: ScreenTools.defaultFontPointSize * 0.9
-                    color:         "#E8ECF4"
+                    color:         Colors.textInverse
                     wrapMode:      Text.WordWrap
                     width:         parent.width
                 }
@@ -182,11 +182,11 @@ Item {
                     id:                nameField
                     width:             parent.width
                     text:              VehicleRegistry.vehicleName
-                    color:             "#FFFFFF"
+                    color:             Colors.dialogText
                     background: Rectangle {
-                        color:  Qt.rgba(0.12, 0.12, 0.20, 0.95)
+                        color:  Colors.surface
                         radius: 4
-                        border.color: "#00D4FF"
+                        border.color: Colors.accentCyan
                         border.width: 1
                     }
                 }
@@ -241,12 +241,12 @@ Item {
                 radius:                 width / 2
                 anchors.verticalCenter: parent.verticalCenter
                 color: {
-                    if (typeof PreflightChecklistModel === 'undefined') return "#9E9E9E"
+                    if (typeof PreflightChecklistModel === 'undefined') return Colors.textDisabled
                     var f = PreflightChecklistModel.blockingFailedCount
                     var p = typeof PreflightManager !== 'undefined' ? PreflightManager.pendingChecks : 0
-                    if (f > 0) return "#E91E63"
-                    if (p > 0) return "#FF9800"
-                    return "#4CAF50"
+                    if (f > 0) return Colors.dialogFocus
+                    if (p > 0) return Colors.warning
+                    return Colors.success
                 }
             }
 
@@ -263,7 +263,7 @@ Item {
                     return "\u2713 Ready"
                 }
                 font.pointSize: ScreenTools.defaultFontPointSize
-                color:          "#E8ECF4"
+                color:          Colors.textInverse
             }
         }
 
@@ -289,12 +289,12 @@ Item {
         z:                      QGroundControl.zOrderWidgets + 1
 
         color: {
-            if (!_activeVehicle) return Qt.rgba(0.3, 0.3, 0.35, 0.70)
-            if (_btnMA.containsPress)  return "#065F7C"
-            if (_btnMA.containsMouse)  return "#0AA8D6"
-            return "#0891B2"
+            if (!_activeVehicle) return Qt.rgba(Colors.textDisabled.r, Colors.textDisabled.g, Colors.textDisabled.b, 0.70)
+            if (_btnMA.containsPress)  return Colors.tealDark
+            if (_btnMA.containsMouse)  return Colors.tealLight
+            return Colors.teal
         }
-        border.color: _activeVehicle ? "#00D4FF" : Qt.rgba(0.5, 0.5, 0.55, 0.5)
+        border.color: _activeVehicle ? Colors.accentCyan : Qt.rgba(0.5, 0.5, 0.55, 0.5)
         border.width: 1
 
         Behavior on color { ColorAnimation { duration: 120 } }
@@ -318,7 +318,7 @@ Item {
                 text:                   qsTr("Preflight Checklist")
                 font.pointSize:         ScreenTools.defaultFontPointSize * 0.95
                 font.weight:            Font.DemiBold
-                color:                  _activeVehicle ? "#FFFFFF" : "#888888"
+                color:                  _activeVehicle ? Colors.dialogText : Colors.textDisabled
             }
 
             Rectangle {
@@ -331,10 +331,10 @@ Item {
                 color: {
                     if (typeof PreflightChecklistModel === 'undefined') return "transparent"
                     var f = PreflightChecklistModel.blockingFailedCount
-                    if (f > 0) return "#E91E63"
+                    if (f > 0) return Colors.dialogFocus
                     var p = typeof PreflightManager !== 'undefined' ? PreflightManager.pendingChecks : 0
-                    if (p > 0) return "#FF9800"
-                    return "#4CAF50"
+                    if (p > 0) return Colors.warning
+                    return Colors.success
                 }
 
                 Text {
@@ -350,7 +350,7 @@ Item {
                     }
                     font.pointSize: ScreenTools.defaultFontPointSize * 0.8
                     font.weight:    Font.Bold
-                    color:          "#FFFFFF"
+                    color:          Colors.dialogText
                 }
             }
         }

@@ -1,13 +1,14 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import com.uav.preflight 1.0
 
 Rectangle {
     id: root
 
-    color: "#1A0A2E"
+    color: "Colors.dialogBg"
     radius: 8
-    border.color: "#9B59B6"
+    border.color: "Colors.dialogAccent"
     border.width: 1
 
     property var clipboardHelper: null
@@ -72,21 +73,21 @@ Rectangle {
                 text: qsTr("DMS Converter")
                 font.pixelSize: 18
                 font.bold: true
-                color: "#FFFFFF"
+                color: "Colors.dialogText"
             }
             Item { Layout.fillWidth: true }
 
             Rectangle {
                 visible: root.valuesMatch
-                color: "#1B5E20"
+                color: "Colors.successDim"
                 radius: 4
                 Layout.preferredWidth: 120
                 Layout.preferredHeight: 24
                 RowLayout {
                     anchors.centerIn: parent
                     spacing: 4
-                    Text { text: "\u2713"; color: "#2ECC71"; font.bold: true; font.pixelSize: 14 }
-                    Text { text: "Values match"; color: "#2ECC71"; font.pixelSize: 11; font.bold: true }
+                    Text { text: "\u2713"; color: "Colors.success"; font.bold: true; font.pixelSize: 14 }
+                    Text { text: "Values match"; color: "Colors.success"; font.pixelSize: 11; font.bold: true }
                 }
             }
         }
@@ -99,9 +100,9 @@ Rectangle {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                color: "#2D1B4E"
+                color: "Colors.dialogSurface"
                 radius: 8
-                border.color: "#9B59B6"
+                border.color: "Colors.dialogAccent"
                 border.width: 1
 
                 ColumnLayout {
@@ -113,39 +114,39 @@ Rectangle {
                         text: qsTr("Decimal Degrees")
                         font.pixelSize: 14
                         font.bold: true
-                        color: "#E91E63"
+                        color: "Colors.dialogFocus"
                     }
 
-                    Text { text: "Latitude"; font.pixelSize: 12; color: "#F8BBD0" }
+                    Text { text: "Latitude"; font.pixelSize: 12; color: "Colors.dialogHighlight" }
                     TextField {
                         id: latDecimalField
                         Layout.fillWidth: true
                         Layout.preferredHeight: 32
                         text: qsTr("33.125055")
-                        color: "#FFFFFF"
+                        color: "Colors.dialogText"
                         font.pixelSize: 14
                         font.family: "monospace"
                         background: Rectangle {
-                            color: "#1A0A2E"
-                            border.color: latDecimalField.activeFocus ? "#E91E63" : "#9B59B6"
+                            color: "Colors.dialogBg"
+                            border.color: latDecimalField.activeFocus ? "Colors.dialogFocus" : "Colors.dialogAccent"
                             border.width: 1
                             radius: 4
                         }
                         validator: DoubleValidator { bottom: -90.0; top: 90.0; decimals: 8 }
                     }
 
-                    Text { text: "Longitude"; font.pixelSize: 12; color: "#F8BBD0" }
+                    Text { text: "Longitude"; font.pixelSize: 12; color: "Colors.dialogHighlight" }
                     TextField {
                         id: lonDecimalField
                         Layout.fillWidth: true
                         Layout.preferredHeight: 32
                         text: qsTr("118.852360")
-                        color: "#FFFFFF"
+                        color: "Colors.dialogText"
                         font.pixelSize: 14
                         font.family: "monospace"
                         background: Rectangle {
-                            color: "#1A0A2E"
-                            border.color: lonDecimalField.activeFocus ? "#E91E63" : "#9B59B6"
+                            color: "Colors.dialogBg"
+                            border.color: lonDecimalField.activeFocus ? "Colors.dialogFocus" : "Colors.dialogAccent"
                             border.width: 1
                             radius: 4
                         }
@@ -157,9 +158,9 @@ Rectangle {
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 60
-                        color: "#1A0A2E"
+                        color: "Colors.dialogBg"
                         radius: 4
-                        border.color: "#9B59B6"
+                        border.color: "Colors.dialogAccent"
                         border.width: 1
 
                         ColumnLayout {
@@ -170,13 +171,13 @@ Rectangle {
                             Text {
                                 text: "Lat: " + decimalToDmsLat(decimalLat)
                                 font.pixelSize: 12
-                                color: "#FFFFFF"
+                                color: "Colors.dialogText"
                                 font.family: "monospace"
                             }
                             Text {
                                 text: "Lon: " + decimalToDmsLon(decimalLon)
                                 font.pixelSize: 12
-                                color: "#FFFFFF"
+                                color: "Colors.dialogText"
                                 font.family: "monospace"
                             }
                         }
@@ -195,16 +196,16 @@ Rectangle {
             Rectangle {
                 width: 2
                 Layout.fillHeight: true
-                color: "#9B59B6"
+                color: "Colors.dialogAccent"
                 opacity: 0.5
             }
 
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                color: "#2D1B4E"
+                color: "Colors.dialogSurface"
                 radius: 8
-                border.color: "#9B59B6"
+                border.color: "Colors.dialogAccent"
                 border.width: 1
 
                 ColumnLayout {
@@ -216,10 +217,10 @@ Rectangle {
                         text: qsTr("Degrees Minutes Seconds")
                         font.pixelSize: 14
                         font.bold: true
-                        color: "#9B59B6"
+                        color: "Colors.dialogAccent"
                     }
 
-                    Text { text: "Latitude"; font.pixelSize: 12; color: "#F8BBD0" }
+                    Text { text: "Latitude"; font.pixelSize: 12; color: "Colors.dialogHighlight" }
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 4
@@ -229,14 +230,14 @@ Rectangle {
                             from: 0; to: 90; value: 33
                             Layout.preferredWidth: 56
                         }
-                        Text { text: "\u00B0"; color: "#F8BBD0" }
+                        Text { text: "\u00B0"; color: "Colors.dialogHighlight" }
 
                         SpinBox {
                             id: latMinSpin
                             from: 0; to: 59; value: 7
                             Layout.preferredWidth: 56
                         }
-                        Text { text: "'"; color: "#F8BBD0" }
+                        Text { text: "'"; color: "Colors.dialogHighlight" }
 
                         SpinBox {
                             id: latSecSpin
@@ -244,29 +245,29 @@ Rectangle {
                             Layout.preferredWidth: 80
                             contentItem: TextInput {
                                 text: (latSecSpin.value / 1000.0).toFixed(3)
-                                color: "#FFFFFF"
+                                color: "Colors.dialogText"
                                 horizontalAlignment: Text.AlignHCenter
                                 font.pixelSize: 13
                             }
                         }
-                        Text { text: "\""; color: "#F8BBD0" }
+                        Text { text: "\""; color: "Colors.dialogHighlight" }
 
                         ComboBox {
                             id: latDirCombo
                             model: ["N", "S"]
                             currentIndex: 0
                             Layout.preferredWidth: 48
-                            background: Rectangle { color: "#1A0A2E"; border.color: "#9B59B6"; border.width: 1; radius: 4 }
+                            background: Rectangle { color: "Colors.dialogBg"; border.color: "Colors.dialogAccent"; border.width: 1; radius: 4 }
                             contentItem: Text {
                                 text: latDirCombo.currentText
-                                color: "#FFFFFF"
+                                color: "Colors.dialogText"
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
                             }
                         }
                     }
 
-                    Text { text: "Longitude"; font.pixelSize: 12; color: "#F8BBD0" }
+                    Text { text: "Longitude"; font.pixelSize: 12; color: "Colors.dialogHighlight" }
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 4
@@ -276,14 +277,14 @@ Rectangle {
                             from: 0; to: 180; value: 118
                             Layout.preferredWidth: 56
                         }
-                        Text { text: "\u00B0"; color: "#F8BBD0" }
+                        Text { text: "\u00B0"; color: "Colors.dialogHighlight" }
 
                         SpinBox {
                             id: lonMinSpin
                             from: 0; to: 59; value: 51
                             Layout.preferredWidth: 56
                         }
-                        Text { text: "'"; color: "#F8BBD0" }
+                        Text { text: "'"; color: "Colors.dialogHighlight" }
 
                         SpinBox {
                             id: lonSecSpin
@@ -291,22 +292,22 @@ Rectangle {
                             Layout.preferredWidth: 80
                             contentItem: TextInput {
                                 text: (lonSecSpin.value / 1000.0).toFixed(3)
-                                color: "#FFFFFF"
+                                color: "Colors.dialogText"
                                 horizontalAlignment: Text.AlignHCenter
                                 font.pixelSize: 13
                             }
                         }
-                        Text { text: "\""; color: "#F8BBD0" }
+                        Text { text: "\""; color: "Colors.dialogHighlight" }
 
                         ComboBox {
                             id: lonDirCombo
                             model: ["E", "W"]
                             currentIndex: 0
                             Layout.preferredWidth: 48
-                            background: Rectangle { color: "#1A0A2E"; border.color: "#9B59B6"; border.width: 1; radius: 4 }
+                            background: Rectangle { color: "Colors.dialogBg"; border.color: "Colors.dialogAccent"; border.width: 1; radius: 4 }
                             contentItem: Text {
                                 text: lonDirCombo.currentText
-                                color: "#FFFFFF"
+                                color: "Colors.dialogText"
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
                             }
@@ -318,9 +319,9 @@ Rectangle {
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 60
-                        color: "#1A0A2E"
+                        color: "Colors.dialogBg"
                         radius: 4
-                        border.color: "#9B59B6"
+                        border.color: "Colors.dialogAccent"
                         border.width: 1
 
                         ColumnLayout {
@@ -331,13 +332,13 @@ Rectangle {
                             Text {
                                 text: "Lat: " + dmsToDecimalLat.toFixed(8)
                                 font.pixelSize: 12
-                                color: "#FFFFFF"
+                                color: "Colors.dialogText"
                                 font.family: "monospace"
                             }
                             Text {
                                 text: "Lon: " + dmsToDecimalLon.toFixed(8)
                                 font.pixelSize: 12
-                                color: "#FFFFFF"
+                                color: "Colors.dialogText"
                                 font.family: "monospace"
                             }
                         }

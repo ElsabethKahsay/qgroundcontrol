@@ -16,7 +16,7 @@ import Qt.labs.settings 1.0
 import QGroundControl
 import QGroundControl.Controls
 import QGroundControl.ScreenTools
-import QGroundControl.Palette
+import com.uav.preflight 1.0
 
 Item {
     id: root
@@ -50,18 +50,6 @@ Item {
         _boxX = 16
         _boxY = 16
     }
-
-    // ── Theme tokens (Larger Size & Layout) ───────────────────────────
-    readonly property color _bg:      Qt.rgba(0.078, 0.078, 0.118, 0.78)
-    readonly property color _border:  Qt.rgba(1, 1, 1, 0.13)
-    readonly property color _divider: Qt.rgba(1, 1, 1, 0.09)
-    readonly property color _text:    "#F0F4FF"
-    readonly property color _label:   Qt.rgba(1, 1, 1, 0.55)
-    readonly property color _unit:    Qt.rgba(1, 1, 1, 0.45)
-    readonly property color _accent:  "#00D4FF"
-    readonly property color _good:    "#4ADE80"
-    readonly property color _warn:    "#FBBF24"
-    readonly property color _crit:    "#F87171"
 
     readonly property real _pad:       18 // Increased padding (15% bigger)
     readonly property real _colGap:    18 // Increased gap between columns
@@ -113,9 +101,9 @@ Item {
     }
 
     // ── Color helpers ─────────────────────────────────────────────────
-    function _battColor(p) { return (!activeVehicle || p === undefined || p === null || isNaN(p) || p < 0) ? _label : p >= 40 ? _good : p >= 20 ? _warn : _crit }
-    function _rssiColor(r) { return (!activeVehicle || r === undefined || r === null || isNaN(r) || r <= 0 || r > 100) ? _label : r >= 70 ? _good : r >= 40 ? _warn : _crit }
-    function _gpsColor(l)  { return (!activeVehicle || l === undefined || l === null || isNaN(l) || l < 2) ? _crit : l >= 3 ? _good : _warn }
+    function _battColor(p) { return (!activeVehicle || p === undefined || p === null || isNaN(p) || p < 0) ? Colors.textSecondary : p >= 40 ? Colors.pass : p >= 20 ? Colors.warning : Colors.fail }
+    function _rssiColor(r) { return (!activeVehicle || r === undefined || r === null || isNaN(r) || r <= 0 || r > 100) ? Colors.textSecondary : r >= 70 ? Colors.pass : r >= 40 ? Colors.warning : Colors.fail }
+    function _gpsColor(l)  { return (!activeVehicle || l === undefined || l === null || isNaN(l) || l < 2) ? Colors.fail : l >= 3 ? Colors.pass : Colors.warning }
     
     function _fixStr(l) {
         if (!activeVehicle || l === undefined || l === null || isNaN(l)) return "No GPS"
@@ -144,8 +132,8 @@ Item {
         implicitHeight: _contentRow.implicitHeight + root._pad * 2
 
         radius:      8
-        color:       root._bg
-        border.color: root._border
+        color:       Qt.rgba(Colors.surface.r, Colors.surface.g, Colors.surface.b, 0.78)
+        border.color: Colors.border
         border.width: 1
         z:            QGroundControl.zOrderWidgets + 1
 
@@ -228,16 +216,16 @@ Item {
                 header: "FLIGHT"
                 rows: _settings.threeColumns ? [
                     { label: "Mode",  value: (_armed ? "✦ " : "") + _mode,
-                      vcolor: _armed ? _good : _text },
-                    { label: "Alt",   value: _formatVal(_altRel, 1), unit: "m",   vcolor: _text },
-                    { label: "Speed", value: _formatVal(_gndSpd, 1), unit: "m/s", vcolor: _text },
-                    { label: "Vspd",  value: (_climbRate >= 0 ? "↑" : "↓") + _formatVal(Math.abs(_climbRate), 1), unit: "m/s", vcolor: _climbRate > 0.5 ? _accent : _climbRate < -0.5 ? _warn : _text }
+                      vcolor: _armed ? Colors.pass : Colors.textPrimary },
+                    { label: "Alt",   value: _formatVal(_altRel, 1), unit: "m",   vcolor: Colors.textPrimary },
+                    { label: "Speed", value: _formatVal(_gndSpd, 1), unit: "m/s", vcolor: Colors.textPrimary },
+                    { label: "Vspd",  value: (_climbRate >= 0 ? "↑" : "↓") + _formatVal(Math.abs(_climbRate), 1), unit: "m/s", vcolor: _climbRate > 0.5 ? Colors.accentCyan : _climbRate < -0.5 ? Colors.warning : Colors.textPrimary }
                 ] : [
                     { label: "Mode",  value: (_armed ? "✦ " : "") + _mode,
-                      vcolor: _armed ? _good : _text },
-                    { label: "Alt",   value: _formatVal(_altRel, 1), unit: "m",   vcolor: _text },
-                    { label: "Gnd",   value: _formatVal(_gndSpd, 1), unit: "m/s", vcolor: _text },
-                    { label: "Hdg",   value: _formatVal(_hdg, 0),    unit: "°",   vcolor: _accent }
+                      vcolor: _armed ? Colors.pass : Colors.textPrimary },
+                    { label: "Alt",   value: _formatVal(_altRel, 1), unit: "m",   vcolor: Colors.textPrimary },
+                    { label: "Gnd",   value: _formatVal(_gndSpd, 1), unit: "m/s", vcolor: Colors.textPrimary },
+                    { label: "Hdg",   value: _formatVal(_hdg, 0),    unit: "°",   vcolor: Colors.accentCyan }
                 ]
             }
 
@@ -249,7 +237,7 @@ Item {
                 Layout.bottomMargin: 4
                 Layout.leftMargin:   root._colGap
                 Layout.rightMargin:  root._colGap
-                color: root._divider
+                color: Colors.borderLight
             }
 
             // ── Column 2: NAVIGATION (only shown in 3-column mode) ──
@@ -263,15 +251,15 @@ Item {
                     { label: "Sats",  value: activeVehicle ? _sats.toString() : "--", unit: "sat", vcolor: _gpsColor(_lock) },
                     { label: "Hdg",
                       value: _hdgArrow(_hdg) + " " + _formatVal(_hdg, 0),
-                      unit: "°",    vcolor: _accent },
+                      unit: "°",    vcolor: Colors.accentCyan },
                     { label: "Dist",  value: _formatVal(_distHome, 0),
-                      unit: "m",    vcolor: _text },
+                      unit: "m",    vcolor: Colors.textPrimary },
                     { label: "Flight", value: _formatVal(_flightDist, 0),
-                      unit: "m",    vcolor: _accent },
+                      unit: "m",    vcolor: Colors.accentCyan },
                     { label: "Plan",  value: _planDist > 0 ? _formatVal(_planDist, 0) : "--",
-                      unit: _planDist > 0 ? "m" : "", vcolor: _accent },
+                      unit: _planDist > 0 ? "m" : "", vcolor: Colors.accentCyan },
                     { label: "Tgt",  value: "--",
-                      vcolor: _label }
+                      vcolor: Colors.textSecondary }
                 ]
             }
 
@@ -284,7 +272,7 @@ Item {
                 Layout.bottomMargin: 4
                 Layout.leftMargin:   root._colGap
                 Layout.rightMargin:  root._colGap
-                color: root._divider
+                color: Colors.borderLight
             }
 
             // ── Column 3: SYSTEM ─────────────────────────────────────
@@ -303,7 +291,7 @@ Item {
                       vcolor: _rssiColor(_rssi) },
                     { label: "Curr",
                       value: _formatVal(_batCur, 1),
-                      unit: "A",    vcolor: _text }
+                      unit: "A",    vcolor: Colors.textPrimary }
                 ] : [
                     { label: "Bat",
                       value: activeVehicle && _batPct >= 0 ? _batPct.toFixed(0) + "% (" + _formatVal(_batV, 1) + "V)" : "--",
@@ -316,10 +304,10 @@ Item {
                       vcolor: _rssiColor(_rssi) },
                     { label: "Home",
                       value: _formatVal(_distHome, 0),
-                      unit: "m",    vcolor: _accent },
+                      unit: "m",    vcolor: Colors.accentCyan },
                     { label: "Tgt",
                       value: "--",
-                      vcolor: _label }
+                      vcolor: Colors.textSecondary }
                 ]
             }
         }
@@ -353,14 +341,14 @@ Item {
             font.pointSize:  root._labelSize * 0.95
             font.weight:     Font.DemiBold
             font.letterSpacing: 1.2
-            color:           root._label
+            color:           Colors.textSecondary
         }
 
         // Underline beneath header
         Rectangle {
             Layout.fillWidth: true
             height: 1
-            color:  root._divider
+            color:  Colors.borderLight
             Layout.bottomMargin: 5
         }
 
@@ -375,7 +363,7 @@ Item {
                 Text {
                     text:           modelData.label + ":"
                     font.pointSize: root._labelSize
-                    color:          root._label
+                    color:          Colors.textSecondary
                     font.weight:    Font.Normal
                 }
                 Text {
@@ -383,13 +371,13 @@ Item {
                     font.pointSize: root._valSize
                     font.family:    "monospace"
                     font.weight:    Font.DemiBold
-                    color:          modelData.vcolor !== undefined ? modelData.vcolor : root._text
+                    color:          modelData.vcolor !== undefined ? modelData.vcolor : Colors.textPrimary
                 }
                 Text {
                     visible:        (modelData.unit !== undefined && modelData.unit !== "")
                     text:           modelData.unit !== undefined ? modelData.unit : ""
                     font.pointSize: root._unitSize
-                    color:          root._unit
+                    color:          Colors.textDisabled
                 }
             }
         }

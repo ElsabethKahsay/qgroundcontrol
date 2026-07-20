@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QGroundControl.Controls
+import com.uav.preflight 1.0
 
 AnalyzePage {
     id:                 root
@@ -27,7 +28,7 @@ AnalyzePage {
                 Text {
                     text: vehiclesModel.length + " vehicle(s)"
                     font.pixelSize: 14
-                    color: "#9CA3AF"
+                    color: Colors.textSecondary
                 }
 
                 Item { Layout.fillWidth: true }
@@ -42,7 +43,7 @@ AnalyzePage {
             Rectangle {
                 Layout.fillWidth: true
                 height: 1
-                color: "#374151"
+                color: Colors.divider
             }
 
             ScrollView {
@@ -62,9 +63,9 @@ AnalyzePage {
 
                             Layout.fillWidth: true
                             Layout.preferredHeight: 90
-                            color: "#1F2937"
+                            color: Colors.bgPrimary
                             radius: 6
-                            border.color: "#374151"
+                            border.color: Colors.divider
                             border.width: 1
 
                             property bool _editing: false
@@ -83,7 +84,7 @@ AnalyzePage {
                                         text: modelData.friendlyName || "unnamed"
                                         font.pixelSize: 15
                                         font.bold: true
-                                        color: "#F3F4F6"
+                                        color: Colors.textPrimary
                                         elide: Text.ElideRight
                                         Layout.fillWidth: true
                                     }
@@ -92,20 +93,20 @@ AnalyzePage {
                                         text: modelData.autopilotType + " \\u00b7 " + modelData.airframeType
                                                + " \\u00b7 v" + modelData.firmwareVersion
                                         font.pixelSize: 12
-                                        color: "#9CA3AF"
+                                        color: Colors.textSecondary
                                     }
 
                                     Text {
                                         text: "Flights: " + modelData.totalFlightCount
                                                + " \\u00b7 Hours: " + Number(modelData.totalFlightHours).toFixed(1)
                                         font.pixelSize: 12
-                                        color: "#9CA3AF"
+                                        color: Colors.textSecondary
                                     }
 
                                     Text {
                                         text: "Last seen: " + (modelData.lastSeen || "never")
                                         font.pixelSize: 11
-                                        color: "#6B7280"
+                                        color: Colors.textMuted
                                     }
                                 }
 
@@ -157,10 +158,10 @@ AnalyzePage {
 
                                 ColumnLayout {
                                     spacing: 6
-                                    Text { text: "Fingerprint: " + uidDialog.fp; color: "#D1D5DB" }
-                                    Text { text: "UID: " + uidDialog.uid; color: "#D1D5DB" }
-                                    Text { text: "Board: " + uidDialog.brd; color: "#D1D5DB" }
-                                    Text { text: "COMPID: " + uidDialog.cid; color: "#D1D5DB" }
+                                    Text { text: "Fingerprint: " + uidDialog.fp; color: Colors.textSecondary }
+                                    Text { text: "UID: " + uidDialog.uid; color: Colors.textSecondary }
+                                    Text { text: "Board: " + uidDialog.brd; color: Colors.textSecondary }
+                                    Text { text: "COMPID: " + uidDialog.cid; color: Colors.textSecondary }
                                 }
                             }
 
@@ -173,11 +174,11 @@ AnalyzePage {
                                 anchors.right: parent.right
                                 anchors.rightMargin: 10
                                 text: _editName
-                                color: "#F3F4F6"
+                                color: Colors.textPrimary
                                 background: Rectangle {
-                                    color: "#111827"
+                                    color: Colors.surface
                                     radius: 4
-                                    border.color: "#3B82F6"
+                                    border.color: Colors.info
                                 }
                                 onTextChanged: _editName = text
                             }

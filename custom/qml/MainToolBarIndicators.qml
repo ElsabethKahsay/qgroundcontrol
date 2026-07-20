@@ -4,7 +4,7 @@ import QtQuick.Layouts
 
 import QGroundControl
 import QGroundControl.ScreenTools
-import QGroundControl.Palette
+import com.uav.preflight 1.0
 
 Row {
     id:                 indicatorRow
@@ -19,8 +19,6 @@ Row {
     function dropMessageIndicatorTool() {
         toolIndicatorsRepeater.dropMessageIndicatorTool();
     }
-
-    QGCPalette { id: qgcPal }
 
     // Standard app-provided toolbar indicators
     Repeater {
@@ -50,7 +48,7 @@ Row {
         anchors.bottom: parent.bottom
         width: ScreenTools.defaultFontPixelWidth * 10
         visible: true
-        color: _btnMA.containsPress ? "#065F7C"
+        color: _btnMA.containsPress ? Colors.tealDark
              : _btnMA.containsMouse ? Qt.rgba(0,0,0,0.08)
              : "transparent"
         radius: 4
@@ -64,14 +62,14 @@ Row {
             Text {
                 text: _activeVehicle ? "\u2714" : "\u2610"
                 font.pixelSize: ScreenTools.defaultFontPixelHeight * 0.9
-                color: _activeVehicle ? "#0891B2" : qgcPal.colorGrey
+                color: _activeVehicle ? Colors.teal : Colors.textDisabled
             }
 
             Text {
                 text: qsTr("Checklist")
                 font.pointSize: ScreenTools.defaultFontPointSize * 0.85
                 font.weight: Font.Medium
-                color: _activeVehicle ? qgcPal.text : qgcPal.colorGrey
+                color: _activeVehicle ? Colors.textPrimary : Colors.textDisabled
             }
         }
 

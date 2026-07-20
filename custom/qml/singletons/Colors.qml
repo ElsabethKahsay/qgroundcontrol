@@ -45,6 +45,43 @@ QtObject {
     readonly property color pastelGreen:  "#34d399"
     readonly property color pastelPurple: "#a78bfa"
 
+    // ── Extended status (real-time indicators) ──
+    readonly property color testing:      "#FFD700"   // gold — motor/action testing
+    readonly property color pass:         "#4ADE80"   // bright green — passed
+    readonly property color fail:         "#F87171"   // soft red — failed
+
+    // ── Background surfaces (extended) ──
+    readonly property color bgPrimary:    "#1F2937"   // card/section header bg
+    readonly property color bgSecondary:  "#F3F4F6"   // light alternate bg
+
+    // ── Extended accent ──
+    readonly property color accentCyan:   "#00D4FF"   // bright cyan for indicators
+
+    // ── Button teal states ──
+    readonly property color teal:         "#0891B2"   // default state
+    readonly property color tealLight:    "#0AA8D6"   // hover state
+    readonly property color tealDark:     "#065F7C"   // pressed state
+
+    // ── Extended text ──
+    readonly property color textMuted:    "#6B7280"   // tertiary/muted text
+    readonly property color textInverse:  "#E8ECF4"   // light text on dark surfaces
+
+    // ── Divider ──
+    readonly property color divider:      "#374151"   // section/card dividers
+
+    // ── Purple dialog theme ──
+    readonly property color dialogBg:         "#1A0A2E"   // very dark purple bg
+    readonly property color dialogSurface:    "#2D1B4E"   // dialog card surface
+    readonly property color dialogAccent:     "#9B59B6"   // purple borders/icons
+    readonly property color dialogHighlight:  "#F8BBD0"   // light purple label
+    readonly property color dialogFocus:      "#E91E63"   // pink focus ring
+    readonly property color dialogText:       "#FFFFFF"   // white text
+
+    // ── Checklist-specific ──
+    readonly property color checkFailLight:   "#EF9A9A"
+    readonly property color checkPassLight:   "#A5D6A7"
+    readonly property color checkAccent:      "#CE93D8"
+
     // ── Footer ──
     readonly property color footerBg:     "#0E1018"
 

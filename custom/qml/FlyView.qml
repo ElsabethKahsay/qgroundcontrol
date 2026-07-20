@@ -40,6 +40,8 @@ import QGroundControl.Palette
 import QGroundControl.ScreenTools
 import QGroundControl.Vehicle
 
+import com.uav.preflight 1.0
+
 // 3D Viewer modules
 import Viewer3D
 
@@ -145,7 +147,7 @@ Item {
             anchors.bottom: parent.bottom
             anchors.left: leftPanel.right
             width: 3
-            color: Qt.rgba(0.10, 0.10, 0.20, 0.95)
+            color: Colors.background
             z: QGroundControl.zOrderWidgets + 2
 
             Rectangle {
@@ -154,8 +156,8 @@ Item {
                 width: ScreenTools.defaultFontPixelHeight * 2.6
                 height: width
                 radius: width / 2
-                color: _swapMA.containsMouse ? Qt.rgba(0, 0.83, 1, 0.30) : Qt.rgba(0.07, 0.07, 0.16, 0.92)
-                border.color: Qt.rgba(0, 0.83, 1, 0.55)
+                color: _swapMA.containsMouse ? Qt.rgba(Colors.accentCyan.r, Colors.accentCyan.g, Colors.accentCyan.b, 0.30) : Colors.surface
+                border.color: Qt.rgba(Colors.accentCyan.r, Colors.accentCyan.g, Colors.accentCyan.b, 0.55)
                 border.width: 1.5
                 z: QGroundControl.zOrderWidgets + 3
 
@@ -169,7 +171,7 @@ Item {
                     anchors.centerIn: parent
                     text: qsTr("⇄")
                     font.pixelSize: ScreenTools.defaultFontPixelHeight * 1.2
-                    color: "#00D4FF"
+                    color: Colors.accentCyan
                 }
 
                 MouseArea {
@@ -275,7 +277,7 @@ Item {
             visible: !QGroundControl.videoManager.hasVideo
             parent: _videoIsMain ? leftPanel : rightPanel
             anchors.fill: parent
-            color: Qt.rgba(0.05, 0.05, 0.09, 1.0)
+            color: Colors.background
 
             Column {
                 anchors.centerIn: parent
@@ -284,13 +286,13 @@ Item {
                 Text {
                     text: qsTr("📹")
                     font.pixelSize: ScreenTools.defaultFontPixelHeight * 2.4
-                    color: "#374151"
+                    color: Colors.textDisabled
                     anchors.horizontalCenter: parent.horizontalCenter
                 }
                 Text {
                     text: qsTr("No Video Stream")
                     font.pointSize: ScreenTools.defaultFontPointSize * 1.05
-                    color: "#4B5563"
+                    color: Colors.textDisabled
                     anchors.horizontalCenter: parent.horizontalCenter
                 }
             }

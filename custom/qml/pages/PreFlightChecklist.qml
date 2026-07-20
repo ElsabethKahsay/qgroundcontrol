@@ -207,7 +207,7 @@ Page {
         anchors.centerIn: parent
         width: Math.min(480, parent.width * 0.9)
         closePolicy: Popup.CloseOnEscape
-        background: Rectangle { color: Colors.surface; border.color: "#7B1C1C"; border.width: 1; radius: Config.radiusMedium }
+        background: Rectangle { color: Colors.surface; border.color: Colors.errorDim; border.width: 1; radius: Config.radiusMedium }
         header: Label { text: forceArmDialog.title; font.bold: true; color: Colors.textPrimary; padding: Config.spacingMedium }
         padding: Config.spacingMedium
 
@@ -263,7 +263,7 @@ Page {
                     text: qsTr("Force Arm Anyway")
                     Layout.fillWidth: true
                     implicitHeight: 32
-                    background: Rectangle { color: "#DC2626"; radius: Config.radiusSmall }
+                    background: Rectangle { color: Colors.error; radius: Config.radiusSmall }
                     contentItem: Text {
                         text: forceArmConfirmBtn.text
                         font.bold: true
@@ -642,9 +642,9 @@ Page {
 
                     gradient: Gradient {
                         orientation: Gradient.Horizontal
-                        GradientStop { position: 0.0; color: "#2D1B4E" }
-                        GradientStop { position: 0.5; color: "#4A1942" }
-                        GradientStop { position: 1.0; color: "#6B1D5E" }
+                        GradientStop { position: 0.0; color: Colors.dialogSurface }
+                        GradientStop { position: 0.5; color: Colors.dialogSurface }
+                        GradientStop { position: 1.0; color: Colors.dialogSurface }
                     }
 
                     RowLayout {
@@ -657,12 +657,12 @@ Page {
                             spacing: 1
                             Text {
                                 text: PreflightManager.passedChecks + "/" + PreflightManager.totalChecks + " checks passed"
-                                font.pixelSize: 25; font.bold: true; color: "#F8BBD0"
+                                font.pixelSize: 25; font.bold: true; color: Colors.dialogHighlight
                             }
                             Text {
                                 text: _nCritical > 0 ? _nCritical + " critical issue" + (_nCritical !== 1 ? "s" : "") : "No critical issues"
                                 font.pixelSize: 25
-                                color: _nCritical > 0 ? "#EF9A9A" : "#A5D6A7"
+                                color: _nCritical > 0 ? Colors.checkFailLight : Colors.checkPassLight
                             }
                         }
 
@@ -671,11 +671,11 @@ Page {
                         Rectangle {
                             width: 32; height: 32; radius: 16
                             color: "transparent"
-                            border.color: "#CE93D8"; border.width: 2
+                            border.color: Colors.checkAccent; border.width: 2
                             Text {
                                 anchors.centerIn: parent
                                 text: PreflightManager.completionPercent + "%"
-                                font.pixelSize: 25; font.bold: true; color: "#CE93D8"
+                                font.pixelSize: 25; font.bold: true; color: Colors.checkAccent
                             }
                         }
 
@@ -1023,7 +1023,7 @@ Page {
                                 implicitHeight: 28; implicitWidth: 100
                                 enabled: _nCritical > 0
                                 background: Rectangle {
-                                    color: "#7B1C1C"
+                                    color: Colors.errorDim
                                     radius: Config.radiusSmall
                                 }
                                 contentItem: Text {

@@ -7,10 +7,10 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import QGroundControl.Palette
 import QGroundControl.ScreenTools
 import QGroundControl.Controls
 import QGroundControl
+import com.uav.preflight 1.0
 
 Item {
     id: root
@@ -25,16 +25,16 @@ Item {
     property var _gate: ArmingGate
 
     function _stateColor() {
-        if (!_pfm) return qgcPal.colorGrey
+        if (!_pfm) return Colors.textDisabled
         switch (_pfm.state) {
-        case 0: return qgcPal.colorGrey
-        case 1: return qgcPal.buttonHighlight
-        case 2: return "#9B59B6"
-        case 3: return "#E91E63"
-        case 4: return qgcPal.colorGreen
-        case 5: return "#009688"
-        case 6: return qgcPal.colorRed
-        default: return qgcPal.colorGrey
+        case 0: return Colors.textDisabled
+        case 1: return Colors.accent
+        case 2: return Colors.dialogAccent
+        case 3: return Colors.dialogFocus
+        case 4: return Colors.success
+        case 5: return Colors.teal
+        case 6: return Colors.error
+        default: return Colors.textDisabled
         }
     }
 
@@ -77,7 +77,7 @@ Item {
             height: 12
             radius: width / 2
             anchors.verticalCenter: parent.verticalCenter
-            color: _gateBlocked() ? qgcPal.colorRed : _stateColor()
+            color: _gateBlocked() ? Colors.error : _stateColor()
         }
 
         Column {
@@ -87,12 +87,12 @@ Item {
             Text {
                 text: qsTr("Preflight")
                 font.pointSize: ScreenTools.smallFontPointSize
-                color: qgcPal.text
+                color: Colors.textPrimary
             }
             Text {
                 text: _stateLabel()
                 font.pointSize: ScreenTools.smallFontPointSize
-                color: _gateBlocked() ? qgcPal.colorRed : qgcPal.buttonText
+                color: _gateBlocked() ? Colors.error : Colors.textPrimary
             }
         }
     }
