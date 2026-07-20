@@ -57,6 +57,9 @@ public:
         int targetPwm, int feedbackPwm, int toleranceMin, int toleranceMax,
         bool operatorConfirmed, const QString &result,
         const QString &failureReason = "", const QString &operatorId = "", int durationMs = 0);
+    Q_INVOKABLE bool logMotorTestResult(int vehicleSysId, int motorIndex, int throttlePct,
+                                        int durationSec, int expectedPwm, int actualPwm,
+                                        int pwmDelta, const QString &result);
     Q_INVOKABLE QString getHardwareTestEvents(int flightId);
 
     // ── Component maintenance CRUD ────────────────────────────────────
@@ -71,11 +74,23 @@ public:
     // ── Vehicle profile CRUD ──────────────────────────────────────────
     Q_INVOKABLE bool upsertVehicle(const QString &deviceUid, const QString &friendlyName,
                                    const QString &autopilotType, const QString &airframeType);
+    Q_INVOKABLE bool upsertVehicleEx(const QString &deviceUid, const QString &friendlyName,
+                                     const QString &autopilotType, const QString &airframeType,
+                                     int frameClass = -1, int frameType = -1,
+                                     int motorCount = 0, const QString &motorLayout = QString(),
+                                     double gpsLat = 0.0, double gpsLon = 0.0);
     Q_INVOKABLE QString getVehicle(const QString &deviceUid);
     Q_INVOKABLE QStringList listVehicles();
     Q_INVOKABLE bool deleteVehicle(const QString &deviceUid);
     Q_INVOKABLE bool incrementFlightCount(const QString &deviceUid);
     Q_INVOKABLE bool updateFlightHours(const QString &deviceUid, double hours);
+    Q_INVOKABLE bool updateVehicleProfile(const QString &deviceUid, const QString &pilotName,
+                                           const QString &notes);
+    Q_INVOKABLE bool updateVehicleGps(const QString &deviceUid, double lat, double lon);
+    Q_INVOKABLE bool updatePreflightStatus(const QString &deviceUid, const QString &status);
+    Q_INVOKABLE QString exportVehiclesJson();
+    Q_INVOKABLE bool importVehiclesJson(const QString &json);
+    Q_INVOKABLE QString searchVehicles(const QString &query);
 
     // ── Vehicle registry (fingerprint-based) ─────────────────────────
     Q_INVOKABLE QString lookupVehicleByFingerprint(const QString &fingerprint);
@@ -113,8 +128,25 @@ public:
     Q_INVOKABLE bool updateFlightSessionLocation(int sessionId, const QString &locationName);
     Q_INVOKABLE bool updateFlightSessionPlanLocation(int sessionId, double lat, double lon);
     Q_INVOKABLE bool endFlightSession(int sessionId, double durationSeconds);
+    Q_INVOKABLE bool updateFlightSessionEnergy(int sessionId, double energyConsumedWh, double distanceM);
     Q_INVOKABLE QString getFlightSessions(const QString &deviceUid, int limit = 10);
     Q_INVOKABLE QString getVehicleHistory(const QString &deviceUid);
+
+    /// Calibrated power model data derived from completed flight sessions.
+    struct CalibratedPowerModel {
+        double whPerKm = 0.0;
+        double hoverWhPerMin = 0.0;  // estimated from average hover duration
+        int dataPointCount = 0;
+        bool isCalibrated = false;
+    };
+    /// Query average energy consumption from the last N completed sessions for a vehicle.
+    CalibratedPowerModel getCalibratedPowerModel(const QString &deviceUid, int minSessions = 5);
+
+    // ── Check config (check-level overrides) ──────────────────────────
+    Q_INVOKABLE QString getCheckConfig(const QString &checkId, const QString &key,
+                                       int vehicleId = -1);
+    Q_INVOKABLE bool setCheckConfig(const QString &checkId, const QString &key,
+                                    const QString &value, int vehicleId = -1);
 
     // ── Check result audit ────────────────────────────────────────────
     Q_INVOKABLE bool saveCheckResult(const QString &deviceUid, int flightSessionId,

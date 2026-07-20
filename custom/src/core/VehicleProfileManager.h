@@ -23,6 +23,10 @@ public:
 
     void setTelemetryBridge(TelemetryBridge *bridge);
 
+    /// Resolve motor count from vehicle parameters (CA_AIRFRAME on PX4,
+    /// FRAME_CLASS/FRAME_TYPE on ArduPilot). Falls back to defaultCount.
+    static int resolveMotorCount(TelemetryBridge *telemetry, int defaultCount = 4);
+
     QString currentDeviceUid() const { return m_currentDeviceUid; }
     QString currentVehicleHistoryJson() const { return m_currentVehicleHistoryJson; }
     QString currentBatterySerial() const { return m_batterySerial; }
@@ -73,4 +77,5 @@ private:
     QElapsedTimer m_sessionTimer;
     bool m_wasArmed = false;
     QElapsedTimer m_armedTimer;
+    double m_armBatteryPct = -1.0;
 };

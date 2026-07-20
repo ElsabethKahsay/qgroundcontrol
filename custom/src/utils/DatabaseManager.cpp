@@ -154,7 +154,8 @@ bool DatabaseManager::initialize(const QString &dbPath)
 //   3 - Phase 7: payload_weight_kg, location_name columns + indexes
 //   4 - Phase 8/9: fingerprint columns, vehicle_config table
 //   5 - plan_lat/plan_lon columns for per-plan location coordinates
-static const int kLatestSchemaVersion = 5;
+//   6 - energy_consumed_wh/distance_m on flight_sessions; check_config table
+static const int kLatestSchemaVersion = 8;
 
 bool DatabaseManager::createTables()
 {
@@ -581,6 +582,37 @@ bool DatabaseManager::logHardwareTestStep(
     return true;
 }
 
+bool DatabaseManager::logMotorTestResult(int vehicleSysId, int motorIndex,
+                                         int throttlePct, int durationSec,
+                                         int expectedPwm, int actualPwm,
+                                         int pwmDelta, const QString &result)
+{
+    if (!m_initialized) return false;
+
+    QSqlQuery query(m_db);
+    query.prepare(
+        "INSERT INTO motor_test_results "
+        "(vehicle_sys_id, motor_index, throttle_pct, duration_sec, expected_pwm, "
+        " actual_pwm, pwm_delta, result, timestamp) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    );
+    query.addBindValue(vehicleSysId);
+    query.addBindValue(motorIndex);
+    query.addBindValue(throttlePct);
+    query.addBindValue(durationSec);
+    query.addBindValue(expectedPwm);
+    query.addBindValue(actualPwm);
+    query.addBindValue(pwmDelta);
+    query.addBindValue(result);
+    query.addBindValue(QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+
+    if (!query.exec()) {
+        qWarning() << "DatabaseManager: logMotorTestResult failed:" << query.lastError().text();
+        return false;
+    }
+    return true;
+}
+
 /**
  * @brief Query hardware test events for a flight
  */
@@ -735,6 +767,74 @@ bool DatabaseManager::migrateSchema()
             }
             break;
         }
+        case 6: {
+            // v6: energy_consumed_wh/distance_m on flight_sessions; check_config table
+            QSqlQuery pragma6(m_db);
+            pragma6.exec("PRAGMA table_info(flight_sessions)");
+            bool hasEnergy = false;
+            while (pragma6.next()) {
+                if (pragma6.value(1).toString() == "energy_consumed_wh") { hasEnergy = true; break; }
+            }
+            if (!hasEnergy) {
+                q.exec("ALTER TABLE flight_sessions ADD COLUMN energy_consumed_wh REAL DEFAULT 0.0");
+                q.exec("ALTER TABLE flight_sessions ADD COLUMN distance_m REAL DEFAULT 0.0");
+            }
+            q.exec("CREATE TABLE IF NOT EXISTS check_config ("
+                   "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                   "vehicle_id INTEGER,"
+                   "check_id TEXT NOT NULL,"
+                   "key TEXT NOT NULL,"
+                   "value TEXT NOT NULL,"
+                   "updated_at TEXT NOT NULL)");
+            q.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_check_config_lookup "
+                   "ON check_config(vehicle_id, check_id, key)");
+            break;
+        }
+        case 7: {
+            // v7: motor_test_results audit table
+            q.exec("CREATE TABLE IF NOT EXISTS motor_test_results ("
+                   "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                   "vehicle_sys_id INTEGER NOT NULL,"
+                   "motor_index INTEGER NOT NULL,"
+                   "throttle_pct INTEGER NOT NULL,"
+                   "duration_sec INTEGER NOT NULL,"
+                   "expected_pwm INTEGER NOT NULL,"
+                   "actual_pwm INTEGER NOT NULL,"
+                   "pwm_delta INTEGER NOT NULL,"
+                   "result TEXT NOT NULL,"
+                   "timestamp TEXT NOT NULL)");
+            break;
+        }
+        case 8: {
+            // v8: expanded vehicle profile columns
+            auto addCol = [&](const QString &colDef) {
+                QSqlQuery pragma8(m_db);
+                pragma8.exec("PRAGMA table_info(vehicles)");
+                bool has = false;
+                QString colName = colDef.section(' ', 0, 0);
+                while (pragma8.next()) {
+                    if (pragma8.value(1).toString() == colName) { has = true; break; }
+                }
+                if (!has) {
+                    q.exec(QStringLiteral("ALTER TABLE vehicles ADD COLUMN %1").arg(colDef));
+                }
+            };
+            addCol(QStringLiteral("vehicle_uuid TEXT DEFAULT ''"));
+            addCol(QStringLiteral("frame_class INTEGER DEFAULT -1"));
+            addCol(QStringLiteral("frame_type INTEGER DEFAULT -1"));
+            addCol(QStringLiteral("motor_count INTEGER DEFAULT 0"));
+            addCol(QStringLiteral("motor_layout TEXT DEFAULT ''"));
+            addCol(QStringLiteral("param_snapshot_path TEXT DEFAULT ''"));
+            addCol(QStringLiteral("last_preflight_status TEXT DEFAULT ''"));
+            addCol(QStringLiteral("gps_latitude REAL DEFAULT 0.0"));
+            addCol(QStringLiteral("gps_longitude REAL DEFAULT 0.0"));
+            addCol(QStringLiteral("pilot_name TEXT DEFAULT ''"));
+            addCol(QStringLiteral("notes TEXT DEFAULT ''"));
+            addCol(QStringLiteral("thumbnail TEXT DEFAULT ''"));
+            q.exec("CREATE INDEX IF NOT EXISTS idx_vehicles_airframe ON vehicles(airframe_type)");
+            q.exec("CREATE INDEX IF NOT EXISTS idx_vehicles_autopilot ON vehicles(autopilot_type)");
+            break;
+        }
         default:
             qWarning() << "DatabaseManager: unknown migration version" << v;
             return false;
@@ -874,6 +974,65 @@ bool DatabaseManager::upsertVehicle(const QString &deviceUid, const QString &fri
     return execOrWarn(q, "upsertVehicle");
 }
 
+bool DatabaseManager::upsertVehicleEx(const QString &deviceUid, const QString &friendlyName,
+                                       const QString &autopilotType, const QString &airframeType,
+                                       int frameClass, int frameType,
+                                       int motorCount, const QString &motorLayout,
+                                       double gpsLat, double gpsLon)
+{
+    if (!m_initialized) return false;
+    QSqlQuery q(m_db);
+    q.prepare(R"(
+        INSERT INTO vehicles (device_uid, friendly_name, autopilot_type, airframe_type,
+                              frame_class, frame_type, motor_count, motor_layout,
+                              gps_latitude, gps_longitude,
+                              first_seen, last_seen, identity_source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'hardware_uid')
+        ON CONFLICT(device_uid) DO UPDATE SET
+            friendly_name = CASE WHEN ? != '' THEN ? ELSE friendly_name END,
+            autopilot_type = ?,
+            airframe_type = ?,
+            frame_class = CASE WHEN ? >= 0 THEN ? ELSE frame_class END,
+            frame_type = CASE WHEN ? >= 0 THEN ? ELSE frame_type END,
+            motor_count = CASE WHEN ? > 0 THEN ? ELSE motor_count END,
+            motor_layout = CASE WHEN ? != '' THEN ? ELSE motor_layout END,
+            gps_latitude = CASE WHEN ? != 0.0 OR ? != 0.0 THEN ? ELSE gps_latitude END,
+            gps_longitude = CASE WHEN ? != 0.0 OR ? != 0.0 THEN ? ELSE gps_longitude END,
+            last_seen = CURRENT_TIMESTAMP
+    )");
+    q.addBindValue(deviceUid);
+    q.addBindValue(friendlyName);
+    q.addBindValue(autopilotType);
+    q.addBindValue(airframeType);
+    q.addBindValue(frameClass);
+    q.addBindValue(frameType);
+    q.addBindValue(motorCount);
+    q.addBindValue(motorLayout);
+    q.addBindValue(gpsLat);
+    q.addBindValue(gpsLon);
+    // ON CONFLICT bind values
+    q.addBindValue(friendlyName);
+    q.addBindValue(friendlyName);
+    q.addBindValue(autopilotType);
+    q.addBindValue(airframeType);
+    q.addBindValue(frameClass);
+    q.addBindValue(frameClass);
+    q.addBindValue(frameType);
+    q.addBindValue(frameType);
+    q.addBindValue(motorCount);
+    q.addBindValue(motorCount);
+    q.addBindValue(motorLayout);
+    q.addBindValue(motorLayout);
+    q.addBindValue(gpsLat);
+    q.addBindValue(gpsLon);
+    q.addBindValue(gpsLat);
+    q.addBindValue(gpsLat);
+    q.addBindValue(gpsLon);
+    q.addBindValue(gpsLon);
+    return execOrWarn(q, "upsertVehicleEx");
+}
+
 QString DatabaseManager::getVehicle(const QString &deviceUid)
 {
     if (!m_initialized) return {};
@@ -934,6 +1093,189 @@ bool DatabaseManager::updateFlightHours(const QString &deviceUid, double hours)
     q.addBindValue(hours);
     q.addBindValue(deviceUid);
     return execOrWarn(q, "updateFlightHours");
+}
+
+bool DatabaseManager::updateVehicleProfile(const QString &deviceUid, const QString &pilotName,
+                                            const QString &notes)
+{
+    if (!m_initialized || deviceUid.isEmpty()) return false;
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE vehicles SET pilot_name = ?, notes = ?, last_seen = CURRENT_TIMESTAMP WHERE device_uid = ?");
+    q.addBindValue(pilotName);
+    q.addBindValue(notes);
+    q.addBindValue(deviceUid);
+    return execOrWarn(q, "updateVehicleProfile");
+}
+
+bool DatabaseManager::updateVehicleGps(const QString &deviceUid, double lat, double lon)
+{
+    if (!m_initialized || deviceUid.isEmpty()) return false;
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE vehicles SET gps_latitude = ?, gps_longitude = ?, last_seen = CURRENT_TIMESTAMP WHERE device_uid = ?");
+    q.addBindValue(lat);
+    q.addBindValue(lon);
+    q.addBindValue(deviceUid);
+    return execOrWarn(q, "updateVehicleGps");
+}
+
+bool DatabaseManager::updatePreflightStatus(const QString &deviceUid, const QString &status)
+{
+    if (!m_initialized || deviceUid.isEmpty()) return false;
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE vehicles SET last_preflight_status = ?, last_seen = CURRENT_TIMESTAMP WHERE device_uid = ?");
+    q.addBindValue(status);
+    q.addBindValue(deviceUid);
+    return execOrWarn(q, "updatePreflightStatus");
+}
+
+QString DatabaseManager::exportVehiclesJson()
+{
+    if (!m_initialized) return QStringLiteral("[]");
+    QSqlQuery q(m_db);
+    q.exec("SELECT device_uid, friendly_name, autopilot_type, airframe_type, "
+           "first_seen, last_seen, total_flight_count, total_flight_hours, "
+           "compid, firmware_version, board_version, fingerprint, "
+           "vehicle_uuid, frame_class, frame_type, motor_count, motor_layout, "
+           "param_snapshot_path, last_preflight_status, "
+           "gps_latitude, gps_longitude, pilot_name, notes, thumbnail "
+           "FROM vehicles ORDER BY last_seen DESC");
+
+    QJsonArray arr;
+    while (q.next()) {
+        QJsonObject o;
+        o["deviceUid"] = q.value(0).toString();
+        o["friendlyName"] = q.value(1).toString();
+        o["autopilotType"] = q.value(2).toString();
+        o["airframeType"] = q.value(3).toString();
+        o["firstSeen"] = q.value(4).toString();
+        o["lastSeen"] = q.value(5).toString();
+        o["totalFlightCount"] = q.value(6).toInt();
+        o["totalFlightHours"] = q.value(7).toDouble();
+        o["compid"] = q.value(8).toInt();
+        o["firmwareVersion"] = q.value(9).toString();
+        o["boardVersion"] = q.value(10).toString();
+        o["fingerprint"] = q.value(11).toString();
+        o["vehicleUuid"] = q.value(12).toString();
+        o["frameClass"] = q.value(13).toInt();
+        o["frameType"] = q.value(14).toInt();
+        o["motorCount"] = q.value(15).toInt();
+        o["motorLayout"] = q.value(16).toString();
+        o["paramSnapshotPath"] = q.value(17).toString();
+        o["lastPreflightStatus"] = q.value(18).toString();
+        o["gpsLatitude"] = q.value(19).toDouble();
+        o["gpsLongitude"] = q.value(20).toDouble();
+        o["pilotName"] = q.value(21).toString();
+        o["notes"] = q.value(22).toString();
+        o["thumbnail"] = q.value(23).toString();
+        arr.append(o);
+    }
+    return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Indented));
+}
+
+bool DatabaseManager::importVehiclesJson(const QString &json)
+{
+    if (!m_initialized) return false;
+    QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8());
+    if (!doc.isArray()) return false;
+
+    QJsonArray arr = doc.array();
+    for (const QJsonValue &val : arr) {
+        QJsonObject o = val.toObject();
+        QString uid = o["deviceUid"].toString();
+        if (uid.isEmpty()) continue;
+
+        QSqlQuery q(m_db);
+        q.prepare(R"(
+            INSERT OR REPLACE INTO vehicles
+            (device_uid, friendly_name, autopilot_type, airframe_type,
+             first_seen, last_seen, total_flight_count, total_flight_hours,
+             compid, firmware_version, board_version, fingerprint,
+             vehicle_uuid, frame_class, frame_type, motor_count, motor_layout,
+             param_snapshot_path, last_preflight_status,
+             gps_latitude, gps_longitude, pilot_name, notes, thumbnail,
+             identity_source)
+            VALUES (?, ?, ?, ?,
+                    ?, ?, ?, ?,
+                    ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?,
+                    ?, ?,
+                    ?, ?, ?, ?, ?,
+                    'import')
+        )");
+        q.addBindValue(uid);
+        q.addBindValue(o["friendlyName"].toString());
+        q.addBindValue(o["autopilotType"].toString());
+        q.addBindValue(o["airframeType"].toString());
+        q.addBindValue(o["firstSeen"].toString());
+        q.addBindValue(o["lastSeen"].toString());
+        q.addBindValue(o["totalFlightCount"].toInt());
+        q.addBindValue(o["totalFlightHours"].toDouble());
+        q.addBindValue(o["compid"].toInt());
+        q.addBindValue(o["firmwareVersion"].toString());
+        q.addBindValue(o["boardVersion"].toString());
+        q.addBindValue(o["fingerprint"].toString());
+        q.addBindValue(o["vehicleUuid"].toString());
+        q.addBindValue(o["frameClass"].toInt());
+        q.addBindValue(o["frameType"].toInt());
+        q.addBindValue(o["motorCount"].toInt());
+        q.addBindValue(o["motorLayout"].toString());
+        q.addBindValue(o["paramSnapshotPath"].toString());
+        q.addBindValue(o["lastPreflightStatus"].toString());
+        q.addBindValue(o["gpsLatitude"].toDouble());
+        q.addBindValue(o["gpsLongitude"].toDouble());
+        q.addBindValue(o["pilotName"].toString());
+        q.addBindValue(o["notes"].toString());
+        q.addBindValue(o["thumbnail"].toString());
+        if (!q.exec()) {
+            qWarning() << "DatabaseManager: importVehiclesJson failed for" << uid << q.lastError().text();
+        }
+    }
+    return true;
+}
+
+QString DatabaseManager::searchVehicles(const QString &query)
+{
+    if (!m_initialized) return QStringLiteral("[]");
+    QSqlQuery q(m_db);
+    QString pattern = QStringLiteral("%%1%").arg(query);
+    q.prepare("SELECT device_uid, friendly_name, autopilot_type, airframe_type, "
+              "first_seen, last_seen, total_flight_count, total_flight_hours, "
+              "fingerprint, vehicle_uuid, frame_class, frame_type, motor_count, "
+              "last_preflight_status, pilot_name "
+              "FROM vehicles WHERE "
+              "friendly_name LIKE ? OR "
+              "autopilot_type LIKE ? OR "
+              "airframe_type LIKE ? OR "
+              "pilot_name LIKE ? OR "
+              "notes LIKE ? OR "
+              "device_uid LIKE ? "
+              "ORDER BY last_seen DESC LIMIT 50");
+    for (int i = 0; i < 6; ++i)
+        q.addBindValue(pattern);
+
+    QJsonArray arr;
+    if (q.exec()) {
+        while (q.next()) {
+            QJsonObject o;
+            o["deviceUid"] = q.value(0).toString();
+            o["friendlyName"] = q.value(1).toString();
+            o["autopilotType"] = q.value(2).toString();
+            o["airframeType"] = q.value(3).toString();
+            o["firstSeen"] = q.value(4).toString();
+            o["lastSeen"] = q.value(5).toString();
+            o["totalFlightCount"] = q.value(6).toInt();
+            o["totalFlightHours"] = q.value(7).toDouble();
+            o["fingerprint"] = q.value(8).toString();
+            o["vehicleUuid"] = q.value(9).toString();
+            o["frameClass"] = q.value(10).toInt();
+            o["frameType"] = q.value(11).toInt();
+            o["motorCount"] = q.value(12).toInt();
+            o["lastPreflightStatus"] = q.value(13).toString();
+            o["pilotName"] = q.value(14).toString();
+            arr.append(o);
+        }
+    }
+    return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
 }
 
 // ── Vehicle registry (fingerprint-based) ────────────────────────────────────
@@ -1350,6 +1692,17 @@ bool DatabaseManager::endFlightSession(int sessionId, double durationSeconds)
     return execOrWarn(q, "endFlightSession");
 }
 
+bool DatabaseManager::updateFlightSessionEnergy(int sessionId, double energyConsumedWh, double distanceM)
+{
+    if (!m_initialized) return false;
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE flight_sessions SET energy_consumed_wh = ?, distance_m = ? WHERE id = ?");
+    q.addBindValue(energyConsumedWh);
+    q.addBindValue(distanceM);
+    q.addBindValue(sessionId);
+    return execOrWarn(q, "updateFlightSessionEnergy");
+}
+
 QString DatabaseManager::getFlightSessions(const QString &deviceUid, int limit)
 {
     if (!m_initialized) return QStringLiteral("[]");
@@ -1371,6 +1724,85 @@ QString DatabaseManager::getFlightSessions(const QString &deviceUid, int limit)
         arr.append(o);
     }
     return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
+}
+
+DatabaseManager::CalibratedPowerModel DatabaseManager::getCalibratedPowerModel(
+    const QString &deviceUid, int minSessions)
+{
+    CalibratedPowerModel result;
+    if (!m_initialized || deviceUid.isEmpty()) return result;
+
+    QSqlQuery q(m_db);
+    q.prepare("SELECT energy_consumed_wh, distance_m FROM flight_sessions "
+              "WHERE device_uid = ? AND ended_at IS NOT NULL AND distance_m > 0 "
+              "ORDER BY id DESC LIMIT ?");
+    q.addBindValue(deviceUid);
+    q.addBindValue(qMax(minSessions, 1));
+
+    QVector<double> whPerKmValues;
+    int hoverCount = 0;
+    double hoverEnergySum = 0.0;
+
+    if (!q.exec()) return result;
+
+    while (q.next()) {
+        double energyWh = q.value(0).toDouble();
+        double distM = q.value(1).toDouble();
+        if (energyWh > 0.0 && distM > 0.0) {
+            whPerKmValues.append(energyWh / (distM / 1000.0));
+            result.dataPointCount++;
+        }
+    }
+
+    if (result.dataPointCount >= minSessions) {
+        double sum = 0.0;
+        for (double v : whPerKmValues) sum += v;
+        result.whPerKm = sum / whPerKmValues.size();
+        result.isCalibrated = true;
+        qDebug() << "DatabaseManager: calibrated power model for" << deviceUid
+                 << "whPerKm:" << result.whPerKm
+                 << "from" << result.dataPointCount << "sessions";
+    }
+
+    return result;
+}
+
+QString DatabaseManager::getCheckConfig(const QString &checkId, const QString &key, int vehicleId)
+{
+    if (!m_initialized) return {};
+    QSqlQuery q(m_db);
+    if (vehicleId >= 0) {
+        q.prepare("SELECT value FROM check_config WHERE check_id = ? AND key = ? AND vehicle_id = ?");
+        q.addBindValue(checkId);
+        q.addBindValue(key);
+        q.addBindValue(vehicleId);
+    } else {
+        q.prepare("SELECT value FROM check_config WHERE check_id = ? AND key = ? AND vehicle_id IS NULL");
+        q.addBindValue(checkId);
+        q.addBindValue(key);
+    }
+    if (q.exec() && q.next())
+        return q.value(0).toString();
+    return {};
+}
+
+bool DatabaseManager::setCheckConfig(const QString &checkId, const QString &key,
+                                     const QString &value, int vehicleId)
+{
+    if (!m_initialized) return false;
+    QSqlQuery q(m_db);
+    if (vehicleId >= 0) {
+        q.prepare("INSERT OR REPLACE INTO check_config (vehicle_id, check_id, key, value, updated_at) "
+                  "VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)");
+        q.addBindValue(vehicleId);
+    } else {
+        q.prepare("INSERT OR REPLACE INTO check_config (vehicle_id, check_id, key, value, updated_at) "
+                  "VALUES (NULL, ?, ?, ?, CURRENT_TIMESTAMP)");
+    }
+    q.addBindValue(checkId);
+    q.addBindValue(key);
+    q.addBindValue(value);
+    return execOrWarn(q, "setCheckConfig");
 }
 
 QString DatabaseManager::getVehicleHistory(const QString &deviceUid)
