@@ -15,7 +15,7 @@ Rectangle {
                  : Colors.border
     border.width: status === "passed" || status === "failed" || isRunning ? 2 : 1
 
-    property string title: "Motor Test"
+    property string title: qsTr("Motor Test")
     property string status: "pending"
     property string evaluationMessage: ""
     property string progressText: ""
@@ -39,7 +39,6 @@ Rectangle {
         }
         spacing: Config.spacingSmall
 
-        // Header row: status dot + title + action button
         RowLayout {
             Layout.fillWidth: true
             spacing: Config.spacingMedium
@@ -61,58 +60,8 @@ Rectangle {
                 font.bold: true
                 Layout.fillWidth: true
             }
-
-            Button {
-                id: runBtn
-                text: {
-                    if (isRunning) return "\u23F3 Running..."
-                    if (status === "passed") return "Passed"
-                    return "Run Motor Test"
-                }
-                enabled: !isRunning && status !== "passed"
-                highlighted: !isRunning && status === "pending"
-                font.pixelSize: status === "passed" ? 13 : 14
-                font.bold: true
-                implicitHeight: 36
-                implicitWidth: status === "passed" ? 80 : 140
-
-                onClicked: root.runRequested()
-
-                background: Rectangle {
-                    radius: Config.radiusSmall
-                    color: {
-                        if (status === "passed") return Colors.successDim
-                        if (isRunning) return Colors.surfaceLight
-                        return Colors.primary
-                    }
-                    border.color: {
-                        if (status === "passed") return Colors.success
-                        if (isRunning) return "transparent"
-                        return Colors.primary
-                    }
-                    border.width: 1
-
-                    // Pulse animation when pending
-                    SequentialAnimation on color {
-                        running: !isRunning && status === "pending" && runBtn.hovered
-                        loops: Animation.Infinite
-                        ColorAnimation { from: Colors.primary; to: Colors.accent; duration: 600 }
-                        ColorAnimation { from: Colors.accent; to: Colors.primary; duration: 600 }
-                    }
-                }
-
-                contentItem: Text {
-                    text: parent.text
-                    color: status === "passed" ? Colors.success : Colors.background
-                    font.pixelSize: parent.font.pixelSize
-                    font.bold: parent.font.bold
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-            }
         }
 
-        // Step progress text
         Label {
             visible: progressText.length > 0
             text: progressText
@@ -121,7 +70,6 @@ Rectangle {
             font.italic: true
         }
 
-        // Step progress bar
         ProgressBar {
             Layout.fillWidth: true
             visible: isRunning
@@ -141,7 +89,6 @@ Rectangle {
             }
         }
 
-        // Live servo output preview during test
         Rectangle {
             Layout.fillWidth: true
             visible: isRunning
@@ -172,7 +119,7 @@ Rectangle {
                 }
 
                 Label {
-                    text: "PWM"
+                    text: qsTr("PWM")
                     font.pixelSize: 12
                     font.bold: true
                     color: Colors.textSecondary
@@ -192,7 +139,6 @@ Rectangle {
             }
         }
 
-        // Result message
         Rectangle {
             Layout.fillWidth: true
             visible: evaluationMessage.length > 0 && !isRunning
