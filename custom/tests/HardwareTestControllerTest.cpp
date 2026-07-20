@@ -35,7 +35,7 @@ void HardwareTestControllerTest::testAbortSequence()
     vehicle.setConnected(true);
     ctrl.setVehicle(reinterpret_cast<Vehicle *>(&vehicle));
 
-    ctrl.runMotorTest();
+    ctrl.runServoSweep();
     ctrl.abortSequence();
     QVERIFY(!ctrl.isRunning());
 }
