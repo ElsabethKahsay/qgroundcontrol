@@ -15,14 +15,7 @@ public:
     QString getCurrentValueString() const override;
 
     // Expected endpoint ranges for calibrated RC
-    static constexpr double kMinEndpointLow  = 800.0;
-    static constexpr double kMinEndpointHigh = 1200.0;
-    static constexpr double kMaxEndpointLow  = 1800.0;
-    static constexpr double kMaxEndpointHigh = 2200.0;
-    static constexpr double kTrimCenter      = 1500.0;
-    static constexpr double kTrimTolerance   = 150.0;
-    static constexpr double kFactoryMin      = 1100.0;
-    static constexpr double kFactoryMax      = 1900.0;
+    // (defaults used as fallbacks when check_config table has no entry)
 
 private:
     struct RcCalData {

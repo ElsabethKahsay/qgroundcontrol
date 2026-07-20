@@ -4,8 +4,9 @@
 #include "TelemetryBridge.h"
 #include "WeatherProvider.h"
 
-static constexpr double TEMP_MIN_C = -10.0;
-static constexpr double TEMP_MAX_C = 45.0;
+// Config keys (stored in check_config table, populated by AbstractCheck::configDouble)
+static const QString kCfgTempMin = QStringLiteral("temp_min_c");
+static const QString kCfgTempMax = QStringLiteral("temp_max_c");
 
 MetarTemperatureCheck::MetarTemperatureCheck(TelemetryBridge *telemetry, QObject *parent)
     : AbstractCheck(QStringLiteral("env.temperature"),
@@ -54,11 +55,13 @@ void MetarTemperatureCheck::evaluate()
             // Timeout: check for cached data
             if (wp->temperature() > -100.0) {
                 double temp = wp->temperature();
-                if (temp < TEMP_MIN_C || temp > TEMP_MAX_C) {
+                double tMin = configDouble(kCfgTempMin, -10.0);
+                double tMax = configDouble(kCfgTempMax, 50.0);
+                if (temp < tMin || temp > tMax) {
                     setStatus(CheckStatus::Warning,
                               QStringLiteral("Temperature %1 \u00B0C outside operating range (%2 to %3 \u00B0C) — STALE data")
-                                  .arg(temp, 0, 'f', 1).arg(TEMP_MIN_C, 0, 'f', 0)
-                                  .arg(TEMP_MAX_C, 0, 'f', 0));
+                                  .arg(temp, 0, 'f', 1).arg(tMin, 0, 'f', 0)
+                                  .arg(tMax, 0, 'f', 0));
                 } else {
                     setStatus(CheckStatus::Warning,
                               QStringLiteral("Temperature %1 \u00B0C — STALE data").arg(temp, 0, 'f', 1));
@@ -80,12 +83,14 @@ void MetarTemperatureCheck::evaluate()
     m_fetchTriggered = false;
 
     double temp = wp->temperature();
+    double tMin = configDouble(kCfgTempMin, -10.0);
+    double tMax = configDouble(kCfgTempMax, 50.0);
 
-    if (temp < TEMP_MIN_C || temp > TEMP_MAX_C) {
+    if (temp < tMin || temp > tMax) {
         setStatus(CheckStatus::Warning,
                   QStringLiteral("Temperature %1 \u00B0C outside operating range (%2 to %3 \u00B0C)")
-                      .arg(temp, 0, 'f', 1).arg(TEMP_MIN_C, 0, 'f', 0)
-                      .arg(TEMP_MAX_C, 0, 'f', 0));
+                      .arg(temp, 0, 'f', 1).arg(tMin, 0, 'f', 0)
+                      .arg(tMax, 0, 'f', 0));
         return;
     }
 

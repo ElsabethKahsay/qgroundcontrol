@@ -4,9 +4,18 @@
 #include <QtMath>
 #include <QVariantMap>
 
+#include "DatabaseManager.h"
+
 PowerModel::PowerModel(QObject *parent)
     : QObject(parent)
 {
+}
+
+int PowerModel::minCalibrationPoints()
+{
+    QString val = DatabaseManager::instance().getCheckConfig("power_model", "min_calibration_points");
+    if (!val.isEmpty()) { bool ok; int v = val.toInt(&ok); if (ok) return v; }
+    return 5;
 }
 
 double PowerModel::defaultWhPerKm(const QString &airframeType)
@@ -44,7 +53,7 @@ void PowerModel::setCalibrationPoints(const QString &deviceUid,
 {
     auto *cal = findOrCreate(deviceUid);
     cal->points = points;
-    if (points.size() >= kMinCalibrationPoints) {
+    if (points.size() >= minCalibrationPoints()) {
         fitLinear(*cal);
     } else {
         cal->fitted = false;
@@ -92,12 +101,26 @@ PowerEstimate PowerModel::estimate(const QString &deviceUid, double payloadKg,
     int dataPts = 0;
     bool calibrated = false;
 
-    // Try to find calibration for this device (only if deviceUid is non-empty)
+    // Query DB for calibrated data (only if deviceUid is non-empty)
     if (!deviceUid.isEmpty()) {
+        auto dbModel = DatabaseManager::instance().getCalibratedPowerModel(deviceUid, minCalibrationPoints());
+        if (dbModel.isCalibrated) {
+            whPerKm = dbModel.whPerKm;
+            dataPts = dbModel.dataPointCount;
+            calibrated = true;
+            qDebug() << "PowerModel: using calibrated values from DB (" << dataPts << "sessions)";
+        } else {
+            dataPts = dbModel.dataPointCount;
+        }
+    }
+
+    // If not DB-calibrated, try in-memory calibration data
+    if (!calibrated && !deviceUid.isEmpty()) {
         for (const auto &cal : m_calibrations) {
             if (cal.deviceUid == deviceUid) {
-                dataPts = cal.points.size();
-                if (cal.fitted && dataPts >= kMinCalibrationPoints) {
+                if (dataPts == 0)
+                    dataPts = cal.points.size();
+                if (cal.fitted && dataPts >= minCalibrationPoints()) {
                     whPerKm = cal.intercept + cal.slope * payloadKg;
                     calibrated = true;
                 }
@@ -129,10 +152,12 @@ PowerEstimate PowerModel::estimate(const QString &deviceUid, double payloadKg,
     if (calibrated) {
         src = QStringLiteral("Calibrated from %1 flights").arg(dataPts);
     } else if (dataPts > 0) {
-        src = QStringLiteral("Default model (%1 flights recorded, need %2)")
-                  .arg(dataPts).arg(kMinCalibrationPoints);
+        int remaining = minCalibrationPoints() - dataPts;
+        src = QStringLiteral("Using defaults \u2014 %1 flight(s) remaining to calibrate")
+                  .arg(remaining);
     } else {
-        src = QStringLiteral("Default model (no flight history yet)");
+        src = QStringLiteral("Using defaults \u2014 %1 flights remaining to calibrate")
+                  .arg(minCalibrationPoints());
     }
 
     return {whPerKm, rangeKm, flightTimeMin, src, dataPts, calibrated};

@@ -5,6 +5,7 @@
 #include <QMetaObject>
 #include <QMetaProperty>
 
+#include "DatabaseManager.h"
 #include "TelemetryBridge.h"
 
 #include <cmath>
@@ -51,7 +52,7 @@ bool AbstractCheck::requiresReevaluation() const
         return true;
     if (m_status == CheckStatus::Passed)
         return false;
-    return m_lastEvalTime.msecsTo(QDateTime::currentDateTime()) > STALE_DATA_TIMEOUT_MS;
+    return m_lastEvalTime.msecsTo(QDateTime::currentDateTime()) > configInt(QStringLiteral("stale_timeout_ms"), 5000);
 }
 
 bool AbstractCheck::overrideStatus(const QString &newStatus, const QString &reason)
@@ -223,6 +224,26 @@ QVariant AbstractCheck::getTelemetryVariant(const QString &prop) const
         return {};
     }
     return meta->property(idx).read(m_telemetry);
+}
+
+double AbstractCheck::configDouble(const QString &key, double defaultVal) const
+{
+    QString val = DatabaseManager::instance().getCheckConfig(m_id, key);
+    if (val.isEmpty())
+        return defaultVal;
+    bool ok = false;
+    double result = val.toDouble(&ok);
+    return ok ? result : defaultVal;
+}
+
+int AbstractCheck::configInt(const QString &key, int defaultVal) const
+{
+    QString val = DatabaseManager::instance().getCheckConfig(m_id, key);
+    if (val.isEmpty())
+        return defaultVal;
+    bool ok = false;
+    int result = val.toInt(&ok);
+    return ok ? result : defaultVal;
 }
 
 QString AbstractCheck::getUserMessage() const

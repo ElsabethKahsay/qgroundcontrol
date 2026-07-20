@@ -54,10 +54,11 @@ void MagInterferenceCheck::evaluate()
     setCurrentValue(mag);
 
     double thr = throttlePercent();
+    int minSamples = configInt(QStringLiteral("min_baseline_samples"), 5);
 
     // Build baseline at low throttle
     if (thr < m_throttleThreshold) {
-        if (m_baselineSamples < kMinBaselineSamples) {
+        if (m_baselineSamples < minSamples) {
             m_baselineMag = (m_baselineMag * m_baselineSamples + mag) / (m_baselineSamples + 1);
             m_baselineSamples++;
         } else {
@@ -66,10 +67,10 @@ void MagInterferenceCheck::evaluate()
         }
     }
 
-    if (m_baselineSamples < kMinBaselineSamples) {
+    if (m_baselineSamples < minSamples) {
         setStatus(CheckStatus::Pending,
                   QStringLiteral("Calibrating baseline (%1/%2)")
-                      .arg(m_baselineSamples).arg(kMinBaselineSamples));
+                      .arg(m_baselineSamples).arg(minSamples));
         return;
     }
 

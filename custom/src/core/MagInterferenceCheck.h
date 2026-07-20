@@ -21,5 +21,4 @@ private:
 
     double m_baselineMag = 0.0;
     int m_baselineSamples = 0;
-    static constexpr int kMinBaselineSamples = 5;
 };

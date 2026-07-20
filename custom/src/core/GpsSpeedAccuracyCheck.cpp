@@ -61,9 +61,11 @@ void GpsSpeedAccuracyCheck::evaluate()
     }
 
     // Speed jitter detection (only when moving)
+    double jmpThreshold = configDouble(QStringLiteral("speed_jmp_threshold"), 15.0);
+    int maxJitter = configInt(QStringLiteral("max_jitter_samples"), 3);
     if (speed > 1.0 && m_prevSpeed > 0.0) {
         double delta = qAbs(speed - m_prevSpeed);
-        if (delta > SPEED_JMP_THRESHOLD) {
+        if (delta > jmpThreshold) {
             m_jitterCount++;
         } else {
             m_jitterCount = qMax(0, m_jitterCount - 1);
@@ -71,7 +73,7 @@ void GpsSpeedAccuracyCheck::evaluate()
     }
     m_prevSpeed = speed;
 
-    if (m_jitterCount >= MAX_JITTER_SAMPLES) {
+    if (m_jitterCount >= maxJitter) {
         setStatus(CheckStatus::Warning,
                   QStringLiteral("GPS speed jumping — check for interference or multipath"));
         return;

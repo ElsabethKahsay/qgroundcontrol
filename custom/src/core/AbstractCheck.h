@@ -179,6 +179,11 @@ protected:
     bool getTelemetryBool(const QString &prop) const;
     QVariant getTelemetryVariant(const QString &prop) const;
 
+    /// Read a configurable double from the check_config table, falling back to defaultVal.
+    double configDouble(const QString &key, double defaultVal) const;
+    /// Read a configurable integer from the check_config table, falling back to defaultVal.
+    int configInt(const QString &key, int defaultVal) const;
+
     friend class PreflightManager;
     friend class MissionEnergyCheckTest;
 
@@ -194,7 +199,6 @@ protected:
     QDateTime m_lastEvalTime;
     QList<OverrideRecord> m_overrideHistory;
     TelemetryBridge *m_telemetry = nullptr;
-    static constexpr qint64 STALE_DATA_TIMEOUT_MS = 5000;
 
 private:
     CheckStatus statusFromString(const QString &s) const;

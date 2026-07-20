@@ -5,6 +5,8 @@
 #include <QVector>
 #include <QPair>
 
+class DatabaseManager;
+
 struct PowerCalibrationPoint {
     double payloadKg;
     double whPerKm;
@@ -42,8 +44,8 @@ public:
                            double missionDistanceKm = -1.0,
                            const QString &airframeHint = QString()) const;
 
-    // Minimum data points before using calibrated model
-    static constexpr int kMinCalibrationPoints = 5;
+    // Minimum data points before using calibrated model (from DB check_config or default 5)
+    static int minCalibrationPoints();
 
 signals:
     void calibrationUpdated(const QString &deviceUid);

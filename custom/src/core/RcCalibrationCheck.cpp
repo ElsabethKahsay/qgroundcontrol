@@ -28,37 +28,50 @@ void RcCalibrationCheck::evaluate()
         // ── Verify endpoints ──────────────────────────────────────────
         QStringList failures;
 
+        double minLo = configDouble(QStringLiteral("rc_min_endpoint_low"), 800.0);
+        double minHi = configDouble(QStringLiteral("rc_min_endpoint_high"), 1200.0);
+        double maxLo = configDouble(QStringLiteral("rc_max_endpoint_low"), 1800.0);
+        double maxHi = configDouble(QStringLiteral("rc_max_endpoint_high"), 2200.0);
+        double trimCenter = configDouble(QStringLiteral("rc_trim_center"), 1500.0);
+        double trimTol   = configDouble(QStringLiteral("rc_trim_tolerance"), 150.0);
+
         for (int i = 0; i < 4; ++i) {
-            if (cal.min[i] < kMinEndpointLow || cal.min[i] > kMinEndpointHigh) {
+            if (cal.min[i] < minLo || cal.min[i] > minHi) {
                 failures << QStringLiteral("Ch%1 min %2 (expected %3\u2013%4)")
                                 .arg(i + 1).arg(cal.min[i], 0, 'f', 0)
-                                .arg(kMinEndpointLow, 0, 'f', 0)
-                                .arg(kMinEndpointHigh, 0, 'f', 0);
+                                .arg(minLo, 0, 'f', 0)
+                                .arg(minHi, 0, 'f', 0);
             }
-            if (cal.max[i] < kMaxEndpointLow || cal.max[i] > kMaxEndpointHigh) {
+            if (cal.max[i] < maxLo || cal.max[i] > maxHi) {
                 failures << QStringLiteral("Ch%1 max %2 (expected %3\u2013%4)")
                                 .arg(i + 1).arg(cal.max[i], 0, 'f', 0)
-                                .arg(kMaxEndpointLow, 0, 'f', 0)
-                                .arg(kMaxEndpointHigh, 0, 'f', 0);
+                                .arg(maxLo, 0, 'f', 0)
+                                .arg(maxHi, 0, 'f', 0);
             }
             if (cal.min[i] >= cal.max[i]) {
                 failures << QStringLiteral("Ch%1 min \u2265 max (%2 \u2265 %3)")
                                 .arg(i + 1).arg(cal.min[i], 0, 'f', 0).arg(cal.max[i], 0, 'f', 0);
             }
             if (cal.trim[i] > 0 &&
-                (cal.trim[i] < kTrimCenter - kTrimTolerance ||
-                 cal.trim[i] > kTrimCenter + kTrimTolerance)) {
+                (cal.trim[i] < trimCenter - trimTol ||
+                 cal.trim[i] > trimCenter + trimTol)) {
                 failures << QStringLiteral("Ch%1 trim %2 far from center %3")
                                 .arg(i + 1).arg(cal.trim[i], 0, 'f', 0)
-                                .arg(kTrimCenter, 0, 'f', 0);
+                                .arg(trimCenter, 0, 'f', 0);
             }
         }
 
         // ── Factory-default detection ─────────────────────────────────
         if (_isFactoryDefault(cal)) {
+            double fm = 1100.0, fM = 1900.0;
+            if (hasTelemetry()) {
+                double r1 = getTelemetryDouble(QStringLiteral("RC1_MIN"));
+                double r2 = getTelemetryDouble(QStringLiteral("RC1_MAX"));
+                if (!qIsNaN(r1)) fm = r1;
+                if (!qIsNaN(r2)) fM = r2;
+            }
             failures << QStringLiteral("All endpoints at factory defaults (min=%1, max=%2) \u2014 calibration required")
-                            .arg(kFactoryMin, 0, 'f', 0)
-                            .arg(kFactoryMax, 0, 'f', 0);
+                            .arg(fm, 0, 'f', 0).arg(fM, 0, 'f', 0);
         }
 
         if (failures.isEmpty()) {
@@ -127,14 +140,28 @@ RcCalibrationCheck::RcCalData RcCalibrationCheck::_readCalParams() const
 
 bool RcCalibrationCheck::_isFactoryDefault(const RcCalData &cal) const
 {
+    // Read RC1_MIN/RC1_MAX from vehicle params as the reference for factory defaults.
+    // On an uncalibrated system all channels share the same min/max. If params are
+    // unavailable, fall back to standard ArduPilot/PX4 defaults (1100/1900).
+    double factoryMin = 1100.0;
+    double factoryMax = 1900.0;
+    if (hasTelemetry()) {
+        double rcMin = getTelemetryDouble(QStringLiteral("RC1_MIN"));
+        double rcMax = getTelemetryDouble(QStringLiteral("RC1_MAX"));
+        if (!qIsNaN(rcMin) && !qIsNaN(rcMax)) {
+            factoryMin = rcMin;
+            factoryMax = rcMax;
+        }
+    }
+
     for (int i = 0; i < 4; ++i) {
-        if (qFuzzyCompare(cal.min[i], kFactoryMin) &&
-            qFuzzyCompare(cal.max[i], kFactoryMax)) {
+        if (qFuzzyCompare(cal.min[i], factoryMin) &&
+            qFuzzyCompare(cal.max[i], factoryMax)) {
             continue;
         }
-        return false; // at least one channel is non-default
+        return false;
     }
-    return true; // all 4 channels at factory defaults
+    return true;
 }
 
 QString RcCalibrationCheck::getRationale() const
