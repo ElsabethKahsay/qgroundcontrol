@@ -516,8 +516,7 @@ Rectangle {
                                         required property bool isAction
                                         required property string actionButtonText
 
-                                        width: gridHost.cellWidth
-                                        height: expanded ? expandedCol.implicitHeight + 10 : collapsedH
+                                        width: isMotorSpinCheck ? parent.width : gridHost.cellWidth
                                         radius: Config.radiusSmall
                                         color: {
                                             if (status === 1) return Colors.successDim
@@ -534,10 +533,11 @@ Rectangle {
                                         border.width: 1
                                         Behavior on color { ColorAnimation { duration: 150 } }
 
+                                        readonly property bool isMotorSpinCheck: checkId === "propulsion.motors.spin"
                                         property bool expanded: root._expandedChecks[checkId] === true
                                         readonly property int collapsedH: isManual || isAction ? 72 : 56
                                         property string _checkTime: ""
-
+                                        height: isMotorSpinCheck ? (motorPanelLoader.item ? motorPanelLoader.item.implicitHeight + 10 : collapsedH) : (expanded ? expandedCol.implicitHeight + 10 : collapsedH)
                                     ToolTip {
                                         visible: tooltipMa.containsMouse
                                         text: "ID: " + checkId + "\nType: " + typeNames[type]
@@ -551,6 +551,8 @@ Rectangle {
                                         id: tooltipMa
                                         anchors.fill: parent
                                         hoverEnabled: true
+                                        visible: !isMotorSpinCheck
+                                        enabled: !isMotorSpinCheck
                                         onClicked: {
                                             root._expandedChecks[checkId] = !root._expandedChecks[checkId]
                                             root._expandedChecks = root._expandedChecks
@@ -558,8 +560,21 @@ Rectangle {
                                         cursorShape: Qt.PointingHandCursor
                                     }
 
+                                    Loader {
+                                        id: motorPanelLoader
+                                        anchors.fill: parent
+                                        visible: isMotorSpinCheck
+                                        active: isMotorSpinCheck
+                                        source: active ? "qrc:/qml/cpts/MotorCheckPanel.qml" : ""
+                                        onLoaded: {
+                                            if (item)
+                                                item.checklistCheck = checkObject
+                                        }
+                                    }
+
                                     ColumnLayout {
                                         id: expandedCol
+                                        visible: !isMotorSpinCheck
                                         width: parent.width
                                         anchors.top: parent.top
                                         anchors.left: parent.left
