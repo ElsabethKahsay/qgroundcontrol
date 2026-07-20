@@ -25,7 +25,7 @@ Page {
         spacing: Config.spacingMedium
 
         Text {
-            text: "Registered Vehicles"
+            text: qsTr("Registered Vehicles")
             font.pixelSize: Config.fontSizeH2
             color: Colors.secondary
             anchors.horizontalCenter: parent.horizontalCenter
@@ -39,7 +39,7 @@ Page {
         }
 
         CustomButton {
-            text: "↻ Refresh"
+            text: qsTr("↻ Refresh")
             anchors.horizontalCenter: parent.horizontalCenter
             width: 120
             height: 28
@@ -194,7 +194,7 @@ Page {
                                 }
 
                                 CustomButton {
-                                    text: "History"
+                                    text: qsTr("History")
                                     width: 70
                                     height: 26
                                     baseColor: Colors.surface
@@ -243,7 +243,7 @@ Page {
     Dialog {
         id: historyDialog
         property string text: ""
-        title: "Flight History"
+        title: qsTr("Flight History")
         standardButtons: Dialog.Ok
         modal: true
 

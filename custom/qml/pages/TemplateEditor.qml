@@ -45,7 +45,7 @@ Page {
         TextField {
             id: nameField
             width: parent.width
-            placeholderText: "Template Name"
+            placeholderText: qsTr("Template Name")
             text: templateId !== "new_template" ? templateId : ""
             font.pixelSize: Config.fontSizeBody
             color: Colors.textPrimary
@@ -112,7 +112,7 @@ Page {
             anchors.horizontalCenter: parent.horizontalCenter
 
             CustomButton {
-                text: "Add Item"
+                text: qsTr("Add Item")
                 width: (parent.parent.width - Config.spacingMedium - Config.spacingLarge * 2) / 3
                 onClicked: {
                     var temp = templateItems.slice()
@@ -122,7 +122,7 @@ Page {
             }
 
             CustomButton {
-                text: "Save"
+                text: qsTr("Save")
                 width: (parent.parent.width - Config.spacingMedium - Config.spacingLarge * 2) / 3
                 onClicked: {
                     var tName = nameField.text !== "" ? nameField.text : "untitled_template"
@@ -134,7 +134,7 @@ Page {
             }
             
             CustomButton {
-                text: "Cancel"
+                text: qsTr("Cancel")
                 width: (parent.parent.width - Config.spacingMedium - Config.spacingLarge * 2) / 3
                 baseColor: Colors.surface
                 onClicked: Window.window.mainStackView.pop()

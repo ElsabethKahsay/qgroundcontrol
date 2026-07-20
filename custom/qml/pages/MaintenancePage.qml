@@ -14,14 +14,14 @@ Page {
             width: parent.width
             spacing: Config.spacingMedium
             Text {
-                text: "Maintenance Tracker"
+                text: qsTr("Maintenance Tracker")
                 font.pixelSize: Config.fontSizeH2
                 color: Colors.primary
                 anchors.verticalCenter: parent.verticalCenter
             }
             Item { height: 1; width: 1; Layout.fillWidth: true }
             CustomButton {
-                text: "← Back"
+                text: qsTr("← Back")
                 baseColor: Colors.surface
                 implicitHeight: 28
                 onClicked: Window.window.mainStackView.pop()
@@ -42,7 +42,7 @@ Page {
                 spacing: Config.spacingSmall
 
                 Text {
-                    text: "Current Vehicle"
+                    text: qsTr("Current Vehicle")
                     font.pixelSize: Config.fontSizeH3
                     font.bold: true
                     color: Colors.textPrimary
@@ -133,7 +133,7 @@ Page {
                         spacing: 2
 
                         Text {
-                            text: "Battery Health"
+                            text: qsTr("Battery Health")
                             font.pixelSize: Config.fontSizeH4; font.bold: true; color: Colors.textPrimary
                         }
 
@@ -175,14 +175,14 @@ Page {
                 spacing: Config.spacingSmall
 
                 Text {
-                    text: "Export Vehicle Data"
+                    text: qsTr("Export Vehicle Data")
                     font.pixelSize: Config.fontSizeH3
                     font.bold: true
                     color: Colors.textPrimary
                 }
 
                 Text {
-                    text: "Exports preflight checklist history, overrides, and battery data. To download the autopilot's raw flight log (.ulg/.bin), use the Analyze tab in the main QGC window."
+                    text: qsTr("Exports preflight checklist history, overrides, and battery data. To download the autopilot's raw flight log (.ulg/.bin), use the Analyze tab in the main QGC window.")
                     font.pixelSize: Config.fontSizeSmall
                     color: Colors.textSecondary
                     wrapMode: Text.WordWrap
@@ -193,7 +193,7 @@ Page {
                     spacing: Config.spacingSmall
 
                     CustomButton {
-                        text: "Export Vehicle CSV"
+                        text: qsTr("Export Vehicle CSV")
                         implicitHeight: 28
                         font.pixelSize: Config.fontSizeSmall
                         onClicked: {
@@ -205,7 +205,7 @@ Page {
                     }
 
                     CustomButton {
-                        text: "Export Vehicle HTML"
+                        text: qsTr("Export Vehicle HTML")
                         implicitHeight: 28
                         font.pixelSize: Config.fontSizeSmall
                         onClicked: {
@@ -217,7 +217,7 @@ Page {
                     }
 
                     CustomButton {
-                        text: "Export Fleet CSV (stub)"
+                        text: qsTr("Export Fleet CSV (stub)")
                         implicitHeight: 28
                         font.pixelSize: Config.fontSizeSmall
                         baseColor: Colors.surface
@@ -254,7 +254,7 @@ Page {
 
                 TextField {
                     id: newName
-                    placeholderText: "Name (e.g. Motor 1)"
+                    placeholderText: qsTr("Name (e.g. Motor 1)")
                     implicitWidth: 160
                     font.pixelSize: Config.fontSizeSmall
                     background: Rectangle { color: Colors.background; radius: Config.radiusSmall; border.color: Colors.border }
@@ -267,7 +267,7 @@ Page {
                 }
                 TextField {
                     id: newMaxHours
-                    placeholderText: "Max hours"
+                    placeholderText: qsTr("Max hours")
                     implicitWidth: 80
                     font.pixelSize: Config.fontSizeSmall
                     background: Rectangle { color: Colors.background; radius: Config.radiusSmall; border.color: Colors.border }
@@ -275,14 +275,14 @@ Page {
                 }
                 TextField {
                     id: newMaxCycles
-                    placeholderText: "Max cycles"
+                    placeholderText: qsTr("Max cycles")
                     implicitWidth: 80
                     font.pixelSize: Config.fontSizeSmall
                     background: Rectangle { color: Colors.background; radius: Config.radiusSmall; border.color: Colors.border }
                     validator: IntValidator { bottom: 0 }
                 }
                 CustomButton {
-                    text: "Add"
+                    text: qsTr("Add")
                     implicitHeight: 28
                     font.pixelSize: Config.fontSizeSmall
                     enabled: newName.text.length > 0
@@ -461,7 +461,7 @@ Page {
                     }
 
                     CustomButton {
-                        text: "Reset"
+                        text: qsTr("Reset")
                         implicitHeight: 24
                         font.pixelSize: Config.fontSizeSmall
                         baseColor: Colors.surface
@@ -482,7 +482,7 @@ Page {
             }
 
             Text {
-                text: "No components tracked — add one above"
+                text: qsTr("No components tracked — add one above")
                 font.pixelSize: Config.fontSizeBody
                 color: Colors.textSecondary
                 visible: parent.count === 0

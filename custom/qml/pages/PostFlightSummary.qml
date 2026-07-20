@@ -37,7 +37,7 @@ Page {
         spacing: Config.spacingMedium
 
         Text {
-            text: "Post-Flight Summary"
+            text: qsTr("Post-Flight Summary")
             font.pixelSize: Config.fontSizeH2
             color: Colors.primary
             Layout.alignment: Qt.AlignHCenter
@@ -74,7 +74,7 @@ Page {
             }
 
             CustomButton {
-                text: "Reset"
+                text: qsTr("Reset")
                 baseColor: Colors.surface
                 enabled: !flightActive && flightDuration > 0
                 onClicked: {
@@ -117,7 +117,7 @@ Page {
 
         // ── Notes ──
         Text {
-            text: "Flight Notes"
+            text: qsTr("Flight Notes")
             font.pixelSize: Config.fontSizeH3
             font.bold: true
             color: Colors.textPrimary
@@ -126,14 +126,14 @@ Page {
         TextArea {
             Layout.fillWidth: true
             Layout.minimumHeight: 60
-            placeholderText: "Enter flight notes..."
+            placeholderText: qsTr("Enter flight notes...")
             text: notes
             onTextChanged: notes = text
             background: Rectangle { color: Colors.surface; border.color: Colors.border; radius: Config.radiusSmall }
         }
 
         Text {
-            text: "Incidents / Issues"
+            text: qsTr("Incidents / Issues")
             font.pixelSize: Config.fontSizeH3
             font.bold: true
             color: Colors.textPrimary
@@ -142,7 +142,7 @@ Page {
         TextArea {
             Layout.fillWidth: true
             Layout.minimumHeight: 60
-            placeholderText: "Describe any issues encountered..."
+            placeholderText: qsTr("Describe any issues encountered...")
             text: incidents
             onTextChanged: incidents = text
             background: Rectangle { color: Colors.surface; border.color: Colors.border; radius: Config.radiusSmall }
@@ -173,14 +173,14 @@ Page {
                 spacing: Config.spacingSmall
 
                 Text {
-                    text: "Export Preflight Data"
+                    text: qsTr("Export Preflight Data")
                     font.pixelSize: Config.fontSizeH3
                     font.bold: true
                     color: Colors.textPrimary
                 }
 
                 Text {
-                    text: "This exports checklist results, overrides, and vehicle history — not the autopilot's raw flight log. Use QGC's Download Flight Log (Analyze tab) for .ulg/.bin logs."
+                    text: qsTr("This exports checklist results, overrides, and vehicle history — not the autopilot's raw flight log. Use QGC's Download Flight Log (Analyze tab) for .ulg/.bin logs.")
                     font.pixelSize: Config.fontSizeSmall
                     color: Colors.textSecondary
                     wrapMode: Text.WordWrap
@@ -191,7 +191,7 @@ Page {
                     spacing: Config.spacingSmall
 
                     CustomButton {
-                        text: "Export Session CSV"
+                        text: qsTr("Export Session CSV")
                         enabled: flightDuration > 0
                         implicitHeight: 28
                         font.pixelSize: Config.fontSizeSmall
@@ -208,7 +208,7 @@ Page {
                     }
 
                     CustomButton {
-                        text: "Export Session HTML"
+                        text: qsTr("Export Session HTML")
                         enabled: flightDuration > 0
                         implicitHeight: 28
                         font.pixelSize: Config.fontSizeSmall
@@ -230,7 +230,7 @@ Page {
                     spacing: Config.spacingSmall
 
                     CustomButton {
-                        text: "Export Vehicle CSV"
+                        text: qsTr("Export Vehicle CSV")
                         implicitHeight: 28
                         font.pixelSize: Config.fontSizeSmall
                         onClicked: {
@@ -246,7 +246,7 @@ Page {
                     }
 
                     CustomButton {
-                        text: "Export Vehicle HTML"
+                        text: qsTr("Export Vehicle HTML")
                         implicitHeight: 28
                         font.pixelSize: Config.fontSizeSmall
                         onClicked: {
@@ -263,7 +263,7 @@ Page {
                 }
 
                 CustomButton {
-                    text: "Export Fleet CSV (stub)"
+                    text: qsTr("Export Fleet CSV (stub)")
                     implicitHeight: 28
                     font.pixelSize: Config.fontSizeSmall
                     baseColor: Colors.surface
@@ -281,13 +281,13 @@ Page {
             Layout.alignment: Qt.AlignHCenter
 
             CustomButton {
-                text: "Save Post-Flight Report"
+                text: qsTr("Save Post-Flight Report")
                 enabled: flightDuration > 0
                 onClicked: saveReport()
             }
 
             CustomButton {
-                text: "← Back"
+                text: qsTr("← Back")
                 baseColor: Colors.surface
                 onClicked: Window.window.mainStackView.pop()
             }

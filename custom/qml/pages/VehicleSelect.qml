@@ -27,7 +27,7 @@ Page {
             spacing: Config.spacingMedium
 
             Text {
-                text: "MAVLink Connection"
+                text: qsTr("MAVLink Connection")
                 font.pixelSize: Config.fontSizeH2
                 color: Colors.secondary
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -136,7 +136,7 @@ Page {
                                 }
 
                                 CustomButton {
-                                    text: "Connect"
+                                    text: qsTr("Connect")
                                     visible: !TelemetryProvider.isConnected || index > 0
                                     baseColor: Colors.surface
                                     height: 28
@@ -152,7 +152,7 @@ Page {
 
                     // Rescan button
                     CustomButton {
-                        text: "↻ Rescan USB"
+                        text: qsTr("↻ Rescan USB")
                         width: 120
                         height: 28
                         baseColor: Colors.surface
@@ -169,7 +169,7 @@ Page {
             }
 
             Text {
-                text: "Manual Connection"
+                text: qsTr("Manual Connection")
                 font.pixelSize: Config.fontSizeBody
                 font.bold: true
                 color: Colors.textSecondary
@@ -188,7 +188,7 @@ Page {
                 id: urlField
                 width: parent.width - 2 * Config.spacingLarge
                 text: TelemetryProvider.defaultConnectionUrl
-                placeholderText: "udp://:14550"
+                placeholderText: qsTr("udp://:14550")
                 color: Colors.textPrimary
                 placeholderTextColor: Colors.textDisabled
                 background: Rectangle {
@@ -215,7 +215,7 @@ Page {
                 }
 
                 CustomButton {
-                    text: "Disconnect"
+                    text: qsTr("Disconnect")
                     width: (parent.width - Config.spacingMedium) / 2
                     baseColor: Colors.surface
                     enabled: TelemetryProvider.isConnected
@@ -224,7 +224,7 @@ Page {
             }
 
             CustomButton {
-                text: "Use preset URL"
+                text: qsTr("Use preset URL")
                 width: parent.width - 2 * Config.spacingLarge
                 baseColor: Colors.surface
                 onClicked: {
@@ -239,7 +239,7 @@ Page {
             }
 
             Text {
-                text: "Vehicle Detection"
+                text: qsTr("Vehicle Detection")
                 font.pixelSize: Config.fontSizeH2
                 color: Colors.secondary
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -322,7 +322,7 @@ Page {
             }
 
             CustomButton {
-                text: "Manage Vehicles"
+                text: qsTr("Manage Vehicles")
                 anchors.horizontalCenter: parent.horizontalCenter
                 width: parent.width - 2 * Config.spacingLarge
                 baseColor: Colors.surface
@@ -330,7 +330,7 @@ Page {
             }
 
             CustomButton {
-                text: "← Back"
+                text: qsTr("← Back")
                 anchors.horizontalCenter: parent.horizontalCenter
                 width: parent.width - 2 * Config.spacingLarge
                 baseColor: Colors.surface

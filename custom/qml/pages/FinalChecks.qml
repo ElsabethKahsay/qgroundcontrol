@@ -10,7 +10,7 @@ Page {
         spacing: Config.spacingLarge
 
         Text {
-            text: "Final Checks"
+            text: qsTr("Final Checks")
             font.pixelSize: Config.fontSizeH2
             color: Colors.primary
             anchors.horizontalCenter: parent.horizontalCenter
@@ -62,7 +62,7 @@ Page {
         }
 
         ChecklistItem {
-            text: "Airspace Clear"
+            text: qsTr("Airspace Clear")
             checked: VehicleTelemetry.airspaceClear
             status: VehicleTelemetry.airspaceClear ? "passed" : "failed"
             onToggled: VehicleTelemetry.airspaceClear = checked
@@ -76,7 +76,7 @@ Page {
         }
 
         ChecklistItem {
-            text: "Home Point Set"
+            text: qsTr("Home Point Set")
             checked: VehicleTelemetry.homePointSet
             status: VehicleTelemetry.homePointSet ? "passed" : "failed"
             onToggled: VehicleTelemetry.homePointSet = checked
@@ -95,7 +95,7 @@ Page {
                 spacing: Config.spacingSmall
 
                 Text {
-                    text: "Operator Info"
+                    text: qsTr("Operator Info")
                     font.pixelSize: Config.fontSizeH3
                     font.bold: true
                     color: Colors.textPrimary
@@ -105,7 +105,7 @@ Page {
                     spacing: Config.spacingMedium
                     width: parent.width
                     Text {
-                        text: "Operator Name"
+                        text: qsTr("Operator Name")
                         width: 140
                         font.pixelSize: Config.fontSizeSmall
                         color: Colors.textSecondary
@@ -113,7 +113,7 @@ Page {
                     }
                     TextField {
                         text: VehicleTelemetry.pilotName
-                        placeholderText: "Full name"
+                        placeholderText: qsTr("Full name")
                         font.pixelSize: Config.fontSizeSmall
                         implicitWidth: 200
                         background: Rectangle { color: Colors.background; radius: Config.radiusSmall; border.color: Colors.border }
@@ -127,7 +127,7 @@ Page {
                     spacing: Config.spacingMedium
                     width: parent.width
                     Text {
-                        text: "License / Cert #"
+                        text: qsTr("License / Cert #")
                         width: 140
                         font.pixelSize: Config.fontSizeSmall
                         color: Colors.textSecondary
@@ -135,7 +135,7 @@ Page {
                     }
                     TextField {
                         text: VehicleTelemetry.pilotLicense
-                        placeholderText: "FAA license or certificate"
+                        placeholderText: qsTr("FAA license or certificate")
                         font.pixelSize: Config.fontSizeSmall
                         implicitWidth: 200
                         background: Rectangle { color: Colors.background; radius: Config.radiusSmall; border.color: Colors.border }
@@ -149,7 +149,7 @@ Page {
                     spacing: Config.spacingMedium
                     width: parent.width
                     Text {
-                        text: "Aircraft Reg"
+                        text: qsTr("Aircraft Reg")
                         width: 140
                         font.pixelSize: Config.fontSizeSmall
                         color: Colors.textSecondary
@@ -158,7 +158,7 @@ Page {
                     TextField {
                         id: aircraftRegField
                         text: VehicleTelemetry.aircraftReg
-                        placeholderText: "Tail number (N-XXXXX)"
+                        placeholderText: qsTr("Tail number (N-XXXXX)")
                         font.pixelSize: Config.fontSizeSmall
                         implicitWidth: 200
                         background: Rectangle { color: Colors.background; radius: Config.radiusSmall; border.color: Colors.border }
@@ -181,7 +181,7 @@ Page {
                         }
                     }
                     CustomButton {
-                        text: "\u21BA"
+                        text: qsTr("\u21BA")
                         implicitWidth: 28
                         implicitHeight: 28
                         baseColor: Colors.surface
@@ -205,7 +205,7 @@ Page {
                 spacing: Config.spacingSmall
 
                 Text {
-                    text: "FAA Part 107 Signature"
+                    text: qsTr("FAA Part 107 Signature")
                     font.pixelSize: Config.fontSizeH3
                     font.bold: true
                     color: Colors.textPrimary
@@ -226,7 +226,7 @@ Page {
             spacing: Config.spacingMedium
             anchors.horizontalCenter: parent.horizontalCenter
             Text {
-                text: "FAA Part 107 Mode"
+                text: qsTr("FAA Part 107 Mode")
                 font.pixelSize: Config.fontSizeBody
                 color: Colors.textPrimary
                 anchors.verticalCenter: parent.verticalCenter
@@ -257,18 +257,18 @@ Page {
             spacing: Config.spacingMedium
             anchors.horizontalCenter: parent.horizontalCenter
             CustomButton {
-                text: "← Back"
+                text: qsTr("← Back")
                 width: (parent.width - Config.spacingMedium - Config.spacingLarge * 2) / 3
                 onClicked: Window.window.mainStackView.pop()
             }
             CustomButton {
-                text: "Launch Ready →"
+                text: qsTr("Launch Ready →")
                 width: (parent.width - Config.spacingMedium - Config.spacingLarge * 2) / 3
                 enabled: VehicleTelemetry.readyToLaunch
                 onClicked: Window.window.mainStackView.push("LaunchReady.qml")
             }
             CustomButton {
-                text: "Post-Flight"
+                text: qsTr("Post-Flight")
                 width: (parent.width - Config.spacingMedium - Config.spacingLarge * 2) / 3
                 baseColor: Colors.surface
                 onClicked: Window.window.mainStackView.push("PostFlightSummary.qml")

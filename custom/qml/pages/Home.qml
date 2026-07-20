@@ -9,21 +9,21 @@ Page {
         spacing: Config.spacingLarge
 
         Text {
-            text: "UAV Pre‑Flight Check"
+            text: qsTr("UAV Pre‑Flight Check")
             font.pixelSize: Config.fontSizeH1
             color: Colors.primary
             anchors.horizontalCenter: parent.horizontalCenter
         }
 
         CustomButton {
-            text: "Start Pre‑Flight"
+            text: qsTr("Start Pre‑Flight")
             anchors.horizontalCenter: parent.horizontalCenter
             width: 250
             onClicked: Window.window.mainStackView.push("VehicleSelect.qml")
         }
 
         CustomButton {
-            text: "Manage Templates"
+            text: qsTr("Manage Templates")
             anchors.horizontalCenter: parent.horizontalCenter
             width: 250
             baseColor: Colors.surface

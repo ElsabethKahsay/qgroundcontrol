@@ -32,7 +32,7 @@ Page {
         spacing: Config.spacingMedium
 
         Text {
-            text: "Template Manager"
+            text: qsTr("Template Manager")
             font.pixelSize: Config.fontSizeH2
             color: Colors.primary
             anchors.horizontalCenter: parent.horizontalCenter
@@ -66,7 +66,7 @@ Page {
                     }
 
                     CustomButton {
-                        text: "Edit"
+                        text: qsTr("Edit")
                         width: 80
                         height: 36
                         anchors.verticalCenter: parent.verticalCenter
@@ -81,13 +81,13 @@ Page {
             anchors.horizontalCenter: parent.horizontalCenter
 
             CustomButton {
-                text: "← Back"
+                text: qsTr("← Back")
                 width: (parent.parent.width - Config.spacingMedium - Config.spacingLarge * 2) / 2
                 baseColor: Colors.surface
                 onClicked: Window.window.mainStackView.pop()
             }
             CustomButton {
-                text: "Create New"
+                text: qsTr("Create New")
                 width: (parent.parent.width - Config.spacingMedium - Config.spacingLarge * 2) / 2
                 onClicked: Window.window.mainStackView.push("TemplateEditor.qml", { templateId: "new_template" })
             }

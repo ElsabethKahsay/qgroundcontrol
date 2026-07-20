@@ -13,7 +13,7 @@ Page {
         spacing: Config.spacingLarge
 
         Text {
-            text: "Launch Ready"
+            text: qsTr("Launch Ready")
             font.pixelSize: Config.fontSizeH2
             color: Colors.primary
             anchors.horizontalCenter: parent.horizontalCenter
@@ -83,7 +83,7 @@ Page {
                 spacing: Config.spacingMedium
 
                 Text {
-                    text: "Export Pre-Flight Report"
+                    text: qsTr("Export Pre-Flight Report")
                     font.pixelSize: Config.fontSizeH3
                     font.bold: true
                     color: Colors.textPrimary
@@ -100,18 +100,18 @@ Page {
                     spacing: Config.spacingSmall
 
                     CustomButton {
-                        text: "&#128196; Export HTML"
+                        text: qsTr("&#128196; Export HTML")
                         Layout.fillWidth: true
                         onClicked: doExport("html")
                     }
                     CustomButton {
-                        text: "&#128196; Export JSON"
+                        text: qsTr("&#128196; Export JSON")
                         Layout.fillWidth: true
                         baseColor: Colors.surface
                         onClicked: doExport("json")
                     }
                     CustomButton {
-                        text: "&#128196; Export PDF"
+                        text: qsTr("&#128196; Export PDF")
                         Layout.fillWidth: true
                         baseColor: Colors.surface
                         onClicked: doExport("pdf")
@@ -155,7 +155,7 @@ Page {
         }
 
         CustomButton {
-            text: "Authorize Launch"
+            text: qsTr("Authorize Launch")
             anchors.horizontalCenter: parent.horizontalCenter
             enabled: VehicleTelemetry.readyToLaunch
             onClicked: {
@@ -165,14 +165,14 @@ Page {
         }
 
         CustomButton {
-            text: "← Back"
+            text: qsTr("← Back")
             anchors.horizontalCenter: parent.horizontalCenter
             baseColor: Colors.surface
             onClicked: Window.window.mainStackView.pop()
         }
 
         CustomButton {
-            text: "Post-Flight Summary →"
+            text: qsTr("Post-Flight Summary →")
             anchors.horizontalCenter: parent.horizontalCenter
             baseColor: Colors.surface
             onClicked: Window.window.mainStackView.push("PostFlightSummary.qml")

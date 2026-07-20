@@ -351,7 +351,7 @@ Page {
                     RowLayout {
                         Layout.fillWidth: true; spacing: Config.spacingLarge
                         Button {
-                            text: "\u26A1 Auto-Configure"
+                            text: qsTr("\u26A1 Auto-Configure")
                             highlighted: true; font.pixelSize: Config.fontSizeSmall
                             Layout.preferredHeight: 40
                             onClicked: {
@@ -364,7 +364,7 @@ Page {
 
                         // ── Gimbal axis test buttons ──
                         Button {
-                            text: "Pitch Test"
+                            text: qsTr("Pitch Test")
                             font.pixelSize: Config.fontSizeSmall
                             Layout.preferredHeight: 40
                             onClicked: {
@@ -374,7 +374,7 @@ Page {
                             }
                         }
                         Button {
-                            text: "Yaw Test"
+                            text: qsTr("Yaw Test")
                             font.pixelSize: Config.fontSizeSmall
                             Layout.preferredHeight: 40
                             onClicked: {
@@ -403,7 +403,7 @@ Page {
                     }
 
                     Button {
-                        text: "\uD83D\uDCF7 Capture"
+                        text: qsTr("\uD83D\uDCF7 Capture")
                         highlighted: true; font.pixelSize: Config.fontSizeSmall
                         implicitHeight: 40
                         onClicked: {
@@ -414,7 +414,7 @@ Page {
                     }
 
                     Button {
-                        text: "\u2699\uFE0F Recalibrate"
+                        text: qsTr("\u2699\uFE0F Recalibrate")
                         highlighted: true; font.pixelSize: Config.fontSizeSmall
                         implicitHeight: 40
                         onClicked: {
@@ -425,7 +425,7 @@ Page {
                     }
 
                     Button {
-                        text: "\uD83D\uDEE1 Unlock"
+                        text: qsTr("\uD83D\uDEE1 Unlock")
                         font.pixelSize: Config.fontSizeSmall
                         implicitHeight: 40
                         onClicked: {
@@ -443,13 +443,13 @@ Page {
             RowLayout {
                 Layout.fillWidth: true; spacing: Config.spacingLarge
                 Button {
-                    text: "\u2190 Back to Checklist"
+                    text: qsTr("\u2190 Back to Checklist")
                     Layout.fillWidth: true; Layout.preferredHeight: 44
                     font.pixelSize: Config.fontSizeBody
                     onClicked: Window.window.mainStackView.pop()
                 }
                 Button {
-                    text: "Launch Ready \u2192"
+                    text: qsTr("Launch Ready \u2192")
                     Layout.fillWidth: true; Layout.preferredHeight: 44
                     font.pixelSize: Config.fontSizeBody; highlighted: true
                     onClicked: Window.window.mainStackView.push("LaunchReady.qml")
