@@ -293,7 +293,7 @@ Rectangle {
                         from: 1; to: 10; stepSize: 1
                         value: HardwareTestController.durationSec
                         enabled: HardwareTestController.activeMotor === -1
-                        onMoved: HardwareTestController.setDurationSec(value)
+                        onMoved: HardwareTestController.durationSec = value
 
                         background: Rectangle {
                             x: durSlider.leftPadding
@@ -636,7 +636,7 @@ Rectangle {
         }
 
         onAccepted: {
-            HardwareTestController.setFirstTestDone(true)
+            HardwareTestController.firstTestDone = true
             if (pendingMotor > 0) HardwareTestController.testMotor(pendingMotor)
             pendingMotor = -1
         }
