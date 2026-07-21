@@ -25,6 +25,7 @@ import QGroundControl.MultiVehicleManager
 import QGroundControl.ScreenTools
 import QGroundControl.FactSystem
 import com.uav.preflight 1.0
+import cpts 1.0 as ADL
 
 RowLayout {
     id:         _root
@@ -45,28 +46,13 @@ RowLayout {
     property string _estRangeText: ""
     property string _estLabelColor: Colors.textDisabled
 
-    Loader {
+    ADL.ArmGateDialogLoader {
         id: armGateDialogLoader
-        active: false
-        source: "qrc:/qml/cpts/ArmGateDialog.qml"
-        onLoaded: {
-            item.criticalFailCount = _root._gateCriticalFails
-            item.manualFailCount = _root._gateManualFails
-            item.open()
-        }
-        onItemChanged: {
-            if (item) {
-                item.accepted.connect(function() {
-                    mainWindow.armVehicleRequest()
-                    mainWindow.hideIndicatorPopup()
-                })
-                item.closed.connect(function() {
-                    armGateDialogLoader.active = false
-                })
-                item.reviewChecksRequested.connect(function() {
-                    armGateDialogLoader.active = false
-                })
-            }
+        criticalFailCount: _root._gateCriticalFails
+        manualFailCount: _root._gateManualFails
+        onAccepted: {
+            mainWindow.armVehicleRequest()
+            mainWindow.hideIndicatorPopup()
         }
     }
 

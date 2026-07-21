@@ -2,9 +2,15 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import com.uav.preflight 1.0
+import cpts 1.0 as CE
 
 Page {
     id: root
+
+    CE.ChecklistEngine {
+        id: _engine
+        viewMode: "standalone"
+    }
 
     // ── Responsive layout ──
     readonly property bool isSingle: width < Config.breakpointSingle
@@ -48,92 +54,6 @@ Page {
         _collapsed[idx] = !_collapsed[idx]
         _collapsed = _clone(_collapsed)
     }
-    function groupIcon(idx) {
-        var arr = _catGroups
-        if (idx < 0 || idx >= arr.length) return ""
-        var g = arr[idx]
-        var allPassed = true
-        var anyFail = false
-        var anyPending = false
-        var checks = PreflightManager.checks
-        for (var i = 0; i < (checks ? checks.length : 0); ++i) {
-            var c = checks[i]
-            for (var j = 0; j < g.cats.length; ++j) {
-                if (c.checkCategory === g.cats[j]) {
-                    if (c.status === 0 || c.status === 3) { allPassed = false; anyPending = true }
-                    if (c.status === 2 || c.status === 4) { allPassed = false; anyFail = true }
-                }
-            }
-        }
-        if (allPassed) return "\u2713"
-        if (anyFail) return "\u2717"
-        return "\u25CF"
-    }
-    function groupColor(idx) {
-        var arr = _catGroups
-        if (idx < 0 || idx >= arr.length) return Colors.textSecondary
-        var g = arr[idx]
-        var anyFail = false
-        var anyPending = false
-        var checks = PreflightManager.checks
-        for (var i = 0; i < (checks ? checks.length : 0); ++i) {
-            var c = checks[i]
-            for (var j = 0; j < g.cats.length; ++j) {
-                if (c.checkCategory === g.cats[j]) {
-                    if (c.status === 2 || c.status === 4) anyFail = true
-                    if (c.status === 0 || c.status === 3) anyPending = true
-                }
-            }
-        }
-        if (anyFail) return Colors.error
-        if (anyPending) return Colors.warning
-        return Colors.success
-    }
-    function groupPassedCount(idx) {
-        var arr = _catGroups
-        if (idx < 0 || idx >= arr.length) return "0/0"
-        var g = arr[idx]
-        var passed = 0, total = 0
-        var checks = PreflightManager.checks
-        for (var i = 0; i < (checks ? checks.length : 0); ++i) {
-            var c = checks[i]
-            for (var j = 0; j < g.cats.length; ++j) {
-                if (c.checkCategory === g.cats[j]) {
-                    total++
-                    if (c.status === 1) passed++
-                }
-            }
-        }
-        return passed + "/" + total
-    }
-
-    readonly property var _catGroups: [
-        { label: "Power \u0026 Propulsion",     icon: "\u26A1", cats: [0, 1], accent: Colors.pastelGreen },
-        { label: "GPS/Navigation \u0026 Sensors", icon: "\uD83D\uDEE0", cats: [2],    accent: Colors.pastelBlue },
-        { label: "Communication \u0026 Control", icon: "\uD83D\uDCF6", cats: [3],    accent: Colors.pastelPurple },
-        { label: "Airframe \u0026 Physical",    icon: "\uD83D\uDEE9", cats: [4],    accent: Colors.pastelPink },
-        { label: "Safety \u0026 Failsafes",     icon: "\uD83D\uDEE1", cats: [5],    accent: Colors.warning },
-        { label: "Environment \u0026 Mission",  icon: "\uD83C\uDF2C", cats: [6, 7], accent: Colors.info }
-    ]
-
-    readonly property int _nPending: {
-        var n = 0
-        var a = PreflightManager.checks
-        for (var i = 0; i < (a ? a.length : 0); ++i) {
-            if (a[i].status === 0 || a[i].status === 3) n++
-        }
-        return n
-    }
-
-    readonly property int _nCritical: {
-        var n = 0
-        var a = PreflightManager.checks
-        for (var i = 0; i < (a ? a.length : 0); ++i) {
-            if (a[i].status === 2 || a[i].status === 4) n++
-        }
-        return n
-    }
-
     property int _highlightIndex: -1
     property string _highlightCheckId: ""
 
@@ -182,7 +102,7 @@ Page {
         padding: Config.spacingMedium
         ColumnLayout {
             spacing: Config.spacingMedium
-            Text { text: "There are " + _nCritical + " critical failure(s) and " + _nPending + " pending check(s).  Override will bypass all safety gates and arm the vehicle."; color: Colors.textPrimary; font.pixelSize: 25; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            Text { text: "There are " + _engine.criticalChecks + " critical failure(s) and " + _engine.pendingChecks + " pending check(s).  Override will bypass all safety gates and arm the vehicle."; color: Colors.textPrimary; font.pixelSize: 25; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             Text { text: "This should only be used in controlled testing environments."; color: Colors.error; font.pixelSize: 25; font.bold: true }
         }
         onAccepted: {
@@ -373,8 +293,8 @@ Page {
         flashTimer.restart()
 
         var targetGroupIdx = -1
-        for (var g = 0; g < _catGroups.length; ++g) {
-            if (_catGroups[g].cats.indexOf(blockerCat) >= 0) {
+        for (var g = 0; g < _engine.catGroups.length; ++g) {
+            if (_engine.catGroups[g].cats.indexOf(blockerCat) >= 0) {
                 targetGroupIdx = g
                 break
             }
@@ -386,7 +306,7 @@ Page {
         var yPos = 0
         for (var j = 0; j < targetGroupIdx; ++j) {
             yPos += 36 + Config.spacingSmall + 8
-            var catsJ = _catGroups[j].cats
+            var catsJ = _engine.catGroups[j].cats
             var countJ = 0
             for (var c = 0; c < checks.length; ++c) {
                 if (catsJ.indexOf(checks[c].checkCategory) >= 0 && checks[c].status !== 1)
@@ -395,7 +315,7 @@ Page {
             yPos += Math.ceil(countJ / 2) * 56
         }
         yPos += 36 + Config.spacingSmall
-        var catsT = _catGroups[targetGroupIdx].cats
+        var catsT = _engine.catGroups[targetGroupIdx].cats
         var countT = 0
         for (var c2 = 0; c2 < blockerIdx; ++c2) {
             if (catsT.indexOf(checks[c2].checkCategory) >= 0 && checks[c2].status !== 1)
@@ -660,9 +580,9 @@ Page {
                                 font.pixelSize: 25; font.bold: true; color: Colors.dialogHighlight
                             }
                             Text {
-                                text: _nCritical > 0 ? _nCritical + " critical issue" + (_nCritical !== 1 ? "s" : "") : "No critical issues"
+                                text: _engine.criticalChecks > 0 ? _engine.criticalChecks + " critical issue" + (_engine.criticalChecks !== 1 ? "s" : "") : "No critical issues"
                                 font.pixelSize: 25
-                                color: _nCritical > 0 ? Colors.checkFailLight : Colors.checkPassLight
+                                color: _engine.criticalChecks > 0 ? Colors.checkFailLight : Colors.checkPassLight
                             }
                         }
 
@@ -713,7 +633,7 @@ Page {
                         anchors.margins: Config.spacingSmall
 
                         Repeater {
-                            model: _catGroups
+                            model: _engine.catGroups
 
                             delegate: ColumnLayout {
                                 required property int index
@@ -746,8 +666,8 @@ Page {
                                         Text { text: modelData.label; font.pixelSize: 25; font.bold: true; color: Colors.textPrimary; horizontalAlignment: Text.AlignHCenter }
                                         Item { Layout.fillWidth: true }
 
-                                        Text { text: root.groupIcon(index); font.pixelSize: 25; color: root.groupColor(index); font.bold: true }
-                                        Text { text: root.groupPassedCount(index); font.pixelSize: 25; color: Colors.textSecondary }
+                                        Text { text: _engine.groupIcon(index); font.pixelSize: 25; color: _engine.groupColor(index); font.bold: true }
+                                        Text { text: _engine.groupPassedCount(index); font.pixelSize: 25; color: Colors.textSecondary }
 
                                         Text {
                                             text: isOpen ? "\u25B2" : "\u25BC"
@@ -779,7 +699,7 @@ Page {
                                                 required property var modelData
                                                 readonly property var chk: modelData
                                                 readonly property int cStatus: chk ? chk.status : 0
-                                                readonly property bool matchCat: chk && modelData.cats ? false : chk && _catGroups[index].cats.indexOf(chk.checkCategory) >= 0
+                                                readonly property bool matchCat: chk && modelData.cats ? false : chk && _engine.catGroups[index].cats.indexOf(chk.checkCategory) >= 0
                                                 readonly property bool isPassed: cStatus === 1
                                                 readonly property bool isFailed: cStatus === 2
                                                 readonly property bool isWarning: cStatus === 3
@@ -788,7 +708,7 @@ Page {
                                                 readonly property bool isHighlighted: chk && chk.checkId === root._highlightCheckId
                                                 readonly property bool isMotorCheck: chk && chk.checkId === "propulsion.motors.spin"
 
-                                                visible: chk && _catGroups[index] && _catGroups[index].cats.indexOf(chk.checkCategory) >= 0
+                                                visible: chk && _engine.catGroups[index] && _engine.catGroups[index].cats.indexOf(chk.checkCategory) >= 0
                                                 width: isMotorCheck ? parent.width
                                                      : (isManual || isAction) ? parent.width
                                                      : (parent.width / 2 - Config.spacingSmall / 2)
@@ -917,10 +837,10 @@ Page {
 
                                 Rectangle {
                                     width: 18; height: 18; radius: 9
-                                    color: _nCritical > 0 ? Colors.error : Colors.accent
+                                    color: _engine.criticalChecks > 0 ? Colors.error : Colors.accent
                                     Text {
                                         anchors.centerIn: parent
-                                        text: _nCritical > 0 ? "\u2717" : "\u2713"
+                                        text: _engine.criticalChecks > 0 ? "\u2717" : "\u2713"
                                         font.pixelSize: 11; font.bold: true
                                         color: Colors.background
                                     }
@@ -929,12 +849,12 @@ Page {
                                 Text {
                                     id: blockerText
                                     Layout.fillWidth: true
-                                    text: _nCritical > 0 ? "Closed \u2014 " + _nCritical + " blocker(s)"
-                                         : _nPending > 0 ? _nPending + " pending"
+                                    text: _engine.criticalChecks > 0 ? "Closed \u2014 " + _engine.criticalChecks + " blocker(s)"
+                                         : _engine.pendingChecks > 0 ? _engine.pendingChecks + " pending"
                                          : PreflightManager.totalChecks > 0 ? "Open \u2014 all checks passed"
                                          : "No checks"
                                     font.pixelSize: 25; font.bold: true
-                                    color: _nCritical > 0 ? Colors.error : Colors.accent
+                                    color: _engine.criticalChecks > 0 ? Colors.error : Colors.accent
                                     elide: Text.ElideRight
 
                                     MouseArea {
@@ -998,7 +918,7 @@ Page {
                                 text: qsTr("Override")
                                 font.pixelSize: 25; font.bold: true
                                 implicitHeight: 28; implicitWidth: 90
-                                enabled: _nCritical > 0 || _nPending > 0
+                                enabled: _engine.criticalChecks > 0 || _engine.pendingChecks > 0
                                 background: Rectangle {
                                     color: "transparent"
                                     border.color: Colors.accent
@@ -1021,7 +941,7 @@ Page {
                                 text: qsTr("Force Arm")
                                 font.pixelSize: 25; font.bold: true
                                 implicitHeight: 28; implicitWidth: 100
-                                enabled: _nCritical > 0
+                                enabled: _engine.criticalChecks > 0
                                 background: Rectangle {
                                     color: Colors.errorDim
                                     radius: Config.radiusSmall

@@ -81,6 +81,10 @@
         <file alias="PriorityFixPanel.qml">qml/cpts/PriorityFixPanel.qml</file>
         <file alias="ArmGatePanel.qml">qml/cpts/ArmGatePanel.qml</file>
         <file alias="MotorCheckPanel.qml">qml/cpts/MotorCheckPanel.qml</file>
+        <file alias="ChecklistEngine.qml">qml/cpts/ChecklistEngine.qml</file>
+        <file alias="ArmGateDialogLoader.qml">qml/cpts/ArmGateDialogLoader.qml</file>
+        <file alias="MotorTestUtils.js">qml/cpts/MotorTestUtils.js</file>
+        <file alias="qmldir">qml/cpts/qmldir</file>
         <file alias="PreflightToolbarIndicator.qml">qml/PreflightToolbarIndicator.qml</file>
     </qresource>
     <qresource prefix="custom/brand">

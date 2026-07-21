@@ -1,0 +1,3 @@
+module cpts
+ChecklistEngine 1.0 ChecklistEngine.qml
+ArmGateDialogLoader 1.0 ArmGateDialogLoader.qml

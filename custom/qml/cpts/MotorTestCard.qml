@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import com.uav.preflight 1.0
+import "MotorTestUtils.js" as MTU
 
 Rectangle {
     id: root
@@ -22,14 +23,6 @@ Rectangle {
     property bool isRunning: false
 
     signal runRequested()
-
-    function channelValue(index) {
-        var raw = TelemetryProvider.servoOutputsString
-        if (!raw || raw.length === 0) return "\u2014"
-        var parts = raw.trim().split(/\s+/)
-        if (parts.length > index) return parts[index]
-        return "\u2014"
-    }
 
     ColumnLayout {
         id: colLayout
@@ -127,7 +120,7 @@ Rectangle {
                 Repeater {
                     model: 4
                     Label {
-                        text: root.channelValue(modelData)
+                        text: MTU.channelValue(modelData)
                         font.pixelSize: 13
                         font.family: "monospace"
                         color: Colors.primary

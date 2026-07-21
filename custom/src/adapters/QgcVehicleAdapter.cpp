@@ -209,5 +209,6 @@ bool QgcVehicleAdapter::_isValidCommand(int commandId)
     return commandId == MAV_CMD_COMPONENT_ARM_DISARM ||
            commandId == MAV_CMD_DO_MOTOR_TEST ||
            commandId == MAV_CMD_DO_REPOSITION ||
-           commandId == MAV_CMD_DO_CHANGE_SPEED;
+           commandId == MAV_CMD_DO_CHANGE_SPEED ||
+           commandId == MAV_CMD_SET_MESSAGE_INTERVAL;
 }

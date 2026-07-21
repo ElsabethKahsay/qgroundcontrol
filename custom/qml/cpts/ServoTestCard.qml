@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import com.uav.preflight 1.0
+import "MotorTestUtils.js" as MTU
 
 Rectangle {
     id: root
@@ -23,14 +24,6 @@ Rectangle {
     property bool reArmFailed: false
 
     signal runRequested()
-
-    function channelValue(index) {
-        var raw = TelemetryProvider.servoOutputsString
-        if (!raw || raw.length === 0) return "\u2014"
-        var parts = raw.trim().split(/\s+/)
-        if (parts.length > index) return parts[index]
-        return "\u2014"
-    }
 
     function channelLabel(index) {
         var labels = ["", "Aileron", "Elevator", "Throttle", "Rudder",
@@ -218,7 +211,7 @@ Rectangle {
                             elide: Text.ElideRight
                         }
                         Label {
-                            text: root.channelValue(modelData.ch - 1)
+                            text: MTU.channelValue(modelData.ch - 1)
                             font.pixelSize: 13
                             font.family: "monospace"
                             color: Colors.primary

@@ -379,11 +379,12 @@ void HardwareTestController::_updateMotorCount(int count, bool hasHover, int hov
     _motorDuration.resize(count);
     _motorDuration.fill(kDefaultDurationSec);
     _motorPwmValues.resize(count);
-    _motorPwmValues.fill(1100);
+    _motorPwmValues.fill(1150);
     _activeMotor = -1;
     _cooldownIndex = -1;
     _cooldownTimer.stop();
     memset(_feedbackPwm, 0, sizeof(_feedbackPwm));
+    memset(_peakFeedbackPwm, 0, sizeof(_peakFeedbackPwm));
     _firstTestDone = false;
 
     emit motorCountChanged();
@@ -421,7 +422,7 @@ void HardwareTestController::testMotor(int motorIndex)
     }
 
     // Read per-motor PWM value and shared duration
-    int pwmUs  = (idx < _motorPwmValues.size()) ? _motorPwmValues[idx] : 1100;
+    int pwmUs  = (idx < _motorPwmValues.size()) ? _motorPwmValues[idx] : 1150;
 
     _activeMotor = motorIndex;
     _setMotorState(idx, Testing);
@@ -430,6 +431,7 @@ void HardwareTestController::testMotor(int motorIndex)
 
     if (idx >= 0 && idx < kServoCount) {
         _feedbackPwm[idx] = 0;
+        _peakFeedbackPwm[idx] = 0;
     }
 
     qCDebug(hardwareTestLog) << "Testing motor" << motorIndex
@@ -438,13 +440,16 @@ void HardwareTestController::testMotor(int motorIndex)
 
     emit activeMotorChanged();
 
+    // Ensure SERVO_OUTPUT_RAW is streaming so we get feedback
+    _setServoStreaming(true);
+
     _vehicle->sendMavCommand(
         _vehicle->defaultComponentId(),
         MAV_CMD_DO_MOTOR_TEST,
-        false,
+        true,                           // showError: show rejection messages to the user
         motorIndex,
-        1,                          // param2: 1 = PWM \u00b5s mode (not percentage)
-        static_cast<float>(pwmUs), // param3: target PWM in \u00b5s
+        1,                          // param2: 1 = PWM µs mode (not percentage)
+        static_cast<float>(pwmUs), // param3: target PWM in µs
         _durationSec,
         1,                          // param5: single motor
         0
@@ -458,7 +463,7 @@ void HardwareTestController::_evaluateTestResult()
     if (_activeMotor < 0) return;
 
     int idx = _activeMotor - 1;
-    uint16_t actual = _feedbackPwm[idx];
+    uint16_t actual = _peakFeedbackPwm[idx];
     bool passed = false;
     QString resultStr;
     int delta = 0;
@@ -466,7 +471,7 @@ void HardwareTestController::_evaluateTestResult()
     if (actual == 0) {
         resultStr = QStringLiteral("TIMEOUT");
         qCDebug(hardwareTestLog) << "Motor" << _activeMotor
-                                 << "SERVO_OUTPUT_RAW not received";
+                                 << "no SERVO_OUTPUT_RAW received";
     } else {
         delta = qAbs(static_cast<int>(actual) - _expectedPwm);
         if (delta <= kPwmTolerance) {
@@ -487,7 +492,7 @@ void HardwareTestController::_evaluateTestResult()
 
     _setMotorState(idx, passed ? Pass : Fail);
 
-    int pwmUs = (idx < _motorPwmValues.size()) ? _motorPwmValues[idx] : 1100;
+    int pwmUs = (idx < _motorPwmValues.size()) ? _motorPwmValues[idx] : 1150;
     _logTestResult(_activeMotor, pwmUs,
                    _durationSec, _expectedPwm, actual, delta, resultStr);
 
@@ -501,6 +506,41 @@ void HardwareTestController::_evaluateTestResult()
 
     _activeMotor = -1;
     emit activeMotorChanged();
+}
+
+void HardwareTestController::_setServoStreaming(bool enable)
+{
+    if (!_vehicle) return;
+    _vehicle->sendMavCommand(
+        _vehicle->defaultComponentId(),
+        MAV_CMD_SET_MESSAGE_INTERVAL,
+        false,
+        static_cast<float>(MAVLINK_MSG_ID_SERVO_OUTPUT_RAW),
+        enable ? 100000.0f : -1.0f,
+        0, 0, 0, 0, 0
+    );
+}
+
+void HardwareTestController::_onCommandResult(int vehicleId, int targetComponent, int command, int ackResult, int failureCode)
+{
+    Q_UNUSED(vehicleId)
+    Q_UNUSED(targetComponent)
+    Q_UNUSED(failureCode)
+
+    if (command != MAV_CMD_DO_MOTOR_TEST) return;
+
+    if (ackResult != MAV_RESULT_ACCEPTED && _activeMotor > 0) {
+        int idx = _activeMotor - 1;
+        _resultTimer.stop();
+        qCDebug(hardwareTestLog) << "MAV_CMD_DO_MOTOR_TEST rejected:" << ackResult;
+        _setMotorState(idx, Fail);
+        int pwmUs = (idx >= 0 && idx < _motorPwmValues.size()) ? _motorPwmValues[idx] : 1150;
+        _logTestResult(_activeMotor, pwmUs,
+                       _durationSec, _expectedPwm, 0, 0,
+                       QStringLiteral("REJECTED"));
+        _activeMotor = -1;
+        emit activeMotorChanged();
+    }
 }
 
 void HardwareTestController::stopAll()
@@ -527,13 +567,15 @@ void HardwareTestController::stopAll()
 
     if (_activeMotor > 0) {
         int idx = _activeMotor - 1;
-        int pwmUs = (idx < _motorPwmValues.size()) ? _motorPwmValues[idx] : 1100;
+        int pwmUs = (idx < _motorPwmValues.size()) ? _motorPwmValues[idx] : 1150;
         _logTestResult(_activeMotor, pwmUs,
                        _durationSec, _expectedPwm, 0, 0,
                        QStringLiteral("CANCELLED"));
     }
     _activeMotor = -1;
     emit activeMotorChanged();
+
+    _setServoStreaming(false);
 
     qCDebug(hardwareTestLog) << "STOP ALL triggered";
 }
@@ -557,8 +599,11 @@ void HardwareTestController::resetAll()
     _cooldownIndex = -1;
     _resultTimer.stop();
     memset(_feedbackPwm, 0, sizeof(_feedbackPwm));
+    memset(_peakFeedbackPwm, 0, sizeof(_peakFeedbackPwm));
     _firstTestDone = false;
     emit firstTestDoneChanged();
+
+    _setServoStreaming(false);
 }
 
 void HardwareTestController::_sendStopToMotor(int index)
@@ -804,16 +849,6 @@ bool HardwareTestController::_verifyMotorFeedback(int motorInstance) const
 
 // ── Event handlers ───────────────────────────────────────────────────
 
-void HardwareTestController::_onCommandResult(int cmdId, int compId, int mavResult)
-{
-    Q_UNUSED(compId)
-    if (cmdId != MAV_CMD_DO_MOTOR_TEST) return;
-
-    if (mavResult != MAV_RESULT_ACCEPTED) {
-        qCDebug(hardwareTestLog) << "MAV_CMD_DO_MOTOR_TEST rejected:" << mavResult;
-    }
-}
-
 void HardwareTestController::_onArmedChanged()
 {
     bool armed = _vehicle ? _vehicle->armed() : false;
@@ -864,6 +899,15 @@ void HardwareTestController::_onMavlinkMessage(const mavlink_message_t &message)
     _feedbackPwm[13] = servo.servo14_raw;
     _feedbackPwm[14] = servo.servo15_raw;
     _feedbackPwm[15] = servo.servo16_raw;
+
+    // Track peak PWM during active test (value is overwritten once motor stops)
+    if (_activeMotor > 0) {
+        int aidx = _activeMotor - 1;
+        if (aidx >= 0 && aidx < kServoCount && aidx < _state.size()) {
+            if (_state[aidx] == Testing && _feedbackPwm[aidx] > _peakFeedbackPwm[aidx])
+                _peakFeedbackPwm[aidx] = _feedbackPwm[aidx];
+        }
+    }
 }
 
 void HardwareTestController::_cooldownTick()

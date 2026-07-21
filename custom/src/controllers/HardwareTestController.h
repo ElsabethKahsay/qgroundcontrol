@@ -111,7 +111,7 @@ signals:
     void stepProgressChanged();
 
 private slots:
-    void _onCommandResult(int cmdId, int compId, int mavResult);
+    void _onCommandResult(int vehicleId, int targetComponent, int command, int ackResult, int failureCode);
     void _onMavlinkMessage(const mavlink_message_t &message);
     void _onArmedChanged();
     void _onParametersReady();
@@ -128,6 +128,7 @@ private:
                         int expectedPwm, int actualPwm, int pwmDelta,
                         const QString &result);
     void _sendStopToMotor(int index);
+    void _setServoStreaming(bool enable);
     void _startTest();
     void _finishTest(bool passed, const QString &error);
     void _sendMotorStep(int motorInstance, int throttlePct, int durationSec);
@@ -151,6 +152,7 @@ private:
     int _durationSec = kDefaultDurationSec; // shared test duration
 
     uint16_t _feedbackPwm[kServoCount] = {};
+    uint16_t _peakFeedbackPwm[kServoCount] = {};
     QTimer _resultTimer;
     QTimer _cooldownTimer;
     int _cooldownIndex = -1;

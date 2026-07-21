@@ -682,6 +682,7 @@ void PreflightManager::addCheck(AbstractCheck *check) {
   if (!check) return;
   m_checks.append(check);
   connectCheckSignals(check);
+  emit modelChanged();
 }
 
 void PreflightManager::createPhase1Checks() {

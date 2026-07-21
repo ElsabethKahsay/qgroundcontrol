@@ -11,6 +11,7 @@ import QGroundControl.ScreenTools
 import QGroundControl.Controls
 import QGroundControl
 import com.uav.preflight 1.0
+import cpts 1.0 as ADL
 
 Item {
     id: root
@@ -109,23 +110,12 @@ Item {
         }
     }
 
-    Loader {
+    ADL.ArmGateDialogLoader {
         id: armGateDialogLoader
-        active: false
-        source: "qrc:/qml/cpts/ArmGateDialog.qml"
-        onLoaded: {
-            item.criticalFailCount = _pfm ? _pfm.failedChecks : 0
-            item.manualFailCount = _pfm ? _pfm.pendingChecks : 0
-            item.accepted.connect(function() {
-                mainWindow.armVehicleRequest()
-            })
-            item.closed.connect(function() {
-                armGateDialogLoader.active = false
-            })
-            item.reviewChecksRequested.connect(function() {
-                armGateDialogLoader.active = false
-            })
-            item.open()
+        criticalFailCount: _pfm ? _pfm.failedChecks : 0
+        manualFailCount: _pfm ? _pfm.pendingChecks : 0
+        onAccepted: {
+            mainWindow.armVehicleRequest()
         }
     }
 }

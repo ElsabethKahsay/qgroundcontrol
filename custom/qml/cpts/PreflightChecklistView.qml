@@ -13,9 +13,15 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import com.uav.preflight 1.0
+import cpts 1.0 as CE
 
 Rectangle {
     id: root
+
+    CE.ChecklistEngine {
+        id: _engine
+        viewMode: "analyze"
+    }
     anchors.fill: parent
     color: "#0a0a1a"
 
@@ -23,22 +29,6 @@ Rectangle {
         0: CatModel0, 1: CatModel1, 2: CatModel2, 3: CatModel3,
         4: CatModel4, 5: CatModel5, 6: CatModel6, 7: CatModel7
     })
-
-    readonly property var catInfo: ({
-        0: { label: "Propulsion",      icon: "\u2699" },
-        1: { label: "Power",           icon: "\u26A1" },
-        2: { label: "GPS/Navigation",  icon: "\uD83D\uDEE0" },
-        3: { label: "Communication",   icon: "\uD83D\uDCF6" },
-        4: { label: "Airframe",        icon: "\uD83D\uDEE9" },
-        5: { label: "Safety",          icon: "\uD83D\uDEE1" },
-        6: { label: "Environment",     icon: "\uD83C\uDF2C" },
-        7: { label: "Arming Gate",     icon: "\u2699" }
-    })
-
-    // Enforced category display order: Power, GPS/Navigation, Communication, Airframe, Safety, Environment
-    readonly property var catOrder: [1, 2, 3, 4, 5, 6, 0, 7]
-
-    readonly property var typeNames: ["Auto", "Manual", "Action"]
 
     readonly property int _blockers: typeof PreflightChecklistModel !== "undefined" ? PreflightChecklistModel.blockingFailedCount : 0
     readonly property int _pend: typeof PreflightManager !== "undefined" ? PreflightManager.pendingChecks : 0
@@ -50,52 +40,6 @@ Rectangle {
     property var _runningChecks: ({})
     property var _expandedChecks: ({})
     property bool _priorityListVisible: false
-
-    function catFailCount(catId) {
-        var m = catModels[catId]
-        if (!m) return 0
-        var n = 0
-        for (var i = 0; i < m.count; ++i) {
-            if (m.get(i).status === 2) n++
-        }
-        return n
-    }
-
-    function catWarnCount(catId) {
-        var m = catModels[catId]
-        if (!m) return 0
-        var n = 0
-        for (var i = 0; i < m.count; ++i) {
-            if (m.get(i).status === 3) n++
-        }
-        return n
-    }
-
-    function catPassCount(catId) {
-        var m = catModels[catId]
-        if (!m) return 0
-        var n = 0
-        for (var i = 0; i < m.count; ++i) {
-            if (m.get(i).status === 1) n++
-        }
-        return n
-    }
-
-    function catSummary(catId) {
-        var m = catModels[catId]
-        if (!m || m.count === 0) return ""
-        var f = catFailCount(catId), w = catWarnCount(catId), p = catPassCount(catId)
-        if (f > 0) return f + " FAIL"
-        if (w > 0) return w + " WARN"
-        return p + "/" + m.count + " passed"
-    }
-
-    function timestamp() {
-        var d = new Date()
-        return d.getHours().toString().padStart(2, "0") + ":"
-            + d.getMinutes().toString().padStart(2, "0") + ":"
-            + d.getSeconds().toString().padStart(2, "0")
-    }
 
     function nextBlocker(index) {
         if (typeof PreflightManager === "undefined") return ""
@@ -186,8 +130,8 @@ Rectangle {
                                         // Scroll to category containing this check
                                         if (chk) {
                                             var catId = chk.checkCategory
-                                            for (var i = 0; i < catOrder.length; ++i) {
-                                                if (catOrder[i] === catId) {
+                                            for (var i = 0; i < _engine.catOrder.length; ++i) {
+                                                if (_engine.catOrder[i] === catId) {
                                                     var yPos = i * 180
                                                     checklistFlickable.contentY = Math.min(yPos, checklistFlickable.contentHeight - checklistFlickable.height)
                                                     break
@@ -421,15 +365,15 @@ Rectangle {
                 spacing: Config.spacingMedium
 
                 Repeater {
-                    model: catOrder
+                    model: _engine.catOrder
 
                     delegate: Column {
                         id: section
                         readonly property int catId: modelData
-                        readonly property var info: catInfo[catId]
+                        readonly property var info: _engine.catInfo[catId]
                         readonly property var modelObj: catModels[catId]
                         readonly property int catCount: modelObj ? modelObj.count : 0
-                        readonly property int failCount: catFailCount(catId)
+                        readonly property int failCount: _engine.catFailCount(catId, catModels[catId])
                         readonly property bool hasFail: failCount > 0
                         readonly property real contentWidth: scrollCol.width - Config.spacingMedium * 2
 
@@ -464,11 +408,11 @@ Rectangle {
                                 }
                                 Item { Layout.fillWidth: true }
                                 Text {
-                                    text: catSummary(catId)
+                                    text: _engine.catSummary(catId, catModels[catId])
                                     font.pixelSize: Config.fontSizeSmall
                                     font.bold: true
                                     color: hasFail ? Colors.error
-                                         : catWarnCount(catId) > 0 ? Colors.checkWarn
+                                         : _engine.catWarnCount(catId, catModels[catId]) > 0 ? Colors.checkWarn
                                          : Colors.success
                                 }
                             }
@@ -540,8 +484,8 @@ Rectangle {
                                         height: isMotorSpinCheck ? (motorPanelLoader.item ? motorPanelLoader.item.implicitHeight + 10 : collapsedH) : (expanded ? expandedCol.implicitHeight + 10 : collapsedH)
                                     ToolTip {
                                         visible: tooltipMa.containsMouse
-                                        text: "ID: " + checkId + "\nType: " + typeNames[type]
-                                            + "\nCategory: " + catInfo[category].label
+                                        text: "ID: " + checkId + "\nType: " + _engine.typeNames[type]
+                                            + "\nCategory: " + _engine.catInfo[category].label
                                             + "\nMandatory: " + (mandatory ? "Yes" : "No")
                                             + "\nStatus: " + (status === 1 ? "Passed" : status === 2 ? "Failed" : status === 3 ? "Warning" : "Pending")
                                         delay: 600
@@ -720,7 +664,7 @@ Rectangle {
                                                             var chk = checkObject
                                                             if (chk) {
                                                                 chk.confirm("Operator confirmed")
-                                                                checkItem._checkTime = timestamp()
+                                                                checkItem._checkTime = _engine.timestamp()
                                                             }
                                                         }
                                                         onPressAndHold: {
