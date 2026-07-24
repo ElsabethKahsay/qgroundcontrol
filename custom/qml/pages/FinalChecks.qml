@@ -275,10 +275,14 @@ Page {
             }
         }
 
-        // Auto-fetch weather on page load
+        // Auto-fetch weather on page load (deferred to avoid blocking)
         Component.onCompleted: {
-            if (VehicleTelemetry.gpsLatitude !== 0 || VehicleTelemetry.gpsLongitude !== 0)
-                WeatherProvider.fetchWeather(VehicleTelemetry.gpsLatitude, VehicleTelemetry.gpsLongitude)
+            if (typeof WeatherProvider !== 'undefined' && typeof TelemetryProvider !== 'undefined' && TelemetryProvider) {
+                var lat = TelemetryProvider.gpsLatitude
+                var lon = TelemetryProvider.gpsLongitude
+                if (lat !== 0 || lon !== 0)
+                    Qt.callLater(function() { WeatherProvider.fetchWeather(lat, lon) })
+            }
         }
     }
 }

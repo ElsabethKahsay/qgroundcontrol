@@ -134,7 +134,7 @@ Page {
 
                         Text {
                             text: qsTr("Battery Health")
-                            font.pixelSize: Config.fontSizeH4; font.bold: true; color: Colors.textPrimary
+                            font.pixelSize: Config.fontSizeH3; font.bold: true; color: Colors.textPrimary
                         }
 
                         Text {

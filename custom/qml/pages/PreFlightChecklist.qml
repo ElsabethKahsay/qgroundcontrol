@@ -15,13 +15,13 @@ Page {
     // ── Responsive layout ──
     readonly property bool isSingle: width < Config.breakpointSingle
 
-    // ── Auto-fetch weather on page load ──
+    // ── Auto-fetch weather on page load (deferred) ──
     Component.onCompleted: {
         if (typeof WeatherProvider !== 'undefined' && TelemetryProvider) {
             var lat = TelemetryProvider.gpsLatitude
             var lon = TelemetryProvider.gpsLongitude
             if (lat !== 0 || lon !== 0)
-                WeatherProvider.fetchWeather(lat, lon)
+                Qt.callLater(function() { WeatherProvider.fetchWeather(lat, lon) })
         }
     }
 
