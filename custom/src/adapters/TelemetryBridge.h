@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QDateTime>
 #include <QVariantList>
 #include <QString>
 #include <QTimer>
@@ -166,6 +167,49 @@ class TelemetryBridge : public QObject {
     Q_PROPERTY(double magFieldY READ magFieldY NOTIFY magFieldChanged)
     Q_PROPERTY(double magFieldZ READ magFieldZ NOTIFY magFieldChanged)
 
+    // -- Vehicle identification --
+    Q_PROPERTY(QString vehicleType READ vehicleType NOTIFY vehicleTypeChanged)
+    Q_PROPERTY(QString connectionStatus READ connectionStatus NOTIFY connectionStatusChanged)
+    Q_PROPERTY(QString connectionUrl READ connectionUrl NOTIFY connectionUrlChanged)
+    Q_PROPERTY(QString autopilotType READ autopilotType NOTIFY autopilotTypeChanged)
+
+    // -- GPS status strings --
+    Q_PROPERTY(QString gpsFixTypeString READ gpsFixTypeString NOTIFY gpsFixTypeChanged)
+    Q_PROPERTY(int gpsDataQuality READ gpsDataQuality NOTIFY gpsDataQualityChanged)
+    Q_PROPERTY(QString gpsStatusString READ gpsStatusString NOTIFY gpsDataQualityChanged)
+
+    // -- Battery status strings --
+    Q_PROPERTY(int batteryDataQuality READ batteryDataQuality NOTIFY batteryDataQualityChanged)
+    Q_PROPERTY(QString batteryStatusString READ batteryStatusString NOTIFY batteryDataQualityChanged)
+
+    // -- Servo / motor output strings --
+    Q_PROPERTY(QString servoOutputsString READ servoOutputsString NOTIFY servoOutputsChanged)
+
+    // -- Gimbal --
+    Q_PROPERTY(double gimbalPitch READ gimbalPitch NOTIFY gimbalAttitudeChanged)
+    Q_PROPERTY(double gimbalRoll READ gimbalRoll NOTIFY gimbalAttitudeChanged)
+    Q_PROPERTY(double gimbalYaw READ gimbalYaw NOTIFY gimbalAttitudeChanged)
+    Q_PROPERTY(bool gimbalCalibrating READ gimbalCalibrating NOTIFY gimbalCalibratingChanged)
+
+    // -- EKF extras --
+    Q_PROPERTY(double ekfAirspeedVariance READ ekfAirspeedVariance NOTIFY ekfVarianceChanged)
+    Q_PROPERTY(QString ekfStatus READ ekfStatus NOTIFY ekfStatusChanged)
+
+    // -- Flight time / logging --
+    Q_PROPERTY(double flightTime READ flightTime NOTIFY flightTimeChanged)
+    Q_PROPERTY(QString lastLogTimestamp READ lastLogTimestamp NOTIFY lastLogTimestampChanged)
+
+    // -- Pre-arm severity --
+    Q_PROPERTY(QString preArmSeverity READ preArmSeverity NOTIFY preArmSeverityChanged)
+
+    // -- Sensor quality indicators --
+    Q_PROPERTY(int imuDataQuality READ imuDataQuality NOTIFY imuDataQualityChanged)
+    Q_PROPERTY(int compassDataQuality READ compassDataQuality NOTIFY compassDataQualityChanged)
+    Q_PROPERTY(int rcDataQuality READ rcDataQuality NOTIFY rcDataQualityChanged)
+
+    // -- Hardware setup --
+    Q_PROPERTY(bool hardwareSetupRequired READ hardwareSetupRequired NOTIFY hardwareSetupRequiredChanged)
+
 public:
     /// Construct a telemetry bridge.
     explicit TelemetryBridge(QObject *parent = nullptr);
@@ -301,6 +345,49 @@ public:
     double magFieldY() const { return _magFieldY; }
     double magFieldZ() const { return _magFieldZ; }
 
+    // -- Vehicle identification --
+    QString vehicleType() const { return _vehicleType; }
+    QString connectionStatus() const { return _connectionStatus; }
+    QString connectionUrl() const { return _connectionUrl; }
+    QString autopilotType() const { return _autopilotType; }
+
+    // -- GPS status strings --
+    QString gpsFixTypeString() const { return _gpsFixTypeString; }
+    int gpsDataQuality() const { return _gpsDataQuality; }
+    QString gpsStatusString() const { return _gpsStatusString; }
+
+    // -- Battery status --
+    int batteryDataQuality() const { return _batteryDataQuality; }
+    QString batteryStatusString() const { return _batteryStatusString; }
+
+    // -- Servo / motor output strings --
+    QString servoOutputsString() const { return _servoOutputsString; }
+
+    // -- Gimbal --
+    double gimbalPitch() const { return _gimbalPitch; }
+    double gimbalRoll() const { return _gimbalRoll; }
+    double gimbalYaw() const { return _gimbalYaw; }
+    bool gimbalCalibrating() const { return _gimbalCalibrating; }
+
+    // -- EKF extras --
+    double ekfAirspeedVariance() const { return _ekfAirspeedVariance; }
+    QString ekfStatus() const { return _ekfStatus; }
+
+    // -- Flight time / logging --
+    double flightTime() const { return _flightTime; }
+    QString lastLogTimestamp() const { return _lastLogTimestamp; }
+
+    // -- Pre-arm severity --
+    QString preArmSeverity() const { return _preArmSeverity; }
+
+    // -- Sensor quality indicators --
+    int imuDataQuality() const { return _imuDataQuality; }
+    int compassDataQuality() const { return _compassDataQuality; }
+    int rcDataQuality() const { return _rcDataQuality; }
+
+    // -- Hardware setup --
+    bool hardwareSetupRequired() const { return _hardwareSetupRequired; }
+
     /// Set a MAVLink parameter value on the vehicle.
     Q_INVOKABLE void setParameterValue(const QString& name, float value);
     /// Check whether a parameter exists in the local cache.
@@ -380,6 +467,22 @@ signals:
     void escTelemetryChanged();
     void escInfoChanged();
     void magFieldChanged();
+    void vehicleTypeChanged();
+    void connectionStatusChanged();
+    void connectionUrlChanged();
+    void autopilotTypeChanged();
+    void gpsDataQualityChanged();
+    void batteryDataQualityChanged();
+    void gimbalAttitudeChanged();
+    void gimbalCalibratingChanged();
+    void ekfStatusChanged();
+    void flightTimeChanged();
+    void lastLogTimestampChanged();
+    void preArmSeverityChanged();
+    void imuDataQualityChanged();
+    void compassDataQualityChanged();
+    void rcDataQualityChanged();
+    void hardwareSetupRequiredChanged();
 
 private slots:
     void _onVehicleConnectedChanged(bool connected);
@@ -397,6 +500,7 @@ private:
     Vehicle* _vehicle = nullptr;
     int _connectionQuality = 0;
     QTimer _updateTimer;
+    QDateTime _lastHeartbeatTime;
 
     double _batteryVoltage = 0.0;
     int _batteryPercent = 0;
@@ -517,6 +621,49 @@ private:
     double _magFieldX = qQNaN();
     double _magFieldY = qQNaN();
     double _magFieldZ = qQNaN();
+
+    // -- Vehicle identification --
+    QString _vehicleType;
+    QString _connectionStatus;
+    QString _connectionUrl;
+    QString _autopilotType;
+
+    // -- GPS status --
+    QString _gpsFixTypeString;
+    int _gpsDataQuality = 2;
+    QString _gpsStatusString;
+
+    // -- Battery status --
+    int _batteryDataQuality = 2;
+    QString _batteryStatusString;
+
+    // -- Servo outputs string --
+    QString _servoOutputsString;
+
+    // -- Gimbal --
+    double _gimbalPitch = 0.0;
+    double _gimbalRoll = 0.0;
+    double _gimbalYaw = 0.0;
+    bool _gimbalCalibrating = false;
+
+    // -- EKF extras --
+    double _ekfAirspeedVariance = 0.0;
+    QString _ekfStatus;
+
+    // -- Flight time / logging --
+    double _flightTime = 0.0;
+    QString _lastLogTimestamp;
+
+    // -- Pre-arm severity --
+    QString _preArmSeverity;
+
+    // -- Sensor quality --
+    int _imuDataQuality = 3;
+    int _compassDataQuality = 3;
+    int _rcDataQuality = 2;
+
+    // -- Hardware setup --
+    bool _hardwareSetupRequired = false;
 
     QMap<QString, float> _parameterCache;
     QVector<QMetaObject::Connection> _paramConnections;

@@ -1,5 +1,6 @@
 #include "TelemetryBridge.h"
 
+#include <QDateTime>
 #include <QDebug>
 #include <QLoggingCategory>
 
@@ -217,6 +218,7 @@ void TelemetryBridge::_connectVehicleSignals()
     }
 
     _connectionQuality = 100;
+    _lastHeartbeatTime = QDateTime::currentDateTime();
     emit connectionQualityChanged();
 }
 
@@ -425,6 +427,11 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message)
         }
         if (wasFailsafe != _rcFailsafe) {
             emit rcFailsafeChanged();
+        }
+        qint64 nowUsec = QDateTime::currentMSecsSinceEpoch() * 1000;
+        if (nowUsec != _rcLastUpdateUsec) {
+            _rcLastUpdateUsec = nowUsec;
+            emit rcLastUpdateChanged();
         }
         break;
     }
@@ -666,6 +673,28 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message)
             _companionDetected = true;
         if (wasCompanion != _companionDetected)
             emit companionDetectedChanged();
+        // Compute connection quality from heartbeat interval + drop rate
+        {
+            QDateTime now = QDateTime::currentDateTime();
+            int newQuality = 100;
+            if (_lastHeartbeatTime.isValid()) {
+                int elapsedMs = _lastHeartbeatTime.msecsTo(now);
+                // Expected heartbeat ~1000ms; degrade if late
+                if (elapsedMs > 1200) {
+                    newQuality = qMax(0, 100 - ((elapsedMs - 1000) / 50));
+                }
+            }
+            // Factor in comm drop rate (0-100%)
+            if (_commDropRate > 0.0) {
+                newQuality = qMin(newQuality, static_cast<int>(100.0 - _commDropRate));
+            }
+            newQuality = qBound(0, newQuality, 100);
+            if (newQuality != _connectionQuality) {
+                _connectionQuality = newQuality;
+                emit connectionQualityChanged();
+            }
+            _lastHeartbeatTime = now;
+        }
         break;
     }
     case MAVLINK_MSG_ID_ESC_INFO: {

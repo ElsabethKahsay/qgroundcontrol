@@ -142,6 +142,30 @@ public:
     }
     void setRcChannelValues(const QVariantList &v) { m_rcChannelValues = v; emit rcChannelValuesChanged(); }
     void setRcLastUpdateUsec(qint64 v) { m_rcLastUpdateUsec = v; emit rcLastUpdateChanged(); }
+    void setVehicleType(const QString &v) { m_vehicleType = v; emit vehicleTypeChanged(); }
+    void setConnectionStatus(const QString &v) { m_connectionStatus = v; emit connectionStatusChanged(); }
+    void setConnectionUrl(const QString &v) { m_connectionUrl = v; emit connectionUrlChanged(); }
+    void setAutopilotType(const QString &v) { m_autopilotType = v; emit autopilotTypeChanged(); }
+    void setGpsFixTypeString(const QString &v) { m_gpsFixTypeString = v; emit gpsFixTypeChanged(); }
+    void setGpsDataQuality(int v) { m_gpsDataQuality = v; emit gpsDataQualityChanged(); }
+    void setGpsStatusString(const QString &v) { m_gpsStatusString = v; emit gpsDataQualityChanged(); }
+    void setBatteryDataQuality(int v) { m_batteryDataQuality = v; emit batteryDataQualityChanged(); }
+    void setBatteryStatusString(const QString &v) { m_batteryStatusString = v; emit batteryDataQualityChanged(); }
+    void setServoOutputsString(const QString &v) { m_servoOutputsString = v; emit servoOutputsChanged(); }
+    void setGimbalAttitude(double pitch, double roll, double yaw) {
+        m_gimbalPitch = pitch; m_gimbalRoll = roll; m_gimbalYaw = yaw;
+        emit gimbalAttitudeChanged();
+    }
+    void setGimbalCalibrating(bool v) { m_gimbalCalibrating = v; emit gimbalCalibratingChanged(); }
+    void setEkfAirspeedVariance(double v) { m_ekfAirspeedVariance = v; emit ekfVarianceChanged(); }
+    void setEkfStatus(const QString &v) { m_ekfStatus = v; emit ekfStatusChanged(); }
+    void setFlightTime(double v) { m_flightTime = v; emit flightTimeChanged(); }
+    void setLastLogTimestamp(const QString &v) { m_lastLogTimestamp = v; emit lastLogTimestampChanged(); }
+    void setPreArmSeverity(const QString &v) { m_preArmSeverity = v; emit preArmSeverityChanged(); }
+    void setImuDataQuality(int v) { m_imuDataQuality = v; emit imuDataQualityChanged(); }
+    void setCompassDataQuality(int v) { m_compassDataQuality = v; emit compassDataQualityChanged(); }
+    void setRcDataQuality(int v) { m_rcDataQuality = v; emit rcDataQualityChanged(); }
+    void setHardwareSetupRequired(bool v) { m_hardwareSetupRequired = v; emit hardwareSetupRequiredChanged(); }
 
     // -- Override TelemetryBridge virtuals --
     bool isConnected() const override { return m_connected; }
@@ -210,6 +234,29 @@ public:
     double ekfTerrainVariance() const { return m_ekfTerrainVariance; }
     QVariantList rcChannelValues() const { return m_rcChannelValues; }
     qint64 rcLastUpdateUsec() const { return m_rcLastUpdateUsec; }
+    QString vehicleType() const { return m_vehicleType; }
+    QString connectionStatus() const { return m_connectionStatus; }
+    QString connectionUrl() const { return m_connectionUrl; }
+    QString autopilotType() const { return m_autopilotType; }
+    QString gpsFixTypeString() const { return m_gpsFixTypeString; }
+    int gpsDataQuality() const { return m_gpsDataQuality; }
+    QString gpsStatusString() const { return m_gpsStatusString; }
+    int batteryDataQuality() const { return m_batteryDataQuality; }
+    QString batteryStatusString() const { return m_batteryStatusString; }
+    QString servoOutputsString() const { return m_servoOutputsString; }
+    double gimbalPitch() const { return m_gimbalPitch; }
+    double gimbalRoll() const { return m_gimbalRoll; }
+    double gimbalYaw() const { return m_gimbalYaw; }
+    bool gimbalCalibrating() const { return m_gimbalCalibrating; }
+    double ekfAirspeedVariance() const { return m_ekfAirspeedVariance; }
+    QString ekfStatus() const { return m_ekfStatus; }
+    double flightTime() const { return m_flightTime; }
+    QString lastLogTimestamp() const { return m_lastLogTimestamp; }
+    QString preArmSeverity() const { return m_preArmSeverity; }
+    int imuDataQuality() const { return m_imuDataQuality; }
+    int compassDataQuality() const { return m_compassDataQuality; }
+    int rcDataQuality() const { return m_rcDataQuality; }
+    bool hardwareSetupRequired() const { return m_hardwareSetupRequired; }
 
 signals:
     void isConnectedChanged();
@@ -255,6 +302,23 @@ signals:
     void ekfVarianceChanged();
     void rcChannelValuesChanged();
     void rcLastUpdateChanged();
+    void vehicleTypeChanged();
+    void connectionStatusChanged();
+    void connectionUrlChanged();
+    void autopilotTypeChanged();
+    void gpsDataQualityChanged();
+    void batteryDataQualityChanged();
+    void servoOutputsChanged();
+    void gimbalAttitudeChanged();
+    void gimbalCalibratingChanged();
+    void ekfStatusChanged();
+    void flightTimeChanged();
+    void lastLogTimestampChanged();
+    void preArmSeverityChanged();
+    void imuDataQualityChanged();
+    void compassDataQualityChanged();
+    void rcDataQualityChanged();
+    void hardwareSetupRequiredChanged();
 
 private:
     bool m_connected = false;
@@ -321,4 +385,27 @@ private:
     double m_ekfTerrainVariance = 0.0;
     QVariantList m_rcChannelValues;
     qint64 m_rcLastUpdateUsec = 0;
+    QString m_vehicleType;
+    QString m_connectionStatus;
+    QString m_connectionUrl;
+    QString m_autopilotType;
+    QString m_gpsFixTypeString;
+    int m_gpsDataQuality = 2;
+    QString m_gpsStatusString;
+    int m_batteryDataQuality = 2;
+    QString m_batteryStatusString;
+    QString m_servoOutputsString;
+    double m_gimbalPitch = 0.0;
+    double m_gimbalRoll = 0.0;
+    double m_gimbalYaw = 0.0;
+    bool m_gimbalCalibrating = false;
+    double m_ekfAirspeedVariance = 0.0;
+    QString m_ekfStatus;
+    double m_flightTime = 0.0;
+    QString m_lastLogTimestamp;
+    QString m_preArmSeverity;
+    int m_imuDataQuality = 3;
+    int m_compassDataQuality = 3;
+    int m_rcDataQuality = 2;
+    bool m_hardwareSetupRequired = false;
 };

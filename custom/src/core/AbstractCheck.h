@@ -183,6 +183,8 @@ protected:
     double configDouble(const QString &key, double defaultVal) const;
     /// Read a configurable integer from the check_config table, falling back to defaultVal.
     int configInt(const QString &key, int defaultVal) const;
+    /// Invalidate the config value cache (call when DB config changes).
+    void clearConfigCache() const;
 
     friend class PreflightManager;
     friend class MissionEnergyCheckTest;
@@ -199,6 +201,7 @@ protected:
     QDateTime m_lastEvalTime;
     QList<OverrideRecord> m_overrideHistory;
     TelemetryBridge *m_telemetry = nullptr;
+    mutable QHash<QString, QVariant> m_configCache;
 
 private:
     CheckStatus statusFromString(const QString &s) const;

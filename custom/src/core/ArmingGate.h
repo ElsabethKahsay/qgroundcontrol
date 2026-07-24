@@ -1,6 +1,5 @@
 #pragma once
 #include <QObject>
-#include <QSet>
 #include <QTimer>
 #include <QDateTime>
 
@@ -96,8 +95,6 @@ signals:
     void armingOverrideExpired();
     /// Emitted when the override active state changes.
     void overrideActiveChanged(bool active);
-    /// Emitted when force arm is issued.
-    void forceArmIssued(const QString &reason);
     /// Emitted when the gate mode changes.
     void modeChanged(Mode mode);
 
@@ -135,6 +132,4 @@ private:
 
     uint16_t m_armCommandCode = 400;
     static constexpr int EVAL_INTERVAL_MS = 500;
-
-    static QSet<uint16_t> s_emergencyCommands;
 };

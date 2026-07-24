@@ -101,6 +101,7 @@ void AbstractCheck::reset()
     m_message.clear();
     m_lastEvalTime = QDateTime();
     m_overrideHistory.clear();
+    m_configCache.clear();
     emit statusChanged(m_id, static_cast<int>(m_status));
     emit messageChanged(m_id, m_message);
 }
@@ -228,22 +229,39 @@ QVariant AbstractCheck::getTelemetryVariant(const QString &prop) const
 
 double AbstractCheck::configDouble(const QString &key, double defaultVal) const
 {
+    auto it = m_configCache.constFind(key);
+    if (it != m_configCache.constEnd())
+        return it->toDouble();
     QString val = DatabaseManager::instance().getCheckConfig(m_id, key);
-    if (val.isEmpty())
+    if (val.isEmpty()) {
+        m_configCache.insert(key, QVariant(defaultVal));
         return defaultVal;
+    }
     bool ok = false;
     double result = val.toDouble(&ok);
+    m_configCache.insert(key, QVariant(ok ? result : defaultVal));
     return ok ? result : defaultVal;
 }
 
 int AbstractCheck::configInt(const QString &key, int defaultVal) const
 {
+    auto it = m_configCache.constFind(key);
+    if (it != m_configCache.constEnd())
+        return it->toInt();
     QString val = DatabaseManager::instance().getCheckConfig(m_id, key);
-    if (val.isEmpty())
+    if (val.isEmpty()) {
+        m_configCache.insert(key, QVariant(defaultVal));
         return defaultVal;
+    }
     bool ok = false;
     int result = val.toInt(&ok);
+    m_configCache.insert(key, QVariant(ok ? result : defaultVal));
     return ok ? result : defaultVal;
+}
+
+void AbstractCheck::clearConfigCache() const
+{
+    m_configCache.clear();
 }
 
 QString AbstractCheck::getUserMessage() const

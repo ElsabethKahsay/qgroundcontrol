@@ -50,10 +50,8 @@ int qInitResources_qmlcache_VehicleSetupModule();
 #include "AbstractCheck.h"
 #include "adapters/TelemetryBridge.h"
 #include "core/ArmingGate.h"
-#include "core/BatteryHealthCheck.h"
 #include "core/ChecklistEngine.h"
 #include "core/ChecklistItemModel.h"
-#include "core/MissionEnergyCheck.h"
 #include "core/PowerModel.h"
 #include "core/VehicleProfileManager.h"
 #include "utils/DatabaseManager.h"
@@ -158,14 +156,6 @@ void PreflightPlugin::init()
 
     _vehicleProfileManager = new VehicleProfileManager(this);
     _vehicleProfileManager->setTelemetryBridge(_telemetryBridge);
-
-    auto *batteryHealthCheck = new BatteryHealthCheck(
-        _vehicleProfileManager, kBatteryHealthVoltageThreshold, kBatteryHealthStddevThreshold, this);
-    _preflightManager->addCheck(batteryHealthCheck);
-
-    auto *energyCheck = new MissionEnergyCheck(_powerModel, kMissionEnergyMargin, this);
-    energyCheck->setVehicleProfileManager(_vehicleProfileManager);
-    _preflightManager->addCheck(energyCheck);
 
     _armingGate = new ArmingGate(this);
     _armingGate->setPreflightManager(_preflightManager);

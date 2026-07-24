@@ -41,6 +41,7 @@ public:
     static constexpr int kDefaultThrottlePct = 5;
     static constexpr int kDefaultDurationSec = 3;
     static constexpr int kParamTimeoutMs = 10000;
+    static constexpr int kResultGraceMs = 1500;  // extra time after test duration before evaluating result
 
     explicit HardwareTestController(QObject *parent = nullptr);
 
@@ -138,6 +139,12 @@ private:
     bool _verifyMotorFeedback(int motorInstance) const;
     static QString _positionForMotor(int motorIndex, int totalCount);
 
+    // Fixed-wing motor test: arm → RC_CHANNELS_OVERRIDE → disarm
+    void _fwStartTest(int motorIndex, int pwmUs);
+    void _fwSendRcOverride(uint16_t throttlePwm);
+    void _fwDisarm();
+    int  _fwThrottleChannel() const;
+
     Vehicle *_vehicle = nullptr;
 
     int _motorCount = 0;
@@ -185,4 +192,12 @@ private:
     QString _profileName;
     QTimer _stepTimer;
     QVector<TestStep> _profileSteps;
+
+    // Fixed-wing motor test state machine
+    enum FwTestPhase { FwIdle, FwArming, FwSpinning, FwStopping, FwDisarming };
+    FwTestPhase _fwPhase = FwIdle;
+    int         _fwMotorIndex = -1;
+    int         _fwPwmUs = 1150;
+    QTimer      _fwTestTimer;     // fires after test duration → stop throttle
+    QTimer      _fwDisarmTimer;   // fires after stop → disarm
 };

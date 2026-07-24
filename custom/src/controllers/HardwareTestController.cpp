@@ -26,6 +26,20 @@ HardwareTestController::HardwareTestController(QObject *parent)
 
     _paramTimeoutTimer.setSingleShot(true);
     connect(&_paramTimeoutTimer, &QTimer::timeout, this, &HardwareTestController::_onParamTimeout);
+
+    _fwTestTimer.setSingleShot(true);
+    connect(&_fwTestTimer, &QTimer::timeout, this, [this]() {
+        qCDebug(hardwareTestLog) << "FW test duration elapsed — stopping motor";
+        _fwSendRcOverride(1000);
+        _fwPhase = FwStopping;
+        _fwDisarmTimer.start(500);
+    });
+
+    _fwDisarmTimer.setSingleShot(true);
+    connect(&_fwDisarmTimer, &QTimer::timeout, this, [this]() {
+        qCDebug(hardwareTestLog) << "FW test — disarming";
+        _fwDisarm();
+    });
 }
 
 void HardwareTestController::setVehicle(Vehicle *vehicle)
@@ -394,6 +408,108 @@ void HardwareTestController::_updateMotorCount(int count, bool hasHover, int hov
     emit motorPwmValuesChanged();
 }
 
+// ── Fixed-wing motor test: arm → RC_CHANNELS_OVERRIDE → disarm ────
+
+int HardwareTestController::_fwThrottleChannel() const
+{
+    // Read RCMAP_THROTTLE parameter (default: channel 3 for ArduPilot)
+    if (!_vehicle || !_vehicle->parameterManager() || !_vehicle->parameterManager()->parametersReady())
+        return 3;
+
+    Fact *fact = _vehicle->parameterManager()->getParameter(
+        _vehicle->defaultComponentId(), QStringLiteral("RCMAP_THROTTLE"));
+    if (fact) {
+        int ch = fact->rawValue().toInt();
+        if (ch >= 1 && ch <= 18) {
+            qCDebug(hardwareTestLog) << "RCMAP_THROTTLE:" << ch;
+            return ch;
+        }
+    }
+
+    qCDebug(hardwareTestLog) << "RCMAP_THROTTLE not found — defaulting to channel 3";
+    return 3;
+}
+
+void HardwareTestController::_fwSendRcOverride(uint16_t throttlePwm)
+{
+    if (!_vehicle) return;
+
+    int throttleCh = _fwThrottleChannel();
+    SharedLinkInterfacePtr sharedLink = _vehicle->vehicleLinkManager()->primaryLink().lock();
+    if (!sharedLink) {
+        qCDebug(hardwareTestLog) << "FW RC override: primary link gone";
+        return;
+    }
+
+    uint16_t channels[18] = {};
+    channels[throttleCh - 1] = throttlePwm;
+
+    mavlink_message_t msg;
+    mavlink_msg_rc_channels_override_pack_chan(
+        static_cast<uint8_t>(_vehicle->id()),
+        static_cast<uint8_t>(_vehicle->defaultComponentId()),
+        sharedLink->mavlinkChannel(),
+        &msg,
+        static_cast<uint8_t>(_vehicle->id()),
+        static_cast<uint8_t>(_vehicle->defaultComponentId()),
+        channels[0],  channels[1],  channels[2],  channels[3],
+        channels[4],  channels[5],  channels[6],  channels[7],
+        channels[8],  channels[9],  channels[10], channels[11],
+        channels[12], channels[13], channels[14], channels[15],
+        channels[16], channels[17]
+    );
+
+    _vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
+    qCDebug(hardwareTestLog) << "FW RC override: ch" << throttleCh << "=" << throttlePwm << "µs";
+}
+
+void HardwareTestController::_fwDisarm()
+{
+    if (!_vehicle) return;
+    _fwPhase = FwDisarming;
+    _vehicle->sendMavCommand(
+        _vehicle->defaultComponentId(),
+        MAV_CMD_COMPONENT_ARM_DISARM, false,
+        0.0f   // param1: 0 = disarm
+    );
+}
+
+void HardwareTestController::_fwStartTest(int motorIndex, int pwmUs)
+{
+    if (!_vehicle || !_vehicle->apmFirmware()) return;
+
+    _fwMotorIndex = motorIndex;
+    _fwPwmUs = pwmUs;
+    _fwPhase = FwArming;
+
+    qCDebug(hardwareTestLog) << "FW motor test: arming vehicle, then throttle ch"
+                             << _fwThrottleChannel() << "to" << pwmUs << "µs";
+
+    // Step 1: Arm the vehicle
+    _vehicle->sendMavCommand(
+        _vehicle->defaultComponentId(),
+        MAV_CMD_COMPONENT_ARM_DISARM, false,
+        1.0f   // param1: 1 = arm
+    );
+
+    // Timeout: if arm ACK doesn't come in 5s, abort
+    QTimer::singleShot(5000, this, [this]() {
+        if (_fwPhase == FwArming) {
+            qCDebug(hardwareTestLog) << "FW motor test: arm timed out";
+            _lastError = QStringLiteral("Arm timed out — check prearm checks");
+            emit lastErrorMessageChanged();
+            int idx = _fwMotorIndex - 1;
+            if (idx >= 0 && idx < _state.size()) {
+                _setMotorState(idx, Fail);
+                emit motorStatesChanged();
+            }
+            _fwPhase = FwIdle;
+            _activeMotor = -1;
+            emit activeMotorChanged();
+        }
+    });
+}
+
 // ── Individual motor test ─────────────────────────────────────────────
 
 void HardwareTestController::testMotor(int motorIndex)
@@ -404,6 +520,31 @@ void HardwareTestController::testMotor(int motorIndex)
         qCDebug(hardwareTestLog) << "testMotor: no vehicle";
         return;
     }
+
+    // Fixed-wing: arm → RC override → disarm (user approves each test via safety dialog)
+    bool isFixedWing = _vehicle && _vehicle->vehicleType() == MAV_TYPE_FIXED_WING;
+    if (isFixedWing) {
+        if (_fwPhase != FwIdle) {
+            qCDebug(hardwareTestLog) << "testMotor: fixed-wing test already in progress";
+            return;
+        }
+        if (idx < 0 || idx >= _motorCount) {
+            qCDebug(hardwareTestLog) << "testMotor: invalid index" << motorIndex;
+            return;
+        }
+
+        int pwmUs = (idx < _motorPwmValues.size()) ? _motorPwmValues[idx] : 1150;
+        _activeMotor = motorIndex;
+        _setMotorState(idx, Testing);
+        _expectedPwm = pwmUs;
+        emit activeMotorChanged();
+
+        qCDebug(hardwareTestLog) << "FW motor test: motor" << motorIndex << "at" << pwmUs << "µs for" << _durationSec << "s";
+        _fwStartTest(motorIndex, pwmUs);
+        return;
+    }
+
+    // Copter path
     if (_isArmed) {
         qCDebug(hardwareTestLog) << "testMotor: vehicle is armed — cannot test";
         return;
@@ -445,17 +586,16 @@ void HardwareTestController::testMotor(int motorIndex)
 
     _vehicle->sendMavCommand(
         _vehicle->defaultComponentId(),
-        MAV_CMD_DO_MOTOR_TEST,
-        true,                           // showError: show rejection messages to the user
+        MAV_CMD_DO_MOTOR_TEST, false,
         motorIndex,
-        1,                          // param2: 1 = PWM µs mode (not percentage)
-        static_cast<float>(pwmUs), // param3: target PWM in µs
+        MOTOR_TEST_THROTTLE_PWM,     // param2: MOTOR_TEST_THROTTLE_PWM
+        static_cast<float>(pwmUs),   // param3: target PWM in µs
         _durationSec,
-        1,                          // param5: single motor
-        0
+        0,                           // param5: 0 = single motor
+        MOTOR_TEST_ORDER_BOARD        // param6: map motor instance to board output labels
     );
 
-    _resultTimer.start((_durationSec + 1) * 1000 + 500);
+    _resultTimer.start(_durationSec * 1000 + kResultGraceMs);
 }
 
 void HardwareTestController::_evaluateTestResult()
@@ -525,19 +665,77 @@ void HardwareTestController::_onCommandResult(int vehicleId, int targetComponent
 {
     Q_UNUSED(vehicleId)
     Q_UNUSED(targetComponent)
-    Q_UNUSED(failureCode)
 
-    if (command != MAV_CMD_DO_MOTOR_TEST) return;
+    // Fixed-wing motor test: handle arm ACK → start throttle
+    if (command == MAV_CMD_COMPONENT_ARM_DISARM && _fwPhase == FwArming) {
+        if (ackResult == MAV_RESULT_ACCEPTED) {
+            qCDebug(hardwareTestLog) << "FW motor test: armed — sending RC override throttle to" << _fwPwmUs << "µs";
+            _fwSendRcOverride(static_cast<uint16_t>(_fwPwmUs));
+            _fwPhase = FwSpinning;
+            _fwTestTimer.start(_durationSec * 1000);
+        } else {
+            qCDebug(hardwareTestLog) << "FW motor test: arm rejected:" << ackResult;
+            _lastError = QStringLiteral("Arm rejected — check prearm conditions");
+            emit lastErrorMessageChanged();
+            if (_fwMotorIndex > 0) {
+                int idx = _fwMotorIndex - 1;
+                if (idx >= 0 && idx < _state.size()) {
+                    _setMotorState(idx, Fail);
+                    emit motorStatesChanged();
+                }
+            }
+            _fwPhase = FwIdle;
+            _activeMotor = -1;
+            emit activeMotorChanged();
+        }
+        return;
+    }
+
+    // Fixed-wing motor test: handle disarm ACK → complete
+    if (command == MAV_CMD_COMPONENT_ARM_DISARM && _fwPhase == FwDisarming) {
+        qCDebug(hardwareTestLog) << "FW motor test: disarmed — test complete";
+        if (_fwMotorIndex > 0) {
+            int idx = _fwMotorIndex - 1;
+            if (idx >= 0 && idx < _state.size()) {
+                _setMotorState(idx, ackResult == MAV_RESULT_ACCEPTED ? Pass : Fail);
+                emit motorStatesChanged();
+            }
+        }
+        _fwPhase = FwIdle;
+        _activeMotor = -1;
+        emit activeMotorChanged();
+        return;
+    }
+
+    // Handle both motor test and servo set commands (fixed-wing uses DO_SET_SERVO)
+    if (command != MAV_CMD_DO_MOTOR_TEST && command != MAV_CMD_DO_SET_SERVO) return;
+
+    qCDebug(hardwareTestLog) << "Command result: cmd" << command
+                             << "result" << ackResult
+                             << "failure" << failureCode
+                             << "activeMotor" << _activeMotor;
 
     if (ackResult != MAV_RESULT_ACCEPTED && _activeMotor > 0) {
         int idx = _activeMotor - 1;
         _resultTimer.stop();
-        qCDebug(hardwareTestLog) << "MAV_CMD_DO_MOTOR_TEST rejected:" << ackResult;
+
+        QString reason;
+        switch (ackResult) {
+        case MAV_RESULT_UNSUPPORTED:   reason = QStringLiteral("UNSUPPORTED — firmware does not handle this command"); break;
+        case MAV_RESULT_DENIED:        reason = QStringLiteral("DENIED — vehicle state does not allow this command"); break;
+        case MAV_RESULT_TEMPORARILY_REJECTED: reason = QStringLiteral("TEMPORARILY REJECTED"); break;
+        case MAV_RESULT_FAILED:        reason = QStringLiteral("FAILED"); break;
+        default:                       reason = QStringLiteral("RESULT %1").arg(ackResult); break;
+        }
+
+        qCDebug(hardwareTestLog) << "Motor test rejected:" << reason;
         _setMotorState(idx, Fail);
         int pwmUs = (idx >= 0 && idx < _motorPwmValues.size()) ? _motorPwmValues[idx] : 1150;
         _logTestResult(_activeMotor, pwmUs,
                        _durationSec, _expectedPwm, 0, 0,
-                       QStringLiteral("REJECTED"));
+                       reason);
+        _lastError = reason;
+        emit lastErrorMessageChanged();
         _activeMotor = -1;
         emit activeMotorChanged();
     }
@@ -546,6 +744,16 @@ void HardwareTestController::_onCommandResult(int vehicleId, int targetComponent
 void HardwareTestController::stopAll()
 {
     if (!_vehicle) return;
+
+    // Fixed-wing: stop RC override and disarm
+    if (_fwPhase != FwIdle) {
+        qCDebug(hardwareTestLog) << "STOP ALL — fixed-wing: stopping RC override and disarming";
+        _fwTestTimer.stop();
+        _fwDisarmTimer.stop();
+        _fwSendRcOverride(1000);
+        _fwDisarm();
+        return;
+    }
 
     qCDebug(hardwareTestLog) << "STOP ALL — sending zero throttle to all motors";
 
@@ -611,14 +819,13 @@ void HardwareTestController::_sendStopToMotor(int index)
     if (!_vehicle) return;
     _vehicle->sendMavCommand(
         _vehicle->defaultComponentId(),
-        MAV_CMD_DO_MOTOR_TEST,
-        false,
+        MAV_CMD_DO_MOTOR_TEST, false,
         index,
-        1,     // param2: PWM mode
-        1000,  // param3: 1000µs = disarmed
-        0,
-        1,
-        0
+        MOTOR_TEST_THROTTLE_PWM,      // param2: MOTOR_TEST_THROTTLE_PWM
+        1000,                         // param3: 1000µs = disarmed
+        0,                            // param4: no timeout
+        0,                            // param5: single motor
+        MOTOR_TEST_ORDER_BOARD        // param6: map motor instance to board output labels
     );
 }
 

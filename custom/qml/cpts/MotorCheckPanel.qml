@@ -263,7 +263,7 @@ Rectangle {
                 Rectangle {
                     Layout.fillWidth: true
                     visible: root._mc > 0 && !root._armed
-                    Layout.preferredHeight: 34
+                    Layout.preferredHeight: 50
                     radius: Config.radiusSmall
                     color: Colors.warningDim
                     border.color: Colors.warning; border.width: 1
@@ -273,8 +273,11 @@ Rectangle {
                         Text { text: "\u26A0"; font.pixelSize: 13; color: Colors.warning }
                         Text {
                             Layout.fillWidth: true
-                            text: qsTr("Remove propellers or ensure clearance before testing")
+                            text: root._vt.toLowerCase().indexOf("fixed") >= 0
+                                ? qsTr("Vehicle will ARM during test. Ensure propeller clearance and keep hands clear.")
+                                : qsTr("Remove propellers or ensure clearance before testing")
                             font.pixelSize: Config.fontSizeSmall; color: Colors.warning
+                            wrapMode: Text.WordWrap
                         }
                     }
                 }

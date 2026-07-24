@@ -7,14 +7,6 @@
 #include "PreflightManager.h"
 #include "TelemetryBridge.h"
 
-QSet<uint16_t> ArmingGate::s_emergencyCommands = {
-    21,    // MAV_CMD_DO_SET_MODE
-    92,    // MAV_CMD_DO_DISARM
-    2050,  // MAV_CMD_COMPONENT_ARM_DISARM (disarm)
-    3000,  // MAV_CMD_DO_LAND_START
-    4000   // MAV_CMD_NAV_LAND
-};
-
 ArmingGate::ArmingGate(QObject *parent)
     : QObject(parent)
 {
@@ -56,6 +48,8 @@ void ArmingGate::setPreflightManager(PreflightManager *manager)
                     m_manager->persistOverrides();
                 });
     }
+    if (!m_gateTimer->isActive())
+        m_gateTimer->start();
     updateArmingState();
 }
 
@@ -95,9 +89,6 @@ bool ArmingGate::interceptCommandLong(uint16_t command, const QMap<int, float> &
         emit denialReasonChanged({});
         return true;
     }
-
-    if (s_emergencyCommands.contains(command))
-        return true;
 
     if (m_mode == Passive)
         return true;
@@ -237,7 +228,17 @@ void ArmingGate::resetGate()
 
 void ArmingGate::forceArm()
 {
-    overrideGate(QStringLiteral("Operator force arm"), 10);
+    m_overrideActive = true;
+    emit overrideActiveChanged(true);
+    emit armingOverrideActivated(QStringLiteral("Operator force arm"), 0);
+
+    m_denialReason.clear();
+    m_armingAllowed = true;
+    emit armingAllowedChanged(true);
+    emit denialReasonChanged({});
+
+    emit gateOverrideLogged(QStringLiteral("Operator force arm"), 0);
+    qWarning() << "Arming overridden: Operator force arm (no timeout)";
 }
 
 void ArmingGate::onCheckFailed(const QString &checkId, const QString &reason)
