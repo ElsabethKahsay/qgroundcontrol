@@ -1,3 +1,5 @@
+// Verifies the number of RC channels received matches the expected count (RC_CHAN_CNT).
+// Fails when fewer channels are received than configured, indicating RC signal issues.
 #pragma once
 #include "AbstractCheck.h"
 

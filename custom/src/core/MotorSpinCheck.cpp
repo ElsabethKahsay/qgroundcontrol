@@ -26,6 +26,8 @@ void MotorSpinCheck::reset()
               QStringLiteral("Use the motor test panel to test each motor individually"));
 }
 
+// Pass: set externally by QML motor test panel via confirm(). Never auto-passes.
+// Warning/Fail: vehicle must be disarmed before motor testing. Resets to pending on reset().
 void MotorSpinCheck::evaluate()
 {
     if (!hasTelemetry()) {

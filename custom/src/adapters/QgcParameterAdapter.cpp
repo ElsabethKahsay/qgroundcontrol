@@ -1,4 +1,5 @@
-#include "QgcParameterAdapter.h"
+/// @file QgcParameterAdapter.cpp
+/// @brief Implementation of the QgcParameterAdapter parameter interface.
 
 #include <QDebug>
 #include <QLoggingCategory>
@@ -11,6 +12,7 @@
 #include "Vehicle/Vehicle.h"
 #include "MultiVehicleManager.h"
 
+/// Logging category for QgcParameterAdapter debug/warning output.
 Q_LOGGING_CATEGORY(qgcParamAdapterLog, "qgc.param.adapter")
 
 QgcParameterAdapter::QgcParameterAdapter(ParameterManager* paramMgr, QObject* parent)
@@ -23,6 +25,7 @@ QgcParameterAdapter::QgcParameterAdapter(ParameterManager* paramMgr, QObject* pa
         return;
     }
 
+    // Monitor load progress so we know when all parameters are available.
     connect(_paramMgr, &ParameterManager::loadProgressChanged,
             this, &QgcParameterAdapter::_onLoadProgressChanged);
 }
@@ -31,6 +34,8 @@ QgcParameterAdapter::~QgcParameterAdapter()
 {
 }
 
+/// Retrieve a parameter value by name. Uses component ID -1 to search all components.
+/// Returns QVariant() and emits fallbackActivated on failure.
 QVariant QgcParameterAdapter::getParam(const QString& name)
 {
     if (!_paramMgr) {
@@ -49,6 +54,7 @@ QVariant QgcParameterAdapter::getParam(const QString& name)
     return fact->rawValue();
 }
 
+/// Write a parameter value to the vehicle. Returns true on success.
 bool QgcParameterAdapter::setParam(const QString& name, const QVariant& value)
 {
     if (!_paramMgr) {
@@ -67,6 +73,7 @@ bool QgcParameterAdapter::setParam(const QString& name, const QVariant& value)
     return true;
 }
 
+/// True when the ParameterManager reports 100% load progress.
 bool QgcParameterAdapter::isReady() const
 {
     if (!_paramMgr) {
@@ -75,13 +82,18 @@ bool QgcParameterAdapter::isReady() const
     return _paramMgr->loadProgress() >= 1.0f;
 }
 
+/// Detect autopilot firmware type using a multi-step heuristic:
+///   1. Check the Vehicle's firmware type flags (most reliable).
+///   2. Fall back to probing for PX4-specific (SYS_AUTOSTART) or
+///      ArduPilot-specific (FRAME_CLASS) parameters.
+///   3. Return "Generic" if nothing matches.
 QString QgcParameterAdapter::autopilotType()
 {
     if (!_paramMgr) {
         return QStringLiteral("Generic");
     }
 
-    // Try to detect autopilot from vehicle firmware type
+    // Primary detection via Vehicle firmware type flags.
     Vehicle* vehicle = MultiVehicleManager::instance()->activeVehicle();
     if (vehicle) {
         if (vehicle->px4Firmware()) {
@@ -92,7 +104,7 @@ QString QgcParameterAdapter::autopilotType()
         }
     }
 
-    // Fallback: try reading a hint parameter
+    // Fallback: check for characteristic parameters.
     QVariant sysAutostart = getParam(QStringLiteral("SYS_AUTOSTART"));
     if (sysAutostart.isValid()) {
         return QStringLiteral("PX4");
@@ -106,6 +118,8 @@ QString QgcParameterAdapter::autopilotType()
     return QStringLiteral("Generic");
 }
 
+/// Called when ParameterManager load progress changes. Once progress reaches 100%,
+/// marks the adapter as ready and caches the detected autopilot type.
 void QgcParameterAdapter::_onLoadProgressChanged(float progress)
 {
     if (progress >= 1.0f && !_ready) {

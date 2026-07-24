@@ -1,5 +1,21 @@
 #pragma once
 
+// ============================================================================
+// PreflightSettingsManager — Persists user-configurable preflight settings
+// using QSettings (platform-native storage: registry on Windows, plist on
+// macOS, INI on Linux).
+//
+// Settings groups:
+//   Pilot info:     pilot name, license number, aircraft registration
+//   Compliance:     FAA Part 107 mode toggle
+//   Video:          recording preferences, stream URL override
+//   Weather:        auto-fetch toggle, default ICAO station, thresholds
+//                   for wind, visibility, and ceiling alerts
+//
+// All properties are Q_PROPERTY bindings for direct use in QML.
+// Setters clamp numeric values to safe ranges before persisting.
+// ============================================================================
+
 #include <QObject>
 #include <QSettings>
 

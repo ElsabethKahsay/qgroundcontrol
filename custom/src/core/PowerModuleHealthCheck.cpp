@@ -12,6 +12,7 @@ PowerModuleHealthCheck::PowerModuleHealthCheck(TelemetryBridge *telemetry,
     m_telemetry = telemetry;
 }
 
+// Warn if |sysVoltage - battVoltage| exceeds maxDeltaV; pass if the two readings agree.
 void PowerModuleHealthCheck::evaluate()
 {
     if (!hasTelemetry()) {

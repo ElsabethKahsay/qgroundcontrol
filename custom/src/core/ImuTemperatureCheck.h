@@ -1,3 +1,5 @@
+// Verifies IMU temperature is within safe operating range.
+// Fails when temperature is below minTemp or above maxTemp, indicating sensor issues.
 #pragma once
 #include "AbstractCheck.h"
 

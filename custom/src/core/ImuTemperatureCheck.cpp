@@ -33,6 +33,7 @@ void ImuTemperatureCheck::evaluate()
         return;
     }
 
+    // Pass if IMU temp is within [minTemp, maxTemp]; warn if outside range.
     if (temp > m_maxTemp) {
         setStatus(CheckStatus::Warning,
                   QStringLiteral("IMU temperature %1°C exceeds max %2°C")

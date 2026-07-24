@@ -9,10 +9,12 @@ PreflightSettingsManager *PreflightSettingsManager::instance()
 
 PreflightSettingsManager::PreflightSettingsManager(QObject *parent)
     : QObject(parent)
-    , m_settings("UAVPreflight", "UAVPreflight")
+    , m_settings("UAVPreflight", "UAVPreflight")  // org/app name for QSettings
 {
     s_instance = this;
 }
+
+// ── Pilot info ───────────────────────────────────────────────────────
 
 QString PreflightSettingsManager::pilotName() const
 {
@@ -53,6 +55,8 @@ void PreflightSettingsManager::setAircraftReg(const QString &v)
     }
 }
 
+// ── Compliance ───────────────────────────────────────────────────────
+
 bool PreflightSettingsManager::faaPart107Mode() const
 {
     return m_settings.value("faaPart107mode", false).toBool();
@@ -65,6 +69,8 @@ void PreflightSettingsManager::setFaaPart107Mode(bool v)
         emit faaPart107ModeChanged();
     }
 }
+
+// ── Video settings ───────────────────────────────────────────────────
 
 bool PreflightSettingsManager::videoRequiredForPass() const
 {
@@ -117,6 +123,10 @@ void PreflightSettingsManager::setVideoStreamUrlOverride(const QString &v)
         emit videoStreamUrlOverrideChanged();
     }
 }
+
+// ── Weather settings ─────────────────────────────────────────────────
+// Thresholds for automated weather-based go/no-go decisions.
+// Values are clamped to safe ranges in setters.
 
 bool PreflightSettingsManager::autoWeatherEnabled() const
 {

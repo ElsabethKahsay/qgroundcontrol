@@ -11,6 +11,8 @@ RcFailsafeCheck::RcFailsafeCheck(TelemetryBridge *telemetry, int minRssi, QObjec
     m_telemetry = telemetry;
 }
 
+// Passes when rcConnected is true, rcFailsafe is false, and RSSI >= m_minRssi.
+// Fails if failsafe is active or RSSI is below threshold; warns if RC is not connected.
 void RcFailsafeCheck::evaluate()
 {
     if (!hasTelemetry()) {

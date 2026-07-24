@@ -6,6 +6,7 @@
 #include "AbstractCheck.h"
 #include "PreflightManager.h"
 #include "TelemetryBridge.h"
+#include "utils/DatabaseManager.h"
 
 ArmingGate::ArmingGate(QObject *parent)
     : QObject(parent)
@@ -301,6 +302,13 @@ void ArmingGate::updateArmingState()
         m_denialReason = failure;
         emit armingAllowedChanged(allOk);
         emit denialReasonChanged(failure);
+
+        // Persist preflight status to DB
+        if (m_telemetry && m_telemetry->vehicle()) {
+            QString deviceUid = QString::number(m_telemetry->vehicle()->id());
+            QString status = allOk ? QStringLiteral("Ready") : QStringLiteral("Blocked");
+            DatabaseManager::instance().updatePreflightStatus(deviceUid, status);
+        }
     }
 }
 

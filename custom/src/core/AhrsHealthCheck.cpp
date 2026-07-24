@@ -11,6 +11,7 @@ AhrsHealthCheck::AhrsHealthCheck(TelemetryBridge *telemetry,
     m_telemetry = telemetry;
 }
 
+// Warn if attitude stabilization bit is clear or ahrsHealth is false; pass if healthy.
 void AhrsHealthCheck::evaluate()
 {
     if (!hasTelemetry()) {

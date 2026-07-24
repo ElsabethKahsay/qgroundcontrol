@@ -29,6 +29,7 @@ void BaroHealthCheck::evaluate()
         }
     }
 
+    // Pass if SYS_STATUS health bit is set, pressure is positive, and temp is in [-40, 85]°C.
     double baroPress = getTelemetryDouble(QStringLiteral("baroPressure"));
     double baroTemp = getTelemetryDouble(QStringLiteral("baroTemperature"));
 

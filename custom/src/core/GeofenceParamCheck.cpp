@@ -10,6 +10,8 @@ GeofenceParamCheck::GeofenceParamCheck(TelemetryBridge *telemetry, QObject *pare
     m_telemetry = telemetry;
 }
 
+// Passes when geofence is disabled, or enabled with both alt+lateral types and an action configured.
+// Warns when enabled but missing fence types or no action is set; skips if params are unavailable.
 void GeofenceParamCheck::evaluate()
 {
     if (!hasTelemetry()) {

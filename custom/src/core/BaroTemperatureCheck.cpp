@@ -33,6 +33,7 @@ void BaroTemperatureCheck::evaluate()
         return;
     }
 
+    // Pass if baro temp is within [minTempC, maxTempC]; warn if outside range.
     setCurrentValue(temp);
 
     if (temp >= m_minTempC && temp <= m_maxTempC) {

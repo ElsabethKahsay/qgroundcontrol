@@ -1,3 +1,16 @@
+/**
+ * @file PowerModel.h
+ * @brief Energy consumption prediction from flight history and default airframe profiles.
+ *
+ * Provides per-airframe Wh/km defaults (MultiRotor, FixedWing, VTOL, etc.) and
+ * supports per-vehicle calibration using actual flight data. The calibrated model
+ * uses linear regression on payload vs. consumption, falling back to defaults
+ * when insufficient flight data is available.
+ *
+ * Used by MissionEnergyCheck to determine whether the battery has enough charge
+ * for a planned mission distance.
+ */
+
 #pragma once
 
 #include <QObject>
@@ -7,20 +20,29 @@
 
 class DatabaseManager;
 
+/// A single data point from a past flight: payload weight vs. measured energy consumption.
 struct PowerCalibrationPoint {
-    double payloadKg;
-    double whPerKm;
+    double payloadKg;    ///< Total payload weight for the flight (kg)
+    double whPerKm;      ///< Measured energy consumption (Wh per km)
 };
 
+/// Result of an energy estimate calculation.
 struct PowerEstimate {
-    double whPerKm;
-    double rangeKm;
-    double flightTimeMin;
-    QString sourceLabel;   // e.g. "Default (MultiRotor)" or "Calibrated from 8 flights"
-    int dataPointCount;
-    bool isCalibrated;
+    double whPerKm;          ///< Energy consumption rate (Wh/km) — calibrated or default
+    double rangeKm;          ///< Estimated max range on full battery (km)
+    double flightTimeMin;    ///< Estimated max flight time (minutes)
+    QString sourceLabel;     ///< Human-readable description of the model source
+    int dataPointCount;      ///< Number of flight sessions used for calibration (0 = defaults only)
+    bool isCalibrated;       ///< True if a per-vehicle calibrated model was used
 };
 
+/**
+ * Energy consumption model for preflight range/flight-time estimation.
+ *
+ * Estimates are computed per-vehicle when flight history is available (stored
+ * in DatabaseManager), or fall back to generic airframe defaults. The model
+ * also accounts for payload weight via a calibrated linear relationship.
+ */
 class PowerModel : public QObject {
     Q_OBJECT
 public:
@@ -51,16 +73,19 @@ signals:
     void calibrationUpdated(const QString &deviceUid);
 
 private:
+    /// Per-vehicle linear regression model: whPerKm = intercept + slope * payloadKg
     struct VehicleCalibration {
         QString deviceUid;
         QVector<PowerCalibrationPoint> points;
-        double slope = 0.0;   // Wh/km per kg payload
-        double intercept = 0.0; // base Wh/km (zero payload)
-        bool fitted = false;
+        double slope = 0.0;     ///< Wh/km per kg of payload
+        double intercept = 0.0; ///< Base Wh/km at zero payload
+        bool fitted = false;    ///< Whether the linear model has been computed
     };
 
+    /// Fit a linear regression model to the calibration points.
     void fitLinear(VehicleCalibration &cal) const;
+    /// Find the calibration record for a device, creating one if it doesn't exist.
     VehicleCalibration *findOrCreate(const QString &deviceUid);
 
-    QVector<VehicleCalibration> m_calibrations;
+    QVector<VehicleCalibration> m_calibrations; ///< In-memory calibration data per vehicle
 };

@@ -35,11 +35,13 @@ const QMap<QString, QMap<QString, QString>> UavParameterManager::s_paramMappings
 UavParameterManager::UavParameterManager(QObject *parent)
     : QObject(parent)
 {
+    // 10-second timeout: if the full watchlist hasn't arrived by then, enter Fallback mode.
     m_timeout.setSingleShot(true);
     m_timeout.setInterval(10000);
     connect(&m_timeout, &QTimer::timeout, this, &UavParameterManager::onTimeout);
 }
 
+/// Reset received set, start the timeout, and begin tracking the new watchlist.
 void UavParameterManager::setWatchlist(const QSet<QString> &params)
 {
     m_watchlist = params;
@@ -49,6 +51,7 @@ void UavParameterManager::setWatchlist(const QSet<QString> &params)
     emit statusChanged();
 }
 
+/// Record that a parameter has arrived and re-evaluate readiness.
 void UavParameterManager::notifyParamReceived(const QString &name)
 {
     if (!m_watchlist.contains(name))
@@ -63,6 +66,9 @@ void UavParameterManager::setAutopilotType(AutopilotType type)
     m_autopilotType = type;
 }
 
+/// Translate a parameter name between autopilot conventions.
+/// First tries a forward lookup (canonical key -> target), then a reverse scan
+/// (source name -> canonical key -> target).  Returns the original name if no mapping exists.
 QString UavParameterManager::mapParamName(const QString &name, AutopilotType from, AutopilotType to)
 {
     if (from == to) return name;
@@ -92,11 +98,11 @@ QString UavParameterManager::mapParamName(const QString &name, AutopilotType fro
     return name;
 }
 
+/// Map a canonical parameter name to the local autopilot's naming convention.
 QString UavParameterManager::toLocalName(const QString &name) const
 {
     if (m_autopilotType == Generic) return name;
 
-    // Try mapping from "canonical" (first key) to local autopilot name
     QString target = (m_autopilotType == PX4) ? QStringLiteral("PX4") : QStringLiteral("ArduPilot");
 
     auto it = s_paramMappings.constFind(name);
@@ -130,6 +136,8 @@ void UavParameterManager::reset()
     emit statusChanged();
 }
 
+/// Timeout handler: not all parameters arrived in time, switch to Fallback mode
+/// and warn the UI to use cached defaults with manual verification.
 void UavParameterManager::onTimeout()
 {
     m_status = Fallback;
@@ -138,6 +146,7 @@ void UavParameterManager::onTimeout()
     emit fallback(QStringLiteral("Using cached defaults \u2014 verify thresholds"));
 }
 
+/// If every watched parameter has been received, mark as Ready and stop the timeout.
 void UavParameterManager::reevaluate()
 {
     if (m_received.size() >= m_watchlist.size()) {

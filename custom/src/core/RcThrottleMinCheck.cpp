@@ -11,6 +11,8 @@ RcThrottleMinCheck::RcThrottleMinCheck(TelemetryBridge *telemetry,
     m_telemetry = telemetry;
 }
 
+// Passes when the throttle channel value >= 900 (stick fully down).
+// Fails if throttle is above zero but below 900 (stick not at minimum); warns on zero signal.
 void RcThrottleMinCheck::evaluate()
 {
     if (!hasTelemetry()) {

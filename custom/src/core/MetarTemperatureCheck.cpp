@@ -17,6 +17,8 @@ MetarTemperatureCheck::MetarTemperatureCheck(TelemetryBridge *telemetry, QObject
     m_telemetry = telemetry;
 }
 
+// Pass: temperature within [tMin, tMax] range. Warning: temperature outside range.
+// Uses configurable temp_min_c/temp_max_c from check config (defaults -10 to 50 C).
 void MetarTemperatureCheck::evaluate()
 {
     if (!hasTelemetry()) {

@@ -1,3 +1,5 @@
+// Monitors telemetry packet drop rate against warning and failure thresholds.
+// Fails when drop rate exceeds maxDropRate; warns between warnDropRate and maxDropRate.
 #pragma once
 #include "AbstractCheck.h"
 

@@ -7,6 +7,9 @@
 
 class TelemetryBridge;
 
+/// Manages per-vehicle profile data: device UID resolution, flight session lifecycle,
+/// battery tracking, and GPS/payload metadata.  Listens to TelemetryBridge for
+/// connection and arm/disarm events to auto-start and end flight sessions in the database.
 class VehicleProfileManager : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString currentDeviceUid READ currentDeviceUid NOTIFY currentVehicleChanged)
@@ -21,6 +24,7 @@ class VehicleProfileManager : public QObject {
 public:
     explicit VehicleProfileManager(QObject *parent = nullptr);
 
+    /// Connect to a TelemetryBridge to receive connection/arm state and vehicle parameters.
     void setTelemetryBridge(TelemetryBridge *bridge);
 
     /// Resolve motor count from vehicle parameters (CA_AIRFRAME on PX4,
@@ -43,9 +47,16 @@ public:
     double planLongitude() const { return m_planLon; }
     void setPlanLongitude(double lon);
 
+    /// Record battery serial for cycle tracking and persist to the battery table.
     Q_INVOKABLE void setBatterySerial(const QString &serial, const QString &operatorLabel = {});
     Q_INVOKABLE QString loadVehicleHistory(const QString &deviceUid);
     Q_INVOKABLE QStringList knownVehicles();
+
+    Q_INVOKABLE bool deleteVehicle(const QString &deviceUid);
+    Q_INVOKABLE bool incrementFlightCount(const QString &deviceUid);
+    Q_INVOKABLE bool updateVehicleProfile(const QString &deviceUid, const QString &pilotName,
+                                           const QString &notes);
+    Q_INVOKABLE bool updateVehicleFirmware(const QString &fingerprint, const QString &firmwareVersion);
 
 signals:
     void currentVehicleChanged();
@@ -61,8 +72,11 @@ private slots:
     void _onArmedChanged(bool armed);
 
 private:
+    /// Resolve the vehicle's persistent device UID: tries hardware UID first,
+    /// then falls back to composite key or system ID.
     QString resolveDeviceUid();
     QString autopilotTypeString();
+    /// Determine airframe type from vehicle parameters, falling back to HEARTBEAT flags.
     QString airframeTypeString();
 
     TelemetryBridge *m_telemetry = nullptr;
@@ -76,6 +90,6 @@ private:
     double m_planLon = 0.0;
     QElapsedTimer m_sessionTimer;
     bool m_wasArmed = false;
-    QElapsedTimer m_armedTimer;
-    double m_armBatteryPct = -1.0;
+    QElapsedTimer m_armedTimer;          // Tracks arm duration to filter out short test-arms.
+    double m_armBatteryPct = -1.0;       // Battery % at arm time, used to compute energy used.
 };

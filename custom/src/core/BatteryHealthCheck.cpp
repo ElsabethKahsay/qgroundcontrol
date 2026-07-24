@@ -23,6 +23,7 @@ BatteryHealthCheck::BatteryHealthCheck(VehicleProfileManager *profileManager,
 {
 }
 
+// Warn if capacity retained < threshold or avg voltage sag > threshold; pass if healthy.
 void BatteryHealthCheck::evaluate()
 {
     if (!m_profileManager) {

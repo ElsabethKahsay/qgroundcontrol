@@ -1,3 +1,5 @@
+// Checks that the roll, pitch, and yaw RC sticks are centered before takeoff.
+// Warns if any of the three sticks deviates from center by more than the tolerance.
 #pragma once
 #include "AbstractCheck.h"
 

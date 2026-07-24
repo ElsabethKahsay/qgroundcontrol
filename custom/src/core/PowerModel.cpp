@@ -11,6 +11,8 @@ PowerModel::PowerModel(QObject *parent)
 {
 }
 
+// Minimum number of flight sessions required before using a calibrated model.
+// Configurable via check_config database, defaults to 5.
 int PowerModel::minCalibrationPoints()
 {
     QString val = DatabaseManager::instance().getCheckConfig("power_model", "min_calibration_points");
@@ -18,6 +20,8 @@ int PowerModel::minCalibrationPoints()
     return 5;
 }
 
+// Default cruise energy consumption (Wh/km at zero payload) per airframe type.
+// Values are approximate and based on typical small UAS profiles.
 double PowerModel::defaultWhPerKm(const QString &airframeType)
 {
     // Static per-airframe consumption rates (Wh/km at cruise, zero payload)
@@ -29,6 +33,8 @@ double PowerModel::defaultWhPerKm(const QString &airframeType)
     return 100.0; // Generic / Unknown
 }
 
+// Default hover energy consumption (Wh/min) per airframe type.
+// Used to account for takeoff/landing hover time in range estimates.
 double PowerModel::defaultHoverWhPerMin(const QString &airframeType)
 {
     if (airframeType == QStringLiteral("MultiRotor"))   return 8.0;
@@ -61,6 +67,8 @@ void PowerModel::setCalibrationPoints(const QString &deviceUid,
     emit calibrationUpdated(deviceUid);
 }
 
+// Simple linear regression: whPerKm = intercept + slope * payloadKg.
+// Requires at least 2 data points. Uses standard least-squares formulas.
 void PowerModel::fitLinear(VehicleCalibration &cal) const
 {
     // Simple linear regression: whPerKm = intercept + slope * payloadKg
@@ -84,6 +92,14 @@ void PowerModel::fitLinear(VehicleCalibration &cal) const
     cal.fitted = true;
 }
 
+// Compute a power estimate for a given vehicle, payload, and battery capacity.
+//
+// Model selection priority:
+//   1. DB-calibrated model (if enough flight sessions exist)
+//   2. In-memory calibrated model (if setCalibrationPoints was called)
+//   3. Default airframe values with a rough +5% per kg payload surcharge
+//
+// Adds 2 minutes of hover time for takeoff/landing. Assumes 30 km/h avg ground speed.
 PowerEstimate PowerModel::estimate(const QString &deviceUid, double payloadKg,
                                     double batteryCapacityWh,
                                     double missionDistanceKm,
@@ -163,6 +179,7 @@ PowerEstimate PowerModel::estimate(const QString &deviceUid, double payloadKg,
     return {whPerKm, rangeKm, flightTimeMin, src, dataPts, calibrated};
 }
 
+// Convenience wrapper: returns estimate() as a QVariantMap for direct QML consumption.
 QVariantMap PowerModel::estimateToMap(const QString &deviceUid, double payloadKg,
                                        double batteryCapacityWh,
                                        double missionDistanceKm,

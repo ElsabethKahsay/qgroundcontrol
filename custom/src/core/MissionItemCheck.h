@@ -1,3 +1,5 @@
+// Validates the first waypoint distance from home is within a safe maximum.
+// Warns if the first waypoint is farther than the configured limit from the home position.
 #pragma once
 #include "AbstractCheck.h"
 

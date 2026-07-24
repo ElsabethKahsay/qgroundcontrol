@@ -15,6 +15,8 @@ RcRssiCheck::RcRssiCheck(TelemetryBridge *telemetry, int minRcRssi,
     m_telemetry = telemetry;
 }
 
+// Passes when RC RSSI >= m_minRcRssi and radio RSSI (if available) >= m_minRadioRssi.
+// Fails if channel data is stale (>5 s) or both links are below threshold; warns for single-link degradation.
 void RcRssiCheck::evaluate()
 {
     if (!hasTelemetry()) {

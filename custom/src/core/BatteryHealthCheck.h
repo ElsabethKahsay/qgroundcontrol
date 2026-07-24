@@ -1,3 +1,5 @@
+// Tracks battery capacity retention and voltage sag trends across charge cycles from the database.
+// Warns when capacity retention drops below threshold or average voltage sag is too high.
 #pragma once
 #include "AbstractCheck.h"
 

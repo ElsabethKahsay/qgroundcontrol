@@ -12,6 +12,8 @@ EscCurrentSymmetryCheck::EscCurrentSymmetryCheck(TelemetryBridge *telemetry,
     m_telemetry = telemetry;
 }
 
+// Pass: all ESC currents within maxDevRatio (default 20%) of the mean.
+// Warning: imbalance detected. Pending: mean current too low to evaluate (< 0.1 A).
 void EscCurrentSymmetryCheck::evaluate()
 {
     if (!hasTelemetry()) {

@@ -1,4 +1,21 @@
 #pragma once
+
+// ============================================================================
+// AutopilotInfoDetector — Identifies the connected autopilot type from
+// MAVLink HEARTBEAT messages and triggers appropriate parameter loading.
+//
+// Detection flow:
+//   1. consumeHeartbeat() is called with the MAV_AUTOPILOT enum value
+//   2. Maps the enum to PX4, ArduPilot, Generic, or Unknown
+//   3. For PX4/ArduPilot, invokes the registered ParamMapLoader callback
+//      to load autopilot-specific parameter mappings
+//   4. For Generic/Unknown, emits genericModeActivated() and falls back
+//      to hardcoded default thresholds (DefaultThresholds struct)
+//
+// This allows the preflight checklist to adapt its checks and thresholds
+// based on what autopilot firmware is running on the connected vehicle.
+// ============================================================================
+
 #include <QObject>
 #include <QString>
 #include <functional>

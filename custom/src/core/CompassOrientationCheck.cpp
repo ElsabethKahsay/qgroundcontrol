@@ -20,6 +20,7 @@ void CompassOrientationCheck::applyVehicleConfig(const QJsonObject &config)
     }
 }
 
+// Pass if rotation matches vehicle profile or is default (0); otherwise prompt for confirmation.
 void CompassOrientationCheck::evaluate()
 {
     if (status() == CheckStatus::Passed) return;

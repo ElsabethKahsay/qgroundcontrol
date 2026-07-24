@@ -1,3 +1,5 @@
+// Checks TAF (Terminal Aerodrome Forecast) for deteriorating weather conditions.
+// Warns when the TAF predicts worsening conditions within the next 6 hours.
 #pragma once
 #include "AbstractCheck.h"
 

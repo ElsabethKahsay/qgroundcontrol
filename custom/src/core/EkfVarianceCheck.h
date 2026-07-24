@@ -1,3 +1,5 @@
+// Checks EKF velocity, horizontal/vertical position, and compass variance values against thresholds.
+// Fails when any variance exceeds its limit (preferring vehicle COM_ARM_EKF_* params over defaults).
 #pragma once
 #include "AbstractCheck.h"
 

@@ -13,6 +13,7 @@ AmbientTemperatureCheck::AmbientTemperatureCheck(TelemetryBridge *telemetry,
     m_telemetry = telemetry;
 }
 
+// Pass: baroTemperature within [minTempC, maxTempC]. Warning: outside safe range.
 void AmbientTemperatureCheck::evaluate()
 {
     if (!hasTelemetry()) {

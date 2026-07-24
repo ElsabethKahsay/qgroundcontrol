@@ -22,9 +22,9 @@
 
 Q_DECLARE_METATYPE(Vehicle*)
 
-// Force QML module type registrations from static libraries to be included.
-// (Linker discards QQmlModuleRegistration globals from static archives
-// unless something references the object.)
+// QGroundControl QML module registrations are declared below and called in the
+// constructor to force-link them from static libraries. Without explicit references,
+// the linker discards the QQmlModuleRegistration globals.
 void qml_register_types_QGroundControl();
 void qml_register_types_QGroundControl_AnalyzeView();
 void qml_register_types_QGroundControl_AppSettings();
@@ -72,10 +72,13 @@ Q_APPLICATION_STATIC(PreflightPlugin, _preflightPluginInstance)
 
 extern int qInitResources_custom();
 
+// Singleton access — returned via Q_APPLICATION_STATIC so only one instance exists.
 PreflightPlugin::PreflightPlugin(QObject *parent)
     : QGCCorePlugin(parent)
 {
-    // Force-link all module type registrations and qmlcache objects from static libs
+    // Force-link all QML module type registrations from static libraries.
+    // These calls ensure the linker includes the registration code; the actual
+    // types become available when the QML engine is created later in init().
     qml_register_types_QGroundControl();
     qml_register_types_QGroundControl_FlightDisplay();
     qml_register_types_QGroundControl_Controls();
@@ -113,10 +116,15 @@ PreflightPlugin *PreflightPlugin::instance()
     return _preflightPluginInstance();
 }
 
+// ---------------------------------------------------------------------------
+// init() — Called once after plugin construction. Sets up fonts, creates all
+// managers, wires signals, and connects to any already-active vehicle.
+// ---------------------------------------------------------------------------
 void PreflightPlugin::init()
 {
     QGCCorePlugin::init();
 
+    // Load custom application font and apply it globally
     int fontId = QFontDatabase::addApplicationFont(QStringLiteral(":/fonts/Abel-Regular"));
     if (fontId < 0) {
         qCWarning(preflightPluginLog) << "Could not load Abel-Regular font";
@@ -130,11 +138,15 @@ void PreflightPlugin::init()
         }
     }
 
+    // --- Create core managers ---
+    // PreflightManager owns the check definitions; the checklist model wraps them for QML.
     _preflightManager = new PreflightManager(1, this);
     _checklistModel = new PreflightChecklistModel(this);
     _checklistModel->setPreflightManager(_preflightManager);
     _telemetryBridge = new TelemetryBridge(this);
 
+    // Create one proxy model per checklist category (8 max) so QML can bind
+    // each category section to its own filtered view of the source checklist.
     for (int i = 0; i < 8; ++i) {
         _categoryModels[i] = new PreflightChecklistFilterModel(this);
         _categoryModels[i]->setSourceModel(static_cast<QAbstractItemModel *>(_checklistModel));
@@ -152,23 +164,30 @@ void PreflightPlugin::init()
 
     DatabaseManager::instance().initialize();
 
+    // Application branding used by the title bar and OS
     QCoreApplication::setApplicationName(QStringLiteral("Skywin GCS"));
 
     _vehicleProfileManager = new VehicleProfileManager(this);
     _vehicleProfileManager->setTelemetryBridge(_telemetryBridge);
 
+    // --- Wire up the ArmingGate so it can query checks and telemetry ---
     _armingGate = new ArmingGate(this);
     _armingGate->setPreflightManager(_preflightManager);
     _armingGate->setTelemetryBridge(_telemetryBridge);
 
     _preflightManager->setTelemetryBridge(_telemetryBridge);
 
+    // Flatten all checks into ChecklistItemModel and feed to ChecklistEngine
+    // which evaluates them against live telemetry each cycle.
     _checklistItemModel = new ChecklistItemModel(this);
     _populateChecklistModel();
     _checklistEngine = new ChecklistEngine(this);
     _checklistEngine->setModel(_checklistItemModel);
     _checklistEngine->setTelemetryBridge(_telemetryBridge);
 
+    // When we get a battery voltage reading and no battery serial has been
+    // assigned yet, create a synthetic serial ID from the vehicle ID so
+    // the power model can track per-battery cycle counts.
     connect(_telemetryBridge, &TelemetryBridge::batteryVoltageChanged, this, [this]() {
         if (!_telemetryBridge || !_vehicleProfileManager) return;
         if (!_vehicleProfileManager->currentBatterySerial().isEmpty()) return;
@@ -176,12 +195,16 @@ void PreflightPlugin::init()
         _vehicleProfileManager->setBatterySerial(sysId);
     });
 
+    // --- Vehicle registry signals ---
+    // knownVehicleConnected: a previously-seen vehicle reconnected; load its saved config.
+    // newVehicleRegistered:  a never-seen vehicle appeared; save its initial config (compass, etc.)
     auto *registry = VehicleRegistry::instance();
     connect(registry, &VehicleRegistry::knownVehicleConnected,
             this, &PreflightPlugin::_onKnownVehicleConnected);
     connect(registry, &VehicleRegistry::newVehicleRegistered,
             this, &PreflightPlugin::_onNewVehicleRegistered);
 
+    // Gate open/close tracks the flight session lifecycle for compliance logging.
     connect(_armingGate, &ArmingGate::gateOpened,
             this, &PreflightPlugin::_onGateOpened);
     connect(_armingGate, &ArmingGate::gateClosed,
@@ -190,6 +213,8 @@ void PreflightPlugin::init()
     qCDebug(preflightPluginLog) << "PreflightPlugin: init complete,"
                                 << _preflightManager->totalChecks() << "checks";
 
+    // Connect to vehicle changes going forward; if a vehicle is already active,
+    // set up for it immediately so the UI is ready on startup.
     connect(MultiVehicleManager::instance(), &MultiVehicleManager::activeVehicleChanged,
             this, &PreflightPlugin::_onActiveVehicleChanged);
 
@@ -199,12 +224,20 @@ void PreflightPlugin::init()
     }
 }
 
+// ---------------------------------------------------------------------------
+// createQmlApplicationEngine() — Builds the QML engine and registers all
+// custom context properties and singleton types that QML views bind to.
+// This is the bridge between C++ managers and QML UI.
+// ---------------------------------------------------------------------------
 QQmlApplicationEngine *PreflightPlugin::createQmlApplicationEngine(QObject *parent)
 {
     QQmlApplicationEngine *qmlEngine = QGCCorePlugin::createQmlApplicationEngine(parent);
 
+    // Add import path for custom QML components (CPTS = custom preflight tools)
     qmlEngine->addImportPath(QStringLiteral("qrc:/qml/cpts"));
 
+    // Register QML singletons — these are global objects accessible from any QML file
+    // under the com.uav.preflight module namespace.
     qmlRegisterSingletonType(QUrl(QStringLiteral("qrc:/qml/singletons/Colors.qml")), "com.uav.preflight", 1, 0, "Colors");
     qmlRegisterSingletonType(QUrl(QStringLiteral("qrc:/qml/singletons/Config.qml")), "com.uav.preflight", 1, 0, "Config");
     qmlRegisterSingletonType(QUrl(QStringLiteral("qrc:/qml/singletons/VehicleTelemetry.qml")), "com.uav.preflight", 1, 0, "VehicleTelemetry");
@@ -215,6 +248,9 @@ QQmlApplicationEngine *PreflightPlugin::createQmlApplicationEngine(QObject *pare
             return PreflightSettingsManager::instance();
         });
 
+    // Expose C++ objects as QML context properties — available globally in QML
+    // without needing an import. Each lets QML bind directly to the manager's
+    // properties and invoke its methods.
     if (_weatherProvider) {
         qmlEngine->rootContext()->setContextProperty(QStringLiteral("WeatherProvider"), _weatherProvider);
     }
@@ -251,6 +287,8 @@ QQmlApplicationEngine *PreflightPlugin::createQmlApplicationEngine(QObject *pare
     qmlEngine->rootContext()->setContextProperty(QStringLiteral("VehicleRegistry"), VehicleRegistry::instance());
     qmlEngine->rootContext()->setContextProperty(QStringLiteral("Database"), &DatabaseManager::instance());
 
+    // Register per-category filter models as CatModel0..CatModel7 so QML
+    // category sections can each bind to their own filtered checklist view.
     for (int i = 0; i < 8; ++i) {
         QString name = QStringLiteral("CatModel%1").arg(i);
         qmlEngine->rootContext()->setContextProperty(name, _categoryModels[i]);
@@ -260,12 +298,19 @@ QQmlApplicationEngine *PreflightPlugin::createQmlApplicationEngine(QObject *pare
     return qmlEngine;
 }
 
+// ---------------------------------------------------------------------------
+// _populateChecklistModel() — Converts PreflightManager's AbstractCheck list
+// into a flat JSON array and loads it into ChecklistItemModel. This gives
+// ChecklistEngine the items it needs to evaluate against telemetry data.
+// ---------------------------------------------------------------------------
 void PreflightPlugin::_populateChecklistModel()
 {
     if (!_checklistItemModel || !_preflightManager)
         return;
     QJsonArray items;
     const auto checks = _preflightManager->checks();
+    // Serialize each check to a JSON object with id, label, type, and category
+    // so ChecklistItemModel can index them uniformly.
     for (const auto *check : checks) {
         QJsonObject obj;
         obj[QStringLiteral("id")] = check->id();
@@ -277,6 +322,11 @@ void PreflightPlugin::_populateChecklistModel()
     _checklistItemModel->loadFromJson(items);
 }
 
+// ---------------------------------------------------------------------------
+// _onActiveVehicleChanged() — Called when the user switches between vehicles
+// (or connects/disconnects). Sets up telemetry and checks for the new vehicle,
+// or tears everything down if no vehicle is active.
+// ---------------------------------------------------------------------------
 void PreflightPlugin::_onActiveVehicleChanged(Vehicle *vehicle)
 {
     qCDebug(preflightPluginLog) << "PreflightPlugin: Active vehicle changed"
@@ -292,6 +342,11 @@ void PreflightPlugin::_onActiveVehicleChanged(Vehicle *vehicle)
     }
 }
 
+// ---------------------------------------------------------------------------
+// _onKnownVehicleConnected() — A previously-configured vehicle reconnected.
+// Loads its saved per-vehicle check configuration from the database and
+// applies it to override default check thresholds (e.g., compass orientation).
+// ---------------------------------------------------------------------------
 void PreflightPlugin::_onKnownVehicleConnected(int vehicleId)
 {
     Q_UNUSED(vehicleId)
@@ -307,6 +362,8 @@ void PreflightPlugin::_onKnownVehicleConnected(int vehicleId)
     if (!doc.isObject()) return;
 
     QJsonObject config = doc.object();
+    // Iterate the saved config object; keys are check IDs, values are per-check config.
+    // Apply each one so the check uses vehicle-specific thresholds.
     for (auto it = config.begin(); it != config.end(); ++it) {
         AbstractCheck *check = _preflightManager->checkById(it.key());
         if (check) {
@@ -317,6 +374,11 @@ void PreflightPlugin::_onKnownVehicleConnected(int vehicleId)
     qCDebug(preflightPluginLog) << "Vehicle config loaded for fingerprint" << fingerprint.left(16);
 }
 
+// ---------------------------------------------------------------------------
+// _onNewVehicleRegistered() — First-time vehicle detected. Records its initial
+// configuration (currently just compass orientation) to the database so future
+// reconnections can detect config drift.
+// ---------------------------------------------------------------------------
 void PreflightPlugin::_onNewVehicleRegistered(int vehicleId)
 {
     Q_UNUSED(vehicleId)
@@ -354,6 +416,11 @@ void PreflightPlugin::_onNewVehicleRegistered(int vehicleId)
     }
 }
 
+// ---------------------------------------------------------------------------
+// _onGateOpened() — The arming gate just opened (all preflight checks passed
+// and the pilot is cleared to arm). Starts a new flight session in the database
+// for compliance tracking.
+// ---------------------------------------------------------------------------
 void PreflightPlugin::_onGateOpened()
 {
     if (_currentSessionId >= 0) return;
@@ -364,6 +431,11 @@ void PreflightPlugin::_onGateOpened()
     qCDebug(preflightPluginLog) << "Flight session started:" << _currentSessionId;
 }
 
+// ---------------------------------------------------------------------------
+// _onGateClosed() — The arming gate closed (disarmed or check failure).
+// Ends the flight session: calculates duration, writes a compliance log entry
+// with session metadata, and increments the battery cycle counter.
+// ---------------------------------------------------------------------------
 void PreflightPlugin::_onGateClosed(const QString &reason)
 {
     Q_UNUSED(reason)
@@ -371,12 +443,34 @@ void PreflightPlugin::_onGateClosed(const QString &reason)
     double duration = _sessionStartTime.isValid()
         ? _sessionStartTime.secsTo(QDateTime::currentDateTime())
         : 0.0;
+
+    // Save compliance log for this session
+    QString fp = VehicleRegistry::instance()->currentFingerprint();
+    if (!fp.isEmpty()) {
+        QJsonObject logEntry;
+        logEntry[QStringLiteral("sessionId")] = _currentSessionId;
+        logEntry[QStringLiteral("deviceUid")] = fp;
+        logEntry[QStringLiteral("durationSec")] = duration;
+        logEntry[QStringLiteral("startTime")] = _sessionStartTime.toString(Qt::ISODate);
+        logEntry[QStringLiteral("endTime")] = QDateTime::currentDateTime().toString(Qt::ISODate);
+        logEntry[QStringLiteral("gateCloseReason")] = reason;
+        QString logJson = QString::fromUtf8(QJsonDocument(logEntry).toJson(QJsonDocument::Compact));
+        DatabaseManager::instance().saveComplianceLog(
+            QStringLiteral("session-%1").arg(_currentSessionId),
+            fp, QString(), QString(), logJson, QString());
+    }
+
     DatabaseManager::instance().endFlightSession(_currentSessionId, duration);
     DatabaseManager::instance().incrementBatteryCycle(_currentSessionId);
     qCDebug(preflightPluginLog) << "Flight session ended:" << _currentSessionId << "duration:" << duration << "s";
     _currentSessionId = -1;
 }
 
+// ---------------------------------------------------------------------------
+// _setupForVehicle() — Wires all managers to a specific vehicle. Called both
+// on initial connection and when switching active vehicles. Starts telemetry
+// streaming, checklist evaluation, and weather refresh.
+// ---------------------------------------------------------------------------
 void PreflightPlugin::_setupForVehicle(Vehicle *vehicle)
 {
     if (!vehicle || !_telemetryBridge || !_preflightManager) return;
@@ -401,6 +495,10 @@ void PreflightPlugin::_setupForVehicle(Vehicle *vehicle)
                                 << vehicle->id();
 }
 
+// ---------------------------------------------------------------------------
+// _refreshWeather() — Fetches weather data using either a configured ICAO code
+// or the vehicle's current GPS position as a fallback.
+// ---------------------------------------------------------------------------
 void PreflightPlugin::_refreshWeather()
 {
     if (!_weatherProvider || !_telemetryBridge) return;
@@ -410,8 +508,10 @@ void PreflightPlugin::_refreshWeather()
 
     QString icao = settings->defaultIcao();
     if (!icao.isEmpty()) {
+        // Prefer manual ICAO station override
         _weatherProvider->refreshAll(icao);
     } else if (_telemetryBridge->vehicle()) {
+        // Fall back to vehicle GPS coordinates
         double lat = _telemetryBridge->vehicle()->latitude();
         double lon = _telemetryBridge->vehicle()->longitude();
         if (qAbs(lat) > 0.01 || qAbs(lon) > 0.01)
@@ -419,6 +519,7 @@ void PreflightPlugin::_refreshWeather()
     }
 }
 
+// Starts the periodic weather refresh timer using the user-configured interval.
 void PreflightPlugin::_startWeatherRefresh()
 {
     auto *settings = PreflightSettingsManager::instance();
@@ -426,6 +527,10 @@ void PreflightPlugin::_startWeatherRefresh()
     _weatherRefreshTimer.start(interval * 60 * 1000);
 }
 
+// ---------------------------------------------------------------------------
+// analyzePages() — Returns the list of pages shown in the Analyze tab.
+// Lazily built: copies the base QGC pages then appends custom ones.
+// ---------------------------------------------------------------------------
 const QVariantList &PreflightPlugin::analyzePages()
 {
     if (_analyzePages.isEmpty()) {
@@ -437,6 +542,7 @@ const QVariantList &PreflightPlugin::analyzePages()
 #ifdef QT_DEBUG
 #endif
 
+        // Append custom plugin pages after the stock QGC pages
         _analyzePages.append(QVariant::fromValue(
             new QmlComponentInfo(
                 tr("Preflight Checklist"),
@@ -454,6 +560,13 @@ const QVariantList &PreflightPlugin::analyzePages()
     return _analyzePages;
 }
 
+// ---------------------------------------------------------------------------
+// paletteOverride() — Custom theming for the Skywin GCS dark theme.
+// Called by QGCPalette for each named color. Overrides the dark theme entries
+// with a steel-blue accent on near-black backgrounds. Safety colors (green,
+// red, yellow) are intentionally NOT overridden so they remain standard.
+// Light theme is left at QGC defaults.
+// ---------------------------------------------------------------------------
 void PreflightPlugin::paletteOverride(const QString &colorName, QGCPalette::PaletteColorInfo_t &colorInfo)
 {
     // ══════════════════════════════════════════════════════════════════════
@@ -596,6 +709,7 @@ void PreflightPlugin::paletteOverride(const QString &colorName, QGCPalette::Pale
     }
 }
 
+// Scales down the default font size to fit the plugin's custom layout proportions.
 bool PreflightPlugin::adjustSettingMetaData(const QString &settingsGroup, FactMetaData &metaData)
 {
     if (settingsGroup == AppSettings::settingsGroup) {
@@ -612,6 +726,7 @@ bool PreflightPlugin::adjustSettingMetaData(const QString &settingsGroup, FactMe
     return QGCCorePlugin::adjustSettingMetaData(settingsGroup, metaData);
 }
 
+// Passthrough — lets the message flow through to QGC's default handling.
 bool PreflightPlugin::mavlinkMessage(Vehicle *vehicle, LinkInterface *link, const mavlink_message_t &message)
 {
     Q_UNUSED(vehicle)
@@ -620,6 +735,7 @@ bool PreflightPlugin::mavlinkMessage(Vehicle *vehicle, LinkInterface *link, cons
     return true;
 }
 
+// Returns the list of custom toolbar indicators (shown in the top toolbar).
 const QVariantList &PreflightPlugin::toolBarIndicators()
 {
     if (_toolBarIndicators.isEmpty()) {

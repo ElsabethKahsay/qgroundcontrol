@@ -1,3 +1,5 @@
+// Checks battery temperature stays within safe operating range using a 3-second moving average.
+// Fails when temperature exceeds the max or drops below the min threshold.
 #pragma once
 #include "AbstractCheck.h"
 #include "Hysteresis.h"

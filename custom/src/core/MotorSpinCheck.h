@@ -1,3 +1,5 @@
+// Manual check requiring each motor to be individually spin-tested via the motor test panel.
+// Stays pending until the user completes all motor tests; fails if vehicle is armed.
 #pragma once
 #include "AbstractCheck.h"
 

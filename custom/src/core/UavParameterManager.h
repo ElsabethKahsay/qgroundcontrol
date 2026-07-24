@@ -6,6 +6,10 @@
 #include <QMap>
 #include <QString>
 
+/// Tracks parameter loading progress for the preflight checklist.
+/// Given a "watchlist" of parameter names, it monitors which have been received
+/// and transitions through Loading -> Ready (all received) or Loading -> Fallback (timeout).
+/// Also provides a PX4 <-> ArduPilot parameter name mapping and a simple key-value cache.
 class UavParameterManager : public QObject {
     Q_OBJECT
     Q_PROPERTY(Status status READ status NOTIFY statusChanged)
@@ -21,7 +25,9 @@ public:
 
     explicit UavParameterManager(QObject *parent = nullptr);
 
+    /// Define the set of parameters we care about; resets received set and starts the timeout.
     void setWatchlist(const QSet<QString> &params);
+    /// Called when a parameter arrives from the vehicle; tracks progress toward readiness.
     void notifyParamReceived(const QString &name);
     Status status() const { return m_status; }
     int receivedCount() const { return m_received.size(); }
@@ -32,14 +38,16 @@ public:
     void setAutopilotType(AutopilotType type);
     AutopilotType autopilotType() const { return m_autopilotType; }
 
-    // PX4 → ArduPilot name mapping (and vice versa)
+    /// Translate a parameter name between PX4 and ArduPilot naming conventions.
     static QString mapParamName(const QString &name, AutopilotType from, AutopilotType to);
+    /// Convenience: translate a canonical name to the current autopilot's local name.
     QString toLocalName(const QString &name) const;
 
     Q_INVOKABLE void reset();
 
-    // Parameter cache storage
+    /// Retrieve a cached parameter value (translated to local name); returns defaultVal if absent.
     float paramValue(const QString &name, float defaultVal = 0.0f) const;
+    /// Store a parameter value in the local cache (keyed by local autopilot name).
     void storeParam(const QString &name, float value);
 
 signals:
@@ -54,15 +62,16 @@ private slots:
     void onTimeout();
 
 private:
+    /// Check if all watched parameters have arrived and update status accordingly.
     void reevaluate();
 
-    QSet<QString> m_watchlist;
-    QSet<QString> m_received;
-    QMap<QString, float> m_cache;
-    QTimer m_timeout;
+    QSet<QString> m_watchlist;   // Parameters we expect to receive.
+    QSet<QString> m_received;    // Parameters that have arrived so far.
+    QMap<QString, float> m_cache; // Local-name -> value cache for quick parameter lookup.
+    QTimer m_timeout;            // Single-shot timer: if watchlist isn't complete in time, go to Fallback.
     Status m_status = Loading;
     AutopilotType m_autopilotType = Generic;
 
-    // PX4 ↔ ArduPilot parameter name map
+    // PX4 <-> ArduPilot parameter name map
     static const QMap<QString, QMap<QString, QString>> s_paramMappings;
 };

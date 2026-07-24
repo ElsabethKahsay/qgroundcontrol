@@ -1,3 +1,16 @@
+/**
+ * @file AbstractCheck.h
+ * @brief Base class for all preflight checks in the QGC custom plugin.
+ *
+ * Defines the check lifecycle (Pending → Passed/Failed/etc.), status query interface,
+ * operator override mechanism, and telemetry access helpers. Each concrete check
+ * (e.g. BatteryVoltageCheck, GpsFixCheck) evaluates a single preflight precondition
+ * and reports its result to the PreflightManager.
+ *
+ * Subclasses must implement evaluate() to perform the actual check logic using
+ * values read from TelemetryBridge via the protected helper methods.
+ */
+
 #pragma once
 #include <QObject>
 #include <QString>
@@ -9,13 +22,7 @@
 
 class TelemetryBridge;
 
-/// @file AbstractCheck.h
-/// Base class for all preflight checks. Defines the check lifecycle, status query interface,
-/// override mechanism, and telemetry access helpers. Each concrete check evaluates a single
-/// precondition and reports its result to the PreflightManager.
-
-/// Current evaluation status of a check.
-/// Maps to integer values exposed to QML.
+/// Evaluation status of a check, exposed to QML as int.
 enum class CheckStatus : int {
     Pending  = 0,   ///< Not yet evaluated or waiting for data
     Passed   = 1,   ///< Check passed successfully
@@ -56,6 +63,14 @@ struct OverrideRecord {
     QString operatorId;
 };
 
+/**
+ * Abstract base class for a single preflight check.
+ *
+ * Lifecycle: constructed by PreflightManager, registered via addCheck(),
+ * then periodically evaluated. The check reads telemetry values, evaluates
+ * a condition, and calls setStatus() to report the result. Operators can
+ * override non-Auto checks via overrideStatus()/confirm().
+ */
 class AbstractCheck : public QObject {
     Q_OBJECT
     /// Unique identifier for this check (e.g. "battery_voltage").
@@ -115,6 +130,7 @@ public:
     CheckType checkType() const { return m_type; }
     int typeInt() const { return static_cast<int>(m_type); }
     bool mandatory() const { return m_mandatory; }
+    // Auto checks cannot be overridden — only manual/action checks allow operator override.
     bool canOverride() const { return m_canOverride && m_type != CheckType::Auto; }
     QVariant currentValue() const { return m_currentValue; }
 
@@ -171,12 +187,19 @@ signals:
                         const QString &newStatus, const QString &reason);
 
 protected:
+    /// Update check status and emit appropriate signals. Called by subclasses in evaluate().
     void setStatus(CheckStatus newStatus, const QString &message = {});
+    /// Update the displayed telemetry value and emit currentValueChanged.
     void setCurrentValue(const QVariant &value);
+    /// Whether the vehicle is connected with acceptable signal quality (>= 10%).
     bool hasTelemetry() const;
+    /// Whether a given property is available on the TelemetryBridge (includes param_ prefix fallback).
     bool isParamAvailable(const QString &prop) const;
+    /// Read a double property from TelemetryBridge, falling back to dynamic properties and param_ prefix.
     double getTelemetryDouble(const QString &prop) const;
+    /// Read a boolean property from TelemetryBridge.
     bool getTelemetryBool(const QString &prop) const;
+    /// Read any QVariant property from TelemetryBridge.
     QVariant getTelemetryVariant(const QString &prop) const;
 
     /// Read a configurable double from the check_config table, falling back to defaultVal.
@@ -189,21 +212,27 @@ protected:
     friend class PreflightManager;
     friend class MissionEnergyCheckTest;
 
-    QString m_id;
-    QString m_label;
+    // --- Core identity ---
+    QString m_id;          ///< Unique string identifier (e.g. "battery_voltage")
+    QString m_label;       ///< Human-readable display label
     CheckCategory m_category;
     CheckType m_type;
+
+    // --- Runtime state ---
     CheckStatus m_status = CheckStatus::Pending;
-    QString m_message;
-    QVariant m_currentValue;
-    bool m_mandatory = true;
-    bool m_canOverride = true;
-    QDateTime m_lastEvalTime;
-    QList<OverrideRecord> m_overrideHistory;
+    QString m_message;             ///< Detail message (failure reason, etc.)
+    QVariant m_currentValue;       ///< Latest telemetry value being monitored
+    bool m_mandatory = true;       ///< If true, failure blocks arming
+    bool m_canOverride = true;     ///< If operator may override result
+    QDateTime m_lastEvalTime;      ///< Timestamp of last evaluate() call
+    QList<OverrideRecord> m_overrideHistory; ///< Audit trail of overrides
+
+    // --- Telemetry & config ---
     TelemetryBridge *m_telemetry = nullptr;
-    mutable QHash<QString, QVariant> m_configCache;
+    mutable QHash<QString, QVariant> m_configCache; ///< Cached check_config values (mutable for const accessors)
 
 private:
+    /// Convert a status string ("passed", "failed", etc.) to the CheckStatus enum.
     CheckStatus statusFromString(const QString &s) const;
 
 #ifdef QT_DEBUG

@@ -24,5 +24,6 @@ void CompanionLinkCheck::evaluate()
         return;
     }
 
+    // Pass if companion is detected (heartbeat received); skip otherwise.
     setStatus(CheckStatus::Passed, QStringLiteral("Companion computer heartbeat OK"));
 }

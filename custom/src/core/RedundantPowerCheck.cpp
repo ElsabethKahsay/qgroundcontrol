@@ -12,6 +12,7 @@ RedundantPowerCheck::RedundantPowerCheck(TelemetryBridge *telemetry,
     m_telemetry = telemetry;
 }
 
+// Pass if secondary battery present and voltage >= minVoltage; skip if absent; fail if low.
 void RedundantPowerCheck::evaluate()
 {
     if (!hasTelemetry()) {

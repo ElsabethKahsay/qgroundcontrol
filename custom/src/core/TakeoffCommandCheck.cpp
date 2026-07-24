@@ -14,6 +14,8 @@ TakeoffCommandCheck::TakeoffCommandCheck(TelemetryBridge *telemetry, QObject *pa
     m_telemetry = telemetry;
 }
 
+// Passes when a MAV_CMD_NAV_TAKEOFF item exists in the mission (reports its altitude).
+// Warns if no takeoff command is found, indicating RTL may use the default ascent behavior.
 void TakeoffCommandCheck::evaluate()
 {
     if (!hasTelemetry()) {

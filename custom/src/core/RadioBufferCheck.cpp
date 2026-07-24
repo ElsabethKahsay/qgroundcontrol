@@ -28,6 +28,7 @@ void RadioBufferCheck::evaluate()
 
     setCurrentValue(txbuf);
 
+    // Pass if txbuf >= minTxBuf; warn if buffer is critically low.
     if (txbuf < m_minTxBuf) {
         setStatus(CheckStatus::Warning,
                   QStringLiteral("TX buffer %1% — below %2% threshold").arg(txbuf).arg(m_minTxBuf));

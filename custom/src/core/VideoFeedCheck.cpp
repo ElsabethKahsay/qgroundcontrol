@@ -14,6 +14,8 @@ VideoFeedCheck::VideoFeedCheck(TelemetryBridge *telemetry, QObject *parent)
     m_telemetry = telemetry;
 }
 
+// Pass: video source configured, streaming, decoding, and receiving frames.
+// Warning/Fail: depends on videoRequiredForPass setting — Fail if required, Warning if optional.
 void VideoFeedCheck::evaluate()
 {
     if (!hasTelemetry()) {

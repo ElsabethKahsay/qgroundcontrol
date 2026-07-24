@@ -32,6 +32,7 @@ void OpticalFlowCheck::evaluate()
         return;
     }
 
+    // Pass if quality >= minQuality; warn if below threshold.
     if (quality >= m_minQuality) {
         setStatus(CheckStatus::Passed,
                   QStringLiteral("Optical flow quality %1/%2").arg(quality).arg(255));

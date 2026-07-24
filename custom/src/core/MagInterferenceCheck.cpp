@@ -38,6 +38,7 @@ double MagInterferenceCheck::throttlePercent() const
     return qBound(0.0, (val - 1000.0) / 1000.0, 1.0);
 }
 
+// Accumulate baseline at idle, then fail if |mag - baseline| exceeds max when throttle is active.
 void MagInterferenceCheck::evaluate()
 {
     if (!hasTelemetry()) {

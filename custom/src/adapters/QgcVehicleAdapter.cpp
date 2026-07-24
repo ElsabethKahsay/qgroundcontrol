@@ -1,4 +1,5 @@
-#include "QgcVehicleAdapter.h"
+/// @file QgcVehicleAdapter.cpp
+/// @brief Implementation of the QgcVehicleAdapter vehicle wrapper.
 
 #include <QDebug>
 #include <QLoggingCategory>
@@ -11,6 +12,7 @@
 #include "QGCMAVLink.h"
 #include "Vehicle/Vehicle.h"
 
+/// Logging category for QgcVehicleAdapter debug/warning output.
 Q_LOGGING_CATEGORY(qgcVehicleAdapterLog, "qgc.vehicle.adapter")
 
 QgcVehicleAdapter::QgcVehicleAdapter(Vehicle* vehicle, QObject* parent)
@@ -27,11 +29,13 @@ QgcVehicleAdapter::QgcVehicleAdapter(Vehicle* vehicle, QObject* parent)
         return;
     }
 
+    // Seed cached state from the current Vehicle.
     _armed = _vehicle->armed();
     _flightMode = _vehicle->flightMode();
     _coordinate = _vehicle->coordinate();
     _vehicleTypeInt = static_cast<int>(_vehicle->vehicleType());
 
+    // Forward Vehicle state-change signals.
     connect(_vehicle, &Vehicle::armedChanged, this, &QgcVehicleAdapter::_onArmedChanged);
     connect(_vehicle, &Vehicle::flightModeChanged, this, &QgcVehicleAdapter::_onFlightModeChanged);
     connect(_vehicle, &Vehicle::coordinateChanged, this, &QgcVehicleAdapter::_onCoordinateChanged);
@@ -39,11 +43,14 @@ QgcVehicleAdapter::QgcVehicleAdapter(Vehicle* vehicle, QObject* parent)
 
 QgcVehicleAdapter::~QgcVehicleAdapter()
 {
+    // Disconnect from MAVLinkProtocol if we connected during the lifetime of this adapter.
     if (_mavlinkProtocol && _mavlinkConnected) {
         disconnect(_mavlinkProtocol, nullptr, this, nullptr);
     }
 }
 
+/// Send a MAV_CMD command. Only commands in the allowlist are dispatched.
+/// The args list maps positionally to the 7 MAV_CMD param fields (param1-param7).
 bool QgcVehicleAdapter::sendCommand(int commandId, const QVariantList& args)
 {
     if (!_vehicle) {
@@ -58,6 +65,7 @@ bool QgcVehicleAdapter::sendCommand(int commandId, const QVariantList& args)
 
     auto mavCmd = static_cast<MAV_CMD>(commandId);
 
+    // Pack up to 7 parameters from the QVariant list, defaulting to 0.
     float params[7] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
     int count = qMin(args.size(), 7);
     for (int i = 0; i < count; ++i) {
@@ -71,6 +79,9 @@ bool QgcVehicleAdapter::sendCommand(int commandId, const QVariantList& args)
     return true;
 }
 
+/// Register a callback for a specific MAVLink message ID. The slot must have
+/// the signature: void slot(int msgId, QByteArray payload).
+/// Lazily connects to MAVLinkProtocol on the first subscription.
 void QgcVehicleAdapter::subscribeToMessage(int msgId, QObject* receiver, const char* slot)
 {
     if (!receiver || !slot) {
@@ -83,6 +94,7 @@ void QgcVehicleAdapter::subscribeToMessage(int msgId, QObject* receiver, const c
     qCDebug(qgcVehicleAdapterLog) << "Subscribed to msgId" << msgId;
 }
 
+/// Remove a subscription for a specific message ID and receiver.
 void QgcVehicleAdapter::unsubscribeFromMessage(int msgId, QObject* receiver)
 {
     auto it = _subscriptions.find(msgId);
@@ -92,6 +104,7 @@ void QgcVehicleAdapter::unsubscribeFromMessage(int msgId, QObject* receiver)
     }
 }
 
+/// True when the underlying Vehicle pointer is non-null.
 bool QgcVehicleAdapter::isConnected() const
 {
     if (!_vehicle) {
@@ -100,6 +113,7 @@ bool QgcVehicleAdapter::isConnected() const
     return true;
 }
 
+/// Human-readable vehicle type string derived from the MAV_TYPE enum.
 QString QgcVehicleAdapter::vehicleType() const
 {
     if (!_vehicle) {
@@ -126,6 +140,9 @@ void QgcVehicleAdapter::_onCoordinateChanged(const QGeoCoordinate& coord)
     emit coordinateChanged(coord);
 }
 
+/// Internal handler for incoming MAVLink messages. Looks up the subscription
+/// for the message ID and dispatches the raw payload to the registered receiver
+/// via QMetaObject::invokeMethod (queued connection).
 void QgcVehicleAdapter::_onMavlinkMessage(LinkInterface* link, const void* msg)
 {
     Q_UNUSED(link)
@@ -134,27 +151,35 @@ void QgcVehicleAdapter::_onMavlinkMessage(LinkInterface* link, const void* msg)
     }
     const mavlink_message_t* mavMsg = static_cast<const mavlink_message_t*>(msg);
 
+    // Only process messages that have an active subscription.
     auto it = _subscriptions.find(mavMsg->msgid);
     if (it == _subscriptions.end()) {
         return;
     }
 
+    // Guard against stale subscriptions where the receiver was destroyed.
     if (!it->receiver) {
         _subscriptions.erase(it);
         return;
     }
 
+    // Extract the raw payload bytes from the MAVLink message.
     QByteArray payload(reinterpret_cast<const char*>(mavMsg->payload64),
                        static_cast<int>(mavMsg->len));
+
+    // Emit the general signal so any listener can observe the message.
     emit messageReceived(static_cast<int>(mavMsg->msgid), payload,
                          mavMsg->sysid, mavMsg->compid);
 
+    // Dispatch to the specific subscriber's slot with the same signature.
     QMetaObject::invokeMethod(it->receiver, it->slotMethod.constData(),
                               Qt::QueuedConnection,
                               Q_ARG(int, static_cast<int>(mavMsg->msgid)),
                               Q_ARG(QByteArray, payload));
 }
 
+/// Lazily connect to the global MAVLinkProtocol singleton. Only connects once,
+/// on the first call to subscribeToMessage().
 void QgcVehicleAdapter::_lazyConnectMavlink()
 {
     if (_mavlinkConnected || !_vehicle) {
@@ -174,6 +199,9 @@ void QgcVehicleAdapter::_lazyConnectMavlink()
     _mavlinkConnected = true;
 }
 
+/// Convert a MAV_TYPE enum value to a short, human-readable vehicle type string.
+/// Covers common airframe types: quad, fixed-wing, VTOL variants, helicopter,
+/// ground rover, submarine, boat, and airship.
 QString QgcVehicleAdapter::_vehicleTypeToString(int mavType)
 {
     switch (mavType) {
@@ -204,6 +232,8 @@ QString QgcVehicleAdapter::_vehicleTypeToString(int mavType)
     }
 }
 
+/// Whitelist of command IDs that sendCommand() is allowed to dispatch.
+/// This prevents accidental sending of dangerous commands (e.g. emergency actions).
 bool QgcVehicleAdapter::_isValidCommand(int commandId)
 {
     return commandId == MAV_CMD_COMPONENT_ARM_DISARM ||

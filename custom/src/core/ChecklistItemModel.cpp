@@ -11,6 +11,7 @@ int ChecklistItemModel::rowCount(const QModelIndex &) const
     return m_items.size();
 }
 
+// Map each ChecklistItemData field to its corresponding role for QML access.
 QVariant ChecklistItemModel::data(const QModelIndex &index, int role) const
 {
     if (!index.isValid() || index.row() < 0 || index.row() >= m_items.size())
@@ -46,6 +47,9 @@ QHash<int, QByteArray> ChecklistItemModel::roleNames() const
     };
 }
 
+// Load checklist items from a JSON array. Each object should have keys like
+// "id", "label", "bindProperty", "requiredValue", "tolerance", "unit", "isManual".
+// Performs a full model reset — QML views will be rebuilt.
 void ChecklistItemModel::loadFromJson(const QJsonArray &items)
 {
     beginResetModel();
@@ -69,6 +73,8 @@ void ChecklistItemModel::loadFromJson(const QJsonArray &items)
     qDebug().noquote() << QStringLiteral("ChecklistItemModel: loaded %1 items").arg(m_items.size());
 }
 
+// Update a single item's status and message, then notify QML of the change.
+// Skips the update if status and message are unchanged to avoid unnecessary repaints.
 void ChecklistItemModel::setItemStatus(int row, int status, const QString &message)
 {
     if (row < 0 || row >= m_items.size())
@@ -82,6 +88,8 @@ void ChecklistItemModel::setItemStatus(int row, int status, const QString &messa
     emit itemStatusChanged(row, status, message);
 }
 
+// Reset all items to Pending status (status=0) and clear messages.
+// Emits a single dataChanged spanning the entire model range.
 void ChecklistItemModel::resetAll()
 {
     for (int i = 0; i < m_items.size(); ++i) {

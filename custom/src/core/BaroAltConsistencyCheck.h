@@ -1,3 +1,5 @@
+// Checks that GPS altitude and barometric altitude agree within a configurable delta.
+// Fails when the two sources diverge beyond the threshold, indicating GPS or baro error.
 #pragma once
 #include "AbstractCheck.h"
 

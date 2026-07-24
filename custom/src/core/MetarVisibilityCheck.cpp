@@ -13,6 +13,7 @@ MetarVisibilityCheck::MetarVisibilityCheck(TelemetryBridge *telemetry, QObject *
     m_telemetry = telemetry;
 }
 
+// Pass: visibility >= configured threshold. Warning: below threshold. Fail: below 1 km.
 void MetarVisibilityCheck::evaluate()
 {
     if (!hasTelemetry()) {

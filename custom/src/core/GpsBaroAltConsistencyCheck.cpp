@@ -13,6 +13,7 @@ GpsBaroAltConsistencyCheck::GpsBaroAltConsistencyCheck(TelemetryBridge *telemetr
     m_telemetry = telemetry;
 }
 
+// Warn if |gpsAlt - relAlt| exceeds maxDeltaM; pass if the two altitude sources agree.
 void GpsBaroAltConsistencyCheck::evaluate()
 {
     if (!hasTelemetry()) {

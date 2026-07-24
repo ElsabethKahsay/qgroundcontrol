@@ -1,3 +1,5 @@
+// Checks that airspeed reading meets minimum for safe takeoff.
+// Fails when airspeed is below minimum or sensor returns zero (not fitted/invalid).
 #pragma once
 #include "AbstractCheck.h"
 

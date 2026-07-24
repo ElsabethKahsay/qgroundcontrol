@@ -5,6 +5,10 @@
 
 class PreflightManager;
 
+/// QAbstractListModel that exposes preflight checklist items to QML.
+/// Each row corresponds to one AbstractCheck (sensor, manual, action, etc.).
+/// Provides summary properties (counts, completion %, first blocking failure)
+/// so the QML UI can display overall preflight status at a glance.
 class PreflightChecklistModel : public QAbstractListModel {
     Q_OBJECT
     Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
@@ -48,15 +52,19 @@ public:
     QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
     QHash<int, QByteArray> roleNames() const override;
 
+    /// Count of checks with failed or warning status (statusInt 2, 3, or 4).
     int criticalCount() const;
     int passedCount() const;
     int pendingCount() const;
     int warnCount() const;
+    /// Count of mandatory checks that have failed (blocks takeoff).
     int blockingFailedCount() const;
     int completionPercent() const;
+    /// Label of the first mandatory check that failed, for prominent UI display.
     QString firstBlockingFailure() const;
     QString statusSummary() const;
 
+    /// Return all role data for a given row as a QVariantMap (QML-friendly helper).
     Q_INVOKABLE QVariantMap get(int row) const;
 
 signals:

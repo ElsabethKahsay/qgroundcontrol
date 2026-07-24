@@ -23,6 +23,7 @@ AbstractCheck::AbstractCheck(const QString &id, const QString &label,
 {
 }
 
+// Default no-op: subclasses can override to apply vehicle-specific configuration.
 void AbstractCheck::applyVehicleConfig(const QJsonObject &config)
 {
     Q_UNUSED(config)
@@ -42,6 +43,8 @@ QString AbstractCheck::statusText() const
     return QStringLiteral("pending");
 }
 
+// Determine whether an Auto check needs re-evaluation based on staleness.
+// Manual/Action checks only change through explicit user interaction.
 bool AbstractCheck::requiresReevaluation() const
 {
     // Manual and action checks only change via explicit user interaction
@@ -57,6 +60,7 @@ bool AbstractCheck::requiresReevaluation() const
 
 bool AbstractCheck::overrideStatus(const QString &newStatus, const QString &reason)
 {
+    // Only non-Auto checks that permit overrides can be changed by the operator.
     if (!m_canOverride || m_type == CheckType::Auto)
         return false;
 
@@ -95,6 +99,7 @@ bool AbstractCheck::confirm(const QString &reason)
     return true;
 }
 
+// Reset the check to its initial Pending state, clearing all history and caches.
 void AbstractCheck::reset()
 {
     m_status = CheckStatus::Pending;
@@ -106,6 +111,9 @@ void AbstractCheck::reset()
     emit messageChanged(m_id, m_message);
 }
 
+// Core state update: sets the new status, records the timestamp, and emits
+// the appropriate change signals. Emits checkPassed/checkFailed only on transitions
+// (not on repeated same-status sets) to avoid duplicate signal processing.
 void AbstractCheck::setStatus(CheckStatus newStatus, const QString &message)
 {
     if (m_status == newStatus && m_message == message)
@@ -136,6 +144,7 @@ void AbstractCheck::setCurrentValue(const QVariant &value)
     emit currentValueChanged(m_id, value);
 }
 
+// Check vehicle connectivity: connected flag must be set and signal quality >= 10%.
 bool AbstractCheck::hasTelemetry() const
 {
     if (!m_telemetry)
@@ -149,6 +158,9 @@ bool AbstractCheck::hasTelemetry() const
     return true;
 }
 
+// Check whether a telemetry property exists on the bridge.
+// Tries the direct name first, then falls back to the "param_" prefix convention
+// (e.g. "param_RTL_ALT" → "RTL_ALT") since parameters are stored as raw names.
 bool AbstractCheck::isParamAvailable(const QString &prop) const
 {
     if (!m_telemetry) return false;
@@ -164,6 +176,11 @@ bool AbstractCheck::isParamAvailable(const QString &prop) const
     return false;
 }
 
+// Read a double value from TelemetryBridge with multiple fallback strategies:
+// 1. Qt meta-object property (declared Q_PROPERTY)
+// 2. Dynamic property (set via setProperty at runtime, e.g. loaded parameters)
+// 3. "param_" prefix stripping (param_RTL_ALT → RTL_ALT)
+// Returns NaN if the property cannot be read.
 double AbstractCheck::getTelemetryDouble(const QString &prop) const
 {
     if (!m_telemetry) return qQNaN();
@@ -227,8 +244,11 @@ QVariant AbstractCheck::getTelemetryVariant(const QString &prop) const
     return meta->property(idx).read(m_telemetry);
 }
 
+// Read a configurable double from the check_config database table, with in-memory caching.
+// Falls back to defaultVal if the key is not set or cannot be parsed.
 double AbstractCheck::configDouble(const QString &key, double defaultVal) const
 {
+    // Return cached value if available
     auto it = m_configCache.constFind(key);
     if (it != m_configCache.constEnd())
         return it->toDouble();
@@ -264,6 +284,8 @@ void AbstractCheck::clearConfigCache() const
     m_configCache.clear();
 }
 
+// Generate a user-facing message based on the current status.
+// Uses the explicit m_message if set, otherwise returns a generic status description.
 QString AbstractCheck::getUserMessage() const
 {
     if (!m_message.isEmpty())
@@ -326,6 +348,8 @@ QString AbstractCheck::getThreshold() const
     return {};
 }
 
+// Convert a status string to the CheckStatus enum. Used when parsing
+// stored override records from QSettings.
 CheckStatus AbstractCheck::statusFromString(const QString &s) const
 {
     if (s == QStringLiteral("passed")) return CheckStatus::Passed;

@@ -1,3 +1,5 @@
+// Verifies the geofence maximum altitude parameter (GF_MAX_ALT) is set to a reasonable value.
+// Warns if the altitude ceiling is below the minimum or set to zero (no limit).
 #pragma once
 #include "AbstractCheck.h"
 

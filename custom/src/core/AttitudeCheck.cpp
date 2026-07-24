@@ -33,6 +33,7 @@ void AttitudeCheck::evaluate()
                         .arg(pitchDeg, 0, 'f', 0)
                         .arg(yawDeg, 0, 'f', 0));
 
+    // Pass if roll and pitch are within limits; fail if either exceeds the max tilt angle.
     if (std::abs(rollDeg) > m_maxPitchRollDeg || std::abs(pitchDeg) > m_maxPitchRollDeg) {
         setStatus(CheckStatus::Failed,
                   QStringLiteral("Vehicle tilted: roll %1\u00B0 pitch %2\u00B0 \u2014 exceed %3\u00B0 limit")

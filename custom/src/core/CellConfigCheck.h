@@ -1,3 +1,5 @@
+// Verifies battery cell count matches configured parameter and all cell voltages are above minimum.
+// Fails on cell count mismatch, individual cell under-voltage, or voltage-derived cell count discrepancy.
 #pragma once
 #include "AbstractCheck.h"
 

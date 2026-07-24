@@ -1,3 +1,5 @@
+// Validates geofence configuration: enabled state, fence type, action, and distance/altitude limits.
+// Warns when geofence is enabled but missing altitude or lateral fence types or no action is set.
 #pragma once
 #include "AbstractCheck.h"
 

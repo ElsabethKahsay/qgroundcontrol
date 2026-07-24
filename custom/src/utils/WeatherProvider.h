@@ -1,5 +1,24 @@
 #pragma once
 
+// ============================================================================
+// WeatherProvider — Fetches aviation weather data (METAR, TAF, NOTAMs)
+// and general forecast data for the UAV Preflight Checklist plugin.
+//
+// Data sources:
+//   - Open-Meteo API: general forecast (temperature, wind, visibility)
+//   - NOAA Aviation Weather Center: METAR (current conditions) and
+//     TAF (Terminal Aerodrome Forecast)
+//   - FAA NOTAM Search: airspace notices and restrictions
+//
+// The class exposes Q_PROPERTY values that QML binds to directly.
+// Network responses are cached on disk (50 MB limit) to reduce
+// redundant requests.  All network calls use a 4-second timeout.
+//
+// METAR freshness is considered valid for 60 minutes after observation.
+// TAF analysis flags deteriorating conditions (IFR, strong wind,
+// convection) via the tafDeteriorating property.
+// ============================================================================
+
 #include <QObject>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>

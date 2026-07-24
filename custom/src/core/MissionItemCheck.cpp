@@ -11,6 +11,8 @@ MissionItemCheck::MissionItemCheck(TelemetryBridge *telemetry, double maxFirstWp
     m_telemetry = telemetry;
 }
 
+// Passes when the first waypoint distance is <= m_maxFirstWpDistM from home.
+// Warns if it exceeds the limit; stays pending if no mission is loaded or distance is not yet available.
 void MissionItemCheck::evaluate()
 {
     if (!hasTelemetry()) {

@@ -1,3 +1,5 @@
+// Evaluates GPS speed uncertainty using vel_acc when available, falling back to HDOP and jitter detection.
+// Fails on no 3D fix or excessive speed error; warns on high HDOP or repeated speed jumps.
 #pragma once
 #include "AbstractCheck.h"
 

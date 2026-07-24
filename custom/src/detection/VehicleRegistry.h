@@ -6,6 +6,9 @@
 
 class Vehicle;
 
+/// Singleton that identifies UAVs by a hardware fingerprint (SHA-256 of UID + autopilot + board)
+/// and tracks whether the current vehicle is known/registered in the database.
+/// Exposes QML-friendly properties for the preflight UI to display vehicle identity state.
 class VehicleRegistry : public QObject
 {
     Q_OBJECT
@@ -25,6 +28,13 @@ public:
     QString vehicleName() const { return m_vehicleName; }
     QString currentFingerprint() const { return m_currentFingerprint; }
 
+    Q_INVOKABLE QString searchVehicles(const QString &query);
+    Q_INVOKABLE bool updateVehicleName(const QString &fingerprint, const QString &name);
+    Q_INVOKABLE QString getAllVehiclesJson();
+    Q_INVOKABLE QString exportVehiclesJson();
+    Q_INVOKABLE bool importVehiclesJson(const QString &json);
+
+    /// Build a fingerprint string from hardware UID, autopilot type, and board product ID.
     static QString generateFingerprint(quint64 uid, int autopilotType, const QString &boardVersion);
 
     static QString autopilotTypeString(int autopilotType);
@@ -42,6 +52,7 @@ private slots:
     void _onActiveVehicleChanged(Vehicle *vehicle);
 
 private:
+    /// Read hardware identifiers from a Vehicle and populate m_currentFingerprint.
     void _extractVehicleInfo(Vehicle *vehicle);
 
     int m_currentVehicleId = 0;

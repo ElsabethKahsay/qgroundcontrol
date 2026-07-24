@@ -10,6 +10,8 @@ RtlTerrainCheck::RtlTerrainCheck(TelemetryBridge *telemetry, QObject *parent)
     m_telemetry = telemetry;
 }
 
+// Pass: RTL_ALT_TYPE is terrain-following (1) and cone slope is 1-3.
+// Fail: RTL_ALT_TYPE is relative (0), cone slope is 0, or params are unavailable.
 void RtlTerrainCheck::evaluate()
 {
     if (!hasTelemetry()) {

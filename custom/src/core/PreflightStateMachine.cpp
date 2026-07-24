@@ -5,6 +5,7 @@ PreflightStateMachine::PreflightStateMachine(QObject *parent)
 {
 }
 
+// Return a human-readable name for the current state, for display in QML.
 QString PreflightStateMachine::stateName() const
 {
     switch (m_state) {
@@ -20,6 +21,8 @@ QString PreflightStateMachine::stateName() const
     return QStringLiteral("Unknown");
 }
 
+// Transition to a new state. No-ops if already in the target state.
+// Emits stateChanged() plus any transition-specific semantic signals.
 void PreflightStateMachine::transitionTo(State s)
 {
     if (m_state == s)
@@ -32,6 +35,7 @@ void PreflightStateMachine::transitionTo(State s)
     emitTransitionSignals(oldState, s);
 }
 
+// Reset to Disconnected. Emits disarmed() if we were in any other state.
 void PreflightStateMachine::reset()
 {
     State oldState = m_state;
@@ -41,6 +45,9 @@ void PreflightStateMachine::reset()
         emit disarmed();
 }
 
+// Emit transition-specific signals based on the state being entered.
+// This allows listeners to react to specific lifecycle milestones
+// (e.g. start logging when linkEstablished fires).
 void PreflightStateMachine::emitTransitionSignals(State oldState, State newState)
 {
     switch (newState) {

@@ -8,6 +8,7 @@ AutopilotInfoDetector::AutopilotInfoDetector(QObject *parent)
 {
 }
 
+/** @brief Return a human-readable name for the detected autopilot. */
 QString AutopilotInfoDetector::autopilotName() const
 {
     switch (m_autopilot) {
@@ -18,6 +19,13 @@ QString AutopilotInfoDetector::autopilotName() const
     }
 }
 
+/**
+ * @brief Process a MAVLink HEARTBEAT to identify the autopilot type.
+ *
+ * Maps the MAV_AUTOPILOT enum to the internal Autopilot enum.  On
+ * detection of PX4 or ArduPilot, triggers parameter map loading.
+ * Only emits signals if the detected type actually changed.
+ */
 void AutopilotInfoDetector::consumeHeartbeat(int mavAutopilotEnum)
 {
     Autopilot detected;
@@ -49,6 +57,7 @@ void AutopilotInfoDetector::consumeHeartbeat(int mavAutopilotEnum)
     }
 }
 
+/** @brief Invoke the registered parameter map loader for the detected autopilot. */
 void AutopilotInfoDetector::loadParamMap()
 {
     switch (m_autopilot) {

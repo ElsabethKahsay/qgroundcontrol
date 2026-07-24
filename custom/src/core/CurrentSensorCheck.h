@@ -1,3 +1,5 @@
+// Sanity-checks current sensor readings for both armed and disarmed states.
+// Warns on stuck sensor (0 A), negative current, abnormal disarmed draw, or low armed current.
 #pragma once
 #include "AbstractCheck.h"
 

@@ -1,3 +1,5 @@
+// Checks ambient temperature from METAR against configurable min/max operating range.
+// Fails when temperature is outside the safe operating range (default -10 C to 50 C).
 #pragma once
 #include "AbstractCheck.h"
 

@@ -12,6 +12,7 @@ ChecklistEngine::ChecklistEngine(QObject *parent)
 {
 }
 
+// Connect to a TelemetryBridge and rebuild signal bindings if a model is already set.
 void ChecklistEngine::setTelemetryBridge(TelemetryBridge *bridge)
 {
     if (m_bridge == bridge)
@@ -21,6 +22,8 @@ void ChecklistEngine::setTelemetryBridge(TelemetryBridge *bridge)
         _rebuildBindings();
 }
 
+// Set the data model and connect to its structural change signals
+// (modelReset, rowsInserted, rowsRemoved) to rebuild bindings when items change.
 void ChecklistEngine::setModel(ChecklistItemModel *model)
 {
     if (m_model == model)
@@ -59,6 +62,8 @@ void ChecklistEngine::evaluateAll()
     emit evaluationCompleted();
 }
 
+// Mark a manual checklist item as confirmed by the operator.
+// Only works on items where isManual == true.
 void ChecklistEngine::confirmItem(int row, const QString &operatorId)
 {
     if (!m_model || row < 0 || row >= m_model->rowCount())
@@ -118,6 +123,12 @@ bool ChecklistEngine::allPassed() const
     return true;
 }
 
+// Rebuild the property-to-row binding map and signal connections.
+//
+// For each checklist item with a bindProperty, we:
+//   1. Map the property name → set of model row indices
+//   2. Connect TelemetryBridge's propertyChanged signal to _onTelemetryPropertyChanged
+//      using QMetaObject::connect for runtime signal lookup
 void ChecklistEngine::_rebuildBindings()
 {
     // Disconnect previous connections
@@ -169,6 +180,9 @@ void ChecklistEngine::_rebuildBindings()
         evaluateAll();
 }
 
+// Slot called when any connected TelemetryBridge property changes.
+// Uses senderSignalIndex() to identify which property changed, then
+// re-evaluates only the model rows that bind to that property.
 void ChecklistEngine::_onTelemetryPropertyChanged()
 {
     if (!m_running || !m_model || !m_bridge)
@@ -210,6 +224,12 @@ void ChecklistEngine::_onTelemetryPropertyChanged()
     emit evaluationCompleted();
 }
 
+// Evaluate a single checklist item:
+//   - Manual items: skipped (wait for confirmItem())
+//   - No binding: marked as pending with "No telemetry binding" message
+//   - Value unavailable (NaN): marked as pending with "Waiting for telemetry"
+//   - Value in range [required ± tolerance]: passed
+//   - Value out of range: failed
 void ChecklistEngine::_evaluateItem(int row)
 {
     if (!m_model || row < 0 || row >= m_model->rowCount())
@@ -255,6 +275,7 @@ void ChecklistEngine::_evaluateItem(int row)
     }
 }
 
+// Read a double property from TelemetryBridge. Returns NaN if unavailable.
 double ChecklistEngine::_readBridgeProperty(const QString &prop) const
 {
     if (!m_bridge)
@@ -265,6 +286,8 @@ double ChecklistEngine::_readBridgeProperty(const QString &prop) const
     return val.toDouble();
 }
 
+// Derive the Qt signal name from a property name using the TelemetryBridge convention:
+// "batteryVoltage" → "batteryVoltageChanged"
 QString ChecklistEngine::_signalNameForProperty(const QString &prop)
 {
     if (prop.isEmpty())

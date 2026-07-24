@@ -13,6 +13,8 @@ TafDeteriorationCheck::TafDeteriorationCheck(TelemetryBridge *telemetry, QObject
     m_telemetry = telemetry;
 }
 
+// Pass: TAF shows no deterioration in next 6 hours.
+// Warning: TAF forecasts worsening conditions (details from tafSummary).
 void TafDeteriorationCheck::evaluate()
 {
     if (!hasTelemetry()) {

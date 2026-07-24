@@ -6,6 +6,7 @@ PreflightChecklistFilterModel::PreflightChecklistFilterModel(QObject *parent)
     : QSortFilterProxyModel(parent)
 {
     setDynamicSortFilter(true);
+    // Keep the QML-visible count property in sync as rows change.
     connect(this, &QAbstractItemModel::rowsInserted, this, &PreflightChecklistFilterModel::countChanged);
     connect(this, &QAbstractItemModel::rowsRemoved, this, &PreflightChecklistFilterModel::countChanged);
     connect(this, &QAbstractItemModel::modelReset, this, &PreflightChecklistFilterModel::countChanged);
@@ -17,11 +18,13 @@ void PreflightChecklistFilterModel::setCategoryId(int id)
         m_categoryId = id;
         emit categoryIdChanged();
         invalidateFilter();
+        // Full reset ensures QML views immediately reflect the filtered set.
         beginResetModel();
         endResetModel();
     }
 }
 
+/// Accept a row if no category filter is set (-1) or if the check's category matches.
 bool PreflightChecklistFilterModel::filterAcceptsRow(int sourceRow, const QModelIndex &sourceParent) const
 {
     if (m_categoryId < 0)

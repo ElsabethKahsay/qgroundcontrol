@@ -13,6 +13,8 @@ RtlAltParamCheck::RtlAltParamCheck(TelemetryBridge *telemetry,
     m_telemetry = telemetry;
 }
 
+// Converts RTL_ALT to meters (cm for ArduPilot, m for PX4 based on RTL_ALT_TYPE).
+// Passes when altitude is between m_minAlt and m_maxAlt; warns if outside the range.
 void RtlAltParamCheck::evaluate()
 {
     if (!hasTelemetry()) {

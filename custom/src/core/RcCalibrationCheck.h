@@ -1,3 +1,5 @@
+// Verifies RC transmitter calibration: endpoint ranges, center trims, and non-factory defaults.
+// Fails when endpoints are out of range, trims are off-center, or calibration is still at factory defaults.
 #pragma once
 #include "AbstractCheck.h"
 

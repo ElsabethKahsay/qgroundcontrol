@@ -1,3 +1,5 @@
+// Generic manual confirmation check that displays a prompt for the user to verify.
+// Optionally appends parameter values to the prompt; stays pending until confirmed.
 #pragma once
 #include "AbstractCheck.h"
 

@@ -12,6 +12,13 @@
 
 #include "Config.h"
 
+/// Validates the profile by checking that:
+///   - At least one step exists
+///   - All PWM values are within the valid servo range (kServoDefaultMinPwm – kServoDefaultMaxPwm)
+///   - For motor steps: throttlePct is 0–100 (if specified), motorInstance is 0–8
+///   - For servo steps: servoInstance is within kServoMinInstance – kServoMaxInstance
+///   - expectedMin ≤ expectedMax for all steps
+///   - durationMs > 0 and settleMs ≥ 0
 bool HardwareTestProfile::isValid() const
 {
     if (steps.isEmpty()) {
@@ -61,9 +68,25 @@ bool HardwareTestProfile::isValid() const
     return true;
 }
 
+/// Parses a hardware test profile from a JSON file.
+///
+/// Expected JSON structure:
+/// {
+///   "profile_name": "fixed_wing_survey_v2",
+///   "vehicle_type": "fixed_wing",
+///   "throttle_handling": "manual_fixed_wing",
+///   "throttle_note": "...",
+///   "launch_servo": 5,
+///   "launch_pwm": 2000,
+///   "steps": [ { "name": "...", "test_type": "servo", "servo": 1, ... }, ... ]
+/// }
+///
+/// Returns a populated HardwareTestProfile on success, or an empty profile
+/// with errorMessage set on failure (file not found, invalid JSON, validation failure).
 HardwareTestProfile HardwareTestProfile::loadFromJsonFile(const QString &filePath,
                                                           QString *errorMessage)
 {
+    // Helper lambda: sets the error message and returns an empty profile on failure.
     auto setError = [&](const QString &msg) {
         if (errorMessage)
             *errorMessage = msg;
@@ -94,6 +117,8 @@ HardwareTestProfile HardwareTestProfile::loadFromJsonFile(const QString &filePat
         return setError(QStringLiteral("Profile has no steps: %1").arg(filePath));
     }
 
+    // Parse each step object from the JSON array into a TestStep struct.
+    // Missing keys fall back to sensible defaults (e.g. test_type → "servo").
      for (const QJsonValue &value : stepsArray) {
          const QJsonObject stepObj = value.toObject();
          TestStep step;
@@ -112,6 +137,7 @@ HardwareTestProfile HardwareTestProfile::loadFromJsonFile(const QString &filePat
          profile.steps.append(step);
      }
 
+    // Validate the fully-populated profile before returning it.
     if (!profile.isValid()) {
         return setError(QStringLiteral("Profile validation failed: %1").arg(filePath));
     }

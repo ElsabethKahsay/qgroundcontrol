@@ -15,6 +15,8 @@ RcTrimCheck::RcTrimCheck(TelemetryBridge *telemetry,
     m_telemetry = telemetry;
 }
 
+// Passes when Roll (ch1), Pitch (ch2), and Yaw (ch4) are all within m_centerTolerance of 1500.
+// Warns listing which specific channels are off-center. Throttle (ch3) is intentionally skipped.
 void RcTrimCheck::evaluate()
 {
     if (!hasTelemetry()) {

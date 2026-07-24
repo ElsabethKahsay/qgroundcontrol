@@ -1,3 +1,5 @@
+// Checks gimbal presence, mode, and associated video stream status.
+// Fails when gimbal is detected but no video stream is active.
 #pragma once
 #include "AbstractCheck.h"
 

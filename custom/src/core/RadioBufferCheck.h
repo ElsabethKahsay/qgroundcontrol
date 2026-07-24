@@ -1,3 +1,5 @@
+// Checks that radio TX buffer level is above a minimum threshold.
+// Fails when buffer drops below minTxBuf, indicating potential radio congestion or range loss.
 #pragma once
 #include "AbstractCheck.h"
 

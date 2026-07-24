@@ -1,3 +1,5 @@
+// Verifies the home position is set and close to the current GPS location.
+// Fails when home is not set or is farther than maxDistKm from the vehicle.
 #pragma once
 #include "AbstractCheck.h"
 

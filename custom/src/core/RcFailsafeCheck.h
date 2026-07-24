@@ -1,3 +1,5 @@
+// Checks that the RC receiver has not entered failsafe mode and signal is above minimum RSSI.
+// Fails when the vehicle reports an RC failsafe condition or RSSI drops below the threshold.
 #pragma once
 #include "AbstractCheck.h"
 

@@ -1,3 +1,5 @@
+// Checks cloud ceiling height from METAR against configured and absolute minimums.
+// Fails when ceiling is below 60 m absolute minimum; warns below configured threshold.
 #pragma once
 #include "AbstractCheck.h"
 

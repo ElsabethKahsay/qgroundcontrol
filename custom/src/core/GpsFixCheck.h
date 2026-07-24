@@ -1,3 +1,5 @@
+// Checks GPS has a 3D fix with sufficient satellites and acceptable HDOP.
+// Fails on no fix, 2D-only fix, too few satellites, or HDOP above threshold.
 #pragma once
 #include "AbstractCheck.h"
 

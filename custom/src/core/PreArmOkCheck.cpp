@@ -10,6 +10,8 @@ PreArmOkCheck::PreArmOkCheck(TelemetryBridge *telemetry, QObject *parent)
     m_telemetry = telemetry;
 }
 
+// Passes when preArmOk is true (all vehicle pre-arm checks have cleared).
+// Stays pending until the vehicle reports status, displaying the highest-severity pre-arm message.
 void PreArmOkCheck::evaluate()
 {
     if (!hasTelemetry()) {

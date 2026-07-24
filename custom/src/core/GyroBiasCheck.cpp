@@ -31,6 +31,7 @@ void GyroBiasCheck::evaluate()
         return;
     }
 
+    // Pass if the gyro bias vector magnitude is within threshold; warn if it exceeds it.
     double bias = qSqrt(gx * gx + gy * gy + gz * gz);
 
     if (bias <= m_maxBiasRadS) {

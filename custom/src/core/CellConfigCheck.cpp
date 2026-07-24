@@ -19,6 +19,8 @@ CellConfigCheck::CellConfigCheck(TelemetryBridge *telemetry,
     m_telemetry = telemetry;
 }
 
+// Fail if detected cell count differs from param by more than maxCellDelta, or any cell is below min voltage.
+// Warn if total voltage implies a different cell count than configured.
 void CellConfigCheck::evaluate()
 {
     if (!hasTelemetry()) {

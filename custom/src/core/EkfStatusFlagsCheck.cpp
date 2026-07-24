@@ -15,6 +15,8 @@ EkfStatusFlagsCheck::EkfStatusFlagsCheck(TelemetryBridge *telemetry,
     m_telemetry = telemetry;
 }
 
+// Fails if GPS glitch or accel error fault flags are set, or required health bits are missing.
+// Fails if any innovation ratio (vel, pos, mag) meets or exceeds m_maxRatio. Passes when all clear.
 void EkfStatusFlagsCheck::evaluate()
 {
     if (!hasTelemetry()) {

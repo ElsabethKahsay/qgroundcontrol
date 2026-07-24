@@ -1,3 +1,5 @@
+// Verifies the vehicle is not tilted beyond safe limits before takeoff.
+// Fails when roll or pitch exceeds the maximum angle, indicating the vehicle is not level.
 #pragma once
 #include "AbstractCheck.h"
 

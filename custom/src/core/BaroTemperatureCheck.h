@@ -1,3 +1,5 @@
+// Verifies barometer temperature is within a safe operating range.
+// Fails when temperature falls below min or exceeds max, indicating sensor or environmental issues.
 #pragma once
 #include "AbstractCheck.h"
 

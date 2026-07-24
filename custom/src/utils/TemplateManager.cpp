@@ -103,3 +103,8 @@ QVariantList TemplateManager::loadTemplate(const QString &templateId)
     
     return result;
 }
+
+bool TemplateManager::deleteTemplate(const QString &templateId)
+{
+    return DatabaseManager::instance().deleteTemplate(templateId);
+}

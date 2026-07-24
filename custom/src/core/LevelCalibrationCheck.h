@@ -1,3 +1,5 @@
+// Checks that AHRS trim values (pitch/roll) are within acceptable limits.
+// Fails when either pitch or roll trim offset exceeds the maximum, indicating level calibration is needed.
 #pragma once
 #include "AbstractCheck.h"
 

@@ -63,6 +63,9 @@
 
 Q_LOGGING_CATEGORY(preflightLog, "qgc.custom.preflight")
 
+// --- QML list property accessors ---
+// These static functions allow QML to iterate over checks via QQmlListProperty<AbstractCheck>.
+
 QQmlListProperty<AbstractCheck> PreflightManager::qmlChecks() {
   return QQmlListProperty<AbstractCheck>(this, &m_checks,
                                          nullptr, // append (read-only)
@@ -86,10 +89,12 @@ PreflightManager::PreflightManager(uint8_t vehicleSysId, QObject *parent)
     : QObject(parent), m_sysId(vehicleSysId), m_timer(new QTimer(this)),
       m_stateMachine(this), m_paramManager(this) {
   m_timer->setSingleShot(false);
+  // Timer drives the periodic evaluation cycle via tick()
   connect(m_timer, &QTimer::timeout, this, &PreflightManager::tick);
   connect(&m_stateMachine, &PreflightStateMachine::stateChanged, this,
           &PreflightManager::stateChanged);
 
+  // Create all built-in checks immediately at construction
   createPhase1Checks();
 }
 
@@ -103,12 +108,15 @@ void PreflightManager::setTelemetryBridge(TelemetryBridge *bridge) {
     return;
   m_telemetry = bridge;
 
+  // Push the telemetry bridge to all registered checks so they can read values
   for (auto *check : m_checks) {
     check->m_telemetry = bridge;
   }
 
   if (m_telemetry) {
-    // Register autopilot parameter mapping callbacks
+    // Set up autopilot-specific parameter mapping callbacks. These fire when
+    // the autopilot type is detected (PX4 vs ArduPilot) and apply the correct
+    // parameter naming convention.
     m_autopilotDetector.setPx4ParamMapLoader([this]() {
       qDebug() << "PX4 autopilot detected — applying PX4 parameter defaults";
       if (m_telemetry) {
@@ -142,6 +150,7 @@ void PreflightManager::setTelemetryBridge(TelemetryBridge *bridge) {
     };
     detectAutopilot();
 
+    // When the vehicle connects, transition to ParamLoading and detect autopilot type
     connect(m_telemetry, &TelemetryBridge::isConnectedChanged, this, [this]() {
       if (m_telemetry->isConnected()) {
         m_stateMachine.transitionTo(PreflightStateMachine::ParamLoading);
@@ -158,6 +167,8 @@ void PreflightManager::setTelemetryBridge(TelemetryBridge *bridge) {
         resetAll();
       }
     });
+    // Once QGC's ParameterManager reports parameters are ready, pull in the
+    // watchlist values and move to ChecklistInProgress state
     connect(m_telemetry, &TelemetryBridge::parametersReadyChanged, this,
             [this](bool ready) {
               if (ready) {
@@ -167,6 +178,7 @@ void PreflightManager::setTelemetryBridge(TelemetryBridge *bridge) {
                 evaluateAll();
               }
             });
+    // Forward individual parameter updates to the UavParameterManager
     connect(m_telemetry, &TelemetryBridge::parameterUpdated, this,
             [this](const QString &name, float value) {
               m_paramManager.notifyParamReceived(name);
@@ -236,6 +248,8 @@ PreflightManager::checksForCategory(const QVariantList &categories) const {
   return result;
 }
 
+// Return checks sorted by priority: mandatory failures first, then warnings,
+// then non-mandatory issues. Used by QML to display blocking checks in order.
 QVariantList PreflightManager::blockingChecks() const {
   QVector<AbstractCheck *> sorted = m_checks;
   sorted.erase(std::remove_if(sorted.begin(), sorted.end(),
@@ -349,6 +363,7 @@ bool PreflightManager::allMandatoryPassed() const {
   return true;
 }
 
+// Progress as fraction of checks that have been evaluated (non-Pending).
 double PreflightManager::progress() const {
   if (m_checks.isEmpty())
     return 0.0;
@@ -360,6 +375,8 @@ double PreflightManager::progress() const {
   return (double)evaluated / (double)m_checks.size();
 }
 
+// Find the most urgent arming blocker message.
+// Priority order: Stale > Error > Failed (first mandatory match wins).
 QString PreflightManager::armingBlocker() const {
   // Prioritize: stale → error → failed
   for (auto *c : m_checks) {
@@ -389,6 +406,9 @@ void PreflightManager::startEvaluation(int intervalMs) {
 
 void PreflightManager::stopEvaluation() { m_timer->stop(); }
 
+// Evaluate all Auto checks in sequence. Manual/Action checks are skipped
+// (they require explicit user confirmation). Catches exceptions to prevent
+// a single misbehaving check from breaking the entire evaluation cycle.
 void PreflightManager::evaluateAll() {
   for (auto *check : m_checks) {
     if (!check->isAuto())
@@ -423,6 +443,12 @@ void PreflightManager::evaluateAll() {
   }
 }
 
+// Advance or retreat the state machine based on current check results.
+//
+// Decision logic:
+//   - All mandatory passed (including manual) → ArmingAllowed
+//   - All auto-mandatory passed (manual still pending) → PreflightPass → ManualConfirmPhase
+//   - Otherwise → ChecklistInProgress (or retreat from ArmingAllowed if checks degrade)
 void PreflightManager::attemptStateTransition() {
   bool allMandatoryPass = allMandatoryPassed();
   bool allAutoMandatoryPass = true;
@@ -469,6 +495,15 @@ void PreflightManager::setActive(bool active) {
     stopEvaluation();
 }
 
+// Main timer tick: drives the periodic evaluation cycle.
+//
+// Performs four tasks each tick:
+//   1. Manages the parameter-loading state machine (SYS-001)
+//   2. Propagates autopilot type detection to the parameter manager (SYS-002)
+//   3. Re-evaluates stale Auto checks
+//   4. Checks staleness of mandatory checks and marks them Stale if data is too old
+//
+// Emits progressChanged (not modelChanged) to avoid QML delegate destruction.
 void PreflightManager::tick() {
   Vehicle *vehicle = m_telemetry ? m_telemetry->vehicle() : nullptr;
 
@@ -619,6 +654,9 @@ void PreflightManager::tick() {
   }
 }
 
+// Pull initial parameter values from QGC's ParameterManager for all watchlist entries.
+// Called once when parameters become ready, to seed UavParameterManager with values
+// before the first check evaluation.
 void PreflightManager::_initialParamRefresh()
 {
     Vehicle *v = m_telemetry ? m_telemetry->vehicle() : nullptr;
@@ -648,6 +686,9 @@ void PreflightManager::addCheck(AbstractCheck *check) {
   emit modelChanged();
 }
 
+// Create and register all built-in preflight checks.
+// Checks are organized by tier/priority and category, then sorted by category
+// for deterministic display order. Duplicate IDs are removed as a safety measure.
 void PreflightManager::createPhase1Checks() {
   // ── New SRS coverage additions ──
   m_checks.append(new MavlinkProtocolCheck(m_telemetry, this));
@@ -789,11 +830,33 @@ void PreflightManager::createPhase1Checks() {
   emit modelChanged();
 }
 
+// Wire up signals for a check so that status changes trigger progress updates,
+// database logging, and alert notifications.
 void PreflightManager::connectCheckSignals(AbstractCheck *check) {
   connect(check, &AbstractCheck::statusChanged, this,
-          [this](const QString &checkId, int) {
+          [this](const QString &checkId, int newStatus) {
             Q_UNUSED(checkId)
             emit progressChanged();
+
+            // Persist check result to DB for audit trail
+            if (m_db && !checkId.isEmpty()) {
+              QString deviceUid;
+              if (m_telemetry && m_telemetry->vehicle()) {
+                deviceUid = QString::number(m_telemetry->vehicle()->id());
+              }
+              QString statusStr;
+              switch (static_cast<CheckStatus>(newStatus)) {
+                case CheckStatus::Passed:  statusStr = QStringLiteral("Passed"); break;
+                case CheckStatus::Failed:  statusStr = QStringLiteral("Failed"); break;
+                case CheckStatus::Warning: statusStr = QStringLiteral("Warning"); break;
+                case CheckStatus::Error:   statusStr = QStringLiteral("Error"); break;
+                case CheckStatus::Skipped: statusStr = QStringLiteral("Skipped"); break;
+                case CheckStatus::Stale:   statusStr = QStringLiteral("Stale"); break;
+                default:                   statusStr = QStringLiteral("Pending"); break;
+              }
+              m_db->saveCheckResult(deviceUid, -1, checkId, statusStr,
+                                    check->message());
+            }
           });
   connect(check, &AbstractCheck::checkFailed, this,
           [this](const QString &checkId, const QString &reason) {
@@ -813,6 +876,8 @@ void PreflightManager::connectCheckSignals(AbstractCheck *check) {
                  const QString &) { persistOverrides(); });
 }
 
+// Load persisted operator overrides from QSettings.
+// Format: "status:reason" pairs keyed by check ID.
 void PreflightManager::loadOverrides() {
   QSettings settings;
   settings.beginGroup(QStringLiteral("preflight_overrides/%1").arg(m_sysId));
@@ -834,6 +899,8 @@ void PreflightManager::loadOverrides() {
   settings.endGroup();
 }
 
+// Persist the latest override for each check to QSettings, plus any
+// config overrides to the database. Called after every override event.
 void PreflightManager::persistOverrides() {
   QSettings settings;
   settings.beginGroup(QStringLiteral("preflight_overrides/%1").arg(m_sysId));
@@ -842,6 +909,12 @@ void PreflightManager::persistOverrides() {
       const auto &rec = check->overrideHistory().last();
       QString value = rec.newStatus + QStringLiteral(":") + rec.reason;
       settings.setValue(check->id(), value);
+    }
+    // Also persist check config overrides to DB
+    if (m_db && !check->m_configCache.isEmpty()) {
+      for (auto it = check->m_configCache.constBegin(); it != check->m_configCache.constEnd(); ++it) {
+        m_db->setCheckConfig(check->id(), it.key(), it.value().toString());
+      }
     }
   }
   settings.endGroup();

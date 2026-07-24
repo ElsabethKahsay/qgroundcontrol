@@ -1,3 +1,5 @@
+// Verifies the compass rotation parameter matches expected orientation from the vehicle profile.
+// Auto-passes for default rotation or profile match; otherwise prompts operator to confirm.
 #pragma once
 #include "AbstractCheck.h"
 

@@ -15,6 +15,7 @@ CurrentSensorCheck::CurrentSensorCheck(TelemetryBridge *telemetry,
     m_telemetry = telemetry;
 }
 
+// Warn on stuck (0 A with voltage present), negative, or out-of-range current for the arm state.
 void CurrentSensorCheck::evaluate()
 {
     if (!hasTelemetry()) {

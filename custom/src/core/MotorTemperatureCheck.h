@@ -1,3 +1,5 @@
+// Checks ESC-reported motor temperatures against a configurable maximum (default 80 C).
+// Fails when any motor exceeds the temperature threshold.
 #pragma once
 #include "AbstractCheck.h"
 

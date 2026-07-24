@@ -24,6 +24,7 @@ void TelemetryDropRateCheck::evaluate()
 
     double dropRate = getTelemetryDouble(QStringLiteral("commDropRate"));
 
+    // Pass if drop rate <= warnDropRate; warn or fail as thresholds are exceeded.
     if (dropRate > m_maxDropRate) {
         setStatus(CheckStatus::Failed,
                   QStringLiteral("Drop rate %1% exceeds %2%")

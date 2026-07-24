@@ -1,3 +1,5 @@
+// Checks that the voltage spread between the highest and lowest battery cells is within tolerance.
+// Uses a 5-second moving average of the delta; fails when the averaged delta exceeds the max.
 #pragma once
 #include "AbstractCheck.h"
 #include "Hysteresis.h"

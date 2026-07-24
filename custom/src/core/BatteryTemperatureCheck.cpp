@@ -15,6 +15,7 @@ BatteryTemperatureCheck::BatteryTemperatureCheck(TelemetryBridge *telemetry,
     m_telemetry = telemetry;
 }
 
+// Fail if averaged temperature exceeds max or falls below min; otherwise pass.
 void BatteryTemperatureCheck::evaluate()
 {
     if (!hasTelemetry()) {

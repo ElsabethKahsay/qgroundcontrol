@@ -24,6 +24,7 @@ void MavlinkProtocolCheck::evaluate()
         return;
     }
 
+    // Pass if MAVLink version >= 3 (MAVLink 2+); warn if older.
     if (ver >= 3) {
         setStatus(CheckStatus::Passed,
                   QStringLiteral("MAVLink %1 — OK").arg(ver));

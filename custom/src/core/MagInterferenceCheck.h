@@ -1,3 +1,5 @@
+// Detects motor-induced magnetic interference by comparing field strength at throttle vs baseline.
+// Builds a low-throttle baseline then fails when field delta at high throttle exceeds threshold.
 #pragma once
 #include "AbstractCheck.h"
 

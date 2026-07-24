@@ -9,14 +9,32 @@
 #include "PreflightStateMachine.h"
 #include "UavParameterManager.h"
 
-/// @file PreflightManager.h
-/// Central manager that owns, evaluates, and tracks all preflight checks for a single vehicle.
-/// Provides QML-accessible progress counters, categorised check lists, and arming-blocker queries.
+/**
+ * @file PreflightManager.h
+ * @brief Central manager that owns, evaluates, and tracks all preflight checks.
+ *
+ * One PreflightManager exists per vehicle. It:
+ *   - Registers ~40 AbstractCheck instances at construction time
+ *   - Runs periodic evaluation via a QTimer
+ *   - Tracks pass/fail/pending/stale progress counters for QML binding
+ *   - Drives the PreflightStateMachine through its lifecycle
+ *   - Persists operator overrides to QSettings
+ *   - Logs check results to DatabaseManager for audit trail
+ *
+ * QML accesses checks, progress, and arming status through Q_PROPERTY bindings.
+ */
 
 class TelemetryBridge;
 class AlertManager;
 class DatabaseManager;
 
+/**
+ * Manages all preflight checks for a single UAV vehicle.
+ *
+ * Instantiated when a vehicle connects; destroyed on disconnect.
+ * Owns the list of AbstractCheck objects and a PreflightStateMachine
+ * that tracks the progression from Disconnected to ArmingAllowed.
+ */
 class PreflightManager : public QObject {
     Q_OBJECT
     /// Total number of registered checks.
@@ -157,9 +175,13 @@ signals:
     void stateChanged();
 
 private:
+    /// Attempt to advance or retreat the state machine based on current check results.
     void attemptStateTransition();
+    /// Create and register all ~40 built-in preflight checks.
     void createPhase1Checks();
+    /// Wire up statusChanged/checkFailed/checkPassed signals for a check.
     void connectCheckSignals(AbstractCheck *check);
+    /// Pull initial parameter values from QGC's ParameterManager into UavParameterManager.
     void _initialParamRefresh();
 
     uint8_t m_sysId;

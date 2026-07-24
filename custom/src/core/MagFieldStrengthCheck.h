@@ -1,3 +1,5 @@
+// Checks total magnetic field magnitude is within expected range for the local geomagnetic field.
+// Fails when the field strength falls outside min/max bounds, indicating possible interference.
 #pragma once
 #include "AbstractCheck.h"
 

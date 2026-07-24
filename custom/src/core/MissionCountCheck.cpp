@@ -11,6 +11,8 @@ MissionCountCheck::MissionCountCheck(TelemetryBridge *telemetry, int minMissionC
     m_telemetry = telemetry;
 }
 
+// Passes when mission item count >= m_minMissionCount.
+// Fails if count is positive but below minimum; stays pending when count is zero (no mission loaded).
 void MissionCountCheck::evaluate()
 {
     if (!hasTelemetry()) {

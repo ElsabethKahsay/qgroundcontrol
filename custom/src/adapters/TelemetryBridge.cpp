@@ -1,4 +1,11 @@
-#include "TelemetryBridge.h"
+/// @file TelemetryBridge.cpp
+/// @brief Implementation of the TelemetryBridge telemetry adapter.
+///
+/// This file wires up all Vehicle Fact signals, raw MAVLink message handlers,
+/// and a periodic 200ms polling timer to keep cached telemetry values current.
+/// MAVLink message decoding is handled in _handleMavlinkMessage() via a switch
+/// on message.msgid. Connection quality is computed from heartbeat arrival timing
+/// combined with the communication drop rate.
 
 #include <QDateTime>
 #include <QDebug>
@@ -22,11 +29,13 @@
 
 #include <cmath>
 
+/// Logging category for TelemetryBridge debug/warning output.
 Q_LOGGING_CATEGORY(telemetryBridgeLog, "telemetry.bridge")
 
 TelemetryBridge::TelemetryBridge(QObject *parent)
     : QObject(parent)
 {
+    // Fire the polling timer every 200ms to pick up values that aren't pushed via signals.
     _updateTimer.setInterval(200);
     connect(&_updateTimer, &QTimer::timeout, this, &TelemetryBridge::_onTelemetryUpdate);
 }
@@ -35,6 +44,7 @@ void TelemetryBridge::setVehicle(Vehicle* vehicle)
 {
     if (_vehicle == vehicle) return;
 
+    // Disconnect all signals from the previous vehicle before switching.
     if (_vehicle) {
         disconnect(_vehicle, nullptr, this, nullptr);
     }
@@ -46,6 +56,7 @@ void TelemetryBridge::setVehicle(Vehicle* vehicle)
         _updateTimer.start();
         emit isConnectedChanged();
     } else {
+        // No vehicle: stop polling and reset connection quality to zero.
         _updateTimer.stop();
         _connectionQuality = 0;
         emit connectionQualityChanged();
@@ -68,12 +79,17 @@ QString TelemetryBridge::flightMode() const
     return _vehicle ? _vehicle->flightMode() : QString();
 }
 
+/// Wires up all Vehicle Fact signals, FactGroup subscriptions, mission manager,
+/// battery model, and raw MAVLink message routing. Called once per setVehicle().
 void TelemetryBridge::_connectVehicleSignals()
 {
     if (!_vehicle) return;
 
+    // Forward arming and flight mode state changes directly.
     connect(_vehicle, &Vehicle::armedChanged, this, &TelemetryBridge::armedChanged);
     connect(_vehicle, &Vehicle::flightModeChanged, this, &TelemetryBridge::flightModeChanged);
+
+    // GPS position: only emit when values change by more than ~1cm to avoid signal storms.
     connect(_vehicle, &Vehicle::coordinateChanged, this, [this](QGeoCoordinate coord) {
         bool changed = false;
         if (qAbs(coord.latitude() - _gpsLatitude) > 1e-7) { _gpsLatitude = coord.latitude(); changed = true; }
@@ -81,6 +97,7 @@ void TelemetryBridge::_connectVehicleSignals()
         if (changed) emit gpsPositionChanged();
     });
 
+    // Altitude relative to home (from Vehicle Fact).
     Fact* altFact = _vehicle->altitudeRelative();
     if (altFact) {
         connect(altFact, &Fact::valueChanged, this, [this](QVariant val) {
@@ -90,6 +107,7 @@ void TelemetryBridge::_connectVehicleSignals()
         _altitudeRelative = altFact->rawValue().toDouble();
     }
 
+    // Heading in degrees.
     Fact* headingFact = _vehicle->heading();
     if (headingFact) {
         connect(headingFact, &Fact::valueChanged, this, [this](QVariant val) {
@@ -99,6 +117,7 @@ void TelemetryBridge::_connectVehicleSignals()
         _heading = headingFact->rawValue().toDouble();
     }
 
+    // Ground speed in m/s.
     Fact* gsFact = _vehicle->groundSpeed();
     if (gsFact) {
         connect(gsFact, &Fact::valueChanged, this, [this](QVariant val) {
@@ -108,6 +127,7 @@ void TelemetryBridge::_connectVehicleSignals()
         _groundSpeed = gsFact->rawValue().toDouble();
     }
 
+    // Indicated airspeed in m/s.
     Fact* asFact = _vehicle->airSpeed();
     if (asFact) {
         connect(asFact, &Fact::valueChanged, this, [this](QVariant val) {
@@ -117,9 +137,11 @@ void TelemetryBridge::_connectVehicleSignals()
         _airspeed = asFact->rawValue().toDouble();
     }
 
+    // Mark heartbeat as received on first connect.
     _heartbeatReceived = true;
     emit heartbeatReceivedChanged();
 
+    // Load parameters immediately if already available, otherwise wait for ready signal.
     if (_vehicle->parameterManager()->parametersReady()) {
         _loadParameters();
     }
@@ -128,7 +150,7 @@ void TelemetryBridge::_connectVehicleSignals()
 
     // RC Channels via mavlinkMessageReceived
 
-    // Vibration FactGroup
+    // Vibration FactGroup: connect each axis + clipping count.
     auto* vibGroup = static_cast<VehicleVibrationFactGroup*>(_vehicle->vibrationFactGroup());
     if (vibGroup) {
         connect(vibGroup->xAxis(), &Fact::valueChanged, this, [this](QVariant val) {
@@ -149,7 +171,7 @@ void TelemetryBridge::_connectVehicleSignals()
         });
     }
 
-    // Estimator Status FactGroup
+    // Estimator Status FactGroup: connect velocity, horizontal, vertical, and mag ratios.
     auto* estGroup = static_cast<VehicleEstimatorStatusFactGroup*>(_vehicle->estimatorStatusFactGroup());
     if (estGroup) {
         connect(estGroup->velRatio(), &Fact::valueChanged, this, [this](QVariant val) {
@@ -170,7 +192,7 @@ void TelemetryBridge::_connectVehicleSignals()
         });
     }
 
-    // Wind FactGroup
+    // Wind FactGroup: speed and direction.
     auto* windGroup = static_cast<VehicleWindFactGroup*>(_vehicle->windFactGroup());
     if (windGroup) {
         connect(windGroup->speed(), &Fact::valueChanged, this, [this](QVariant val) {
@@ -183,7 +205,7 @@ void TelemetryBridge::_connectVehicleSignals()
         });
     }
 
-    // Home position
+    // Home position: only update when values change significantly to avoid redundant signals.
     connect(_vehicle, &Vehicle::homePositionChanged, this, [this](QGeoCoordinate home) {
         double lat = home.latitude();
         double lon = home.longitude();
@@ -195,7 +217,8 @@ void TelemetryBridge::_connectVehicleSignals()
         if (changed) { _updateMissionInfo(); emit homePositionChanged(); }
     });
 
-    // Primary battery from VehicleBatteryFactGroup (id=0)
+    // Primary battery from VehicleBatteryFactGroup (id=0). Also subscribes to the
+    // battery list model for dynamically-added batteries (e.g. secondary battery).
     {
         QmlObjectListModel* battModel = _vehicle->batteries();
         _connectBatteryFacts(battModel);
@@ -204,10 +227,10 @@ void TelemetryBridge::_connectVehicleSignals()
         });
     }
 
-    // MAVLink messages for SERVO_OUTPUT_RAW, ESC_TELEMETRY_1_TO_4, etc.
+    // Subscribe to raw MAVLink messages for servo outputs, ESC telemetry, GPS2, etc.
     connect(_vehicle, &Vehicle::mavlinkMessageReceived, this, &TelemetryBridge::_handleMavlinkMessage);
 
-    // Mission Manager
+    // Mission Manager: update mission distances when items or current index change.
     if (auto* missionMgr = _vehicle->missionManager()) {
         connect(missionMgr, &MissionManager::newMissionItemsAvailable, this, [this](bool) {
             _updateMissionInfo();
@@ -217,11 +240,14 @@ void TelemetryBridge::_connectVehicleSignals()
         });
     }
 
+    // Initialize connection quality to 100% on fresh connect.
     _connectionQuality = 100;
     _lastHeartbeatTime = QDateTime::currentDateTime();
     emit connectionQualityChanged();
 }
 
+/// Iterates the battery list model, identifies primary (id=0) and secondary (id=1)
+/// batteries, and connects their Fact signals to the bridge's cached member variables.
 void TelemetryBridge::_connectBatteryFacts(QObject* batteryModel)
 {
     auto* model = qobject_cast<QmlObjectListModel*>(batteryModel);
@@ -233,7 +259,7 @@ void TelemetryBridge::_connectBatteryFacts(QObject* batteryModel)
         uint8_t id = static_cast<uint8_t>(batt->id()->rawValue().toUInt());
 
         if (id == 0 || id == 1) {
-            // First battery in model or explicitly id=0 → primary
+            // Voltage: route to primary (id=0) or secondary (id=1) cache.
             connect(batt->voltage(), &Fact::valueChanged, this, [this, id](QVariant val) {
                 double v = val.toDouble();
                 if (id == 0 || id == 1) {
@@ -250,6 +276,7 @@ void TelemetryBridge::_connectBatteryFacts(QObject* batteryModel)
                     }
                 }
             });
+            // Current draw (amps).
             connect(batt->current(), &Fact::valueChanged, this, [this, id](QVariant val) {
                 double c = val.toDouble();
                 if (id == 0) {
@@ -260,6 +287,7 @@ void TelemetryBridge::_connectBatteryFacts(QObject* batteryModel)
                     emit battery2CurrentChanged();
                 }
             });
+            // Remaining percentage (0-100).
             connect(batt->percentRemaining(), &Fact::valueChanged, this, [this, id](QVariant val) {
                 int pct = val.toInt();
                 if (id == 0) {
@@ -270,6 +298,7 @@ void TelemetryBridge::_connectBatteryFacts(QObject* batteryModel)
                     emit battery2PercentChanged();
                 }
             });
+            // Temperature (primary battery only).
             connect(batt->temperature(), &Fact::valueChanged, this, [this, id](QVariant val) {
                 if (id == 0) {
                     _batteryTemperature = val.toDouble();
@@ -277,7 +306,7 @@ void TelemetryBridge::_connectBatteryFacts(QObject* batteryModel)
                 }
             });
 
-            // Read initial values
+            // Seed initial values from the current Fact raw values.
             if (id == 0) {
                 _batteryVoltage = batt->voltage()->rawValue().toDouble();
                 _batteryCurrent = batt->current()->rawValue().toDouble();
@@ -308,6 +337,9 @@ void TelemetryBridge::_onParameterReadyChanged(bool ready)
     }
 }
 
+/// Loads watchlist parameters from the ParameterManager into the local cache
+/// and connects Fact::valueChanged signals so subsequent changes are tracked.
+/// Also exposes each parameter as a dynamic Qt property for QML binding.
 void TelemetryBridge::_loadParameters()
 {
     if (!_vehicle) return;
@@ -316,6 +348,8 @@ void TelemetryBridge::_loadParameters()
     int compId = _vehicle->defaultComponentId();
 
     _parameterCache.clear();
+
+    // Disconnect any previously established per-parameter Fact connections.
     if (!_paramConnections.isEmpty()) {
         for (auto &c : _paramConnections)
             disconnect(c);
@@ -323,6 +357,7 @@ void TelemetryBridge::_loadParameters()
     }
     int loadedCount = 0;
 
+    // Iterate the global watchlist and load matching parameters from the vehicle.
     QStringList availableParams = paramMgr->parameterNames(compId);
     const QSet<QString> watchlistNames = ParameterWatchlist::names();
 
@@ -334,7 +369,11 @@ void TelemetryBridge::_loadParameters()
             continue;
         double val = fact->rawValue().toDouble();
         _parameterCache[name] = static_cast<float>(val);
+
+        // Expose the parameter as a dynamic Q_PROPERTY so QML can bind to it by name.
         setProperty(name.toLatin1().constData(), val);
+
+        // Subscribe to future changes on this parameter.
         QString paramName = name;
         _paramConnections.append(
             connect(fact, &Fact::valueChanged, this, [this, paramName]() {
@@ -363,6 +402,9 @@ void TelemetryBridge::_onTelemetryUpdate()
     _updateFromVehicle();
 }
 
+/// Periodic poll callback. Currently only ensures parameters are loaded once
+/// the ParameterManager becomes ready (covers the case where parameters weren't
+/// available at connect time).
 void TelemetryBridge::_updateFromVehicle()
 {
     if (!_vehicle) return;
@@ -372,24 +414,35 @@ void TelemetryBridge::_updateFromVehicle()
     }
 }
 
+/// Central MAVLink message dispatcher. Decodes each supported message type and
+/// updates the corresponding cached member variable + emits the change signal.
+/// Only fires an emit when the value actually changes (with a small deadband)
+/// to avoid unnecessary QML re-evaluation.
 void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message)
 {
     switch (message.msgid) {
     case MAVLINK_MSG_ID_GPS_RAW_INT: {
         mavlink_gps_raw_int_t gps;
         mavlink_msg_gps_raw_int_decode(&message, &gps);
+
+        // Speed accuracy: centimeters → meters. UINT16_MAX = invalid/unknown.
         double acc = static_cast<double>(gps.vel_acc) / 100.0;
         if (gps.vel_acc != UINT16_MAX && qAbs(acc - _gpsSpeedAccuracy) > 0.01) {
             _gpsSpeedAccuracy = acc;
             emit gpsSpeedAccuracyChanged();
         }
+
+        // Altitude MSL: millimeters → meters. INT32_MAX = invalid.
         double alt = gps.alt / 1000.0;
         if (gps.alt != INT32_MAX && qAbs(alt - _gpsAltitude) > 0.1) {
             _gpsAltitude = alt;
             emit gpsAltitudeChanged();
         }
+
         _gpsFixType = gps.fix_type;
         _gpsSatellites = gps.satellites_visible;
+
+        // HDOP: centi-units → dimensionless. UINT16_MAX = invalid.
         double hdop = gps.eph / 100.0;
         if (gps.eph != UINT16_MAX && qAbs(hdop - _gpsHdop) > 0.01) {
             _gpsHdop = hdop;
@@ -402,13 +455,16 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message)
     case MAVLINK_MSG_ID_GLOBAL_POSITION_INT: {
         mavlink_global_position_int_t gp;
         mavlink_msg_global_position_int_decode(&message, &gp);
-        // MSL altitude (cm → m) from EKF blend
+
+        // MSL altitude (cm → m) from EKF-blended solution.
         double altMsl = gp.alt / 1000.0;
         if (gp.alt != INT32_MAX && qAbs(altMsl - _globalAltitude) > 0.1) {
             _globalAltitude = altMsl;
             emit globalAltitudeChanged();
         }
-        // Update relative altitude (mm → m) from same source if Fact not available
+
+        // Relative altitude (mm → m) from same source, used as fallback
+        // when the Vehicle Fact for altitudeRelative is not available.
         double relAlt = gp.relative_alt / 1000.0;
         if (gp.relative_alt != INT32_MAX && qAbs(relAlt - _altitudeRelative) > 0.1) {
             _altitudeRelative = relAlt;
@@ -419,6 +475,8 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message)
     case MAVLINK_MSG_ID_RC_CHANNELS: {
         mavlink_rc_channels_t rc;
         mavlink_msg_rc_channels_decode(&message, &rc);
+
+        // Failsafe detection: no channels or RSSI of 0 or 255 (invalid) means RC loss.
         bool wasFailsafe = _rcFailsafe;
         _rcFailsafe = (rc.chancount == 0 || rc.rssi == 0 || rc.rssi == UINT8_MAX);
         if (rc.rssi != UINT8_MAX) {
@@ -428,6 +486,8 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message)
         if (wasFailsafe != _rcFailsafe) {
             emit rcFailsafeChanged();
         }
+
+        // Record the timestamp of this RC update (local clock, microseconds).
         qint64 nowUsec = QDateTime::currentMSecsSinceEpoch() * 1000;
         if (nowUsec != _rcLastUpdateUsec) {
             _rcLastUpdateUsec = nowUsec;
@@ -438,29 +498,36 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message)
     case MAVLINK_MSG_ID_SYS_STATUS: {
         mavlink_sys_status_t sys;
         mavlink_msg_sys_status_decode(&message, &sys);
+
+        // Sensor health bitmask from the autopilot.
         uint32_t health = sys.onboard_control_sensors_health;
         if (health != _sensorHealth) {
             _sensorHealth = health;
             emit sensorHealthChanged();
         }
-        // AHRS health from MAV_SYS_STATUS_AHRS bit
+
+        // AHRS health: bit 11 (MAV_SYS_STATUS_AHRS) of the health bitmask.
         bool ahrsOk = (health & MAV_SYS_STATUS_AHRS) != 0;
         if (ahrsOk != _ahrsHealth) {
             _ahrsHealth = ahrsOk;
             emit ahrsHealthChanged();
         }
-        // Pre-arm check result
+
+        // Pre-arm check result: bit 14 (MAV_SYS_STATUS_PREARM_CHECK).
         bool preArmOk = (health & MAV_SYS_STATUS_PREARM_CHECK) != 0;
         if (preArmOk != _preArmOk) {
             _preArmOk = preArmOk;
             emit preArmOkChanged();
         }
+
+        // Communication drop rate: hundredths of a percent → percentage.
         double drop = static_cast<double>(sys.drop_rate_comm) / 100.0;
         if (qAbs(drop - _commDropRate) > 0.01) {
             _commDropRate = drop;
             emit commDropRateChanged();
         }
-        // voltage_battery from SYS_STATUS (mV → V) for power module health check
+
+        // System voltage from the power module (mV → V).
         if (sys.voltage_battery != UINT16_MAX) {
             double vb = sys.voltage_battery / 1000.0;
             if (qAbs(vb - _sysVoltageBattery) > 0.01) {
@@ -482,6 +549,8 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message)
     case MAVLINK_MSG_ID_SERVO_OUTPUT_RAW: {
         mavlink_servo_output_raw_t servo;
         mavlink_msg_servo_output_raw_decode(&message, &servo);
+
+        // Only process port 0 (channels 1-16). Port 1 would be channels 17-32.
         if (servo.port == 0) {
             uint16_t vals[16] = {
                 servo.servo1_raw, servo.servo2_raw, servo.servo3_raw, servo.servo4_raw,
@@ -491,6 +560,8 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message)
             };
             QVariantList outputs;
             outputs.reserve(16);
+
+            // Motor count = index of the highest non-zero channel + 1.
             int count = 0;
             for (int i = 0; i < 16; ++i) {
                 outputs.append(vals[i]);
@@ -518,17 +589,21 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message)
     }
     case MAVLINK_MSG_ID_EKF_STATUS_REPORT: {
         // ArduPilot EKF_STATUS_REPORT provides similar data as ESTIMATOR_STATUS
+        // but with different field names. Both populate the same bridge properties.
         mavlink_ekf_status_report_t ekf;
         mavlink_msg_ekf_status_report_decode(&message, &ekf);
         if (ekf.flags != _estimatorFlags) {
             _estimatorFlags = ekf.flags;
             emit estimatorStatusChanged();
         }
+
+        // Each ratio is a consistency check: 0 = perfect, >1 = innovation exceeds threshold.
         double velRatio = ekf.velocity_variance;
         double posHorizRatio = ekf.pos_horiz_variance;
         double posVertRatio = ekf.pos_vert_variance;
         double compassRatio = ekf.compass_variance;
         double terrainRatio = ekf.terrain_alt_variance;
+
         if (qAbs(velRatio - _estimatorVelRatio) > 0.0001) {
             _estimatorVelRatio = velRatio;
             emit estimatorStatusChanged();
@@ -554,6 +629,9 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message)
     case MAVLINK_MSG_ID_ESC_TELEMETRY_1_TO_4: {
         mavlink_esc_telemetry_1_to_4_t esc;
         mavlink_msg_esc_telemetry_1_to_4_decode(&message, &esc);
+
+        // Decode the first 4 ESCs (indices 0-3). Temperature is in degrees C,
+        // voltage in centivolts (÷100), current in centiamps (÷100).
         QVariantList temps, volts, currents, rpms;
         temps.reserve(4); volts.reserve(4); currents.reserve(4); rpms.reserve(4);
         for (int i = 0; i < 4; ++i) {
@@ -572,7 +650,9 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message)
     case MAVLINK_MSG_ID_ESC_TELEMETRY_5_TO_8: {
         mavlink_esc_telemetry_5_to_8_t esc;
         mavlink_msg_esc_telemetry_5_to_8_decode(&message, &esc);
-        // Append to existing ESC lists (1_TO_4 already set them)
+
+        // Append or update ESCs 5-8 (indices 4-7) into the existing lists.
+        // Depends on ESC_TELEMETRY_1_TO_4 having already populated indices 0-3.
         if (_escTemperatures.size() >= 4) {
             for (int i = 0; i < 4; ++i) {
                 int idx = i + 4;
@@ -595,6 +675,8 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message)
     case MAVLINK_MSG_ID_ESC_TELEMETRY_9_TO_12: {
         mavlink_esc_telemetry_9_to_12_t esc;
         mavlink_msg_esc_telemetry_9_to_12_decode(&message, &esc);
+
+        // Append or update ESCs 9-12 (indices 8-11). Requires 1_TO_4 + 5_TO_8 first.
         if (_escTemperatures.size() >= 8) {
             for (int i = 0; i < 4; ++i) {
                 int idx = i + 8;
@@ -617,20 +699,21 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message)
     case MAVLINK_MSG_ID_GPS2_RAW: {
         mavlink_gps2_raw_t g2;
         mavlink_msg_gps2_raw_decode(&message, &g2);
+
         _gps2FixType = g2.fix_type;
         _gps2Satellites = g2.satellites_visible;
-        _gps2Latitude = g2.lat / 1e7;
+        _gps2Latitude = g2.lat / 1e7;    // degrees * 1e7 → degrees
         _gps2Longitude = g2.lon / 1e7;
-        _gps2Eph = g2.eph;
-        _gps2Yaw = g2.yaw;
+        _gps2Eph = g2.eph;                // horizontal position accuracy (cm)
+        _gps2Yaw = g2.yaw;                // dual-antenna yaw (centidegrees)
         emit gps2Changed();
         break;
     }
     case MAVLINK_MSG_ID_SCALED_PRESSURE: {
         mavlink_scaled_pressure_t sp;
         mavlink_msg_scaled_pressure_decode(&message, &sp);
-        _baroPressure = sp.press_abs;
-        _baroTemperature = sp.temperature / 100.0;
+        _baroPressure = sp.press_abs;            // absolute pressure in hPa
+        _baroTemperature = sp.temperature / 100.0; // centidegrees → degrees C
         emit baroChanged();
         break;
     }
@@ -646,6 +729,8 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message)
     case MAVLINK_MSG_ID_RADIO_STATUS: {
         mavlink_radio_status_t rs;
         mavlink_msg_radio_status_decode(&message, &rs);
+
+        // UINT8_MAX = invalid RSSI → treat as 0.
         _radioRssi = rs.rssi == UINT8_MAX ? 0 : rs.rssi;
         _radioTxBuf = rs.txbuf;
         _radioRxErrors = rs.rxerrors;
@@ -662,29 +747,36 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message)
     case MAVLINK_MSG_ID_HEARTBEAT: {
         mavlink_heartbeat_t hb;
         mavlink_msg_heartbeat_decode(&message, &hb);
+
+        // Track the MAVLink protocol version.
         uint8_t ver = hb.mavlink_version;
         if (ver != _mavlinkVersion) {
             _mavlinkVersion = ver;
             emit mavlinkVersionChanged();
         }
-        // Track companion computer (non-autopilot components)
+
+        // Detect companion computer: any component ID other than 1 (autopilot) or 0.
         bool wasCompanion = _companionDetected;
         if (message.compid != 1 && message.compid != 0)
             _companionDetected = true;
         if (wasCompanion != _companionDetected)
             emit companionDetectedChanged();
-        // Compute connection quality from heartbeat interval + drop rate
+
+        // Connection quality algorithm:
+        //   1. Start at 100% on each heartbeat.
+        //   2. If the heartbeat arrived late (>1200ms vs expected ~1000ms), degrade
+        //      proportionally: 1 point lost per 50ms of excess delay.
+        //   3. Factor in the comm drop rate as a hard ceiling.
+        //   4. Clamp to [0, 100].
         {
             QDateTime now = QDateTime::currentDateTime();
             int newQuality = 100;
             if (_lastHeartbeatTime.isValid()) {
                 int elapsedMs = _lastHeartbeatTime.msecsTo(now);
-                // Expected heartbeat ~1000ms; degrade if late
                 if (elapsedMs > 1200) {
                     newQuality = qMax(0, 100 - ((elapsedMs - 1000) / 50));
                 }
             }
-            // Factor in comm drop rate (0-100%)
             if (_commDropRate > 0.0) {
                 newQuality = qMin(newQuality, static_cast<int>(100.0 - _commDropRate));
             }
@@ -700,6 +792,8 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message)
     case MAVLINK_MSG_ID_ESC_INFO: {
         mavlink_esc_info_t ei;
         mavlink_msg_esc_info_decode(&message, &ei);
+
+        // Only update when count or connection type changes to avoid redundant signals.
         if (ei.count != _escInfoCount || ei.connection_type != _escInfoConnectionType) {
             _escInfoCount = ei.count;
             _escInfoConnectionType = ei.connection_type;
@@ -720,6 +814,9 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message)
     }
 }
 
+/// Recalculates mission item count, home-to-first-waypoint distance, and
+/// total mission distance (Haversine) across all consecutive waypoints.
+/// Called whenever the mission items list or current index changes.
 void TelemetryBridge::_updateMissionInfo()
 {
     if (!_vehicle) return;
@@ -732,7 +829,7 @@ void TelemetryBridge::_updateMissionInfo()
         emit missionCountChanged();
     }
 
-    // Distance from home to first waypoint
+    // Distance from home position to the first waypoint.
     const QGeoCoordinate home(_homeLatitude, _homeLongitude);
     if (count > 0 && home.isValid() && !qFuzzyIsNull(_homeLatitude) && !qFuzzyIsNull(_homeLongitude)) {
         const MissionItem* first = items.first();
@@ -743,7 +840,7 @@ void TelemetryBridge::_updateMissionInfo()
         }
     }
 
-    // Total Haversine distance between consecutive waypoints
+    // Sum of Haversine distances between consecutive waypoints (ignoring invalid coords).
     double totalDist = 0.0;
     QGeoCoordinate prev;
     bool firstValid = false;
@@ -762,11 +859,13 @@ void TelemetryBridge::_updateMissionInfo()
     }
 }
 
+/// Check whether a named parameter exists in the local watchlist cache.
 bool TelemetryBridge::hasParameter(const QString& name) const
 {
     return _parameterCache.contains(name);
 }
 
+/// Read a parameter from the cache, returning defaultValue if the name is not present.
 float TelemetryBridge::parameterValue(const QString& name, float defaultValue) const
 {
     auto it = _parameterCache.find(name);
@@ -776,6 +875,9 @@ float TelemetryBridge::parameterValue(const QString& name, float defaultValue) c
     return defaultValue;
 }
 
+/// Set a parameter value in the local cache and expose it as a dynamic Qt property.
+/// This does NOT send the value to the vehicle — use QgcParameterAdapter::setParam()
+/// or Vehicle::sendMavCommand for that.
 void TelemetryBridge::setParameterValue(const QString& name, float value)
 {
     _parameterCache[name] = value;

@@ -1,3 +1,14 @@
+/**
+ * @file HardwareTestProfile.h
+ * @brief Data structures for profile-driven hardware test sequences.
+ *
+ * A HardwareTestProfile defines a complete servo/motor test sequence for a
+ * specific vehicle type (e.g. "fixed_wing", "quadcopter").  Profiles are
+ * loaded from JSON template files on disk and consist of an ordered list
+ * of TestStep entries.  Each step commands a specific servo or motor to a
+ * target PWM and validates the feedback response.
+ */
+
 #pragma once
 
 #include <QString>

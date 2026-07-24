@@ -17,6 +17,8 @@ EkfVarianceCheck::EkfVarianceCheck(TelemetryBridge *telemetry,
     m_telemetry = telemetry;
 }
 
+// Passes when all variance values (vel, horiz, vert, compass) are below their thresholds.
+// Fails listing each exceeded variance; uses vehicle COM_ARM_EKF_* params if available, else defaults.
 void EkfVarianceCheck::evaluate()
 {
     if (!hasTelemetry()) {

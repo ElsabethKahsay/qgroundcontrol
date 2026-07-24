@@ -10,6 +10,8 @@ BatteryFailsafeCheck::BatteryFailsafeCheck(TelemetryBridge *telemetry, QObject *
     m_telemetry = telemetry;
 }
 
+// Fail if BAT_LOW_THR is outside 10-35% or action param is invalid.
+// Warn if failsafe is entirely disabled; pass with action/threshold summary.
 void BatteryFailsafeCheck::evaluate()
 {
     if (!hasTelemetry()) {

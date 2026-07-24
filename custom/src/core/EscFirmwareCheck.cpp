@@ -10,6 +10,8 @@ EscFirmwareCheck::EscFirmwareCheck(TelemetryBridge *telemetry, QObject *parent)
     m_telemetry = telemetry;
 }
 
+// Pass: all ESCs online with no failure flags. Warning: any ESC reports failure flags.
+// Pass: non-zero error counts but no hard failures. Skipped if no ESC_INFO data.
 void EscFirmwareCheck::evaluate()
 {
     if (!hasTelemetry()) {

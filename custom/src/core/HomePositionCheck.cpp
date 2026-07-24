@@ -45,6 +45,7 @@ void HomePositionCheck::evaluate()
     double dlon = (homeLon - curLon) * 111.0 * lonScale;
     double approxDistKm = qSqrt(dlat * dlat + dlon * dlon);
 
+    // Pass if home is within maxDistKm; warn if too far; pending if home not set.
     if (approxDistKm > m_maxDistKm) {
         setStatus(CheckStatus::Warning,
                   QStringLiteral("Home is %1km away — verify").arg(approxDistKm, 0, 'f', 3));

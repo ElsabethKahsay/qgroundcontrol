@@ -27,6 +27,7 @@ void RcArmingSwitchCheck::evaluate()
 
     int val = static_cast<int>(armRcEnable);
 
+    // Pass if ARMING_RC_ENABLE >= 1; warn if RC arming is disabled.
     if (val >= 1) {
         setStatus(CheckStatus::Passed,
                   QStringLiteral("ARMING_RC_ENABLE=%1").arg(val));

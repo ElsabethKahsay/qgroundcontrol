@@ -1,3 +1,5 @@
+// Validates that ESC PWM outputs are within the expected range (default 800-2200 us).
+// Fails when any motor channel outputs 0 or values outside the valid PWM range.
 #pragma once
 #include "AbstractCheck.h"
 

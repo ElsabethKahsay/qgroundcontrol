@@ -5,6 +5,50 @@
 
 #pragma once
 
+// ============================================================================
+// DatabaseManager — Singleton providing all SQLite persistence for the
+// UAV Preflight Checklist plugin.  Owns a single .db file containing
+// 13 tables that together cover:
+//
+//   Schema tracking     schema_version          Stores the current DB version
+//                                                for incremental migrations.
+//
+//   Templates           checklist_templates     Saved checklist templates,
+//                                                keyed by vehicle type + name.
+//
+//   Compliance          compliance_logs         Finished checklist runs with
+//                                                full JSON snapshot + telemetry.
+//
+//   Hardware audit      hardware_test_events    Servo / actuator test steps
+//                      motor_test_results       Motor spin-up test results
+//
+//   Maintenance         maintenance_components  Hours & cycle tracking for
+//                                                replaceable parts (motors,
+//                                                props, batteries, etc.).
+//
+//   Vehicles            vehicles                Master vehicle registry keyed
+//                                                by device UID (hardware UID
+//                                                or fingerprint).
+//                      vehicle_config          Per-vehicle check overrides as
+//                                                a JSON blob.
+//
+//   Batteries           batteries               Master battery registry keyed
+//                                                by serial number.
+//                      battery_cycles          Per-flight cycle & health data.
+//
+//   Flights             flight_sessions         Start/end time, payload,
+//                                                energy, and location per flight.
+//
+//   Check audit         check_results           Per-check pass/fail records
+//                                                tied to a flight session.
+//                      check_config            Per-check key/value overrides,
+//                                                optionally scoped to a vehicle.
+//
+// All public methods are Q_INVOKABLE so they can be called directly from QML.
+// Every mutator returns bool (success/fail); every query returns either a
+// JSON string, a QStringList, or a plain value.
+// ============================================================================
+
 #include <QObject>
 #include <QSqlDatabase>
 #include <QString>
@@ -13,6 +57,9 @@
 #include <QJsonArray>
 #include <QDateTime>
 
+/// Lightweight representation of a row in the vehicle registry.
+/// Used externally for serialisation; the DB methods return JSON strings
+/// instead of this struct, so it mainly serves as documentation.
 struct VehicleRecord {
     int sysid = 0;
     int compid = 0;
@@ -93,6 +140,10 @@ public:
     Q_INVOKABLE QString searchVehicles(const QString &query);
 
     // ── Vehicle registry (fingerprint-based) ─────────────────────────
+    // Vehicles can be identified either by a stable hardware UID or by a
+    // connection-fingerprint string built from vehicle properties.  These
+    // methods handle the fingerprint path — used when the autopilot
+    // connection supplies a unique vehicle signature via HEARTBEAT.
     Q_INVOKABLE QString lookupVehicleByFingerprint(const QString &fingerprint);
     Q_INVOKABLE bool registerNewVehicle(const QString &fingerprint, int sysid, int compid,
                                         const QString &autopilotType, const QString &vehicleType,
@@ -132,7 +183,10 @@ public:
     Q_INVOKABLE QString getFlightSessions(const QString &deviceUid, int limit = 10);
     Q_INVOKABLE QString getVehicleHistory(const QString &deviceUid);
 
-    /// Calibrated power model data derived from completed flight sessions.
+    /// Calibrated power model derived from completed flight sessions.
+    /// Aggregates energy consumption data to estimate Wh/km for range
+    /// prediction.  Only considered calibrated when enough data points
+    /// exist (controlled by minSessions parameter).
     struct CalibratedPowerModel {
         double whPerKm = 0.0;
         double hoverWhPerMin = 0.0;  // estimated from average hover duration
@@ -163,9 +217,13 @@ private:
     DatabaseManager(QObject *parent = nullptr);
     ~DatabaseManager() override;
 
+    /// Expands ~ in paths and ensures parent directories exist.
     QString expandPath(const QString &path);
+    /// Creates all tables and indexes if they don't already exist.
     bool createTables();
+    /// Executes a query, logging a warning with the table name on failure.
     bool execOrWarn(QSqlQuery &query, const char *tableName);
+    /// Escapes special characters for safe embedding in JSON strings.
     QString escapeJson(const QString &raw);
 
     QSqlDatabase m_db;

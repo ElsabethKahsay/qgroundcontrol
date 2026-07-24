@@ -10,6 +10,8 @@ EkfFailsafeCheck::EkfFailsafeCheck(TelemetryBridge *telemetry, QObject *parent)
     m_telemetry = telemetry;
 }
 
+// Passes when FS_EKF_ACTION >= 1 (failsafe action is set).
+// Warns if FS_EKF_ACTION == 0 (failsafe disabled); fails for any other non-standard value.
 void EkfFailsafeCheck::evaluate()
 {
     if (!hasTelemetry()) {

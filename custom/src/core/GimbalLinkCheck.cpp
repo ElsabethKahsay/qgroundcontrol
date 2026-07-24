@@ -20,6 +20,9 @@ static bool _isVideoStreaming()
     return vm && vm->hasVideo() && vm->streaming() && vm->decoding();
 }
 
+// Pass: gimbal detected with known mode and active video stream.
+// Warning: gimbal detected but mode unknown, or video-only without gimbal heartbeat.
+// Fail: gimbal detected but no video. Skipped: no gimbal fitted.
 void GimbalLinkCheck::evaluate()
 {
     if (!hasTelemetry()) {

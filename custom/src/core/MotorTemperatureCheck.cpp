@@ -12,6 +12,7 @@ MotorTemperatureCheck::MotorTemperatureCheck(TelemetryBridge *telemetry,
     m_telemetry = telemetry;
 }
 
+// Pass: all motor temps <= maxTempC (default 80 C). Fail: any motor overheating.
 void MotorTemperatureCheck::evaluate()
 {
     if (!hasTelemetry()) {

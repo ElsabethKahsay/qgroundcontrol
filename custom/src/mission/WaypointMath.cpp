@@ -9,6 +9,7 @@ static constexpr double EARTH_RADIUS_M = 6371000.0;
 static double toRad(double deg) { return deg * M_PI / 180.0; }
 static double toDeg(double rad) { return rad * 180.0 / M_PI; }
 
+/// Compute destination coordinate using the spherical law of cosines.
 QGeoCoordinate WaypointMath::coordinateFromBearingAndDistance(
     const QGeoCoordinate &reference,
     double bearingDegrees,
@@ -30,6 +31,7 @@ QGeoCoordinate WaypointMath::coordinateFromBearingAndDistance(
     return QGeoCoordinate(toDeg(lat2), toDeg(lon2));
 }
 
+/// Forward azimuth using the atan2 formula for spherical triangles.
 double WaypointMath::bearingBetweenCoordinates(
     const QGeoCoordinate &from,
     const QGeoCoordinate &to)
@@ -48,6 +50,7 @@ double WaypointMath::bearingBetweenCoordinates(
     return std::fmod(toDeg(brng) + 360.0, 360.0);
 }
 
+/// Haversine great-circle distance in meters.
 double WaypointMath::distanceBetweenCoordinates(
     const QGeoCoordinate &from,
     const QGeoCoordinate &to)

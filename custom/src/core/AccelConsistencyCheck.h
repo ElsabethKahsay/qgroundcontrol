@@ -1,3 +1,5 @@
+// Compares primary and secondary accelerometer readings to detect IMU disagreement.
+// Fails when the maximum per-axis difference exceeds the configured threshold.
 #pragma once
 #include "AbstractCheck.h"
 

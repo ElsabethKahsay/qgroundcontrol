@@ -1,3 +1,5 @@
+// Checks sustained wind speed and gusts from live METAR data against configured thresholds.
+// Fails when sustained or gust wind exceeds thresholds (strong fail at 125% of threshold).
 #pragma once
 #include "AbstractCheck.h"
 

@@ -1,3 +1,5 @@
+// Checks that the uploaded mission contains at least the required minimum number of items.
+// Fails if item count is non-zero but below minimum; stays pending when no mission is loaded.
 #pragma once
 #include "AbstractCheck.h"
 

@@ -22,6 +22,7 @@ WeatherProvider *WeatherProvider::instance()
 WeatherProvider::WeatherProvider(QObject *parent)
     : QObject(parent)
 {
+    // Set up a disk cache for weather API responses to avoid redundant requests.
     m_cache = new QNetworkDiskCache(this);
     QString cacheDir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
                        + QStringLiteral("/weather");
@@ -32,6 +33,7 @@ WeatherProvider::WeatherProvider(QObject *parent)
     s_instance = this;
 }
 
+/** @brief METAR data is considered fresh if observed within the last 60 minutes. */
 bool WeatherProvider::metarFresh() const
 {
     if (!m_metarTimestamp.isValid())
@@ -44,6 +46,7 @@ QString WeatherProvider::weatherDescription() const
     return describeCode(m_weatherCode);
 }
 
+/** @brief Map a WMO weather code (or Open-Meteo code) to a human-readable description. */
 QString WeatherProvider::describeCode(int code) const
 {
     switch (code) {
@@ -84,7 +87,9 @@ void WeatherProvider::clearCache()
     m_cache->clear();
 }
 
-// ── Open-Meteo forecast ──
+// ── Open-Meteo forecast ──────────────────────────────────────────────
+// Fetches current weather conditions (temp, wind, visibility, humidity)
+// from the free Open-Meteo API by lat/lon coordinates.
 
 void WeatherProvider::fetchWeather(double latitude, double longitude)
 {
@@ -147,7 +152,9 @@ void WeatherProvider::fetchWeather(double latitude, double longitude)
     });
 }
 
-// ── METAR (NOAA ADDS) ──
+// ── METAR (NOAA ADDS) ────────────────────────────────────────────────
+// Fetches the latest METAR observation for an ICAO station code.
+// Converts knots to m/s for wind and statute miles to km for visibility.
 
 void WeatherProvider::fetchMetar(const QString &icaoCode)
 {
@@ -186,6 +193,13 @@ void WeatherProvider::fetchMetar(const QString &icaoCode)
     });
 }
 
+/**
+ * @brief Parse the NOAA METAR JSON response and update all weather properties.
+ *
+ * Handles unit conversions (knots→m/s, sm→km), derives humidity from
+ * temperature/dewpoint using the Magnus formula, maps flight category
+ * to a weather code, and extracts ceiling height from cloud layers.
+ */
 void WeatherProvider::handleMetarJson(const QByteArray &data)
 {
     QJsonDocument doc = QJsonDocument::fromJson(data);
@@ -284,6 +298,12 @@ void WeatherProvider::handleMetarJson(const QByteArray &data)
     emit weatherUpdated();
 }
 
+/**
+ * @brief Extract precipitation/weather phenomenon codes from a raw METAR string.
+ *
+ * Matches 2-letter codes (RA, SN, TS, FG, etc.) in the weather phenomena
+ * section of the METAR.  Deduplicates results.
+ */
 void WeatherProvider::parsePrecipitation(const QString &metar)
 {
     m_precipitation.clear();
@@ -314,7 +334,9 @@ void WeatherProvider::parsePrecipitation(const QString &metar)
     }
 }
 
-// ── TAF (NOAA ADDS) ──
+// ── TAF (NOAA ADDS) ─────────────────────────────────────────────────
+// Fetches the Terminal Aerodrome Forecast for an ICAO station.
+// Analyzes the raw TAF string for deteriorating conditions.
 
 void WeatherProvider::fetchTaf(const QString &icaoCode)
 {
@@ -353,6 +375,13 @@ void WeatherProvider::fetchTaf(const QString &icaoCode)
     });
 }
 
+/**
+ * @brief Parse TAF response and detect deteriorating conditions.
+ *
+ * Checks for: multiple change groups (instability), IFR/LIFR categories,
+ * low ceilings (OVC/BKN below 1000ft), convection (TS, +RA, SN),
+ * and strong winds (>20kt sustained or >25kt gusts).
+ */
 void WeatherProvider::handleTafJson(const QByteArray &data)
 {
     QJsonDocument doc = QJsonDocument::fromJson(data);
@@ -428,7 +457,8 @@ void WeatherProvider::handleTafJson(const QByteArray &data)
     emit weatherUpdated();
 }
 
-// ── Refresh all ──
+// ── Refresh all ──────────────────────────────────────────────────────
+// Convenience: fetches both METAR and TAF for the given station.
 
 void WeatherProvider::refreshAll(const QString &icaoCode)
 {
@@ -436,7 +466,9 @@ void WeatherProvider::refreshAll(const QString &icaoCode)
     fetchTaf(icaoCode);
 }
 
-// ── NOTAM (FAA) ──
+// ── NOTAM (FAA) ──────────────────────────────────────────────────────
+// Fetches NOTAMs (Notices to Air Missions) from the FAA for a given
+// ICAO station.  POSTs a JSON body with the station code.
 
 void WeatherProvider::fetchNotam(const QString &icaoCode)
 {
@@ -474,6 +506,7 @@ void WeatherProvider::fetchNotam(const QString &icaoCode)
     });
 }
 
+/** @brief Parse FAA NOTAM JSON response into a QVariantList for QML binding. */
 void WeatherProvider::handleNotamJson(const QByteArray &data)
 {
     QJsonDocument doc = QJsonDocument::fromJson(data);
@@ -506,7 +539,8 @@ void WeatherProvider::handleNotamJson(const QByteArray &data)
     emit weatherUpdated();
 }
 
-// ── Local GeoJSON NOTAM ──
+// ── Local GeoJSON NOTAM ──────────────────────────────────────────────
+// Loads NOTAMs from a local GeoJSON file for offline use or testing.
 
 void WeatherProvider::loadNotamGeoJson(const QString &filePath)
 {
@@ -546,6 +580,13 @@ void WeatherProvider::loadNotamGeoJson(const QString &filePath)
         m_lastError = QStringLiteral("GeoJSON has no NOTAM features");
 }
 
+/**
+ * @brief Look up the nearest ICAO station code for given coordinates.
+ *
+ * Uses the NOAA station API with a 50 km radius.  Blocks the calling
+ * thread with a QEventLoop (max 3 seconds) since this is typically
+ * called during initialization before the event loop is running.
+ */
 QString WeatherProvider::lookupIcao(double latitude, double longitude, QString *errorMessage)
 {
     QNetworkAccessManager nam;

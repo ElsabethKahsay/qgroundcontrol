@@ -23,6 +23,7 @@ VehicleRegistry *VehicleRegistry::instance()
 VehicleRegistry::VehicleRegistry(QObject *parent)
     : QObject(parent)
 {
+    // Listen for vehicle connect/disconnect and active-vehicle changes from the global manager.
     connect(MultiVehicleManager::instance(), &MultiVehicleManager::vehicleAdded,
             this, &VehicleRegistry::_onVehicleAdded);
     connect(MultiVehicleManager::instance(), &MultiVehicleManager::vehicleRemoved,
@@ -30,12 +31,16 @@ VehicleRegistry::VehicleRegistry(QObject *parent)
     connect(MultiVehicleManager::instance(), &MultiVehicleManager::activeVehicleChanged,
             this, &VehicleRegistry::_onActiveVehicleChanged);
 
+    // Pick up any vehicle already connected at construction time.
     Vehicle *activeVehicle = MultiVehicleManager::instance()->activeVehicle();
     if (activeVehicle) {
         _extractVehicleInfo(activeVehicle);
     }
 }
 
+/// When a vehicle connects, build its fingerprint and check the database:
+/// - Known vehicle: load friendly name, update last-seen timestamp, emit knownVehicleConnected.
+/// - Unknown vehicle: generate a default name, persist a new record, emit newVehicleRegistered.
 void VehicleRegistry::_onVehicleAdded(Vehicle *vehicle)
 {
     if (!vehicle) return;
@@ -50,10 +55,17 @@ void VehicleRegistry::_onVehicleAdded(Vehicle *vehicle)
         m_vehicleName = obj.value(QStringLiteral("friendlyName")).toString();
         DatabaseManager::instance().updateVehicleLastSeen(m_currentFingerprint);
 
+        // If firmware was updated since last connection, persist the new version.
+        QString dbFw = obj.value(QStringLiteral("firmwareVersion")).toString();
+        if (!m_currentFirmwareVersion.isEmpty() && dbFw != m_currentFirmwareVersion) {
+            DatabaseManager::instance().updateVehicleFirmware(m_currentFingerprint, m_currentFirmwareVersion);
+        }
+
         qCDebug(vehicleRegistryLog) << "Known vehicle connected:" << m_vehicleName;
         emit knownVehicleConnected(m_currentVehicleId);
     } else {
         m_isKnownVehicle = false;
+        // Auto-generate a temporary name until the user assigns one.
         m_vehicleName = QStringLiteral("UAV-%1-%2")
                             .arg(m_currentVehicleId)
                             .arg(m_currentFingerprint.left(8));
@@ -77,6 +89,7 @@ void VehicleRegistry::_onVehicleRemoved(Vehicle *vehicle)
     if (!vehicle) return;
     qCDebug(vehicleRegistryLog) << "Vehicle removed: sysid" << vehicle->id();
 
+    // Record the last-seen time before clearing state.
     if (!m_currentFingerprint.isEmpty()) {
         DatabaseManager::instance().updateVehicleLastSeen(m_currentFingerprint);
     }
@@ -103,6 +116,7 @@ void VehicleRegistry::_onActiveVehicleChanged(Vehicle *vehicle)
     }
 }
 
+/// Pull hardware identifiers from the QGC Vehicle object and build the SHA-256 fingerprint.
 void VehicleRegistry::_extractVehicleInfo(Vehicle *vehicle)
 {
     if (!vehicle) return;
@@ -122,6 +136,7 @@ void VehicleRegistry::_extractVehicleInfo(Vehicle *vehicle)
                                    .arg(minorVer)
                                    .arg(patchVer);
 
+    // Fingerprint = hash(UID + autopilot type + board version) — unique per physical board.
     m_currentFingerprint = generateFingerprint(m_currentUid, m_currentAutopilotType, m_currentBoardVersion);
 
     qCDebug(vehicleRegistryLog)
@@ -136,6 +151,7 @@ void VehicleRegistry::_extractVehicleInfo(Vehicle *vehicle)
         << "\n  fingerprint:" << m_currentFingerprint;
 }
 
+/// Concatenate UID, autopilot type, and board version, then SHA-256 hash them into a hex string.
 QString VehicleRegistry::generateFingerprint(quint64 uid, int autopilotType, const QString &boardVersion)
 {
     QByteArray data;
@@ -166,4 +182,34 @@ QString VehicleRegistry::vehicleTypeString(int vehicleType)
     case 5:  return QStringLiteral("Sub");
     default: return QStringLiteral("Unknown(%1)").arg(vehicleType);
     }
+}
+
+QString VehicleRegistry::searchVehicles(const QString &query)
+{
+    return DatabaseManager::instance().searchVehicles(query);
+}
+
+bool VehicleRegistry::updateVehicleName(const QString &fingerprint, const QString &name)
+{
+    bool ok = DatabaseManager::instance().updateVehicleName(fingerprint, name);
+    if (ok && fingerprint == m_currentFingerprint) {
+        m_vehicleName = name;
+        emit knownVehicleChanged();
+    }
+    return ok;
+}
+
+QString VehicleRegistry::getAllVehiclesJson()
+{
+    return DatabaseManager::instance().getAllVehiclesJson();
+}
+
+QString VehicleRegistry::exportVehiclesJson()
+{
+    return DatabaseManager::instance().exportVehiclesJson();
+}
+
+bool VehicleRegistry::importVehiclesJson(const QString &json)
+{
+    return DatabaseManager::instance().importVehiclesJson(json);
 }

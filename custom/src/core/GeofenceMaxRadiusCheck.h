@@ -1,3 +1,5 @@
+// Verifies the geofence maximum horizontal distance parameter is set to a reasonable value.
+// Warns if the radius is very small or set to zero (no lateral limit).
 #pragma once
 #include "AbstractCheck.h"
 

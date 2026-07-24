@@ -13,6 +13,8 @@ WindSpeedCheck::WindSpeedCheck(TelemetryBridge *telemetry,
     m_telemetry = telemetry;
 }
 
+// Pass: wind speed <= maxWindMps. Warns when above threshold.
+// Falls back to estimating wind from groundspeed/airspeed delta if no direct data.
 void WindSpeedCheck::evaluate()
 {
     if (!hasTelemetry()) {

@@ -2,6 +2,9 @@
 #include <QObject>
 #include <QGeoCoordinate>
 
+/// QML-accessible wrapper around WaypointMath static functions.
+/// Exposes bearing, distance, and coordinate-offset calculations to QML/JS
+/// via Q_INVOKABLE methods so mission editors can compute geometry client-side.
 class WaypointMathHelper : public QObject {
     Q_OBJECT
 public:

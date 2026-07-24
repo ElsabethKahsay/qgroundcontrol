@@ -28,6 +28,8 @@ void MissionEnergyCheck::setVehicleProfileManager(VehicleProfileManager *mgr)
     m_vehicleProfileMgr = mgr;
 }
 
+// Estimates required energy (cruise + 2 min hover for takeoff/landing) and compares to battery capacity.
+// Fails if required Wh > safety fraction of battery; warns if >50%; passes if within safe margins.
 void MissionEnergyCheck::evaluate()
 {
     if (!m_telemetry) {

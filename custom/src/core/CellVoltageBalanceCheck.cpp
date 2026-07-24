@@ -13,6 +13,7 @@ CellVoltageBalanceCheck::CellVoltageBalanceCheck(TelemetryBridge *telemetry,
     m_telemetry = telemetry;
 }
 
+// Compute max-min cell delta, smooth over 5 s, and fail if averaged delta exceeds maxDelta.
 void CellVoltageBalanceCheck::evaluate()
 {
     if (!hasTelemetry()) {

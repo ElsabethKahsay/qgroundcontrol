@@ -1,3 +1,5 @@
+// Estimates mission energy feasibility by comparing required Wh against battery capacity.
+// Fails when estimated consumption exceeds the safety fraction of the battery; warns above 50%.
 #pragma once
 #include "AbstractCheck.h"
 

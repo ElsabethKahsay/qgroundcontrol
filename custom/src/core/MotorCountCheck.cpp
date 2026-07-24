@@ -12,6 +12,8 @@ MotorCountCheck::MotorCountCheck(TelemetryBridge *telemetry, QObject *parent)
     m_telemetry = telemetry;
 }
 
+// Pass: detected motor count matches expected (from FRAME_CLASS). Warns on mismatch.
+// Fail: FRAME_CLASS != 1 (Quad). Falls back to 4-motor expectation if params unknown.
 void MotorCountCheck::evaluate()
 {
     if (!hasTelemetry()) {

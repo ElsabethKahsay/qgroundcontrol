@@ -14,6 +14,8 @@ ManualConfirmCheck::ManualConfirmCheck(const QString &id, const QString &label,
     m_telemetry = nullptr;
 }
 
+// Pass: already confirmed by user (no-op). Otherwise sets Pending with prompt text.
+// Appends available parameter values to the prompt when paramNames are specified.
 void ManualConfirmCheck::evaluate()
 {
     if (status() == CheckStatus::Passed) return;

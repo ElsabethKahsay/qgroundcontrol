@@ -1,3 +1,10 @@
+/**
+ * @file HardwareTestController.cpp
+ * @brief Implementation of the preflight hardware-test controller.
+ *
+ * See HardwareTestController.h for architecture and the fixed-wing state machine.
+ */
+
 #include "HardwareTestController.h"
 
 #include <QDebug>
@@ -12,6 +19,14 @@
 
 Q_LOGGING_CATEGORY(hardwareTestLog, "preflight.hardwaretest")
 
+/// Constructs the controller and wires up all internal timers.
+/// Each timer has a single-shot or interval mode and a specific role:
+///   _stepTimer   — delays between profile-sequence steps
+///   _resultTimer — grace period after test duration before reading feedback
+///   _cooldownTimer — 250 ms tick for the post-test cooldown countdown
+///   _paramTimeoutTimer — safety net if parameters never become ready
+///   _fwTestTimer — fires when the fixed-wing throttle hold duration elapses
+///   _fwDisarmTimer — 500 ms delay between stopping throttle and disarming
 HardwareTestController::HardwareTestController(QObject *parent)
     : QObject(parent)
 {
@@ -29,19 +44,25 @@ HardwareTestController::HardwareTestController(QObject *parent)
 
     _fwTestTimer.setSingleShot(true);
     connect(&_fwTestTimer, &QTimer::timeout, this, [this]() {
+        // Throttle hold duration elapsed — command idle throttle (1000 µs) to stop the motor.
         qCDebug(hardwareTestLog) << "FW test duration elapsed — stopping motor";
         _fwSendRcOverride(1000);
         _fwPhase = FwStopping;
+        // Allow 500 ms for the motor to spin down before disarming.
         _fwDisarmTimer.start(500);
     });
 
     _fwDisarmTimer.setSingleShot(true);
     connect(&_fwDisarmTimer, &QTimer::timeout, this, [this]() {
+        // Spin-down delay complete — send the disarm command to the flight controller.
         qCDebug(hardwareTestLog) << "FW test — disarming";
         _fwDisarm();
     });
 }
 
+/// Binds this controller to a vehicle.  Disconnects from any previous vehicle,
+/// connects signals (mavCommandResult, mavlinkMessageReceived, armedChanged),
+/// and kicks off parameter loading / motor-count resolution.
 void HardwareTestController::setVehicle(Vehicle *vehicle)
 {
     if (_vehicle) {
@@ -86,6 +107,15 @@ void HardwareTestController::setVehicle(Vehicle *vehicle)
     }
 }
 
+/// Resolves the motor/servo count from vehicle parameters.
+///
+/// Resolution order:
+///   1. PX4 — reads CA_AIRFRAME to determine airframe type, then CA_ROTOR_CNT for multirotors.
+///   2. ArduPilot — reads FRAME_CLASS to determine frame type.
+///   3. Fallback — uses MAV_TYPE from HEARTBEAT.
+///
+/// Also sets _vtolMode and _hoverMotorCount for VTOL frames.
+/// Finally updates the human-readable vehicle type labels.
 void HardwareTestController::resolveMotorCount()
 {
     if (!_vehicle) {
@@ -114,7 +144,9 @@ void HardwareTestController::resolveMotorCount()
         return fact->rawValue().toFloat();
     };
 
-    // PX4: read CA_AIRFRAME
+    // ── PX4: read CA_AIRFRAME to determine airframe type ────────────────
+    // Multirotor (0) uses CA_ROTOR_CNT; plane (1) and flying wing (2) are single-motor;
+    // VTOL tiltrotor (4) and standard VTOL (5) set vtol=true with hover motor counts.
     if (_vehicle->px4Firmware()) {
         float caAirframe = getParam(QStringLiteral("CA_AIRFRAME"), -1);
         qCDebug(hardwareTestLog) << "CA_AIRFRAME read:" << caAirframe;
@@ -156,7 +188,9 @@ void HardwareTestController::resolveMotorCount()
         }
     }
 
-    // ArduPilot: read FRAME_CLASS
+    // ── ArduPilot: read FRAME_CLASS to determine frame type ─────────────
+    // Frame classes: 1=Quad, 2=Hexa, 3=Octa, 4=OctaQuad, 5=Y6,
+    //               6=Heli (single rotor), 7=Tri
     if (_vehicle->apmFirmware()) {
         float frameClass = getParam(QStringLiteral("FRAME_CLASS"), -1);
         qCDebug(hardwareTestLog) << "FRAME_CLASS read:" << frameClass;
@@ -175,7 +209,8 @@ void HardwareTestController::resolveMotorCount()
         }
     }
 
-    // Fallback: derive from HEARTBEAT type
+    // ── Fallback: derive motor count from HEARTBEAT MAV_TYPE ────────────
+    // Used when parameters are unavailable or didn't yield a count (e.g. rover → 0).
     qCDebug(hardwareTestLog) << "Fallback check — count:" << count << "vehicleType:" << (_vehicle ? _vehicle->vehicleType() : -1);
     if (count == 0 && _vehicle) {
         qCDebug(hardwareTestLog) << "Using HEARTBEAT type fallback:" << _vehicle->vehicleType();
@@ -222,6 +257,9 @@ void HardwareTestController::resolveMotorCount()
     _updateMotorCount(count, vtol, hoverCnt);
 }
 
+/// Converts the motor-count resolution source string into a short human-readable
+/// label for the vehicle type dropdown (e.g. "Quadcopter", "Fixed Wing", "VTOL").
+/// Uses case-insensitive substring matching against known airframe keywords.
 QString HardwareTestController::_vehicleTypeLabelFromSource(const QString &source) const
 {
     if (source.contains(QStringLiteral("Quad"), Qt::CaseInsensitive)) return QStringLiteral("Quadcopter");
@@ -256,6 +294,8 @@ void HardwareTestController::setFirstTestDone(bool done)
 }
 
 // ── Per-motor accessors ─────────────────────────────────────────────────
+// All Q_INVOKABLE accessors use 1-based motorIndex from QML and convert
+// to 0-based indexing for the internal _state / _targetThrottle vectors.
 
 QString HardwareTestController::motorPosition(int motorIndex) const
 {
@@ -364,6 +404,7 @@ QVariantList HardwareTestController::motorStates() const
     return list;
 }
 
+/// Sets the state for a single motor (0-based index) and emits motorStatesChanged if changed.
 void HardwareTestController::_setMotorState(int index, MotorState state)
 {
     if (index < 0 || index >= _state.size()) return;
@@ -372,6 +413,9 @@ void HardwareTestController::_setMotorState(int index, MotorState state)
     emit motorStatesChanged();
 }
 
+/// Reinitializes all per-motor arrays when the detected motor count changes.
+/// Resets all states to Idle, fills default throttle/duration/PWM values,
+/// clears feedback buffers, and stops any active cooldown or test.
 void HardwareTestController::_updateMotorCount(int count, bool hasHover, int hoverCount)
 {
     count = qBound(0, count, kServoCount);
@@ -408,8 +452,17 @@ void HardwareTestController::_updateMotorCount(int count, bool hasHover, int hov
     emit motorPwmValuesChanged();
 }
 
-// ── Fixed-wing motor test: arm → RC_CHANNELS_OVERRIDE → disarm ────
+// ── Fixed-wing motor test: arm → RC_CHANNELS_OVERRIDE → disarm ─────
+//
+// Unlike copters (which use MAV_CMD_DO_MOTOR_TEST), fixed-wing aircraft
+// require a different approach:
+//   1. Arm the vehicle (MAV_CMD_COMPONENT_ARM_DISARM, param1=1)
+//   2. Once armed, drive the throttle channel via RC_CHANNELS_OVERRIDE
+//   3. After the test duration, set throttle to 1000 µs (idle)
+//   4. Wait 500 ms for spin-down, then disarm
 
+/// Reads the RCMAP_THROTTLE parameter to determine which RC channel controls throttle.
+/// Defaults to channel 3 if the parameter is unavailable (ArduPilot default).
 int HardwareTestController::_fwThrottleChannel() const
 {
     // Read RCMAP_THROTTLE parameter (default: channel 3 for ArduPilot)
@@ -430,6 +483,9 @@ int HardwareTestController::_fwThrottleChannel() const
     return 3;
 }
 
+/// Sends RC_CHANNELS_OVERRIDE with only the throttle channel set to the specified PWM.
+/// All other channels are set to 0 (no override), so the flight controller ignores them.
+/// This is the mechanism that drives the motor on fixed-wing aircraft.
 void HardwareTestController::_fwSendRcOverride(uint16_t throttlePwm)
 {
     if (!_vehicle) return;
@@ -463,6 +519,8 @@ void HardwareTestController::_fwSendRcOverride(uint16_t throttlePwm)
     qCDebug(hardwareTestLog) << "FW RC override: ch" << throttleCh << "=" << throttlePwm << "µs";
 }
 
+/// Sends a disarm command.  The ACK is handled in _onCommandResult where
+/// the state machine transitions from FwDisarming back to FwIdle.
 void HardwareTestController::_fwDisarm()
 {
     if (!_vehicle) return;
@@ -474,6 +532,9 @@ void HardwareTestController::_fwDisarm()
     );
 }
 
+/// Initiates the fixed-wing motor test sequence.
+/// Sends an arm command and sets up a 5-second timeout — if the arm ACK doesn't
+/// arrive in time, the test is aborted and the motor marked as Failed.
 void HardwareTestController::_fwStartTest(int motorIndex, int pwmUs)
 {
     if (!_vehicle || !_vehicle->apmFirmware()) return;
@@ -512,6 +573,14 @@ void HardwareTestController::_fwStartTest(int motorIndex, int pwmUs)
 
 // ── Individual motor test ─────────────────────────────────────────────
 
+/// Entry point for testing a single motor (invoked from QML).
+///
+/// Two paths:
+///   Fixed-wing: Delegates to _fwStartTest() which runs the arm → RC override
+///               → spin → stop → disarm state machine.
+///   Copter:     Sends MAV_CMD_DO_MOTOR_TEST with the configured PWM value.
+///               The result is evaluated after _durationSec + kResultGraceMs
+///               by comparing peak SERVO_OUTPUT_RAW feedback against expected PWM.
 void HardwareTestController::testMotor(int motorIndex)
 {
     int idx = motorIndex - 1;
@@ -598,6 +667,10 @@ void HardwareTestController::testMotor(int motorIndex)
     _resultTimer.start(_durationSec * 1000 + kResultGraceMs);
 }
 
+/// Called by _resultTimer after the test duration + grace period.
+/// Compares the peak feedback PWM captured during the test against the expected
+/// PWM value.  A deviation within kPwmTolerance (50 µs) is a PASS.
+/// After evaluation, transitions the motor into the cooldown phase.
 void HardwareTestController::_evaluateTestResult()
 {
     if (_activeMotor < 0) return;
@@ -648,6 +721,9 @@ void HardwareTestController::_evaluateTestResult()
     emit activeMotorChanged();
 }
 
+/// Enables or disables streaming of SERVO_OUTPUT_RAW (msg ID #36) at 10 Hz.
+/// This message contains the actual PWM values the flight controller is outputting,
+/// which we use as feedback to verify motor/servo commands.
 void HardwareTestController::_setServoStreaming(bool enable)
 {
     if (!_vehicle) return;
@@ -661,6 +737,15 @@ void HardwareTestController::_setServoStreaming(bool enable)
     );
 }
 
+/// Handles MAV_CMD acknowledgment results from the flight controller.
+///
+/// Fixed-wing state machine transitions:
+///   FwArming + ACCEPTED → sends RC override throttle, moves to FwSpinning
+///   FwArming + rejected  → marks motor Fail, returns to FwIdle
+///   FwDisarming + any    → marks motor Pass/Fail based on ACK, returns to FwIdle
+///
+/// Copter path:
+///   DO_MOTOR_TEST rejected → stops result timer, marks motor Fail, logs error
 void HardwareTestController::_onCommandResult(int vehicleId, int targetComponent, int command, int ackResult, int failureCode)
 {
     Q_UNUSED(vehicleId)
@@ -741,6 +826,10 @@ void HardwareTestController::_onCommandResult(int vehicleId, int targetComponent
     }
 }
 
+/// Emergency stop: immediately halts all motor activity.
+/// For fixed-wing: cancels RC override, disarms via MAV_CMD.
+/// For copters: sends DO_MOTOR_TEST with 1000 µs (disarmed) to each motor.
+/// Resets all timers, state arrays, and cooldown tracking.
 void HardwareTestController::stopAll()
 {
     if (!_vehicle) return;
@@ -814,6 +903,8 @@ void HardwareTestController::resetAll()
     _setServoStreaming(false);
 }
 
+/// Sends DO_MOTOR_TEST with 1000 µs PWM (disarmed) to stop a single motor.
+/// Used by stopAll() and also available for individual motor shutdown.
 void HardwareTestController::_sendStopToMotor(int index)
 {
     if (!_vehicle) return;
@@ -858,6 +949,8 @@ QVariantList HardwareTestController::motorPwmValues() const
     return list;
 }
 
+/// Persists a motor test result to the database and emits an AUDIT log line.
+/// Records motor index, throttle %, duration, expected/actual PWM, delta, and pass/fail.
 void HardwareTestController::_logTestResult(int motorIndex, int thrPct,
                                              int durSec, int expPwm,
                                              int actPwm, int pwmDelta,
@@ -877,12 +970,18 @@ void HardwareTestController::_logTestResult(int motorIndex, int thrPct,
 }
 
 // ── Legacy profile-based testing (kept for servo sweep) ───────────────
+// This path drives a sequence of DO_SET_SERVO or DO_MOTOR_TEST commands
+// loaded from a HardwareTestProfile JSON file.  Each step is followed by
+// a feedback verification check before advancing to the next step.
 
 QVariant HardwareTestController::sequenceCompleted() const
 {
     return _sequenceCompleted ? QVariant(true) : QVariant();
 }
 
+/// Generates a hardcoded servo sweep sequence for servos 1–4.
+/// Each servo is driven through 1200 → 1500 → 1800 → 1500 → 1200 µs
+/// with 800 ms hold time and 200 ms settle time per position.
 void HardwareTestController::runServoSweep()
 {
     if (_running || !_vehicle) {
@@ -910,6 +1009,9 @@ void HardwareTestController::runServoSweep()
     _startTest();
 }
 
+/// Loads a HardwareTestProfile from a JSON file and starts the test sequence.
+/// Detects whether all steps are motor tests (to set _isMotorTest flag).
+/// Returns false if the file can't be loaded or fails validation.
 bool HardwareTestController::runProfile(const QString &filePath)
 {
     if (_running) {
@@ -945,6 +1047,8 @@ void HardwareTestController::abortSequence()
     _finishTest(false, QStringLiteral("Test aborted by user"));
 }
 
+/// Initializes all state for a profile/sweep sequence and kicks off the first step.
+/// Resets feedback buffers, progress, and error state; emits signals so the QML UI updates.
 void HardwareTestController::_startTest()
 {
     for (int i = 0; i < kServoCount; ++i)
@@ -964,6 +1068,14 @@ void HardwareTestController::_startTest()
     _advanceStep();
 }
 
+/// Advances the profile sequence to the next step.
+///
+/// Before executing the new step, verifies the previous step's feedback:
+///   - Motor steps: checks feedback PWM is in the 800–2200 µs range
+///   - Servo steps: checks feedback PWM is within [expectedMin, expectedMax]
+///
+/// Logs each step result to the database.  When all steps are done,
+/// calls _finishTest() with the aggregate pass/fail result.
 void HardwareTestController::_advanceStep()
 {
     if (_currentStep >= _totalSteps) {
@@ -989,6 +1101,14 @@ void HardwareTestController::_advanceStep()
                       .arg(_feedbackPwm[prev.servoInstance - 1]);
             emit lastErrorMessageChanged();
         }
+
+        // Log step result to DB
+        auto &db = DatabaseManager::instance();
+        int flightId = -1;
+        QString resultStr = feedbackOk ? QStringLiteral("PASS") : QStringLiteral("FAIL");
+        db.logHardwareTestStep(flightId, prev.name, prev.servoInstance,
+                               prev.targetPwm, prev.expectedMin > 0 ? prev.expectedMin : 0,
+                               0, 0, false, resultStr);
     }
     _progress = static_cast<qreal>(_currentStep) / _totalSteps;
     emit stepProgressChanged();
@@ -1016,6 +1136,8 @@ void HardwareTestController::_sendServoStep(int servoInstance, int pwmValue, int
         servoInstance, pwmValue);
 }
 
+/// Marks the profile sequence as complete and emits all relevant signals
+/// so the QML UI transitions to the results view.
 void HardwareTestController::_finishTest(bool passed, const QString &error)
 {
     _running = false;
@@ -1030,6 +1152,8 @@ void HardwareTestController::_finishTest(bool passed, const QString &error)
     emit stepProgressChanged();
 }
 
+/// Checks that the feedback PWM for a specific servo is within kPwmTolerance
+/// of the expected value.  Returns false if no feedback was received (actual == 0).
 bool HardwareTestController::_verifyServoFeedback(int servoInstance, int expectedPwm) const
 {
     if (servoInstance < 1 || servoInstance > kServoCount) return false;
@@ -1038,6 +1162,8 @@ bool HardwareTestController::_verifyServoFeedback(int servoInstance, int expecte
     return qAbs(static_cast<int>(actual) - expectedPwm) <= kPwmTolerance;
 }
 
+/// Checks that the feedback PWM for a specific servo falls within [expectedMin, expectedMax].
+/// Used by profile steps that specify a valid range rather than an exact target.
 bool HardwareTestController::_verifyServoFeedbackRange(int servoInstance, int expectedMin, int expectedMax) const
 {
     if (servoInstance < 1 || servoInstance > kServoCount) return false;
@@ -1046,6 +1172,9 @@ bool HardwareTestController::_verifyServoFeedbackRange(int servoInstance, int ex
     return actual >= static_cast<uint16_t>(expectedMin) && actual <= static_cast<uint16_t>(expectedMax);
 }
 
+/// Checks that motor feedback PWM is in the plausible range (800–2200 µs).
+/// This is a basic sanity check — any value outside this range indicates
+/// the motor didn't spin or the feedback is corrupt.
 bool HardwareTestController::_verifyMotorFeedback(int motorInstance) const
 {
     if (motorInstance < 1 || motorInstance > kServoCount) return false;
@@ -1056,6 +1185,9 @@ bool HardwareTestController::_verifyMotorFeedback(int motorInstance) const
 
 // ── Event handlers ───────────────────────────────────────────────────
 
+/// Syncs the cached _isArmed flag when the vehicle's armed state changes.
+/// If the vehicle arms while a motor test is active (e.g. pilot arms via RC),
+/// all tests are immediately stopped for safety.
 void HardwareTestController::_onArmedChanged()
 {
     bool armed = _vehicle ? _vehicle->armed() : false;
@@ -1068,6 +1200,7 @@ void HardwareTestController::_onArmedChanged()
     }
 }
 
+/// Parameters are ready — cancel the timeout and resolve motor count from actual params.
 void HardwareTestController::_onParametersReady()
 {
     _paramTimeoutTimer.stop();
@@ -1075,6 +1208,7 @@ void HardwareTestController::_onParametersReady()
     resolveMotorCount();
 }
 
+/// Parameter loading timed out — fall back to HEARTBEAT-based motor count detection.
 void HardwareTestController::_onParamTimeout()
 {
     qCDebug(hardwareTestLog) << "Parameter loading timed out after" << kParamTimeoutMs << "ms — using HEARTBEAT fallback";
@@ -1082,6 +1216,10 @@ void HardwareTestController::_onParamTimeout()
     resolveMotorCount();
 }
 
+/// Processes incoming MAVLink messages.  Only handles SERVO_OUTPUT_RAW (msg #36),
+/// which contains the actual PWM output values for all 16 servo channels.
+/// Updates _feedbackPwm for all channels and tracks the peak value for the
+/// currently active motor (used by _evaluateTestResult to determine pass/fail).
 void HardwareTestController::_onMavlinkMessage(const mavlink_message_t &message)
 {
     if (message.msgid != MAVLINK_MSG_ID_SERVO_OUTPUT_RAW) return;
@@ -1117,6 +1255,9 @@ void HardwareTestController::_onMavlinkMessage(const mavlink_message_t &message)
     }
 }
 
+/// Decrements the cooldown counter every 250 ms.  When the counter reaches zero,
+/// the motor's state is restored from Cooldown back to its result state (Pass or Fail).
+/// This prevents the user from retesting a motor immediately while it's still warm.
 void HardwareTestController::_cooldownTick()
 {
     _cooldownRemaining--;
@@ -1132,4 +1273,10 @@ void HardwareTestController::_cooldownTick()
         }
         _cooldownIndex = -1;
     }
+}
+
+/// Retrieves the hardware test event log for a given flight ID from the database.
+QString HardwareTestController::getHardwareTestEvents(int flightId)
+{
+    return DatabaseManager::instance().getHardwareTestEvents(flightId);
 }

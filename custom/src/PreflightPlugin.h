@@ -5,6 +5,18 @@
 #include <QTimer>
 
 /// @file PreflightPlugin.h
+///
+/// Main plugin entry point for the Skywin GCS preflight system.
+/// Subclasses QGCCorePlugin to inject custom UI, managers, and logic into
+/// the QGroundControl framework. This is the "glue" class that:
+///   - Owns all custom managers (PreflightManager, TelemetryBridge, ArmingGate, etc.)
+///   - Exposes them to the QML UI via context properties and singletons
+///   - Wires vehicle lifecycle signals to setup/teardown logic
+///   - Manages flight sessions (gate open → gate close) and compliance logging
+///   - Provides the custom dark theme via paletteOverride()
+///
+/// Instantiated as a singleton via Q_APPLICATION_STATIC; QGroundControl discovers
+/// it through the plugin system.
 
 class QmlComponentInfo;
 class PreflightManager;
@@ -29,6 +41,7 @@ class PreflightPlugin : public QGCCorePlugin
     QML_UNCREATABLE("")
     Q_PROPERTY(double fontSizeFactor READ fontSizeFactor CONSTANT)
 public:
+    // Font scaling factor used by QML to scale UI elements proportionally.
     Q_INVOKABLE double fontSizeFactor() const { return 1.95; }
 
     explicit PreflightPlugin(QObject *parent = nullptr);
@@ -64,22 +77,25 @@ private:
     void _startWeatherRefresh();
     void _populateChecklistModel();
 
-    QVariantList _analyzePages;
-    QVariantList _toolBarIndicators;
-    PreflightManager *_preflightManager = nullptr;
-    PreflightChecklistModel *_checklistModel = nullptr;
-    PreflightChecklistFilterModel *_categoryModels[8] = {};
-    TelemetryBridge *_telemetryBridge = nullptr;
-    ArmingGate *_armingGate = nullptr;
-    WeatherProvider *_weatherProvider = nullptr;
-    PreflightSettingsManager *_preflightSettingsManager = nullptr;
-    ExportHelper *_exportHelper = nullptr;
-    PowerModel *_powerModel = nullptr;
-    HardwareTestController *_hardwareTestController = nullptr;
-    VehicleProfileManager *_vehicleProfileManager = nullptr;
-    ChecklistItemModel *_checklistItemModel = nullptr;
-    ChecklistEngine *_checklistEngine = nullptr;
-    int _currentSessionId = -1;
-    QDateTime _sessionStartTime;
-    QTimer _weatherRefreshTimer;
+    // --- Owned managers and models (all parented to this for cleanup) ---
+    QVariantList _analyzePages;                // Lazily-built list of Analyze tab pages
+    QVariantList _toolBarIndicators;           // Lazily-built list of toolbar indicator QML URLs
+    PreflightManager *_preflightManager = nullptr;          // Runs preflight checks and evaluation cycles
+    PreflightChecklistModel *_checklistModel = nullptr;     // Data model for all checks (source model)
+    PreflightChecklistFilterModel *_categoryModels[8] = {}; // Per-category proxy models (0-7) filtering _checklistModel
+    TelemetryBridge *_telemetryBridge = nullptr;            // Bridges MAVLink telemetry to Qt properties for QML binding
+    ArmingGate *_armingGate = nullptr;                      // Manages arming gate logic and emits gateOpened/gateClosed
+    WeatherProvider *_weatherProvider = nullptr;             // Fetches METAR/weather data by ICAO or coordinates
+    PreflightSettingsManager *_preflightSettingsManager = nullptr; // Exposes plugin settings to QML
+    ExportHelper *_exportHelper = nullptr;                  // Handles data export (logs, compliance, etc.)
+    PowerModel *_powerModel = nullptr;                      // Battery/power estimation model
+    HardwareTestController *_hardwareTestController = nullptr;     // Controls hardware test sequences (servo, motor)
+    VehicleProfileManager *_vehicleProfileManager = nullptr;      // Loads/saves per-vehicle configuration profiles
+    ChecklistItemModel *_checklistItemModel = nullptr;      // Flattened checklist items for the QML ChecklistEngine
+    ChecklistEngine *_checklistEngine = nullptr;            // Drives checklist evaluation using TelemetryBridge data
+
+    // --- Flight session tracking ---
+    int _currentSessionId = -1;       // Active DB flight session ID, -1 when no session is active
+    QDateTime _sessionStartTime;      // Timestamp when gateOpened started the session
+    QTimer _weatherRefreshTimer;      // Periodic timer that triggers weather data refresh
 };

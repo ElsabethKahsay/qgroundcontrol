@@ -25,6 +25,7 @@ void RadioFailsafeCheck::evaluate()
 
     double fsThrEnable = getTelemetryDouble(QStringLiteral("param_FS_THR_ENABLE"));
 
+    // Pass if FS_THR_ENABLE >= 1 (failsafe active); warn if disabled.
     if (fsThrEnable >= 1.0) {
         setStatus(CheckStatus::Passed,
                   QStringLiteral("Enabled (action=%1)").arg(static_cast<int>(fsThrEnable)));

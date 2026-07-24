@@ -8,6 +8,8 @@
 PreflightChecklistModel::PreflightChecklistModel(QObject *parent)
     : QAbstractListModel(parent) {}
 
+/// Connect to PreflightManager: full rebuild when checks change,
+/// incremental data update when only check statuses change.
 void PreflightChecklistModel::setPreflightManager(PreflightManager *mgr)
 {
     if (m_manager == mgr)
@@ -51,7 +53,7 @@ QVariant PreflightChecklistModel::data(const QModelIndex &index, int role) const
     case FixStepsRole:        return QVariant::fromValue(chk->getFixSteps());
     case ThresholdRole:       return chk->getThreshold();
     case CurrentValueStringRole: return chk->getCurrentValueString();
-    case IsActionRole:        return chk->typeInt() == 2;
+    case IsActionRole:        return chk->typeInt() == 2; // type 2 = action test
     case ActionButtonTextRole: {
         if (chk->typeInt() == 1) {
             if (chk->statusInt() == 1) return QStringLiteral("Checked \u2713");
@@ -95,6 +97,7 @@ QHash<int, QByteArray> PreflightChecklistModel::roleNames() const
     };
 }
 
+/// Count checks with failed (2) or warning (4) status — used for the critical-failures badge.
 int PreflightChecklistModel::criticalCount() const
 {
     int n = 0;
@@ -126,6 +129,7 @@ int PreflightChecklistModel::warnCount() const
     return n;
 }
 
+/// Count mandatory checks that have failed or are in warning state (block takeoff).
 int PreflightChecklistModel::blockingFailedCount() const
 {
     if (!m_manager) return 0;
@@ -142,6 +146,7 @@ int PreflightChecklistModel::completionPercent() const
     return (m_manager->passedChecks() * 100) / m_manager->totalChecks();
 }
 
+/// Return the label of the first mandatory check that has failed, or empty if none.
 QString PreflightChecklistModel::firstBlockingFailure() const
 {
     if (!m_manager) return {};
@@ -153,6 +158,7 @@ QString PreflightChecklistModel::firstBlockingFailure() const
     return {};
 }
 
+/// Human-readable summary string for the preflight status bar.
 QString PreflightChecklistModel::statusSummary() const
 {
     if (!m_manager || m_manager->totalChecks() == 0)
@@ -208,6 +214,7 @@ QVariantMap PreflightChecklistModel::get(int row) const
     return map;
 }
 
+/// Force a full model reset so QML re-reads all rows from the PreflightManager.
 void PreflightChecklistModel::rebuild()
 {
     beginResetModel();

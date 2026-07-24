@@ -1,3 +1,5 @@
+// Verifies that a secondary (redundant) battery is present and above minimum voltage.
+// Skips if no secondary battery is detected; fails if its voltage is too low.
 #pragma once
 #include "AbstractCheck.h"
 

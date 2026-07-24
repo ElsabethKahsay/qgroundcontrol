@@ -13,6 +13,7 @@ CompassYawConsistencyCheck::CompassYawConsistencyCheck(TelemetryBridge *telemetr
     m_telemetry = telemetry;
 }
 
+// Fail if |heading - groundCourse| (wrapping at 360) exceeds maxDeviationDeg.
 void CompassYawConsistencyCheck::evaluate()
 {
     if (!hasTelemetry()) {

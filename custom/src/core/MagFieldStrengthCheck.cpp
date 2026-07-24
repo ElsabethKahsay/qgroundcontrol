@@ -17,6 +17,7 @@ MagFieldStrengthCheck::MagFieldStrengthCheck(TelemetryBridge *telemetry,
     m_telemetry = telemetry;
 }
 
+// Fail if computed field magnitude is outside the min-max range; pass if within bounds.
 void MagFieldStrengthCheck::evaluate()
 {
     if (!hasTelemetry()) {

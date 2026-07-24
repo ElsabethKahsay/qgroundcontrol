@@ -1,3 +1,5 @@
+// Checks that the RC throttle channel is at its minimum (stick-down) position.
+// Fails if throttle is above minimum; warns if there is no RC signal on the throttle channel.
 #pragma once
 #include "AbstractCheck.h"
 

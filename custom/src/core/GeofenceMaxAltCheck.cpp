@@ -13,6 +13,8 @@ GeofenceMaxAltCheck::GeofenceMaxAltCheck(TelemetryBridge *telemetry,
     m_telemetry = telemetry;
 }
 
+// Passes when GF_MAX_ALT >= m_minAlt (a reasonable ceiling is configured).
+// Warns if below minimum (very low limit) or < 1m (no altitude limit set).
 void GeofenceMaxAltCheck::evaluate()
 {
     if (!hasTelemetry()) {

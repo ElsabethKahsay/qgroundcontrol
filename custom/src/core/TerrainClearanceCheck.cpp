@@ -11,6 +11,8 @@ TerrainClearanceCheck::TerrainClearanceCheck(TelemetryBridge *telemetry, double 
     m_telemetry = telemetry;
 }
 
+// Pass: terrainHeight >= minTerrainClearance (default 5 m).
+// Fail: terrainHeight < minTerrainClearance. Skipped if no TERRAIN_REPORT data.
 void TerrainClearanceCheck::evaluate()
 {
     if (!hasTelemetry()) {

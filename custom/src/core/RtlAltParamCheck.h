@@ -1,3 +1,5 @@
+// Verifies the RTL return-to-launch altitude is within a safe range (between min and max).
+// Warns if the altitude is too low (risk of obstacle strike) or exceeds the maximum recommendation.
 #pragma once
 #include "AbstractCheck.h"
 

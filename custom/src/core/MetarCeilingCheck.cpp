@@ -13,6 +13,8 @@ MetarCeilingCheck::MetarCeilingCheck(TelemetryBridge *telemetry, QObject *parent
     m_telemetry = telemetry;
 }
 
+// Pass: no ceiling reported (clear skies) or ceiling >= configured threshold.
+// Warning: ceiling below threshold. Fail: ceiling below 60 m absolute minimum.
 void MetarCeilingCheck::evaluate()
 {
     if (!hasTelemetry()) {

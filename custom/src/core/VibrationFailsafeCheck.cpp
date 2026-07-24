@@ -10,6 +10,8 @@ VibrationFailsafeCheck::VibrationFailsafeCheck(TelemetryBridge *telemetry, QObje
     m_telemetry = telemetry;
 }
 
+// Passes when VIBE_ACTION >= 1 (failsafe action is configured).
+// Warns when VIBE_ACTION == 0, meaning the vehicle will not react to high vibration.
 void VibrationFailsafeCheck::evaluate()
 {
     if (!hasTelemetry()) {

@@ -15,6 +15,7 @@ AccelConsistencyCheck::AccelConsistencyCheck(TelemetryBridge *telemetry,
     m_telemetry = telemetry;
 }
 
+// Fail if max per-axis difference between IMU1 and IMU2 exceeds m_maxDiff m/s^2.
 void AccelConsistencyCheck::evaluate()
 {
     if (!hasTelemetry()) {

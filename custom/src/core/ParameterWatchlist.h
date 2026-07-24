@@ -4,6 +4,7 @@
 #include <QVector>
 #include <QSet>
 
+/// Static definition of a UAV parameter: name, category code, description, and safe value range.
 struct ParameterDef {
     const char *name;
     const char *category;   // matching SRS category code e.g. "SAF", "NAV"
@@ -13,6 +14,10 @@ struct ParameterDef {
     float defaultValue;
 };
 
+/// Provides the master list of parameters to watch during preflight,
+/// organized by category (POW, NAV, COM, SAF, ARM).
+/// Used by UavParameterManager to build the watchlist and by the checklist
+/// UI to display parameter thresholds and current values.
 namespace ParameterWatchlist {
 
 inline const QVector<ParameterDef> &all()
@@ -92,6 +97,7 @@ inline const QVector<ParameterDef> &all()
     return params;
 }
 
+/// Return all parameter names as a QSet (for building a UavParameterManager watchlist).
 inline QSet<QString> names()
 {
     QSet<QString> s;
@@ -101,6 +107,7 @@ inline QSet<QString> names()
     return s;
 }
 
+/// Return parameter names belonging to a specific category code (e.g. "SAF", "NAV").
 inline QSet<QString> namesForCategory(const QString &category)
 {
     QSet<QString> s;

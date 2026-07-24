@@ -1,3 +1,5 @@
+// Verifies EKF estimator health flags and innovation ratios are within acceptable limits.
+// Fails when required health bits are missing, fault flags are set, or any innovation ratio exceeds the max.
 #pragma once
 #include "AbstractCheck.h"
 

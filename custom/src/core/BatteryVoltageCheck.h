@@ -1,3 +1,5 @@
+// Checks battery voltage against minimum threshold derived from vehicle params or constructor defaults.
+// Fails when voltage drops below the effective minimum and remaining capacity is also insufficient.
 #pragma once
 #include "AbstractCheck.h"
 

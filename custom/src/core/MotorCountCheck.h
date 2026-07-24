@@ -1,3 +1,5 @@
+// Checks that detected motor count matches the airframe's expected motor count.
+// Fails when FRAME_CLASS is invalid or motor count mismatches expected value.
 #pragma once
 #include "AbstractCheck.h"
 

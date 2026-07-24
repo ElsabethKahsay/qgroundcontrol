@@ -1,3 +1,5 @@
+// Verifies the vehicle heartbeat link is active and connection quality is acceptable.
+// Fails when no heartbeat received or connection quality drops below threshold.
 #pragma once
 #include "AbstractCheck.h"
 

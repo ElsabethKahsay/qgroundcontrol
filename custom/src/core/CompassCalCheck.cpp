@@ -12,6 +12,7 @@ CompassCalCheck::CompassCalCheck(TelemetryBridge *telemetry,
     m_telemetry = telemetry;
 }
 
+// Warn if compass unhealthy or quality < 2; pass if healthy with good quality.
 void CompassCalCheck::evaluate()
 {
     if (!hasTelemetry()) {

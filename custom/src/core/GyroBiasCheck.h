@@ -1,3 +1,5 @@
+// Checks that gyroscope bias magnitude is below a configurable threshold.
+// Fails when bias vector magnitude exceeds maxBiasRadS, indicating poor IMU calibration.
 #pragma once
 #include "AbstractCheck.h"
 

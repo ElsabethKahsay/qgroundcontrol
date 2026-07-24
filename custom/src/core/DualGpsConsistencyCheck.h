@@ -1,3 +1,5 @@
+// Checks positional agreement between primary and secondary GPS receivers via haversine distance.
+// Skips if no secondary GPS; fails when divergence exceeds the configured meter limit.
 #pragma once
 #include "AbstractCheck.h"
 

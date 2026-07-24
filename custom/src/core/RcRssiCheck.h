@@ -1,3 +1,5 @@
+// Checks that both RC and radio link signal strengths are above their minimum thresholds.
+// Fails when channel data is stale or both links are weak; warns if only one link is below threshold.
 #pragma once
 #include "AbstractCheck.h"
 

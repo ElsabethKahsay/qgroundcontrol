@@ -30,6 +30,7 @@ void AirspeedCheck::evaluate()
         return;
     }
 
+    // Skip if zero (no sensor), fail if below min, pass otherwise.
     if (airspeed < m_minAirspeed) {
         setStatus(CheckStatus::Failed,
                   QStringLiteral("Airspeed %1 m/s — need %2 m/s")

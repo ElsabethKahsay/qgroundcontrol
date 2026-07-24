@@ -1,3 +1,5 @@
+// Verifies battery failsafe parameters are configured with a reasonable threshold and action.
+// Fails if threshold is out of range or action is missing; warns if failsafe is disabled.
 #pragma once
 #include "AbstractCheck.h"
 

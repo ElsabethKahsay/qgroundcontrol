@@ -13,6 +13,7 @@ GpsFixCheck::GpsFixCheck(TelemetryBridge *telemetry, int minSatellites,
     m_telemetry = telemetry;
 }
 
+// Fail if fix < 3D, sats < min, or HDOP > max. Warn if position is at origin (0,0).
 void GpsFixCheck::evaluate()
 {
     if (!hasTelemetry()) {

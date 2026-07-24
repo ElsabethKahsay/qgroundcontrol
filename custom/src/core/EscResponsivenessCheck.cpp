@@ -14,6 +14,7 @@ EscResponsivenessCheck::EscResponsivenessCheck(TelemetryBridge *telemetry,
     m_telemetry = telemetry;
 }
 
+// Pass: all motor PWM outputs within [minPwm, maxPwm] range. Fail: any channel invalid.
 void EscResponsivenessCheck::evaluate()
 {
     if (!hasTelemetry()) {

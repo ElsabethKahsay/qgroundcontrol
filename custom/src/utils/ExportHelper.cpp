@@ -21,6 +21,7 @@ ExportHelper::ExportHelper(QObject *parent)
 {
 }
 
+// Local helper: returns ~/Documents/UAVPreflightReports/, creating it if needed.
 static QString exportDir()
 {
     QString d = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
@@ -33,6 +34,32 @@ static QString exportDir()
 QString ExportHelper::defaultExportDir() const
 {
     return exportDir();
+}
+
+// ── Compliance log access ───────────────────────────────────────────────
+// Thin passthrough to DatabaseManager for QML convenience.
+
+bool ExportHelper::saveComplianceLog(const QString &logId, const QString &vehicleId,
+                                     const QString &vehicleType, const QString &operatorId,
+                                     const QString &logJson, const QString &telemetrySnapshot)
+{
+    return DatabaseManager::instance().saveComplianceLog(logId, vehicleId, vehicleType,
+                                                         operatorId, logJson, telemetrySnapshot);
+}
+
+QString ExportHelper::loadComplianceLog(const QString &logId)
+{
+    return DatabaseManager::instance().loadComplianceLog(logId);
+}
+
+QStringList ExportHelper::listComplianceLogs(const QString &vehicleId, int limit)
+{
+    return DatabaseManager::instance().listComplianceLogs(vehicleId, limit);
+}
+
+bool ExportHelper::deleteComplianceLog(const QString &logId)
+{
+    return DatabaseManager::instance().deleteComplianceLog(logId);
 }
 
 static QString makePath(const QString &baseName, const QString &ext)
@@ -109,6 +136,7 @@ static QString escHtml(const QString &s)
     return r;
 }
 
+// Local helper: generates an HTML <span> badge with the given label and background color.
 static QString badge(const QString &label, const QString &color)
 {
     return QStringLiteral("<span style=\"display:inline-block;padding:2px 10px;border-radius:4px;"
@@ -116,6 +144,13 @@ static QString badge(const QString &label, const QString &color)
         .arg(color, escHtml(label));
 }
 
+/**
+ * @brief Generate a styled HTML compliance report from a JSON record.
+ *
+ * Renders telemetry snapshot, sensor health, checklist item results,
+ * final preflight checks, and payload status into a single-page report
+ * with pass/fail badges.  Writes to ~/Documents/UAVPreflightReports/.
+ */
 QString ExportHelper::saveComplianceHtml(const QString &baseName, const QString &jsonRecord)
 {
     QJsonDocument doc = QJsonDocument::fromJson(jsonRecord.toUtf8());
@@ -334,7 +369,10 @@ QString ExportHelper::generateHash(const QString &data)
     return QString::fromLatin1(hash.toHex());
 }
 
-// ── Phase 8: Structured CSV export ─────────────────────────────────
+// ── Phase 8: Structured CSV export ─────────────────────────────────────
+// Sectioned CSV files with [Section] headers that can be parsed by
+// downstream tools.  Each export includes session metadata, check
+// results, overrides, and optionally battery health data.
 
 QString ExportHelper::escCsv(const QString &value)
 {
@@ -346,6 +384,12 @@ QString ExportHelper::escCsv(const QString &value)
     return value;
 }
 
+/**
+ * @brief Gather operator overrides from QSettings for inclusion in exports.
+ *
+ * Overrides are stored under "preflight_overrides/<sysId>" groups in
+ * QSettings.  Returns CSV lines in the format: sysId,checkId,status:reason.
+ */
 QStringList ExportHelper::collectOverrideLines(const QString &deviceUid) const
 {
     Q_UNUSED(deviceUid)
@@ -539,6 +583,7 @@ QString ExportHelper::saveVehicleHistoryCsv(const QString &deviceUid, const QStr
     return path;
 }
 
+/** @brief Stub — fleet-wide CSV export awaiting multi-vehicle support (Phase 5). */
 QString ExportHelper::saveFleetCsv(const QString &baseName)
 {
     // Stub: multi-vehicle / fleet-wide export not yet available
@@ -558,6 +603,12 @@ QString ExportHelper::saveFleetCsv(const QString &baseName)
 
 // ── Phase 8: Human-readable HTML report ─────────────────────────────
 
+/**
+ * @brief Build a styled HTML report for a single preflight session.
+ *
+ * Includes summary counts (passed/failed/warned/skipped), a table of
+ * all check results with color-coded badges, and any operator overrides.
+ */
 QString ExportHelper::buildSessionHtml(int sessionId, const QString &deviceUid) const
 {
     DatabaseManager &db = DatabaseManager::instance();
@@ -663,6 +714,12 @@ QString ExportHelper::buildSessionHtml(int sessionId, const QString &deviceUid) 
     return html;
 }
 
+/**
+ * @brief Build a styled HTML report for a vehicle's full history.
+ *
+ * Sections: vehicle summary stats, flight session table, battery cycle
+ * history with capacity/sag/voltage, and operator override history.
+ */
 QString ExportHelper::buildVehicleHtml(const QString &deviceUid) const
 {
     DatabaseManager &db = DatabaseManager::instance();
@@ -784,6 +841,7 @@ QString ExportHelper::buildVehicleHtml(const QString &deviceUid) const
     return html;
 }
 
+/** @brief Build and save a session HTML report to disk. */
 QString ExportHelper::saveSessionReport(int sessionId, const QString &baseName, const QString &deviceUid)
 {
     QString html = buildSessionHtml(sessionId, deviceUid);
@@ -796,6 +854,7 @@ QString ExportHelper::saveSessionReport(int sessionId, const QString &baseName, 
     return path;
 }
 
+/** @brief Build and save a full vehicle history HTML report to disk. */
 QString ExportHelper::saveVehicleReport(const QString &deviceUid, const QString &baseName)
 {
     QString html = buildVehicleHtml(deviceUid);

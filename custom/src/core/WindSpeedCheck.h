@@ -1,3 +1,5 @@
+// Checks vehicle-reported wind speed against a configurable maximum (default 10 m/s).
+// Fails when wind speed exceeds the threshold; skips if no wind data is available.
 #pragma once
 #include "AbstractCheck.h"
 

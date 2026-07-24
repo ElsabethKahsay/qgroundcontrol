@@ -15,6 +15,7 @@ VehicleProfileManager::VehicleProfileManager(QObject *parent)
 {
 }
 
+/// Swap the telemetry bridge, reconnecting signals for connection and arm state.
 void VehicleProfileManager::setTelemetryBridge(TelemetryBridge *bridge)
 {
     if (m_telemetry == bridge) return;
@@ -30,6 +31,9 @@ void VehicleProfileManager::setTelemetryBridge(TelemetryBridge *bridge)
     }
 }
 
+/// Called when the telemetry link connects or disconnects.
+/// On disconnect: ends the flight session, accumulates flight hours, saves last GPS.
+/// On connect: resolves device UID, upserts profile in DB, starts a new flight session.
 void VehicleProfileManager::onConnectionChanged()
 {
     if (!m_telemetry || !m_telemetry->isConnected()) {
@@ -39,9 +43,10 @@ void VehicleProfileManager::onConnectionChanged()
             DatabaseManager::instance().endFlightSession(m_flightSessionId, sec);
             if (!m_currentDeviceUid.isEmpty()) {
                 DatabaseManager::instance().updateFlightHours(m_currentDeviceUid, sec / 3600.0);
+                DatabaseManager::instance().incrementFlightCount(m_currentDeviceUid);
             }
         }
-        // Auto-save GPS position on disconnect
+        // Auto-save the vehicle's last known GPS position on disconnect.
         if (!m_currentDeviceUid.isEmpty()) {
             double lat = m_telemetry ? m_telemetry->gpsLatitude() : 0.0;
             double lon = m_telemetry ? m_telemetry->gpsLongitude() : 0.0;
@@ -65,7 +70,7 @@ void VehicleProfileManager::onConnectionChanged()
     QString apType = autopilotTypeString();
     QString afType = airframeTypeString();
 
-    // Expand profile with frame class, motor count, GPS position
+    // Read airframe/frame parameters to expand the stored profile with hardware details.
     int frameClass = -1, frameType = -1, motorCount = 0;
     double gpsLat = 0.0, gpsLon = 0.0;
     if (m_telemetry) {
@@ -75,6 +80,7 @@ void VehicleProfileManager::onConnectionChanged()
             frameClass = static_cast<int>(m_telemetry->parameterValue(QStringLiteral("FRAME_CLASS"), -1.0f));
         if (m_telemetry->hasParameter(QStringLiteral("FRAME_TYPE")))
             frameType = static_cast<int>(m_telemetry->parameterValue(QStringLiteral("FRAME_TYPE"), -1.0f));
+        // PX4 uses CA_AIRFRAME where ArduPilot uses FRAME_CLASS — both map to frameClass here.
         if (m_telemetry->hasParameter(QStringLiteral("CA_AIRFRAME")))
             frameClass = static_cast<int>(m_telemetry->parameterValue(QStringLiteral("CA_AIRFRAME"), -1.0f));
         motorCount = m_telemetry->motorCount();
@@ -103,6 +109,8 @@ void VehicleProfileManager::onConnectionChanged()
     emit currentVehicleChanged();
 }
 
+/// Resolve a persistent device identifier for the connected vehicle.
+/// Priority: hardware UID (stable across sessions) > composite key > system ID (ephemeral).
 QString VehicleProfileManager::resolveDeviceUid()
 {
     if (!m_telemetry) return {};
@@ -115,7 +123,7 @@ QString VehicleProfileManager::resolveDeviceUid()
         return v->vehicleUIDStr();
     }
 
-    // Fallback: composite of autopilot type + airframe type
+    // Fallback: composite of autopilot type + airframe type — not unique per board but stable.
     QString composite = QStringLiteral("composite:%1:%2")
         .arg(autopilotTypeString(), airframeTypeString());
     if (!composite.isEmpty() && composite != "composite::") {
@@ -195,6 +203,8 @@ QString VehicleProfileManager::autopilotTypeString()
     return QStringLiteral("Generic");
 }
 
+/// Determine airframe type string from firmware parameters (most accurate),
+/// falling back to HEARTBEAT-based vehicle type detection.
 QString VehicleProfileManager::airframeTypeString()
 {
     if (!m_telemetry) return {};
@@ -245,6 +255,7 @@ QString VehicleProfileManager::airframeTypeString()
     return QStringLiteral("Unknown");
 }
 
+/// Set the active battery serial number and register/upsert it in the battery database.
 void VehicleProfileManager::setBatterySerial(const QString &serial, const QString &operatorLabel)
 {
     m_batterySerial = serial;
@@ -264,11 +275,32 @@ QStringList VehicleProfileManager::knownVehicles()
     return DatabaseManager::instance().listVehicles();
 }
 
+bool VehicleProfileManager::deleteVehicle(const QString &deviceUid)
+{
+    return DatabaseManager::instance().deleteVehicle(deviceUid);
+}
+
+bool VehicleProfileManager::incrementFlightCount(const QString &deviceUid)
+{
+    return DatabaseManager::instance().incrementFlightCount(deviceUid);
+}
+
+bool VehicleProfileManager::updateVehicleProfile(const QString &deviceUid, const QString &pilotName,
+                                                   const QString &notes)
+{
+    return DatabaseManager::instance().updateVehicleProfile(deviceUid, pilotName, notes);
+}
+
+bool VehicleProfileManager::updateVehicleFirmware(const QString &fingerprint, const QString &firmwareVersion)
+{
+    return DatabaseManager::instance().updateVehicleFirmware(fingerprint, firmwareVersion);
+}
+
 void VehicleProfileManager::setPayloadWeightKg(double kg)
 {
     if (qFuzzyCompare(m_payloadWeightKg, kg)) return;
     m_payloadWeightKg = qMax(0.0, kg);
-    // Persist to current flight session if active
+    // Persist to current flight session if one is active.
     if (m_flightSessionId > 0) {
         DatabaseManager::instance().updateFlightSessionPayload(m_flightSessionId, m_payloadWeightKg);
     }
@@ -305,6 +337,10 @@ void VehicleProfileManager::setPlanLongitude(double lon)
     emit planLongitudeChanged();
 }
 
+/// Track arm/disarm transitions.
+/// On arm: start the armed timer and record battery % for delta calculation.
+/// On disarm: if armed long enough (configurable threshold, default 30 s), record
+/// a battery cycle, estimate energy consumption, and log flight distance.
 void VehicleProfileManager::_onArmedChanged(bool armed)
 {
     if (armed == m_wasArmed)
@@ -323,6 +359,7 @@ void VehicleProfileManager::_onArmedChanged(bool armed)
         return 30000;
     }();
     if (m_armedTimer.isValid() && m_armedTimer.elapsed() > armedThresholdMs) {
+            // Record a battery cycle (discharge event) for battery health tracking.
             if (!m_batterySerial.isEmpty() && m_flightSessionId > 0) {
                 double capacityAtFull = m_telemetry
                     ? m_telemetry->property("batteryPercent").toDouble() / 100.0
@@ -335,14 +372,16 @@ void VehicleProfileManager::_onArmedChanged(bool armed)
                            .arg(m_batterySerial).arg(m_flightSessionId);
             }
 
-            // Record energy consumption for power model calibration
+            // Record energy consumption for power model calibration.
             if (m_flightSessionId > 0 && m_telemetry) {
                 double disarmPct = m_telemetry->property("batteryPercent").toDouble();
                 double pctUsed = 0.0;
                 if (m_armBatteryPct > 0 && disarmPct >= 0)
                     pctUsed = qBound(0.0, m_armBatteryPct - disarmPct, 100.0);
                 double batteryVoltage = m_telemetry->property("batteryVoltage").toDouble();
-                double energyWh = pctUsed * batteryVoltage * 0.45;  // rough estimate: 0.45Ah per % used * voltage
+                // Use battery capacity parameter if available for accurate Wh calculation;
+                // fall back to a rough 0.45 Ah-per-percent estimate otherwise.
+                double energyWh = pctUsed * batteryVoltage * 0.45;
                 if (m_telemetry->hasParameter("BAT_CAPACITY")) {
                     float capMah = m_telemetry->parameterValue("BAT_CAPACITY", 0.0f);
                     if (capMah > 0)
@@ -355,7 +394,7 @@ void VehicleProfileManager::_onArmedChanged(bool armed)
 
                 double distM = m_telemetry->property("missionTotalDistance").toDouble();
                 if (distM <= 0.0) {
-                    // Fallback: estimate from ground speed × duration
+                    // Fallback: estimate from ground speed * duration
                     double gndSpd = m_telemetry->property("groundSpeed").toDouble();
                     double durSec = m_armedTimer.elapsed() / 1000.0;
                     distM = gndSpd * durSec;

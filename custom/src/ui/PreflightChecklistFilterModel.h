@@ -2,6 +2,8 @@
 #include <QSortFilterProxyModel>
 #include <QAbstractListModel>
 
+/// Proxy model that filters PreflightChecklistModel rows by category (e.g. "Sensors", "Manual").
+/// Set categoryId to -1 to show all categories.
 class PreflightChecklistFilterModel : public QSortFilterProxyModel {
     Q_OBJECT
     Q_PROPERTY(int categoryId READ categoryId WRITE setCategoryId NOTIFY categoryIdChanged)

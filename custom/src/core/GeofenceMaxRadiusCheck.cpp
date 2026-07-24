@@ -13,6 +13,8 @@ GeofenceMaxRadiusCheck::GeofenceMaxRadiusCheck(TelemetryBridge *telemetry,
     m_telemetry = telemetry;
 }
 
+// Passes when GF_MAX_HORIZ_DIST >= m_minRadius (a reasonable radius is configured).
+// Warns if below minimum (very small radius) or < 1m (no radius limit set).
 void GeofenceMaxRadiusCheck::evaluate()
 {
     if (!hasTelemetry()) {

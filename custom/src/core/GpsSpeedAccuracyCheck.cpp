@@ -17,6 +17,7 @@ GpsSpeedAccuracyCheck::GpsSpeedAccuracyCheck(TelemetryBridge *telemetry,
     m_telemetry = telemetry;
 }
 
+// Primary: fail if vel_acc > max. Fallback: warn if HDOP high or speed jitter exceeds threshold.
 void GpsSpeedAccuracyCheck::evaluate()
 {
     if (!hasTelemetry()) {

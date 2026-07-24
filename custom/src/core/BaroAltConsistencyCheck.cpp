@@ -29,6 +29,7 @@ void BaroAltConsistencyCheck::evaluate()
         return;
     }
 
+    // Pass if GPS and baro altitudes differ by no more than m_maxDeltaM; warn otherwise.
     double delta = qAbs(gpsAlt - relAlt);
     setCurrentValue(delta);
 

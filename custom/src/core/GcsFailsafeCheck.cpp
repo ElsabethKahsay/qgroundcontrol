@@ -10,6 +10,8 @@ GcsFailsafeCheck::GcsFailsafeCheck(TelemetryBridge *telemetry, QObject *parent)
     m_telemetry = telemetry;
 }
 
+// Passes when FS_GCS_ENABLE >= 1 (GCS failsafe action is configured).
+// Warns when FS_GCS_ENABLE == 0, meaning the vehicle takes no action if the GCS link is lost.
 void GcsFailsafeCheck::evaluate()
 {
     if (!hasTelemetry()) {

@@ -1,3 +1,5 @@
+// Compares compass heading against GPS ground course to detect magnetic deviation.
+// Fails when the angular difference exceeds the configured degree threshold.
 #pragma once
 #include "AbstractCheck.h"
 

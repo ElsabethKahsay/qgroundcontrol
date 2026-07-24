@@ -11,6 +11,8 @@ RcModeSwitchCheck::RcModeSwitchCheck(TelemetryBridge *telemetry,
     m_telemetry = telemetry;
 }
 
+// Passes when the mode switch channel value is between 500 and 2500 (valid PWM range).
+// Warns if the channel index is out of range, signal is below 800, or no channel data is available.
 void RcModeSwitchCheck::evaluate()
 {
     if (!hasTelemetry()) {

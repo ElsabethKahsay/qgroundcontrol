@@ -46,6 +46,7 @@ void ImuCalCheck::evaluate()
         return;
     }
 
+    // Pass if gyro/accel health bits are set, imuHealthy is true, and quality >= 2.
     QVariant qualityVar = getTelemetryVariant(QStringLiteral("imuDataQuality"));
     if (!qualityVar.isValid()) {
         setStatus(CheckStatus::Skipped, QStringLiteral("IMU data quality not reported"));

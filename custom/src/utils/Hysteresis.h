@@ -1,4 +1,22 @@
 #pragma once
+
+// ============================================================================
+// Hysteresis — Signal processing utility templates for smoothing noisy
+// telemetry data in the preflight checklist.
+//
+// DebounceFilter<T> — Suppresses rapid fluctuations by requiring a value
+//   to remain stable (within tolerance) for a configurable period before
+//   accepting it.  Used for things like GPS lock status, sensor health
+//   flags, and battery percentage readings.
+//
+// AveragingFilter<T> — Maintains a sliding time window of samples and
+//   computes running statistics (average, min, max).  Prunes stale
+//   samples on each addSample() call.  Used for smoothing wind speed,
+//   voltage readings, and other noisy sensor values.
+//
+// Both templates are header-only and work with any numeric type.
+// ============================================================================
+
 #include <QObject>
 #include <QElapsedTimer>
 #include <QVector>
@@ -6,6 +24,14 @@
 #include <algorithm>
 #include <cmath>
 
+/**
+ * @brief Debounce filter — accepts a value only after it has been stable
+ *        for the configured duration (default 2 seconds).
+ *
+ * Call update() with the latest sensor reading each time it arrives.
+ * Returns true only once the value hasn't changed beyond the tolerance
+ * (0.001) for the full stable period.  Resets the timer on any change.
+ */
 template<typename T>
 class DebounceFilter {
 public:
@@ -39,6 +65,13 @@ private:
     double m_tolerance = 0.001;
 };
 
+/**
+ * @brief Sliding-window averaging filter with min/max tracking.
+ *
+ * Maintains samples within a configurable time window (default 3 seconds).
+ * Stale samples are automatically pruned on each addSample() call.
+ * Provides average(), minimum(), and maximum() over the active window.
+ */
 template<typename T>
 class AveragingFilter {
 public:
@@ -82,6 +115,7 @@ public:
     void reset() { m_samples.clear(); }
 
 private:
+    /** Remove samples older than the time window to keep memory bounded. */
     void prune() {
         QDateTime cutoff = QDateTime::currentDateTime().addMSecs(-m_windowMs);
         auto it = std::remove_if(m_samples.begin(), m_samples.end(),

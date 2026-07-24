@@ -1,3 +1,5 @@
+// Verifies the barometer sensor is healthy via SYS_STATUS and reports valid pressure/temp.
+// Fails on sensor health faults, missing data, or out-of-range temperature.
 #pragma once
 #include "AbstractCheck.h"
 

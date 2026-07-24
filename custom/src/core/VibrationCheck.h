@@ -1,3 +1,5 @@
+// Checks IMU vibration levels on all three axes against a configurable threshold.
+// Fails when any axis exceeds the limit or sensor clipping is detected.
 #pragma once
 #include "AbstractCheck.h"
 

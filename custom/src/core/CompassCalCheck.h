@@ -1,3 +1,5 @@
+// Checks compass sensor health flag and data quality level from the flight controller.
+// Warns if compass is unhealthy or data quality is below acceptable threshold.
 #pragma once
 #include "AbstractCheck.h"
 

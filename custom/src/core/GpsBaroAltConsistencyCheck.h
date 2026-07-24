@@ -1,3 +1,5 @@
+// Compares GPS altitude with barometric relative altitude to detect sensor disagreement.
+// Warns when the absolute delta exceeds the configured meter limit.
 #pragma once
 #include "AbstractCheck.h"
 

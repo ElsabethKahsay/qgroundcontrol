@@ -27,6 +27,7 @@ double DualGpsConsistencyCheck::_haversineM(double lat1, double lon1,
     return 6371000.0 * 2.0 * qAtan2(qSqrt(a), qSqrt(1.0 - a));
 }
 
+// Compute haversine distance between GPS1 and GPS2 positions; fail if divergence > max.
 void DualGpsConsistencyCheck::evaluate()
 {
     if (!hasTelemetry()) {

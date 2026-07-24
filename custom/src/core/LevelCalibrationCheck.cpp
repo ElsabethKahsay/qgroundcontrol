@@ -33,6 +33,7 @@ void LevelCalibrationCheck::evaluate()
     double pitchDeg = qAbs(pitchTrim);
     double rollDeg = qAbs(rollTrim);
 
+    // Pass if both pitch and roll trim offsets are within threshold; warn per-axis otherwise.
     if (pitchDeg <= m_maxPitchRollDeg && rollDeg <= m_maxPitchRollDeg) {
         setStatus(CheckStatus::Passed,
                   QStringLiteral("Pitch %1° Roll %2° — OK")

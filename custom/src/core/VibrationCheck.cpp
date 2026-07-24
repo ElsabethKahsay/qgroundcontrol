@@ -13,6 +13,8 @@ VibrationCheck::VibrationCheck(TelemetryBridge *telemetry,
     m_telemetry = telemetry;
 }
 
+// Passes when X, Y, and Z vibration are all below the threshold (COM_ARM_VIBE if available).
+// Fails immediately on sensor clipping; fails if any axis exceeds threshold, listing each violation.
 void VibrationCheck::evaluate()
 {
     if (!hasTelemetry()) {

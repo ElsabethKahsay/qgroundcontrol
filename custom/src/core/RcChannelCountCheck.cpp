@@ -35,6 +35,7 @@ void RcChannelCountCheck::evaluate()
     double paramCnt = getTelemetryDouble(QStringLiteral("param_RC_CHAN_CNT"));
 
     int expected = static_cast<int>(paramCnt);
+    // Pass if received channel count >= expected; fail if fewer channels are received.
     if (chanCount >= expected) {
         setStatus(CheckStatus::Passed,
                   QStringLiteral("%1 channels (expected %2) — OK")

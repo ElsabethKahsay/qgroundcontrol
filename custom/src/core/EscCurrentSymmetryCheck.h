@@ -1,3 +1,5 @@
+// Checks that ESC current draw is balanced across all motors within a deviation ratio.
+// Warns when any ESC current deviates more than maxDevRatio (default 20%) from the mean.
 #pragma once
 #include "AbstractCheck.h"
 

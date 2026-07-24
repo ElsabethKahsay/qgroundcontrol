@@ -39,6 +39,13 @@ public:
      */
     Q_INVOKABLE QVariantList loadTemplate(const QString &templateId);
 
+    /**
+     * @brief Delete a checklist template from the database
+     * @param templateId Unique template identifier
+     * @return true if deleted successfully, false on error
+     */
+    Q_INVOKABLE bool deleteTemplate(const QString &templateId);
+
 private:
     explicit TemplateManager(QObject *parent = nullptr);
     ~TemplateManager() override;

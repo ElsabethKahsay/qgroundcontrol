@@ -12,6 +12,8 @@ EscVoltageConsistencyCheck::EscVoltageConsistencyCheck(TelemetryBridge *telemetr
     m_telemetry = telemetry;
 }
 
+// Pass: all ESC voltages within maxDeltaV (default 0.5 V) of battery voltage.
+// Fail: any ESC voltage mismatch exceeds threshold.
 void EscVoltageConsistencyCheck::evaluate()
 {
     if (!hasTelemetry()) {

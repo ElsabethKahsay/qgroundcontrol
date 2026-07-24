@@ -31,6 +31,7 @@ void HeartbeatCheck::evaluate()
         return;
     }
 
+    // Pass if quality >= 10%; warn on weak/timeout; pending if no heartbeat yet.
     if (quality < 10) {
         QString msg = quality <= 0
             ? QStringLiteral("Heartbeat timeout — %1s").arg(m_timeoutSec)

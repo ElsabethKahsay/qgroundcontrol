@@ -13,6 +13,9 @@ WeatherWindCheck::WeatherWindCheck(TelemetryBridge *telemetry, QObject *parent)
     m_telemetry = telemetry;
 }
 
+// Pass: sustained wind <= threshold and gusts <= gust threshold.
+// Warning: wind slightly exceeds threshold; Fail: wind > 125% of threshold.
+// Skipped if auto-weather is disabled or no METAR data is available.
 void WeatherWindCheck::evaluate()
 {
     if (!hasTelemetry()) {

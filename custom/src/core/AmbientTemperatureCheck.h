@@ -1,3 +1,5 @@
+// Checks onboard barometric temperature sensor against safe operating range.
+// Fails when temperature is outside the configured min/max range (default -10 to 50 C).
 #pragma once
 #include "AbstractCheck.h"
 

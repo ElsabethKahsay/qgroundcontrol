@@ -10,10 +10,12 @@
 MaintenanceTracker::MaintenanceTracker(QObject *parent)
     : QObject(parent)
 {
+    // Periodic in-flight threshold checking
     connect(&m_tickTimer, &QTimer::timeout, this, &MaintenanceTracker::onTick);
     refreshComponents();
 }
 
+/** @brief Add a new component to track, then refresh the component list. */
 void MaintenanceTracker::addComponent(const QString &name, const QString &type,
                                        double maxHours, int maxCycles)
 {
@@ -33,6 +35,7 @@ void MaintenanceTracker::resetComponent(int id, const QString &notes)
     refreshComponents();
 }
 
+/** @brief Reload the component list from DatabaseManager and notify QML. */
 void MaintenanceTracker::refreshComponents()
 {
     QString json = DatabaseManager::instance().listComponentsJson();
@@ -46,6 +49,15 @@ void MaintenanceTracker::refreshComponents()
     emit componentsChanged();
 }
 
+/**
+ * @brief Handle arm/disarm state transitions.
+ *
+ * On arm: starts a timer to track elapsed armed time and a periodic
+ * tick for in-flight threshold checks.
+ * On disarm: calculates total elapsed armed time, distributes it to
+ * all tracked components as hours, increments their cycle counts,
+ * and checks for threshold violations.
+ */
 void MaintenanceTracker::setArmed(bool armed)
 {
     if (m_armed == armed) return;
@@ -67,6 +79,7 @@ void MaintenanceTracker::setArmed(bool armed)
                     int id = c.value(QStringLiteral("id")).toInt();
                     double cur = c.value(QStringLiteral("currentHours")).toDouble();
                     DatabaseManager::instance().updateComponentHours(id, cur + elapsedHours);
+                    DatabaseManager::instance().incrementComponentCycle(id);
                 }
                 refreshComponents();
                 checkThresholds();
@@ -81,6 +94,13 @@ void MaintenanceTracker::onTick()
     checkThresholds();
 }
 
+/**
+ * @brief Check all components against their hour and cycle limits.
+ *
+ * Computes usage as a percentage (current / max * 100) and emits
+ * maintenanceWarning or maintenanceCritical signals for any component
+ * that exceeds the thresholds from Config.h.
+ */
 void MaintenanceTracker::checkThresholds()
 {
     for (const QVariant &cv : m_components) {

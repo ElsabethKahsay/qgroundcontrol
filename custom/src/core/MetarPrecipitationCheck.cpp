@@ -13,6 +13,7 @@ MetarPrecipitationCheck::MetarPrecipitationCheck(TelemetryBridge *telemetry, QOb
     m_telemetry = telemetry;
 }
 
+// Pass: no precipitation in METAR. Warning: any precipitation reported (severe or otherwise).
 void MetarPrecipitationCheck::evaluate()
 {
     if (!hasTelemetry()) {

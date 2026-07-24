@@ -46,6 +46,8 @@ double BatteryVoltageCheck::effectiveMinVoltage() const
     return 15.0;
 }
 
+// Pass if voltage >= min threshold. Warn if low on capacity but voltage still ok.
+// Fail if voltage is below threshold and capacity is also insufficient.
 void BatteryVoltageCheck::evaluate()
 {
     if (!hasTelemetry()) {

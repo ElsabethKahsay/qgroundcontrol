@@ -13,6 +13,8 @@ WeatherWindGustCheck::WeatherWindGustCheck(TelemetryBridge *telemetry, QObject *
     m_telemetry = telemetry;
 }
 
+// Pass: METAR is fresh and gusts are <= threshold (or no gusts reported).
+// Warning: requires manual confirmation when no fresh METAR or gusts exceed threshold.
 void WeatherWindGustCheck::evaluate()
 {
     if (!hasTelemetry()) {
