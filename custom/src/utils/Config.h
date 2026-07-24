@@ -110,9 +110,6 @@ constexpr int kMotorCountOcta      = 8;
 constexpr int kMotorCountFixedWing = 1;
 constexpr int kMotorCountVtolQuad  = 4;
 
-// ── EKF / Health thresholds ─────────────────────────────────────────────────
-constexpr float kEkfVarianceMax = 1.0f;
-
 // ── Compliance / Part 107 ────────────────────────────────────────────────────
 constexpr const char* kDefaultPilotName    = "";
 constexpr const char* kDefaultLicense      = "";
@@ -122,22 +119,11 @@ constexpr const char* kDefaultAircraftReg  = "";
 constexpr int kMaintWarningPercent  = 80;
 constexpr int kMaintCriticalPercent = 100;
 
-// ── PreflightPlugin thresholds ──────────────────────────────────────────────
-constexpr double kBatteryHealthVoltageThreshold = 80.0;
-constexpr double kBatteryHealthStddevThreshold = 0.5;
-constexpr double kMissionEnergyMargin = 0.60;
 
-// ── EKF Flags ───────────────────────────────────────────────────────────────
-constexpr uint16_t kEfkFlagVelocity  = 1 << 0;
-constexpr uint16_t kEfkFlagPosHoriz  = 1 << 1;
-constexpr uint16_t kEfkFlagPosVert   = 1 << 2;
-constexpr uint16_t kEfkFlagMag       = 1 << 3;
-constexpr uint16_t kEfkFlagBaro      = 1 << 4;
-constexpr uint16_t kEfkFlagGps       = 1 << 5;
 
-// ── New Layout Design: Flat Telemetry Grid (60% / 40% split) ─────────────────
-constexpr float kTelemetryPanelRatio = 0.60f;  // Left panel width ratio
-constexpr float kChecklistPanelRatio = 0.40f;  // Right panel width ratio
-constexpr int kMinRowHeight = 32;              // Minimum row height (32dp)
-constexpr int kCategoryVerticalSpacing = 8;    // Vertical spacing between categories (8dp)
-constexpr int kHealthGridColumns = 4;          // Health status grid: 4 items per row
+// ── Layout: Telemetry / Checklist Split (35% / 65%) ─────────────────────────
+constexpr float kTelemetryPanelRatio = 0.35f;  // Left panel width ratio
+constexpr float kChecklistPanelRatio = 0.65f;  // Right panel width ratio
+constexpr int kMinRowHeight = 56;              // Minimum row height (56dp)
+constexpr int kCategoryVerticalSpacing = 12;   // Vertical spacing between categories (12dp)
+constexpr int kHealthGridColumns = 2;          // Health status grid: 2 items per row
