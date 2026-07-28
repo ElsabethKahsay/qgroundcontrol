@@ -1,3 +1,13 @@
+/**
+ * @file PowerModel.cpp
+ * @brief Energy consumption prediction from flight history and airframe defaults.
+ *
+ * Provides per-airframe Wh/km defaults and supports per-vehicle calibration
+ * using linear regression on payload vs. consumption data. Used by
+ * MissionEnergyCheck to estimate whether the battery has sufficient charge
+ * for a planned mission distance.
+ */
+
 #include "PowerModel.h"
 
 #include <QDebug>

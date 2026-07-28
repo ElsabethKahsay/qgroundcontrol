@@ -1,3 +1,12 @@
+/**
+ * @file VehicleProfileManager.h
+ * @brief Manages per-vehicle profile data, flight sessions, and battery tracking.
+ *
+ * Resolves device UIDs, auto-starts/ends flight sessions on connect/disarm,
+ * tracks battery cycles for health monitoring, and records GPS/payload metadata.
+ * Listens to TelemetryBridge for connection and arm/disarm events.
+ */
+
 #pragma once
 
 #include <QObject>

@@ -1,3 +1,18 @@
+/**
+ * @file PreflightChecklistModel.h
+ * @brief QAbstractListModel wrapping preflight checks for display in QML.
+ *
+ * Each row corresponds to a single AbstractCheck owned by PreflightManager.
+ * The model exposes per-check data (label, status, category, type, etc.)
+ * through Qt roles, and provides summary properties (counts, completion %,
+ * first blocking failure) so the QML UI can render overall preflight status
+ * without querying individual rows.
+ *
+ * PreflightManager is the source of truth; this model rebuilds entirely when
+ * the check list changes and emits incremental data updates when only statuses
+ * change.
+ */
+
 #pragma once
 #include <QAbstractListModel>
 #include <QHash>
@@ -46,10 +61,18 @@ public:
 
     explicit PreflightChecklistModel(QObject *parent = nullptr);
 
+    /// Binds the model to a PreflightManager. Connects rebuild/data-change
+    /// signals so the model stays in sync with the check list.
     void setPreflightManager(PreflightManager *mgr);
 
+    /// Number of checks (rows) in the model.
     int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+
+    /// Returns the value for a single role at the given row, mapping Qt roles
+    /// to AbstractCheck accessors (label, status, category, etc.).
     QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
+
+    /// Maps custom Role enum values to QML property names (e.g. "checkId", "label").
     QHash<int, QByteArray> roleNames() const override;
 
     /// Count of checks with failed or warning status (statusInt 2, 3, or 4).

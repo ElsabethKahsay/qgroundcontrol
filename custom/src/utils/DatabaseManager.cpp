@@ -162,6 +162,7 @@ bool DatabaseManager::createTables()
     QSqlQuery query(m_db);
 
     // ── Schema version tracking ─────────────────────────────────────────
+    // Single-row table that tracks which migrations have been applied.
     query.exec(R"(
         CREATE TABLE IF NOT EXISTS schema_version (
             version INTEGER PRIMARY KEY
@@ -169,6 +170,10 @@ bool DatabaseManager::createTables()
     )");
 
     // checklist_templates table
+    // Stores user-defined and built-in checklist templates, keyed by
+    // template_id.  The UNIQUE constraint on (vehicle_type, template_name)
+    // prevents duplicate names per vehicle category.  items_json holds the
+    // full checklist as a JSON array of step objects.
     const QString createTemplates = R"(
         CREATE TABLE IF NOT EXISTS checklist_templates (
             template_id TEXT PRIMARY KEY,
@@ -189,6 +194,9 @@ bool DatabaseManager::createTables()
     }
 
     // compliance_logs table
+    // Records the full state of a completed checklist run for audit purposes.
+    // checklist_json stores the serialized checklist with per-item results;
+    // telemetry_snapshot captures the vehicle telemetry at the time of the run.
     const QString createLogs = R"(
         CREATE TABLE IF NOT EXISTS compliance_logs (
             log_id TEXT PRIMARY KEY,
@@ -211,6 +219,9 @@ bool DatabaseManager::createTables()
     }
 
     // hardware_test_events table (for servo actuator testing)
+    // Each row records one servo test step: the commanded PWM, observed
+    // feedback, tolerance window, and whether the operator confirmed the
+    // physical movement.  Non-fatal if creation fails (core tables still work).
     const QString createHardwareTests = R"(
         CREATE TABLE IF NOT EXISTS hardware_test_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -244,6 +255,9 @@ bool DatabaseManager::createTables()
     query.exec("CREATE INDEX IF NOT EXISTS idx_compliance_date ON compliance_logs(created_at)");
 
     // maintenance_components table
+    // Tracks replaceable parts (motors, props, batteries, ESCs) with
+    // maximum hour and cycle limits.  MaintenanceTracker emits warnings
+    // when currentHours/currentCycles approach the limits.
     query.exec(R"(
         CREATE TABLE IF NOT EXISTS maintenance_components (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -286,6 +300,9 @@ bool DatabaseManager::createTables()
     )");
 
     // ── battery_cycles table (FK → batteries) ────────────────────────
+    // Per-flight battery health snapshot: capacity at full charge, voltage
+    // sag under load, and resting voltage.  Used to compute health trends
+    // over time and detect battery degradation.
     query.exec(R"(
         CREATE TABLE IF NOT EXISTS battery_cycles (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -300,6 +317,9 @@ bool DatabaseManager::createTables()
     )");
 
     // ── flight_sessions table (FK → vehicles) ────────────────────────
+    // One row per flight: tracks start/end time, battery used, payload
+    // weight, flight location, energy consumed, and distance traveled.
+    // Extended across schema versions 3, 5, 6, and 8.
     query.exec(R"(
         CREATE TABLE IF NOT EXISTS flight_sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -312,6 +332,9 @@ bool DatabaseManager::createTables()
     )");
 
     // ── check_results table (audit trail) ────────────────────────────
+    // Records the outcome of each individual checklist item evaluation
+    // during a flight session.  Provides the audit trail for compliance
+    // reporting and export.
     query.exec(R"(
         CREATE TABLE IF NOT EXISTS check_results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -582,6 +605,13 @@ bool DatabaseManager::logHardwareTestStep(
     return true;
 }
 
+/**
+ * @brief Log a motor spin-up test result to the database
+ *
+ * Records the commanded throttle, expected vs. actual PWM, and the delta
+ * between them.  Stored in the motor_test_results audit table (created in
+ * schema v7).
+ */
 bool DatabaseManager::logMotorTestResult(int vehicleSysId, int motorIndex,
                                          int throttlePct, int durationSec,
                                          int expectedPwm, int actualPwm,
@@ -615,6 +645,10 @@ bool DatabaseManager::logMotorTestResult(int vehicleSysId, int motorIndex,
 
 /**
  * @brief Query hardware test events for a flight
+ *
+ * Returns a JSON array of all servo test steps for the given flight ID,
+ * ordered by insertion order.  Each entry includes the PWM targets,
+ * tolerances, operator confirmation, and result status.
  */
 QString DatabaseManager::getHardwareTestEvents(int flightId)
 {
@@ -673,10 +707,8 @@ QString DatabaseManager::getHardwareTestEvents(int flightId)
 }
 
 /**
- * @brief Returns the current database schema version
- * @return Schema version number
- * 
- * Used for future migration support. Currently returns 1.
+ * @brief Execute a query, logging a warning with the table name on failure
+ * @return true if the query succeeded
  */
 bool DatabaseManager::execOrWarn(QSqlQuery &query, const char *tableName)
 {
@@ -687,6 +719,9 @@ bool DatabaseManager::execOrWarn(QSqlQuery &query, const char *tableName)
     return true;
 }
 
+/**
+ * @brief Escape special characters for safe embedding in hand-built JSON strings
+ */
 QString DatabaseManager::escapeJson(const QString &raw)
 {
     QString out = raw;
@@ -698,11 +733,13 @@ QString DatabaseManager::escapeJson(const QString &raw)
     return out;
 }
 
+/** @brief Returns the compile-time latest schema version (kLatestSchemaVersion). */
 int DatabaseManager::schemaVersion() const
 {
     return kLatestSchemaVersion;
 }
 
+/** @brief Returns the highest schema version recorded in the database. */
 int DatabaseManager::storedSchemaVersion() const
 {
     if (!m_initialized) return 0;
@@ -713,6 +750,13 @@ int DatabaseManager::storedSchemaVersion() const
     return 0;
 }
 
+/**
+ * @brief Run incremental schema migrations from the stored version to latest.
+ *
+ * Each migration case adds columns or tables that didn't exist in the
+ * previous version.  The version number is recorded after each successful
+ * migration so that partially-applied upgrades can resume safely.
+ */
 bool DatabaseManager::migrateSchema()
 {
     int stored = storedSchemaVersion();
@@ -850,6 +894,10 @@ bool DatabaseManager::migrateSchema()
 }
 
 // ── Component maintenance ─────────────────────────────────────────────────
+// CRUD operations for replaceable hardware components (motors, props,
+// batteries, ESCs, etc.).  Each component tracks max hours and max
+// cycles; MaintenanceTracker compares current usage against these limits
+// to emit warning/critical signals.
 
 bool DatabaseManager::addComponent(const QString &name, const QString &type,
                                     double maxHours, int maxCycles)
@@ -947,6 +995,10 @@ QString DatabaseManager::listComponentsJson()
 }
 
 // ── Vehicle profile CRUD ────────────────────────────────────────────────────
+// The vehicles table is the master registry.  upsertVehicle/upsertVehicleEx
+// use INSERT ... ON CONFLICT to create or update in a single statement.
+// "device_uid" is the hardware UID from the autopilot (e.g. PX4's SYS_UID);
+// "fingerprint" is a connection-derived signature used for auto-identification.
 
 bool DatabaseManager::upsertVehicle(const QString &deviceUid, const QString &friendlyName,
                                     const QString &autopilotType, const QString &airframeType)
@@ -1433,6 +1485,9 @@ QString DatabaseManager::loadVehicleConfig(const QString &fingerprint)
 }
 
 // ── Battery CRUD ────────────────────────────────────────────────────────────
+// Batteries are tracked independently of vehicles since they can be
+// swapped.  Each battery is identified by serial number and accumulates
+// a total cycle count across all vehicles it has been used in.
 
 bool DatabaseManager::upsertBattery(const QString &serialNumber, const QString &operatorLabel)
 {
@@ -1482,6 +1537,9 @@ QStringList DatabaseManager::listBatteries()
 }
 
 // ── Battery cycle CRUD ──────────────────────────────────────────────────────
+// Each row records a single flight's battery health snapshot.
+// getBatteryHealthTrend compares the earliest and latest capacities
+// to estimate degradation percentage.
 
 bool DatabaseManager::saveBatteryCycle(const QString &serialNumber, int flightSessionId,
                                        double capacityAtFullMah, double voltageSagV,
@@ -1547,6 +1605,14 @@ int DatabaseManager::getBatteryCycleCount(const QString &serialNumber)
     return 0;
 }
 
+/**
+ * @brief Record a battery cycle marker for a completed flight session.
+ *
+ * Only counts as a cycle if the session lasted >= 30 seconds and no
+ * cycle has already been recorded for that session (prevents double-counting).
+ * Inserts a lightweight marker with zeroed health data; callers should
+ * use saveBatteryCycle() for detailed health snapshots.
+ */
 bool DatabaseManager::incrementBatteryCycle(int flightSessionId, const QString &batterySerial)
 {
     if (!m_initialized) return false;
@@ -1588,6 +1654,14 @@ bool DatabaseManager::incrementBatteryCycle(int flightSessionId, const QString &
     return true;
 }
 
+/**
+ * @brief Compute battery degradation trend from all recorded cycles.
+ *
+ * Returns a JSON object with baseline/latest capacity, retained percentage,
+ * average voltage sag, average resting voltage, and total cycle count.
+ * Compares the first recorded capacity against the most recent to
+ * estimate overall health degradation.
+ */
 QString DatabaseManager::getBatteryHealthTrend(const QString &serialNumber)
 {
     if (!m_initialized) return {};
@@ -1726,6 +1800,14 @@ QString DatabaseManager::getFlightSessions(const QString &deviceUid, int limit)
     return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
 }
 
+/**
+ * @brief Compute a calibrated power model from recent flight session data.
+ *
+ * Averages Wh/km across the last N completed sessions that have both
+ * energy and distance data.  Used for range prediction in the preflight
+ * UI.  The model is only marked as "calibrated" if at least minSessions
+ * data points are available.
+ */
 DatabaseManager::CalibratedPowerModel DatabaseManager::getCalibratedPowerModel(
     const QString &deviceUid, int minSessions)
 {
@@ -1805,6 +1887,13 @@ bool DatabaseManager::setCheckConfig(const QString &checkId, const QString &key,
     return execOrWarn(q, "setCheckConfig");
 }
 
+/**
+ * @brief Build a composite vehicle history summary.
+ *
+ * Combines the vehicle profile, recent flight sessions, and battery health
+ * trend into a single JSON object.  Used by the vehicle detail view and
+ * the HTML export report.
+ */
 QString DatabaseManager::getVehicleHistory(const QString &deviceUid)
 {
     // Returns a summary JSON: vehicle profile + recent sessions + battery health
@@ -1835,6 +1924,8 @@ QString DatabaseManager::getVehicleHistory(const QString &deviceUid)
 }
 
 // ── Check result audit ──────────────────────────────────────────────────────
+// Each individual checklist item evaluation is recorded here with its
+// outcome (Passed, Failed, Warning, Skipped) for compliance reporting.
 
 bool DatabaseManager::saveCheckResult(const QString &deviceUid, int flightSessionId,
                                      const QString &checkId, const QString &status,

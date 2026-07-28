@@ -1,3 +1,13 @@
+/**
+ * @file ChecklistEngine.cpp
+ * @brief Signal-driven engine that evaluates checklist items against live telemetry.
+ *
+ * Builds a reverse mapping from TelemetryBridge property names to model rows,
+ * connects to the bridge's propertyChanged signals, and re-evaluates only the
+ * items affected by each telemetry update. Manual items require explicit
+ * operator confirmation via confirmItem().
+ */
+
 #include "ChecklistEngine.h"
 #include "ChecklistItemModel.h"
 #include "TelemetryBridge.h"

@@ -1,3 +1,12 @@
+/**
+ * @file PreflightStateMachine.cpp
+ * @brief Finite state machine implementation for the preflight evaluation lifecycle.
+ *
+ * Manages linear state transitions (Disconnected through Armed) and emits
+ * semantic signals on key milestones (link established, param load complete,
+ * etc.) so other components can react to specific lifecycle events.
+ */
+
 #include "PreflightStateMachine.h"
 
 PreflightStateMachine::PreflightStateMachine(QObject *parent)

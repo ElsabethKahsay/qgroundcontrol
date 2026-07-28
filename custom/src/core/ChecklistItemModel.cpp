@@ -1,3 +1,12 @@
+/**
+ * @file ChecklistItemModel.cpp
+ * @brief QAbstractListModel implementation exposing checklist items to QML.
+ *
+ * Provides standard model roles for each ChecklistItemData field, supports
+ * loading from JSON arrays, and notifies QML of per-item status changes
+ * via dataChanged signals.
+ */
+
 #include "ChecklistItemModel.h"
 #include <QDebug>
 

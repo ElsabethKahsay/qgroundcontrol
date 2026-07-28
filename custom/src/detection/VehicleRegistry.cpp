@@ -161,6 +161,7 @@ QString VehicleRegistry::generateFingerprint(quint64 uid, int autopilotType, con
     return QString::fromLatin1(QCryptographicHash::hash(data, QCryptographicHash::Sha256).toHex());
 }
 
+/// Map MAV_AUTOPILOT enum value to a short display string.
 QString VehicleRegistry::autopilotTypeString(int autopilotType)
 {
     switch (autopilotType) {
@@ -171,6 +172,7 @@ QString VehicleRegistry::autopilotTypeString(int autopilotType)
     }
 }
 
+/// Map MAV_TYPE enum value to a short display string.
 QString VehicleRegistry::vehicleTypeString(int vehicleType)
 {
     switch (vehicleType) {
@@ -184,11 +186,14 @@ QString VehicleRegistry::vehicleTypeString(int vehicleType)
     }
 }
 
+/// Delegates vehicle search to DatabaseManager.
 QString VehicleRegistry::searchVehicles(const QString &query)
 {
     return DatabaseManager::instance().searchVehicles(query);
 }
 
+/// Update a vehicle's friendly name. If the fingerprint matches the currently
+/// connected vehicle, updates the in-memory name and emits knownVehicleChanged.
 bool VehicleRegistry::updateVehicleName(const QString &fingerprint, const QString &name)
 {
     bool ok = DatabaseManager::instance().updateVehicleName(fingerprint, name);
@@ -199,16 +204,19 @@ bool VehicleRegistry::updateVehicleName(const QString &fingerprint, const QStrin
     return ok;
 }
 
+/// Return all registered vehicles as a JSON array string (for QML display).
 QString VehicleRegistry::getAllVehiclesJson()
 {
     return DatabaseManager::instance().getAllVehiclesJson();
 }
 
+/// Export all vehicle records as a JSON string for backup or transfer.
 QString VehicleRegistry::exportVehiclesJson()
 {
     return DatabaseManager::instance().exportVehiclesJson();
 }
 
+/// Import vehicle records from a previously-exported JSON string.
 bool VehicleRegistry::importVehiclesJson(const QString &json)
 {
     return DatabaseManager::instance().importVehiclesJson(json);

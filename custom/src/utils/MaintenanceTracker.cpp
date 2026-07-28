@@ -7,10 +7,10 @@
 #include "Config.h"
 #include "DatabaseManager.h"
 
+/// Connects the periodic tick timer and loads initial component data from the database.
 MaintenanceTracker::MaintenanceTracker(QObject *parent)
     : QObject(parent)
 {
-    // Periodic in-flight threshold checking
     connect(&m_tickTimer, &QTimer::timeout, this, &MaintenanceTracker::onTick);
     refreshComponents();
 }
@@ -23,12 +23,14 @@ void MaintenanceTracker::addComponent(const QString &name, const QString &type,
     refreshComponents();
 }
 
+/// Delete a component from the database and refresh the local list.
 void MaintenanceTracker::removeComponent(int id)
 {
     DatabaseManager::instance().deleteComponent(id);
     refreshComponents();
 }
 
+/// Zero out a component's hour and cycle counters, then refresh.
 void MaintenanceTracker::resetComponent(int id, const QString &notes)
 {
     DatabaseManager::instance().resetComponentMaintenance(id, notes);
@@ -88,9 +90,9 @@ void MaintenanceTracker::setArmed(bool armed)
     }
 }
 
+/// Periodic threshold check while armed (called every 60 seconds by m_tickTimer).
 void MaintenanceTracker::onTick()
 {
-    // During flight, periodically check for threshold alerts
     checkThresholds();
 }
 

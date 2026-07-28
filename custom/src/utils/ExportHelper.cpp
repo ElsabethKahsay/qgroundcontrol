@@ -62,6 +62,7 @@ bool ExportHelper::deleteComplianceLog(const QString &logId)
     return DatabaseManager::instance().deleteComplianceLog(logId);
 }
 
+/// Construct the full file path inside ~/Documents/UAVPreflightReports/.
 static QString makePath(const QString &baseName, const QString &ext)
 {
     return exportDir() + QStringLiteral("/") + baseName + ext;

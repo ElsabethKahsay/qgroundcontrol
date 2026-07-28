@@ -1,3 +1,13 @@
+/**
+ * @file UavParameterManager.h
+ * @brief Tracks parameter loading progress for the preflight checklist.
+ *
+ * Given a "watchlist" of parameter names, monitors which have been received
+ * from the vehicle and transitions through Loading -> Ready (all received) or
+ * Loading -> Fallback (timeout). Also provides PX4 <-> ArduPilot parameter
+ * name mapping and a simple key-value cache for quick parameter lookup.
+ */
+
 #pragma once
 
 #include <QObject>

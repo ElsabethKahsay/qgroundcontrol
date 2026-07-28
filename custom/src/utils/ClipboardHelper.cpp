@@ -1,3 +1,5 @@
+// ClipboardHelper.cpp -- Implementation of the QML clipboard wrapper.
+
 #include "ClipboardHelper.h"
 
 #include <QClipboard>
@@ -6,7 +8,7 @@
 ClipboardHelper::ClipboardHelper(QObject *parent)
     : QObject(parent) {}
 
-/** @brief Copy text to the system clipboard via QGuiApplication. */
+/// Delegates to the global QGuiApplication clipboard singleton.
 void ClipboardHelper::copyToClipboard(const QString &text)
 {
     QGuiApplication::clipboard()->setText(text);

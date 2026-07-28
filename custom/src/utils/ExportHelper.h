@@ -57,8 +57,15 @@ public:
     Q_INVOKABLE QString saveVehicleReport(const QString &deviceUid, const QString &baseName);
 
 private:
+    /// Gather operator overrides from QSettings for a given device, formatted as CSV lines.
     QStringList collectOverrideLines(const QString &deviceUid) const;
+
+    /// Build styled HTML for a single preflight session (checks + overrides).
     QString buildSessionHtml(int sessionId, const QString &deviceUid) const;
+
+    /// Build styled HTML for a full vehicle history (sessions + battery + overrides).
     QString buildVehicleHtml(const QString &deviceUid) const;
+
+    /// Escape a value for safe inclusion in a CSV cell (quotes, commas, newlines).
     static QString escCsv(const QString &value);
 };

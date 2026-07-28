@@ -32,26 +32,45 @@ class MaintenanceTracker : public QObject
 public:
     explicit MaintenanceTracker(QObject *parent = nullptr);
 
+    /// Current list of tracked components as QVariantMap list (for QML binding).
     QVariantList components() const { return m_components; }
+
+    /// True while the vehicle is armed and elapsed-time tracking is active.
     bool armed() const { return m_armed; }
 
+    /// Register a new hardware component to track (persisted via DatabaseManager).
     Q_INVOKABLE void addComponent(const QString &name, const QString &type,
                                   double maxHours = 0, int maxCycles = 0);
+
+    /// Remove a tracked component by its database ID.
     Q_INVOKABLE void removeComponent(int id);
+
+    /// Reset a component's hour/cycle counters to zero (after replacement).
     Q_INVOKABLE void resetComponent(int id, const QString &notes = QString());
+
+    /// Reload the component list from DatabaseManager and emit componentsChanged.
     Q_INVOKABLE void refreshComponents();
+
+    /// Update armed state. On arm, starts the elapsed-time timer; on disarm,
+    /// distributes the armed time to all components and increments their cycles.
     Q_INVOKABLE void setArmed(bool armed);
 
 signals:
     void componentsChanged();
     void armedChanged();
+
+    /// Emitted when a component reaches the warning threshold percentage.
     void maintenanceWarning(int componentId, const QString &name, int percent);
+
+    /// Emitted when a component reaches the critical threshold percentage.
     void maintenanceCritical(int componentId, const QString &name, int percent);
 
 private slots:
+    /// Periodic callback while armed; checks all components against thresholds.
     void onTick();
 
 private:
+    /// Compare each component's usage against warning/critical thresholds and emit signals.
     void checkThresholds();
 
     QVariantList m_components;
