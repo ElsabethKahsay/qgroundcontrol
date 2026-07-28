@@ -69,16 +69,12 @@ set(CUSTOM_SOURCE_REL
     src/core/AbstractCheck.h
     src/core/AccelConsistencyCheck.cpp
     src/core/AccelConsistencyCheck.h
-    src/core/AhrsHealthCheck.cpp
-    src/core/AhrsHealthCheck.h
     src/core/AirspeedCheck.cpp
     src/core/AirspeedCheck.h
     src/core/ArmingGate.cpp
     src/core/ArmingGate.h
     src/core/AttitudeCheck.cpp
     src/core/AttitudeCheck.h
-    src/core/BaroAltConsistencyCheck.cpp
-    src/core/BaroAltConsistencyCheck.h
     src/core/BatteryFailsafeCheck.cpp
     src/core/BatteryFailsafeCheck.h
     src/core/BatteryTemperatureCheck.cpp
@@ -91,10 +87,6 @@ set(CUSTOM_SOURCE_REL
     src/core/ChecklistEngine.h
     src/core/ChecklistItemModel.cpp
     src/core/ChecklistItemModel.h
-    src/core/CompassOrientationCheck.cpp
-    src/core/CompassOrientationCheck.h
-    src/core/CurrentSensorCheck.cpp
-    src/core/CurrentSensorCheck.h
     src/core/EkfFailsafeCheck.cpp
     src/core/EkfFailsafeCheck.h
     src/core/GcsFailsafeCheck.cpp
@@ -160,12 +152,8 @@ set(CUSTOM_SOURCE_REL
     src/core/UavParameterManager.h
     src/core/VehicleProfileManager.cpp
     src/core/VehicleProfileManager.h
-    src/core/VibrationFailsafeCheck.cpp
-    src/core/VibrationFailsafeCheck.h
     src/core/VideoFeedCheck.cpp
     src/core/VideoFeedCheck.h
-    src/core/WeatherWindCheck.cpp
-    src/core/WeatherWindCheck.h
     src/core/WindSpeedCheck.cpp
     src/core/WindSpeedCheck.h
     src/mission/WaypointMath.cpp

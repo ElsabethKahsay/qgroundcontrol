@@ -1,3 +1,13 @@
+/**
+ * @file PreflightManager.cpp
+ * @brief Central manager that owns, evaluates, and tracks all preflight checks.
+ *
+ * Registers ~40 AbstractCheck instances at construction, runs periodic evaluation
+ * via QTimer, tracks pass/fail/pending/stale progress counters for QML binding,
+ * drives the PreflightStateMachine through its lifecycle, persists operator
+ * overrides, and logs check results to DatabaseManager for audit trail.
+ */
+
 #include "PreflightManager.h"
 
 #include <QDebug>
@@ -14,17 +24,13 @@
 
 #include "AbstractCheck.h"
 #include "AccelConsistencyCheck.h"
-#include "AhrsHealthCheck.h"
 #include "AirspeedCheck.h"
 #include "AlertManager.h"
 #include "AttitudeCheck.h"
-#include "BaroAltConsistencyCheck.h"
 #include "BatteryFailsafeCheck.h"
 #include "BatteryTemperatureCheck.h"
 #include "BatteryVoltageCheck.h"
 #include "CellConfigCheck.h"
-#include "CompassOrientationCheck.h"
-#include "CurrentSensorCheck.h"
 #include "DatabaseManager.h"
 #include "EkfFailsafeCheck.h"
 #include "GcsFailsafeCheck.h"
@@ -55,9 +61,7 @@
 #include "RtlAltParamCheck.h"
 #include "TelemetryBridge.h"
 #include "TelemetryDropRateCheck.h"
-#include "VibrationFailsafeCheck.h"
 #include "VideoFeedCheck.h"
-#include "WeatherWindCheck.h"
 
 #include <algorithm>
 
@@ -703,13 +707,11 @@ void PreflightManager::createPhase1Checks() {
   m_checks.append(new AirspeedCheck(m_telemetry, 20.0, this));
 
   // Tier 1 — Navigation
-  m_checks.append(new AhrsHealthCheck(m_telemetry, this));
   m_checks.append(new AccelConsistencyCheck(m_telemetry, 4.0, this));
 
   // Tier 1 — Power
   m_checks.append(new BatteryTemperatureCheck(m_telemetry, 45.0, 0.0, this));
   m_checks.append(new CellConfigCheck(m_telemetry, 3.0, 1, this));
-  m_checks.append(new CurrentSensorCheck(m_telemetry, 0.5, 0.5, this));
 
   // Tier 1 — Communication
   m_checks.append(new TelemetryDropRateCheck(m_telemetry, 10, 5, this));
@@ -721,9 +723,6 @@ void PreflightManager::createPhase1Checks() {
   m_checks.append(new GcsFailsafeCheck(m_telemetry, this));
   m_checks.append(new EkfFailsafeCheck(m_telemetry, this));
 
-  // Tier 2 — Navigation / Sensor Health
-  m_checks.append(new BaroAltConsistencyCheck(m_telemetry, 5.0, this));
-
   // Tier 2 — Geofence boundary validation
   m_checks.append(new LevelCalibrationCheck(m_telemetry, 2.0, this));
   m_checks.append(new RcModeSwitchCheck(m_telemetry, this));
@@ -731,12 +730,10 @@ void PreflightManager::createPhase1Checks() {
   m_checks.append(new RcCalibrationCheck(m_telemetry, this));
 
   // Tier 3 — Warning / non-blocking auto-checks
-  m_checks.append(new WeatherWindCheck(m_telemetry, this));
   m_checks.append(new MetarVisibilityCheck(m_telemetry, this));
   m_checks.append(new MetarCeilingCheck(m_telemetry, this));
   m_checks.append(new MetarPrecipitationCheck(m_telemetry, this));
   m_checks.append(new MotorCountCheck(m_telemetry, this));
-  m_checks.append(new VibrationFailsafeCheck(m_telemetry, this));
   m_checks.append(new MissionCountCheck(m_telemetry, 1, this));
 
   // Manual check (operator must confirm)
@@ -773,16 +770,6 @@ void PreflightManager::createPhase1Checks() {
       {QStringLiteral("MOT_SPIN_DIRECTION"), QStringLiteral("FRAME_TYPE")},
       this));
 
-  // Navigation (1)
-  m_checks.append(new CompassOrientationCheck(m_telemetry, this));
-
-  // Environment (replaced by METAR auto-checks above)
-  m_checks.append(new ManualConfirmCheck(
-      QStringLiteral("environment.magnetic_disturbance"),
-      QStringLiteral("Magnetic Disturbance Zone"), CheckCategory::Environment,
-      QStringLiteral("Confirm no magnetic interference sources nearby"), {},
-      this));
-
   // Power (2)
   m_checks.append(new ManualConfirmCheck(
       QStringLiteral("power.battery.physical"),
@@ -790,9 +777,9 @@ void PreflightManager::createPhase1Checks() {
       QStringLiteral("Confirm battery undamaged, no swelling/leaks"), {},
       this));
   m_checks.append(new ManualConfirmCheck(
-      QStringLiteral("power.battery.cycle_count"),
-      QStringLiteral("Battery Cycle Count / Age"), CheckCategory::Power,
-      QStringLiteral("Confirm battery cycle count is within acceptable limits"),
+      QStringLiteral("power.battery.temp_visual"),
+      QStringLiteral("Battery Temperature"), CheckCategory::Power,
+      QStringLiteral("Confirm battery is at ambient temperature, not hot to touch"),
       {}, this));
 
   // Navigation (1)
@@ -834,7 +821,7 @@ void PreflightManager::createPhase1Checks() {
 // database logging, and alert notifications.
 void PreflightManager::connectCheckSignals(AbstractCheck *check) {
   connect(check, &AbstractCheck::statusChanged, this,
-          [this](const QString &checkId, int newStatus) {
+          [this, check](const QString &checkId, int newStatus) {
             Q_UNUSED(checkId)
             emit progressChanged();
 
