@@ -326,10 +326,18 @@ Page {
         checklistFlickable.contentY = Math.max(0, yPos - 100)
     }
 
-    Component.onCompleted: {
-        if (TelemetryProvider.motorConfigWarning.length > 0)
-            motorConfigDialog.open()
+    // Defer dialog open until layout is fully settled to avoid visual glitches
+    Timer {
+        id: _motorDialogTimer
+        interval: 100
+        running: false
+        onTriggered: {
+            if (TelemetryProvider.motorConfigWarning.length > 0)
+                motorConfigDialog.open()
+        }
     }
+
+    Component.onCompleted: _motorDialogTimer.start()
 
     // ──────────────────────────────────────────────────────────
     // MAIN LAYOUT: 35% telemetry | 65% checklist
