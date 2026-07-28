@@ -245,7 +245,7 @@ Item {
 
         // ════════════════════════════════════════════════════════════════
         //  VIDEO — lives in the "video panel" (left by default)
-        //  ⚠ DO NOT modify FlyViewVideo internals — GStreamer lifecycle
+        //  NOTE: DO NOT modify FlyViewVideo internals — GStreamer lifecycle
         // ════════════════════════════════════════════════════════════════
         FlyViewVideo {
             id: videoControl
@@ -284,7 +284,7 @@ Item {
                 spacing: ScreenTools.defaultFontPixelHeight * 0.6
 
                 Text {
-                    text: qsTr("📹")
+                    text: qsTr("NO SIGNAL")
                     font.pixelSize: ScreenTools.defaultFontPixelHeight * 2.4
                     color: Colors.textDisabled
                     anchors.horizontalCenter: parent.horizontalCenter

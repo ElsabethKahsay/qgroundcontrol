@@ -38,8 +38,8 @@ Page {
                 wrapMode: Text.Wrap
                 horizontalAlignment: Text.AlignHCenter
                 text: TelemetryProvider.isConnected
-                      ? "✓ " + TelemetryProvider.connectionStatus
-                      : "⚠ " + (TelemetryProvider.connectionError || TelemetryProvider.connectionStatus)
+                      ? "+ " + TelemetryProvider.connectionStatus
+                      : "! " + (TelemetryProvider.connectionError || TelemetryProvider.connectionStatus)
                 font.pixelSize: Config.fontSizeSmall
                 color: TelemetryProvider.isConnected ? Colors.success : Colors.warning
             }
@@ -70,7 +70,7 @@ Page {
                     Row {
                         spacing: Config.spacingSmall
                         Text {
-                            text: AutopilotDetector.usbAutopilotDetected ? "🔌" : "🔍"
+                            text: AutopilotDetector.usbAutopilotDetected ? "USB" : "..."
                             font.pixelSize: Config.fontSizeH2
                             verticalAlignment: Text.AlignVCenter
                         }
@@ -116,7 +116,7 @@ Page {
                                 spacing: Config.spacingSmall
 
                                 Text {
-                                    text: index === 0 ? "★" : "•"
+                                    text: index === 0 ? "*" : "."
                                     font.pixelSize: Config.fontSizeSmall
                                     color: index === 0 ? Colors.primary : Colors.textDisabled
                                     verticalAlignment: Text.AlignVCenter
@@ -259,10 +259,10 @@ Page {
 
                     Text {
                         text: VehicleTelemetry.vehicleType.length > 0
-                            ? "✅ " + VehicleTelemetry.vehicleType + " detected"
+                            ? VehicleTelemetry.vehicleType + " detected"
                             : VehicleTelemetry.heartbeatReceived
-                                ? "⚠ Heartbeat received — unknown vehicle type"
-                                : "⏳ Waiting for autopilot heartbeat..."
+                                ? "Heartbeat received - unknown vehicle type"
+                                : "Waiting for autopilot heartbeat..."
                         color: VehicleTelemetry.vehicleType.length > 0 ? Colors.success
                              : VehicleTelemetry.heartbeatReceived ? Colors.warning
                              : Colors.textSecondary

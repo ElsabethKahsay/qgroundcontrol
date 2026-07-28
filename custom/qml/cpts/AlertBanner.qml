@@ -6,7 +6,7 @@
 //   severity (string) — one of "error", "warning", or "info" (controls color scheme)
 //   expanded (bool) — if true, shows full message text; if false, truncates at 80 chars
 // Signals:
-//   dismissed — emitted when the user clicks the close (✕) button
+//   dismissed — emitted when the user clicks the close (X) button
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts

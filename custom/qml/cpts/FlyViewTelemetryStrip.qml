@@ -215,13 +215,13 @@ Item {
             TelColumn {
                 header: "FLIGHT"
                 rows: _settings.threeColumns ? [
-                    { label: "Mode",  value: (_armed ? "✦ " : "") + _mode,
+                    { label: "Mode",  value: (_armed ? "> " : "") + _mode,
                       vcolor: _armed ? Colors.pass : Colors.textPrimary },
                     { label: "Alt",   value: _formatVal(_altRel, 1), unit: "m",   vcolor: Colors.textPrimary },
                     { label: "Speed", value: _formatVal(_gndSpd, 1), unit: "m/s", vcolor: Colors.textPrimary },
-                    { label: "Vspd",  value: (_climbRate >= 0 ? "↑" : "↓") + _formatVal(Math.abs(_climbRate), 1), unit: "m/s", vcolor: _climbRate > 0.5 ? Colors.accentCyan : _climbRate < -0.5 ? Colors.warning : Colors.textPrimary }
+                    { label: "Vspd",  value: (_climbRate >= 0 ? "^" : "v") + _formatVal(Math.abs(_climbRate), 1), unit: "m/s", vcolor: _climbRate > 0.5 ? Colors.accentCyan : _climbRate < -0.5 ? Colors.warning : Colors.textPrimary }
                 ] : [
-                    { label: "Mode",  value: (_armed ? "✦ " : "") + _mode,
+                    { label: "Mode",  value: (_armed ? "> " : "") + _mode,
                       vcolor: _armed ? Colors.pass : Colors.textPrimary },
                     { label: "Alt",   value: _formatVal(_altRel, 1), unit: "m",   vcolor: Colors.textPrimary },
                     { label: "Gnd",   value: _formatVal(_gndSpd, 1), unit: "m/s", vcolor: Colors.textPrimary },
@@ -317,7 +317,7 @@ Item {
             anchors.top:   parent.top
             anchors.right: parent.right
             anchors.margins: 4
-            text:          _settings.locked ? "🔒" : ""
+            text:          _settings.locked ? "[LOCKED]" : ""
             font.pixelSize: ScreenTools.defaultFontPixelHeight * 0.85
             opacity:       0.5
         }

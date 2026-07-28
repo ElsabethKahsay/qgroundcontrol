@@ -75,7 +75,7 @@ Rectangle {
         }
         
         Text {
-            text: VideoManager.isRecording ? "🔴 REC" : ""
+            text: VideoManager.isRecording ? "REC" : ""
             color: Colors.error
             font.pixelSize: Config.fontSizeBody
             anchors.top: parent.top

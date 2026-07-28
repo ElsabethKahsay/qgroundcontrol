@@ -75,9 +75,9 @@ Rectangle {
                         Text {
                             text: {
                                 switch (model.severity) {
-                                case 0: return "ℹ️ ADVISORY"
-                                case 1: return "⚠️ CAUTION"
-                                case 2: return "🚨 WARNING"
+                                case 0: return "ADVISORY"
+                                case 1: return "CAUTION"
+                                case 2: return "WARNING"
                                 default: return "?"
                                 }
                             }

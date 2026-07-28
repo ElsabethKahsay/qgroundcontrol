@@ -123,7 +123,7 @@ Item {
 
             Text {
                 anchors.verticalCenter: parent.verticalCenter
-                text:                   qsTr("🆕")
+                text:                   qsTr("NEW")
                 font.pixelSize:         ScreenTools.defaultFontPixelHeight * 1.0
             }
 
@@ -308,7 +308,7 @@ Item {
 
             Text {
                 anchors.verticalCenter: parent.verticalCenter
-                text:                   qsTr("📋")
+                text:                   qsTr("CHECK")
                 font.pixelSize:         ScreenTools.defaultFontPixelHeight * 1.1
                 opacity:                _activeVehicle ? 1.0 : 0.4
             }
@@ -346,7 +346,7 @@ Item {
                         if (f > 0) return f.toString()
                         var p = typeof PreflightManager !== 'undefined' ? PreflightManager.pendingChecks : 0
                         if (p > 0) return p.toString()
-                        return "✓"
+                        return "OK"
                     }
                     font.pointSize: ScreenTools.defaultFontPointSize * 0.8
                     font.weight:    Font.Bold

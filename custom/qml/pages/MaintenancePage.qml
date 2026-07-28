@@ -470,7 +470,7 @@ Page {
                     }
 
                     CustomButton {
-                        text: "✕"
+                        text: "X"
                         implicitHeight: 24
                         implicitWidth: 24
                         font.pixelSize: Config.fontSizeSmall
