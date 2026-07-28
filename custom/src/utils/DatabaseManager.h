@@ -44,6 +44,12 @@
 //                      check_config            Per-check key/value overrides,
 //                                                optionally scoped to a vehicle.
 //
+// Thread affinity: All public methods MUST be called from the main (GUI)
+// thread.  DatabaseManager owns a QSqlDatabase connection which is not
+// thread-safe.  If background I/O is ever needed, the connection must be
+// moved to a dedicated thread with its own event loop, or queries must be
+// serialized through a worker object.
+//
 // All public methods are Q_INVOKABLE so they can be called directly from QML.
 // Every mutator returns bool (success/fail); every query returns either a
 // JSON string, a QStringList, or a plain value.

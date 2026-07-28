@@ -2,6 +2,11 @@
 // Copyright (c) 2026 UAV Preflight Contributors
 // File: src/AlertManager.h
 // Description: Alert severity system with QAbstractListModel for UI binding.
+//
+// Thread affinity: AlertManager is a Meyers' singleton accessed from the main
+// thread only.  All methods are called from QML or signal handlers that
+// execute on the GUI thread.  Do NOT call from background threads without
+// external synchronization.
 
 #pragma once
 
