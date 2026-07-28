@@ -9,7 +9,6 @@
         <file alias="QGroundControl/ScreenTools/ScreenTools.qml">qml/QGroundControl/ScreenTools/ScreenTools.qml</file>
     </qresource>
     <qresource prefix="custom">
-        <file alias="TestPage.qml">res/TestPage.qml</file>
         <file alias="PreflightToolbarIndicator.qml">qml/PreflightToolbarIndicator.qml</file>
         <file alias="ArmedIndicator.qml">qml/ArmedIndicator.qml</file>
         <file alias="MainStatusIndicator.qml">qml/MainStatusIndicator.qml</file>
