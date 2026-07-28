@@ -1,3 +1,12 @@
+/**
+ * @file VehicleProfileManager.cpp
+ * @brief Per-vehicle profile management, flight session lifecycle, and battery tracking.
+ *
+ * Handles device UID resolution, upserts vehicle profiles to the database on
+ * connect, manages flight session start/end, records battery cycles on disarm,
+ * and estimates energy consumption for power model calibration.
+ */
+
 #include "VehicleProfileManager.h"
 
 #include <QDateTime>
@@ -7,6 +16,7 @@
 
 #include "Vehicle.h"
 
+#include "utils/Config.h"
 #include "DatabaseManager.h"
 #include "TelemetryBridge.h"
 
@@ -134,6 +144,9 @@ QString VehicleProfileManager::resolveDeviceUid()
     return QStringLiteral("sysid:%1").arg(m_telemetry->vehicle()->id());
 }
 
+// Resolve motor count from vehicle firmware parameters.
+// PX4 uses CA_AIRFRAME; ArduPilot uses FRAME_CLASS + FRAME_TYPE.
+// Falls back to defaultCount if parameters are missing or unrecognized.
 int VehicleProfileManager::resolveMotorCount(TelemetryBridge *telemetry, int defaultCount)
 {
     if (!telemetry) {
@@ -193,6 +206,7 @@ int VehicleProfileManager::resolveMotorCount(TelemetryBridge *telemetry, int def
     return defaultCount;
 }
 
+// Return "PX4", "ArduPilot", or "Generic" based on the connected vehicle's firmware.
 QString VehicleProfileManager::autopilotTypeString()
 {
     if (!m_telemetry) return {};
@@ -296,6 +310,7 @@ bool VehicleProfileManager::updateVehicleFirmware(const QString &fingerprint, co
     return DatabaseManager::instance().updateVehicleFirmware(fingerprint, firmwareVersion);
 }
 
+// Update payload weight, clamping to non-negative. Persists to active flight session if one exists.
 void VehicleProfileManager::setPayloadWeightKg(double kg)
 {
     if (qFuzzyCompare(m_payloadWeightKg, kg)) return;
@@ -307,6 +322,7 @@ void VehicleProfileManager::setPayloadWeightKg(double kg)
     emit payloadWeightChanged();
 }
 
+// Update the operation location name and persist to the active flight session.
 void VehicleProfileManager::setLocationName(const QString &name)
 {
     if (m_locationName == name) return;
@@ -317,6 +333,7 @@ void VehicleProfileManager::setLocationName(const QString &name)
     emit locationNameChanged();
 }
 
+// Update planned latitude and persist to the active flight session.
 void VehicleProfileManager::setPlanLatitude(double lat)
 {
     if (qFuzzyCompare(m_planLat, lat)) return;
@@ -327,6 +344,7 @@ void VehicleProfileManager::setPlanLatitude(double lat)
     emit planLatitudeChanged();
 }
 
+// Update planned longitude and persist to the active flight session.
 void VehicleProfileManager::setPlanLongitude(double lon)
 {
     if (qFuzzyCompare(m_planLon, lon)) return;
@@ -356,7 +374,7 @@ void VehicleProfileManager::_onArmedChanged(bool armed)
         int armedThresholdMs = [this]() {
         QString val = DatabaseManager::instance().getCheckConfig("vehicle_profile", "armed_timer_threshold_ms");
         if (!val.isEmpty()) { bool ok; int v = val.toInt(&ok); if (ok) return v; }
-        return 30000;
+        return kArmedTimerThresholdMs;
     }();
     if (m_armedTimer.isValid() && m_armedTimer.elapsed() > armedThresholdMs) {
             // Record a battery cycle (discharge event) for battery health tracking.

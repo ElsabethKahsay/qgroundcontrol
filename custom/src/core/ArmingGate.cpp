@@ -1,3 +1,13 @@
+/**
+ * @file ArmingGate.cpp
+ * @brief Gate controller that decides whether to allow or block arming.
+ *
+ * Evaluates preflight check results against the configured gate mode
+ * (Passive/Active/Hybrid), enforces operator override policy, and
+ * intercepts MAVLink arm commands. Emits signals on state changes
+ * so the UI can reflect arming permission in real time.
+ */
+
 #include "ArmingGate.h"
 
 #include <QDebug>
@@ -6,11 +16,15 @@
 #include "AbstractCheck.h"
 #include "PreflightManager.h"
 #include "TelemetryBridge.h"
+#include "Vehicle/Vehicle.h"
+#include "utils/Config.h"
 #include "utils/DatabaseManager.h"
 
+// Set up the override expiration timer and the periodic gate evaluation timer.
 ArmingGate::ArmingGate(QObject *parent)
     : QObject(parent)
 {
+    // Override timer: fires once after timeoutSec to deactivate a temporary override
     m_overrideTimer = new QTimer(this);
     m_overrideTimer->setSingleShot(true);
     connect(m_overrideTimer, &QTimer::timeout, this, [this]() {
@@ -19,11 +33,14 @@ ArmingGate::ArmingGate(QObject *parent)
         emit armingOverrideExpired();
     });
 
+    // Gate timer: periodically re-evaluates arming state at a fixed interval
     m_gateTimer = new QTimer(this);
     m_gateTimer->setInterval(EVAL_INTERVAL_MS);
     connect(m_gateTimer, &QTimer::timeout, this, &ArmingGate::updateArmingState);
 }
 
+// Wire up to PreflightManager so the gate reacts to check failures and passes.
+// Disconnects any previous manager first to avoid duplicate connections.
 void ArmingGate::setPreflightManager(PreflightManager *manager)
 {
     if (m_manager) {
@@ -54,11 +71,13 @@ void ArmingGate::setPreflightManager(PreflightManager *manager)
     updateArmingState();
 }
 
+// Store the telemetry bridge reference for vehicle state queries during gate evaluation.
 void ArmingGate::setTelemetryBridge(TelemetryBridge *bridge)
 {
     m_telemetry = bridge;
 }
 
+// Update the gate operating mode (Passive/Active/Hybrid) and re-evaluate.
 void ArmingGate::setMode(Mode mode)
 {
     if (m_mode == mode) return;
@@ -67,6 +86,9 @@ void ArmingGate::setMode(Mode mode)
     updateArmingState();
 }
 
+// Intercept a MAVLink COMMAND_LONG for arm/disarm.
+// Returns true to allow the command through, false to block it.
+// Only the arm command (param1=1) is intercepted; disarm passes through.
 bool ArmingGate::interceptCommandLong(uint16_t command, const QMap<int, float> &params)
 {
     if (command != m_armCommandCode)
@@ -101,20 +123,7 @@ bool ArmingGate::interceptCommandLong(uint16_t command, const QMap<int, float> &
 
     bool allPassed = m_manager->allMandatoryPassed();
 
-    if (m_mode == Hybrid && !allPassed) {
-        QString reason = m_manager->armingBlocker();
-        if (reason.isEmpty())
-            reason = QStringLiteral("Preflight checks not complete");
-        m_denialReason = reason;
-        m_armingAllowed = false;
-        emit armingAllowedChanged(false);
-        emit denialReasonChanged(reason);
-        emit armingDenied(command, reason);
-        qWarning().noquote() << QStringLiteral("Arming blocked: %1").arg(reason);
-        return false;
-    }
-
-    if (m_mode == Active && !allPassed) {
+    if ((m_mode == Hybrid || m_mode == Active) && !allPassed) {
         QString reason = m_manager->armingBlocker();
         if (reason.isEmpty())
             reason = QStringLiteral("Preflight checks not complete");
@@ -134,6 +143,9 @@ bool ArmingGate::interceptCommandLong(uint16_t command, const QMap<int, float> &
     return true;
 }
 
+// Evaluate an arm request against current check failure counts.
+// In Passive mode or with an active override, the gate is always open.
+// In Active/Hybrid mode, any critical failure closes the gate.
 ArmingGate::GateDecision ArmingGate::processArmRequest(int criticalFailCount, int manualFailCount)
 {
     if (m_overrideActive || m_mode == Passive)
@@ -148,19 +160,8 @@ ArmingGate::GateDecision ArmingGate::processArmRequest(int criticalFailCount, in
         return GATE_OPEN;
     }
 
-    // ACTIVE + any blocking fail = suppress
-    if (m_mode == Active && criticalFailCount > 0) {
-        QString reason = buildDenialReason(criticalFailCount, manualFailCount);
-        m_denialReason = reason;
-        m_armingAllowed = false;
-        emit armingAllowedChanged(false);
-        emit denialReasonChanged(reason);
-        emit gateClosed(reason);
-        return GATE_CLOSED;
-    }
-
-    // HYBRID + any auto blocking fail = suppress (manual-only failures may be overridden)
-    if (m_mode == Hybrid && criticalFailCount > 0) {
+    // ACTIVE or HYBRID + any blocking fail = suppress
+    if ((m_mode == Active || m_mode == Hybrid) && criticalFailCount > 0) {
         QString reason = buildDenialReason(criticalFailCount, manualFailCount);
         m_denialReason = reason;
         m_armingAllowed = false;
@@ -179,6 +180,8 @@ ArmingGate::GateDecision ArmingGate::processArmRequest(int criticalFailCount, in
     return GATE_OPEN;
 }
 
+// Record a pilot's acknowledgment of override responsibility.
+// Requires a non-empty pilot name; the acknowledgment is one-time use.
 bool ArmingGate::acknowledgeOverride(const QString &pilotName, const QString &reason)
 {
     if (pilotName.trimmed().isEmpty())
@@ -200,6 +203,8 @@ void ArmingGate::setOverridePolicy(OverridePolicy policy)
     m_overridePolicy = policy;
 }
 
+// Temporarily override the gate, allowing arming for a limited duration.
+// Logs the override for audit trail and emits signals for UI notification.
 void ArmingGate::overrideGate(const QString &reason, int timeoutSec)
 {
     m_overrideActive = true;
@@ -218,6 +223,7 @@ void ArmingGate::overrideGate(const QString &reason, int timeoutSec)
                                 .arg(reason).arg(timeoutSec);
 }
 
+// Reset the gate to normal evaluation mode, clearing any active override.
 void ArmingGate::resetGate()
 {
     m_overrideActive = false;
@@ -227,6 +233,8 @@ void ArmingGate::resetGate()
     updateArmingState();
 }
 
+// Unconditionally allow arming with no timeout. Used for emergency overrides.
+// Logs the action for audit trail with no expiration.
 void ArmingGate::forceArm()
 {
     m_overrideActive = true;
@@ -242,6 +250,8 @@ void ArmingGate::forceArm()
     qWarning() << "Arming overridden: Operator force arm (no timeout)";
 }
 
+// React to a check failure signal from PreflightManager.
+// In Passive mode, failures are logged but do not block arming.
 void ArmingGate::onCheckFailed(const QString &checkId, const QString &reason)
 {
     Q_UNUSED(checkId)
@@ -256,11 +266,15 @@ void ArmingGate::onCheckFailed(const QString &checkId, const QString &reason)
     }
 }
 
+// Re-evaluate arming state when all checks pass.
 void ArmingGate::onAllChecksPassed()
 {
     updateArmingState();
 }
 
+// Core evaluation: determines whether arming is allowed based on current state.
+// Priority: override active > passive mode > telemetry staleness > check results.
+// Persists the arming status to the database for dashboard display.
 void ArmingGate::updateArmingState()
 {
     if (m_overrideActive) {
@@ -280,7 +294,7 @@ void ArmingGate::updateArmingState()
     }
 
     bool telemetryStale = m_lastTickTime.isValid() &&
-        m_lastTickTime.secsTo(QDateTime::currentDateTime()) > 10 &&
+        m_lastTickTime.secsTo(QDateTime::currentDateTime()) > kTelemetryStalenessSec &&
         !m_overrideActive;
     if (telemetryStale) {
         QString msg = QStringLiteral("Telemetry stale — last update %1s ago")

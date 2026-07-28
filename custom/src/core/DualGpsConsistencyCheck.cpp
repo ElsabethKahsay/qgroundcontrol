@@ -3,6 +3,7 @@
 #include <QtMath>
 
 #include "TelemetryBridge.h"
+#include "utils/Config.h"
 
 DualGpsConsistencyCheck::DualGpsConsistencyCheck(TelemetryBridge *telemetry,
                                                  double maxDivergenceM,
@@ -24,7 +25,7 @@ double DualGpsConsistencyCheck::_haversineM(double lat1, double lon1,
              + qCos(qDegreesToRadians(lat1))
              * qCos(qDegreesToRadians(lat2))
              * qSin(dLon / 2) * qSin(dLon / 2);
-    return 6371000.0 * 2.0 * qAtan2(qSqrt(a), qSqrt(1.0 - a));
+    return kEarthRadiusM * 2.0 * qAtan2(qSqrt(a), qSqrt(1.0 - a));
 }
 
 // Compute haversine distance between GPS1 and GPS2 positions; fail if divergence > max.

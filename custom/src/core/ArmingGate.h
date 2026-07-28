@@ -3,6 +3,8 @@
 #include <QTimer>
 #include <QDateTime>
 
+#include "utils/Config.h"
+
 /// @file ArmingGate.h
 /// Gate controller that evaluates preflight check results, enforces arming policy,
 /// and manages operator overrides. Supports Passive, Active, and Hybrid modes.
@@ -130,6 +132,6 @@ private:
     QTimer *m_gateTimer = nullptr;
     Acknowledgment m_lastAck;
 
-    uint16_t m_armCommandCode = 400;
-    static constexpr int EVAL_INTERVAL_MS = 500;
+    uint16_t m_armCommandCode = kMavCmdArmDisarm;
+    static constexpr int EVAL_INTERVAL_MS = kArmingGateEvalMs;
 };

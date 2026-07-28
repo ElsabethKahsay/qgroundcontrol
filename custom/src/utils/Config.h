@@ -148,7 +148,40 @@ constexpr const char* kDefaultAircraftReg  = "";
 constexpr int kMaintWarningPercent  = 80;
 constexpr int kMaintCriticalPercent = 100;
 
+// ── Arming Gate ──────────────────────────────────────────────────────────────
+// Command code for arm/disarm and periodic gate evaluation interval.
+constexpr uint16_t kMavCmdArmDisarm    = 400;
+constexpr int kArmingGateEvalMs        = 500;
+constexpr int kTelemetryStalenessSec   = 10;
 
+// ── Telemetry polling ────────────────────────────────────────────────────────
+// Interval for the telemetry update timer that polls vehicle state.
+constexpr int kTelemetryUpdateMs = 200;
+
+// ── Parameter loading ────────────────────────────────────────────────────────
+// Timeout before parameter manager enters fallback mode.
+constexpr int kParamLoadTimeoutMs = 10000;
+
+// ── Check staleness ──────────────────────────────────────────────────────────
+// Default timeout before a non-passed check is marked stale.
+constexpr int kDefaultStaleTimeoutMs = 5000;
+
+// ── Vehicle profiling ────────────────────────────────────────────────────────
+// Minimum armed duration (ms) before a disarm is treated as a real flight.
+constexpr int kArmedTimerThresholdMs = 30000;
+
+// ── Battery / Energy estimation ──────────────────────────────────────────────
+// Nominal cell voltage and default capacity for energy prediction.
+constexpr double kNominalCellVoltage       = 3.7;
+constexpr double kDefaultBatteryCapacityMah = 5000.0;
+
+// ── Geodesic ─────────────────────────────────────────────────────────────────
+// Mean Earth radius in meters for Haversine distance calculations.
+constexpr double kEarthRadiusM = 6371000.0;
+
+// ── Magnetometer ─────────────────────────────────────────────────────────────
+// Expected magnetic field strength in nT at the operating location.
+constexpr double kExpectedMagField = 1000.0;
 
 // ── Layout: Telemetry / Checklist Split (35% / 65%) ─────────────────────────
 // UI layout ratios and sizing for the main preflight checklist screen.

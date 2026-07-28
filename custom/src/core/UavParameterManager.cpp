@@ -1,8 +1,20 @@
+/**
+ * @file UavParameterManager.cpp
+ * @brief Parameter loading tracker with PX4/ArduPilot name mapping.
+ *
+ * Monitors a watchlist of expected parameters, transitions to Ready when all
+ * arrive or to Fallback on timeout. Maintains a local-name-keyed value cache
+ * and provides bidirectional translation between PX4 and ArduPilot parameter
+ * naming conventions.
+ */
+
 #include "UavParameterManager.h"
 
 #include <QDebug>
 
-// PX4 ↔ ArduPilot parameter name mapping table
+#include "utils/Config.h"
+
+// PX4 <-> ArduPilot parameter name mapping table
 const QMap<QString, QMap<QString, QString>> UavParameterManager::s_paramMappings = {
     // Power
     {{"BAT1_A_PER_V"},    {{"PX4", "BAT1_A_PER_V"},    {"ArduPilot", "BATT_AMP_PERVLT"}}},
@@ -37,7 +49,7 @@ UavParameterManager::UavParameterManager(QObject *parent)
 {
     // 10-second timeout: if the full watchlist hasn't arrived by then, enter Fallback mode.
     m_timeout.setSingleShot(true);
-    m_timeout.setInterval(10000);
+    m_timeout.setInterval(kParamLoadTimeoutMs);
     connect(&m_timeout, &QTimer::timeout, this, &UavParameterManager::onTimeout);
 }
 
@@ -61,6 +73,7 @@ void UavParameterManager::notifyParamReceived(const QString &name)
     reevaluate();
 }
 
+// Set the autopilot type, which controls parameter name translation.
 void UavParameterManager::setAutopilotType(AutopilotType type)
 {
     m_autopilotType = type;
@@ -115,18 +128,21 @@ QString UavParameterManager::toLocalName(const QString &name) const
     return name;
 }
 
+// Store a parameter value, keyed by the local autopilot name after translation.
 void UavParameterManager::storeParam(const QString &name, float value)
 {
     QString local = toLocalName(name);
     m_cache[local] = value;
 }
 
+// Retrieve a cached parameter value, translating the name to local convention first.
 float UavParameterManager::paramValue(const QString &name, float defaultVal) const
 {
     QString local = toLocalName(name);
     return m_cache.value(local, defaultVal);
 }
 
+// Clear all received state and cached values, resetting to initial Loading state.
 void UavParameterManager::reset()
 {
     m_received.clear();

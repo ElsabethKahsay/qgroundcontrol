@@ -1,3 +1,13 @@
+/**
+ * @file AbstractCheck.cpp
+ * @brief Base implementation for all preflight checks.
+ *
+ * Provides the check lifecycle (status transitions, override/confirm logic),
+ * telemetry value accessors with fallback strategies, and configurable
+ * threshold support via DatabaseManager. Subclasses implement evaluate()
+ * to perform actual check logic.
+ */
+
 #include "AbstractCheck.h"
 
 #include <QDebug>
@@ -7,6 +17,7 @@
 
 #include "DatabaseManager.h"
 #include "TelemetryBridge.h"
+#include "utils/Config.h"
 
 #include <cmath>
 
@@ -55,7 +66,7 @@ bool AbstractCheck::requiresReevaluation() const
         return true;
     if (m_status == CheckStatus::Passed)
         return false;
-    return m_lastEvalTime.msecsTo(QDateTime::currentDateTime()) > configInt(QStringLiteral("stale_timeout_ms"), 5000);
+    return m_lastEvalTime.msecsTo(QDateTime::currentDateTime()) > configInt(QStringLiteral("stale_timeout_ms"), kDefaultStaleTimeoutMs);
 }
 
 bool AbstractCheck::overrideStatus(const QString &newStatus, const QString &reason)

@@ -11,6 +11,8 @@
 #include <QDebug>
 #include <QLoggingCategory>
 
+#include "TelemetryBridge.h"
+
 #include "FactSystem/Fact.h"
 #include "FactSystem/FactMetaData.h"
 #include "FactSystem/ParameterManager.h"
@@ -26,6 +28,7 @@
 #include "Vehicle/FactGroups/VehicleWindFactGroup.h"
 
 #include "core/ParameterWatchlist.h"
+#include "utils/Config.h"
 
 #include <cmath>
 
@@ -36,7 +39,7 @@ TelemetryBridge::TelemetryBridge(QObject *parent)
     : QObject(parent)
 {
     // Fire the polling timer every 200ms to pick up values that aren't pushed via signals.
-    _updateTimer.setInterval(200);
+    _updateTimer.setInterval(kTelemetryUpdateMs);
     connect(&_updateTimer, &QTimer::timeout, this, &TelemetryBridge::_onTelemetryUpdate);
 }
 

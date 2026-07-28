@@ -3,6 +3,7 @@
 #include <QtMath>
 
 #include "TelemetryBridge.h"
+#include "utils/Config.h"
 
 MagInterferenceCheck::MagInterferenceCheck(TelemetryBridge *telemetry,
                                            double maxDeltaGauss,
@@ -35,7 +36,7 @@ double MagInterferenceCheck::throttlePercent() const
     double val = channels[2].toDouble();
     if (val < 900)
         return 0.0;
-    return qBound(0.0, (val - 1000.0) / 1000.0, 1.0);
+    return qBound(0.0, (val - kExpectedMagField) / kExpectedMagField, 1.0);
 }
 
 // Accumulate baseline at idle, then fail if |mag - baseline| exceeds max when throttle is active.

@@ -7,6 +7,7 @@
 #include "PowerModel.h"
 #include "TelemetryBridge.h"
 #include "VehicleProfileManager.h"
+#include "utils/Config.h"
 
 MissionEnergyCheck::MissionEnergyCheck(PowerModel *powerModel,
                                        double batterySafetyFraction,
@@ -147,17 +148,17 @@ double MissionEnergyCheck::readBatteryCapacityWh() const
         double voltage = m_telemetry->batteryVoltage();
         if (voltage > 0) {
             double cellCount = qRound(voltage / 4.2);
-            return capacityMah * cellCount * 3.7 / 1000.0;
+            return capacityMah * cellCount * kNominalCellVoltage / 1000.0;
         }
         // Fallback: assume 6S (22.2V nominal) if voltage not available
-        return capacityMah * 6.0 * 3.7 / 1000.0;
+        return capacityMah * 6.0 * kNominalCellVoltage / 1000.0;
     }
 
     double voltage = m_telemetry->batteryVoltage();
     if (voltage > 0) {
         double cellCount = qRound(voltage / 4.2);
-        double estimatedMah = 5000.0;
-        return estimatedMah * cellCount * 3.7 / 1000.0;
+        double estimatedMah = kDefaultBatteryCapacityMah;
+        return estimatedMah * cellCount * kNominalCellVoltage / 1000.0;
     }
     return -1;
 }
