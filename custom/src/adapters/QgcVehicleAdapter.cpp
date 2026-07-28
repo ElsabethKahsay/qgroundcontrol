@@ -1,6 +1,8 @@
 /// @file QgcVehicleAdapter.cpp
 /// @brief Implementation of the QgcVehicleAdapter vehicle wrapper.
 
+#include "QgcVehicleAdapter.h"
+
 #include <QDebug>
 #include <QLoggingCategory>
 #include <QMetaMethod>

@@ -1,6 +1,8 @@
 /// @file QgcParameterAdapter.cpp
 /// @brief Implementation of the QgcParameterAdapter parameter interface.
 
+#include "QgcParameterAdapter.h"
+
 #include <QDebug>
 #include <QLoggingCategory>
 #include <QMetaObject>

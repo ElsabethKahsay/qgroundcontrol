@@ -984,4 +984,3 @@ private:
     QVector<QMetaObject::Connection> _paramConnections; ///< Active Fact::valueChanged connections.
     bool _parametersReady = false;                 ///< True after _loadParameters() completes.
 };
-};

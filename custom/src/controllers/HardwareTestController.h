@@ -273,6 +273,7 @@ private:
     void _fwDisarm();
 
     /// Returns the RC channel used for throttle (from RCMAP_THROTTLE param, default 3).
+    int _fwThrottleChannel() const;
 
     Vehicle *_vehicle = nullptr;
 
