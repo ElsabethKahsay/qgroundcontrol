@@ -18,6 +18,7 @@ import QGroundControl.Controllers
 import QGroundControl.ScreenTools
 
 import com.uav.preflight 1.0
+import cpts 1.0
 
 Rectangle {
     id:     _root
@@ -32,6 +33,9 @@ Rectangle {
     readonly property real  _verticalMargin:        _defaultTextHeight / 2
     readonly property real  _buttonWidth:           _defaultTextWidth * 18
 
+    property url pendingSource: ""
+    property string pendingTitle: ""
+
     // This need to block click event leakage to underlying map.
     DeadMouseArea {
         anchors.fill: parent
@@ -39,6 +43,12 @@ Rectangle {
 
     GeoTagController {
         id: geoController
+    }
+
+    // Session start dialog — requires a mode selection before the preflight
+    // checklist can load.
+    SessionStartDialog {
+        id: sessionStartDialog
     }
 
     QGCFlickable {
@@ -83,12 +93,11 @@ Rectangle {
                 model:  QGroundControl.corePlugin ? QGroundControl.corePlugin.analyzePages : []
 
                 Component.onCompleted:  {
-                    console.log("AnalyzeView(src): buttonRepeater count=", buttonRepeater.count)
+                    console.log("AnalyzeView: buttonRepeater count=", buttonRepeater.count)
                     for (var i = 0; i < buttonRepeater.count; i++) {
                         try {
-                            console.log("AnalyzeView(src): page[" + i + "] ->", buttonRepeater.itemAt(i).text, buttonRepeater.itemAt(i).imageResource)
-                        } catch (e) {
-                        }
+                            console.log("AnalyzeView: page[" + i + "] ->", buttonRepeater.itemAt(i).text, buttonRepeater.itemAt(i).imageResource)
+                        } catch (e) {}
                     }
                     itemAt(0).checked = true
                 }
@@ -96,77 +105,29 @@ Rectangle {
                 SubMenuButton {
                     id:                 subMenu
                     imageResource:      modelData.icon
-                    autoExclusive:      true
+                    checkable:          true
                     text:               modelData.title
 
                     onClicked: {
-                        console.log("AnalyzeView(src): onClicked title=", modelData.title, "url=", modelData.url, "mode=", FlightSession.mode)
+                        _clearAnalyzeButtonSelection()
+                        checked = true
                         var urlString = modelData.url ? modelData.url.toString() : ""
+                        console.log("MARKER-20260804 onClicked title=", modelData.title, "url=", urlString, "mode=", FlightSession.mode)
                         var isPreflight = urlString.indexOf("PreflightChecklistView.qml") !== -1
                         if (!isPreflight && modelData.title && modelData.title.indexOf("Preflight") !== -1) isPreflight = true
                         if (isPreflight && FlightSession.mode === FlightSession.None) {
-                            console.log("AnalyzeView(src): storing pendingSource=", modelData.url)
+                            console.log("AnalyzeView: storing pendingSource=", modelData.url)
                             pendingSource = modelData.url
                             pendingTitle = modelData.title
                             sessionStartDialog.open()
                         } else {
-                            console.log("AnalyzeView(src): loading directly ->", modelData.url)
+                            console.log("AnalyzeView: loading directly ->", modelData.url)
                             panelLoader.source  = modelData.url
                             panelLoader.title   = modelData.title
-                            checked             = true
                         }
                     }
                 }
             }
-        }
-    }
-
-    // Pending source when waiting for a session mode selection
-    property string pendingSource: ""
-    property string pendingTitle: ""
-
-    Dialog {
-        id: sessionStartDialog
-        title: qsTr("Start Session")
-        modal: true
-        standardButtons: Dialog.Cancel
-        x: Math.round((parent.width - width) / 2)
-        y: Math.round((parent.height - height) / 2)
-        width: Math.min(520, parent.width * 0.6)
-
-        Column {
-            anchors.fill: parent
-            anchors.margins: 12
-            spacing: 12
-
-            Text { text: qsTr("Select session mode to begin preflight:"); font.pixelSize: 14 }
-
-            Row {
-                spacing: 12
-                Button { text: qsTr("Training"); onClicked: { FlightSession.setMode("TRAINING"); sessionStartDialog.close(); } }
-                Button { text: qsTr("Testing"); onClicked: { FlightSession.setMode("TESTING"); sessionStartDialog.close(); } }
-                Button { text: qsTr("Flight");   onClicked: { FlightSession.setMode("FLIGHT");   sessionStartDialog.close(); } }
-            }
-        }
-
-        onClosed: {
-            console.log("AnalyzeView(src): sessionStartDialog closed; pendingSource=", pendingSource, "mode=", FlightSession.mode)
-            if (pendingSource !== "" && FlightSession.mode !== FlightSession.None) {
-                console.log("AnalyzeView(src): loading pendingSource ->", pendingSource)
-                panelLoader.source = pendingSource
-                panelLoader.title  = pendingTitle !== "" ? pendingTitle : "Preflight Checklist"
-                pendingSource = ""
-                pendingTitle = ""
-                // attempt to mark the button checked
-                for (var i = 0; i < buttonRepeater.count; i++) {
-                    if (buttonRepeater.itemAt(i).text === panelLoader.title) {
-                        buttonRepeater.itemAt(i).checked = true
-                        break
-                    }
-                }
-            }
-            pendingSource = ""
-            pendingTitle = ""
         }
     }
 
@@ -199,6 +160,52 @@ Rectangle {
         Connections {
             target:     panelLoader.item
             onPopout:   mainWindow.createrWindowedAnalyzePage(panelLoader.title, panelLoader.source)
+        }
+    }
+
+    // Mode selected from the session dialog — load the preflight checklist.
+    Connections {
+        target: sessionStartDialog
+        function onClosed() {
+            console.log("AnalyzeView: sessionStartDialog closed; pendingSource=", pendingSource, "mode=", FlightSession.mode)
+            if (pendingSource.toString() !== "" && FlightSession.mode !== FlightSession.None) {
+                console.log("AnalyzeView: loading pendingSource ->", pendingSource)
+                panelLoader.source = pendingSource
+                panelLoader.title  = pendingTitle !== "" ? pendingTitle : qsTr("Preflight Checklist")
+                pendingSource = ""
+                pendingTitle = ""
+                _selectAnalyzeButton(panelLoader.title, panelLoader.source)
+            }
+            pendingSource = ""
+            pendingTitle = ""
+        }
+    }
+
+    function _clearAnalyzeButtonSelection() {
+        for (var i = 0; i < buttonRepeater.count; i++) {
+            var item = buttonRepeater.itemAt(i)
+            if (item) {
+                item.checked = false
+            }
+        }
+    }
+
+    function _selectAnalyzeButton(title, url) {
+        for (var i = 0; i < buttonRepeater.count; i++) {
+            var item = buttonRepeater.itemAt(i)
+            if (!item) continue
+            if (item.text === title) {
+                item.checked = true
+                return
+            }
+            if (url && item.modelData && item.modelData.url && item.modelData.url.toString() === url.toString()) {
+                item.checked = true
+                return
+            }
+            if (title.indexOf("Preflight") !== -1 && item.text.indexOf("Preflight") !== -1) {
+                item.checked = true
+                return
+            }
         }
     }
 }
