@@ -674,6 +674,14 @@ public:
     // -- Hardware setup --
     bool hardwareSetupRequired() const { return _hardwareSetupRequired; }
 
+    /// Send an arm command to the vehicle via MAV_CMD_COMPONENT_ARM_DISARM.
+    /// If an ArmingGate is set, the command is only sent when the gate is open
+    /// or an override is active; otherwise it is silently blocked.
+    Q_INVOKABLE void arm();
+
+    /// Set the arming gate reference so arm() can check gate state before sending.
+    void setArmingGate(QObject* gate);
+
     /// Set a parameter value in the local cache. Also updates the Qt dynamic
     /// property so QML bindings react immediately.
     Q_INVOKABLE void setParameterValue(const QString& name, float value);
@@ -912,6 +920,11 @@ private:
 
     int _motorCount = 0;
     QVariantList _motorOutputs;
+    int _fwMotorChannel = -1;   /// Cached fixed-wing motor output channel (1-based), -1 until detected
+
+    /// Auto-detects the servo output channel driving the fixed-wing motor
+    /// (SERVOn_FUNCTION = 70/73, falling back to the RC throttle channel).
+    int _fwMotorOutputChannel();
 
     int _missionCount = 0;
     double _missionFirstWpDistance = -1.0;
@@ -981,6 +994,7 @@ private:
     bool _hardwareSetupRequired = false;
 
     QMap<QString, float> _parameterCache;           ///< Watchlist parameter name -> cached value.
-    QVector<QMetaObject::Connection> _paramConnections; ///< Active Fact::valueChanged connections.
+    QVector<QMetaObject::Connection> _paramConnections; ///< Active per-parameter Fact::valueChanged connections.
     bool _parametersReady = false;                 ///< True after _loadParameters() completes.
+    QObject* _armingGate = nullptr;                ///< ArmingGate for arm-command gating (set by PreflightPlugin).
 };

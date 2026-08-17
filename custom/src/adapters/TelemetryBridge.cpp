@@ -336,8 +336,57 @@ void TelemetryBridge::_onVehicleConnectedChanged(bool connected)
 void TelemetryBridge::_onParameterReadyChanged(bool ready)
 {
     if (ready && _vehicle) {
+        _fwMotorChannel = -1; // re-detect the fixed-wing motor channel with fresh parameters
         _loadParameters();
     }
+}
+
+/// Auto-detects the servo output channel that drives the fixed-wing motor.
+///
+/// Mirrors HardwareTestController: SERVOn_FUNCTION 70 (Throttle) or 73 (Motor)
+/// identifies the throttle output on ArduPilot; fall back to the RC throttle
+/// channel (RCMAP_THROTTLE / RC_MAP_THROTTLE, default 3) when params are
+/// unavailable. The result is cached until parameters reload.
+int TelemetryBridge::_fwMotorOutputChannel()
+{
+    if (_fwMotorChannel > 0)
+        return _fwMotorChannel;
+
+    int detected = 3;
+    if (_vehicle && _vehicle->parameterManager() && _vehicle->parameterManager()->parametersReady()) {
+        ParameterManager *paramMgr = _vehicle->parameterManager();
+        const int compId = _vehicle->defaultComponentId();
+
+        const int functions[] = {70, 73};
+        for (int fn : functions) {
+            for (int ch = 1; ch <= 16; ++ch) {
+                Fact *fact = paramMgr->getParameter(compId, QStringLiteral("SERVO%1_FUNCTION").arg(ch));
+                if (fact && qRound(fact->rawValue().toFloat()) == fn) {
+                    detected = ch;
+                    ch = 16;
+                    break;
+                }
+            }
+            if (detected != 3) break;
+        }
+
+        if (detected == 3) {
+            const QStringList names = {QStringLiteral("RCMAP_THROTTLE"), QStringLiteral("RC_MAP_THROTTLE")};
+            for (const QString &name : names) {
+                Fact *fact = paramMgr->getParameter(compId, name);
+                if (fact) {
+                    int ch = fact->rawValue().toInt();
+                    if (ch >= 1 && ch <= 16) {
+                        detected = ch;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    _fwMotorChannel = qBound(1, detected, 16);
+    return _fwMotorChannel;
 }
 
 /// Loads watchlist parameters from the ParameterManager into the local cache
@@ -564,7 +613,24 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message)
             QVariantList outputs;
             outputs.reserve(16);
 
-            // Motor count = index of the highest non-zero channel + 1.
+            // A fixed-wing airframe has a single motor regardless of which
+            // servo output drives it (e.g. CH3). Report just that motor.
+            if (_vehicle && (_vehicle->fixedWing() || _vehicle->vehicleType() == MAV_TYPE_FIXED_WING)) {
+                const int ch = _fwMotorOutputChannel();
+                int motorCount = 1;
+                if (motorCount != _motorCount) {
+                    _motorCount = motorCount;
+                    emit motorCountChanged();
+                }
+                outputs.append(ch >= 1 && ch <= 16 ? vals[ch - 1] : 0);
+                if (_motorOutputs != outputs) {
+                    _motorOutputs = outputs;
+                    emit servoOutputsChanged();
+                }
+                break;
+            }
+
+            // Multirotor: motor count = index of the highest non-zero channel + 1.
             int count = 0;
             for (int i = 0; i < 16; ++i) {
                 outputs.append(vals[i]);
@@ -876,6 +942,42 @@ float TelemetryBridge::parameterValue(const QString& name, float defaultValue) c
         return it.value();
     }
     return defaultValue;
+}
+
+/// Send an arm command to the vehicle if the arming gate allows it.
+/// Queries ArmingGate.isArmingAllowed() before sending. If no gate is set,
+/// the command is sent unconditionally. If the gate is closed and no override
+/// is active, the command is silently blocked and a warning is logged.
+void TelemetryBridge::arm()
+{
+    if (!_vehicle) {
+        qCWarning(telemetryBridgeLog) << "arm(): no vehicle connected";
+        return;
+    }
+
+    // Check arming gate if one is registered.
+    if (_armingGate) {
+        bool allowed = _armingGate->property("armingAllowed").toBool();
+        bool overrideActive = _armingGate->property("overrideActive").toBool();
+        if (!allowed && !overrideActive) {
+            QString reason = _armingGate->property("denialReason").toString();
+            qCWarning(telemetryBridgeLog) << "arm(): BLOCKED by ArmingGate —" << reason;
+            return;
+        }
+    }
+
+    qCWarning(telemetryBridgeLog) << "arm(): sending MAV_CMD_COMPONENT_ARM_DISARM";
+    _vehicle->sendMavCommand(_vehicle->defaultComponentId(),
+                             MAV_CMD_COMPONENT_ARM_DISARM,
+                             true,    // showError
+                             1.0f);   // param1 = 1 (arm)
+}
+
+/// Store a reference to the ArmingGate so arm() can query gate state.
+/// Uses QObject* to avoid circular header dependency; accesses properties dynamically.
+void TelemetryBridge::setArmingGate(QObject* gate)
+{
+    _armingGate = gate;
 }
 
 /// Set a parameter value in the local cache and expose it as a dynamic Qt property.

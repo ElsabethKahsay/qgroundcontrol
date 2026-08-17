@@ -46,6 +46,17 @@ QString WeatherProvider::weatherDescription() const
     return describeCode(m_weatherCode);
 }
 
+QString WeatherProvider::currentSummary() const
+{
+    if (m_windSpeed < 0.001 && m_visibilityKm < 0.001 && m_temperature < -50.0)
+        return QStringLiteral("Weather not yet fetched");
+    return QStringLiteral("Wind %1 kt, Vis %2 km, %3, %4\u00B0C")
+        .arg(m_windSpeed / 0.514444, 0, 'f', 0)
+        .arg(m_visibilityKm, 0, 'f', 1)
+        .arg(weatherDescription())
+        .arg(m_temperature, 0, 'f', 1);
+}
+
 /** @brief Map a WMO weather code (or Open-Meteo code) to a human-readable description. */
 QString WeatherProvider::describeCode(int code) const
 {
@@ -160,6 +171,7 @@ void WeatherProvider::fetchMetar(const QString &icaoCode)
 {
     if (icaoCode.trimmed().isEmpty()) return;
 
+    m_stationId = icaoCode.trimmed().toUpper();
     m_loading = true;
     m_lastError.clear();
     emit loadingChanged();
@@ -474,6 +486,7 @@ void WeatherProvider::fetchNotam(const QString &icaoCode)
 {
     if (icaoCode.trimmed().isEmpty()) return;
 
+    m_stationId = icaoCode.trimmed().toUpper();
     m_loading = true;
     m_lastError.clear();
     emit loadingChanged();
@@ -578,6 +591,36 @@ void WeatherProvider::loadNotamGeoJson(const QString &filePath)
     emit notamsChanged();
     if (m_notams.isEmpty())
         m_lastError = QStringLiteral("GeoJSON has no NOTAM features");
+}
+
+QString WeatherProvider::windSummary() const
+{
+    if (m_windSpeed < 0.001 && m_windDirection < 0.5)
+        return {};
+    return QStringLiteral("%1 kt from %2\u00B0")
+        .arg(m_windSpeed / 0.514444, 0, 'f', 0)
+        .arg(m_windDirection, 0, 'f', 0);
+}
+
+QString WeatherProvider::ceiling() const
+{
+    if (m_ceilingFt > 0)
+        return QStringLiteral("%1 ft AGL").arg(m_ceilingFt);
+    if (!m_metarString.isEmpty())
+        return QStringLiteral("CAVOK");
+    return {};
+}
+
+bool WeatherProvider::windOk() const
+{
+    return m_windSpeed <= kMaxWindMps;
+}
+
+QString WeatherProvider::lastUpdated() const
+{
+    if (!m_metarTimestamp.isValid())
+        return {};
+    return m_metarTimestamp.toLocalTime().toString(QStringLiteral("dd MMM yyyy  HH:mm"));
 }
 
 /**

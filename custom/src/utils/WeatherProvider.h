@@ -36,6 +36,7 @@ class WeatherProvider : public QObject
     Q_PROPERTY(double windDirection READ windDirection NOTIFY weatherUpdated)
     Q_PROPERTY(int weatherCode READ weatherCode NOTIFY weatherUpdated)
     Q_PROPERTY(QString weatherDescription READ weatherDescription NOTIFY weatherUpdated)
+    Q_PROPERTY(QString currentSummary READ currentSummary NOTIFY weatherUpdated)
     Q_PROPERTY(double visibility READ visibility NOTIFY weatherUpdated)
     Q_PROPERTY(double humidity READ humidity NOTIFY weatherUpdated)
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
@@ -52,6 +53,14 @@ class WeatherProvider : public QObject
     Q_PROPERTY(QString metarString READ metarString NOTIFY weatherUpdated)
     Q_PROPERTY(QStringList metarParsed READ metarParsed NOTIFY weatherUpdated)
     Q_PROPERTY(QVariantList notams READ notams NOTIFY notamsChanged)
+    // Display-friendly summaries for QML weather panels
+    Q_PROPERTY(QString windSummary READ windSummary NOTIFY weatherUpdated)
+    Q_PROPERTY(QString ceiling READ ceiling NOTIFY weatherUpdated)
+    Q_PROPERTY(QString stationId READ stationId NOTIFY weatherUpdated)
+    Q_PROPERTY(QString rawMetar READ rawMetar NOTIFY weatherUpdated)
+    Q_PROPERTY(bool windOk READ windOk NOTIFY weatherUpdated)
+    Q_PROPERTY(QString lastUpdated READ lastUpdated NOTIFY weatherUpdated)
+    Q_PROPERTY(bool isFetching READ isFetching NOTIFY loadingChanged)
 
 public:
     static WeatherProvider *instance();
@@ -64,6 +73,7 @@ public:
     double windDirection() const { return m_windDirection; }
     int weatherCode() const { return m_weatherCode; }
     QString weatherDescription() const;
+    QString currentSummary() const;
     double visibility() const { return m_visibility; }
     double humidity() const { return m_humidity; }
     bool loading() const { return m_loading; }
@@ -79,6 +89,13 @@ public:
     QString metarString() const { return m_metarString; }
     QStringList metarParsed() const { return m_metarParsed; }
     QVariantList notams() const { return m_notams; }
+    QString windSummary() const;
+    QString ceiling() const;
+    QString stationId() const { return m_stationId; }
+    QString rawMetar() const { return m_metarString; }
+    bool windOk() const;
+    QString lastUpdated() const;
+    bool isFetching() const { return m_loading; }
 
     Q_INVOKABLE void fetchWeather(double latitude, double longitude);
     Q_INVOKABLE void fetchMetar(const QString &icaoCode);
@@ -97,6 +114,8 @@ signals:
 
 private:
     friend class WeatherProviderTest;
+
+    static constexpr double kMaxWindMps = 10.0;
 
     QString describeCode(int code) const;
     void handleMetarJson(const QByteArray &data);
@@ -126,6 +145,7 @@ private:
     QDateTime m_metarTimestamp;
     QStringList m_metarParsed;
     QStringList m_precipitation;
+    QString m_stationId;
 
     // TAF
     QString m_tafString;
