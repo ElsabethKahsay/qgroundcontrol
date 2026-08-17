@@ -163,7 +163,7 @@ All 26 navigation requirements are fully covered:
 | SAF-008 | `RtlAltParamCheck` | Auto | `RTL_ALT` ≥ 15 m and ≤ `FENCE_ALT_MAX` − 10 m. Warning. | ✅ |
 | SAF-009 | `RtlTerrainCheck` | Auto | `RTL_ALT_TYPE` + `RTL_CONE_SLOPE` terrain awareness. Info. | ✅ |
 | SAF-010 | `BatteryFailsafeCheck` | Auto | `BATT_FS_LOW_ACT` > 0, `BAT_LOW_THR` 10-35%. Warning. | ✅ |
-| SAF-011 | `MissionCountCheck` | Auto | `MISSION_COUNT` > 0. Warning/skipped. | ✅ |
+| SAF-011 | `MissionCountCheck` | Auto | `MISSION_COUNT` > 0. Warning/skipped. **Removed** (info only, not a check). | ❌ |
 | SAF-012 | `MissionItemCheck` | Auto | First WP distance from home < 100 m. Warning. | ✅ |
 | SAF-013 | `TakeoffCommandCheck` | Auto | `MAV_CMD_NAV_TAKEOFF` in first 3 mission items. Warning. | ✅ |
 | SAF-014 | `TerrainClearanceCheck` | Auto | `TERRAIN_REPORT` clearance ≥ 10 m. Warning/skipped. | ✅ |
@@ -180,7 +180,7 @@ All 26 navigation requirements are fully covered:
 
 | Req | Check | Type | Notes | Status |
 |-----|-------|------|-------|--------|
-| ENV-001 | `WindSpeedCheck` | Auto | `WIND.speed` ≤ 10 m/s. Warning. | ✅ |
+| ENV-001 | `WindSpeedCheck` | Auto | `WIND.speed` ≤ 10 m/s. **Removed** (info only, not a check; fixed-wing critical is now `AirspeedCheck`). | ❌ |
 | ENV-002 | `ManualConfirmCheck("environment.wind_gust")` | Manual | Confirm gust conditions acceptable. Blocking. | ✅ |
 | ENV-003 | `ManualConfirmCheck("environment.ambient_temp")` | Manual | **SRS specifies auto-check** via `SCALED_PRESSURE.temperature`. Implementation is manual-only. Not auto-verified. | ⚠️ |
 | ENV-004 | `ManualConfirmCheck("environment.visibility")` | Manual | Confirm VLOS and ceiling. Blocking. | ✅ |
@@ -276,7 +276,7 @@ The UI shows 91 checks but the SRS has 109 requirements. The difference arises f
 
 All 91 registered checks by category:
 
-**Auto (68):** `AhrsHealthCheck`, `AccelConsistencyCheck`, `AirspeedCheck`, `BaroAltConsistencyCheck`, `BaroHealthCheck`, `BaroTemperatureCheck`, `BatteryFailsafeCheck`, `BatteryTemperatureCheck`, `BatteryVoltageCheck`, `CellConfigCheck`, `CellVoltageBalanceCheck`, `CompanionLinkCheck`, `CompassCalCheck`, `CompassYawConsistencyCheck`, `CurrentSensorCheck`, `DualGpsConsistencyCheck`, `EkfFailsafeCheck`, `EkfStatusFlagsCheck`, `EkfVarianceCheck`, `EscCurrentSymmetryCheck`, `EscFirmwareCheck`, `EscResponsivenessCheck`, `EscVoltageConsistencyCheck`, `GcsFailsafeCheck`, `GeofenceMaxAltCheck`, `GeofenceMaxRadiusCheck`, `GeofenceParamCheck`, `GimbalLinkCheck`, `GpsBaroAltConsistencyCheck`, `GpsFixCheck`, `GpsSpeedAccuracyCheck`, `GyroBiasCheck`, `HeartbeatCheck`, `HomePositionCheck`, `ImuCalCheck`, `ImuTemperatureCheck`, `LevelCalibrationCheck`, `MagFieldStrengthCheck`, `MagInterferenceCheck`, `MavlinkProtocolCheck`, `MissionCountCheck`, `MissionEnergyCheck`, `MissionItemCheck`, `MotorCountCheck`, `MotorTemperatureCheck`, `OpticalFlowCheck`, `PowerModuleHealthCheck`, `PreArmOkCheck`, `RadioBufferCheck`, `RadioFailsafeCheck`, `RcArmingSwitchCheck`, `RcCalibrationCheck`, `RcChannelCountCheck`, `RcFailsafeCheck`, `RcModeSwitchCheck`, `RcRssiCheck`, `RcThrottleMinCheck`, `RcTrimCheck`, `RedundantPowerCheck`, `RtlAltParamCheck`, `RtlTerrainCheck`, `TakeoffCommandCheck`, `TelemetryDropRateCheck`, `TerrainClearanceCheck`, `VibrationCheck`, `VibrationFailsafeCheck`, `WindSpeedCheck`
+**Auto (68):** `AhrsHealthCheck`, `AccelConsistencyCheck`, `AirspeedCheck`, `BaroAltConsistencyCheck`, `BaroHealthCheck`, `BaroTemperatureCheck`, `BatteryFailsafeCheck`, `BatteryTemperatureCheck`, `BatteryVoltageCheck`, `CellConfigCheck`, `CellVoltageBalanceCheck`, `CompanionLinkCheck`, `CompassCalCheck`, `CompassYawConsistencyCheck`, `CurrentSensorCheck`, `DualGpsConsistencyCheck`, `EkfFailsafeCheck`, `EkfStatusFlagsCheck`, `EkfVarianceCheck`, `EscCurrentSymmetryCheck`, `EscFirmwareCheck`, `EscResponsivenessCheck`, `EscVoltageConsistencyCheck`, `GcsFailsafeCheck`, `GeofenceMaxAltCheck`, `GeofenceMaxRadiusCheck`, `GeofenceParamCheck`, `GimbalLinkCheck`, `GpsBaroAltConsistencyCheck`, `GpsFixCheck`, `GpsSpeedAccuracyCheck`, `GyroBiasCheck`, `HeartbeatCheck`, `HomePositionCheck`, `ImuCalCheck`, `ImuTemperatureCheck`, `LevelCalibrationCheck`, `MagFieldStrengthCheck`, `MagInterferenceCheck`, `MavlinkProtocolCheck`, `MissionEnergyCheck`, `MissionItemCheck`, `MotorCountCheck`, `MotorTemperatureCheck`, `OpticalFlowCheck`, `PowerModuleHealthCheck`, `PreArmOkCheck`, `RadioBufferCheck`, `RadioFailsafeCheck`, `RcArmingSwitchCheck`, `RcCalibrationCheck`, `RcChannelCountCheck`, `RcFailsafeCheck`, `RcModeSwitchCheck`, `RcRssiCheck`, `RcThrottleMinCheck`, `RcTrimCheck`, `RedundantPowerCheck`, `RtlAltParamCheck`, `RtlTerrainCheck`, `TakeoffCommandCheck`, `TelemetryDropRateCheck`, `TerrainClearanceCheck`, `VibrationCheck`, `VibrationFailsafeCheck`
 
 **Action (1):** `MotorSpinCheck`
 

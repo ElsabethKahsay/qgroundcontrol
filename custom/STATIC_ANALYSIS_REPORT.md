@@ -75,7 +75,7 @@
 ## DEAD CODE
 
 ### Empty stub files (0 bytes each)
-| File | Lines | Safe to delete? |
+| File | Lines | Safe to delete? |r
 |---|---|---|
 | `src/detection/DetectionBridge.h` | 0 | Yes |
 | `src/detection/DetectionBridge.cpp` | 0 | Yes |
