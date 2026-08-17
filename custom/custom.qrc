@@ -2,6 +2,9 @@
     <qresource prefix="custom/img">
         <file alias="CustomAppIcon.jpg">res/Images/CustomAppIcon.jpg</file>
     </qresource>
+    <qresource prefix="custom/icons">
+        <file alias="airspace.svg">res/Images/airspace.svg</file>
+    </qresource>
     <qresource prefix="/fonts">
         <file alias="Abel-Regular">res/fonts/Abel-Regular.ttf</file>
     </qresource>
@@ -28,6 +31,9 @@
         <file alias="FlyViewToolBar.qml">qml/QGroundControl/Controls/FlyViewToolBar.qml</file>
         <file alias="SubMenuButton.qml">qml/QGroundControl/Controls/SubMenuButton.qml</file>
     </qresource>
+    <qresource prefix="/qml/QGroundControl/AnalyzeView">
+        <file alias="AnalyzeView.qml">qml/AnalyzeView.qml</file>
+    </qresource>
     <qresource prefix="/qml/QGroundControl/FlightMap">
         <file alias="QGCVideoBackground.qml">qml/QGCVideoBackground.qml</file>
     </qresource>
@@ -43,6 +49,9 @@
         <file alias="TemplateEditor.qml">qml/pages/TemplateEditor.qml</file>
         <file alias="TemplateManager.qml">qml/pages/TemplateManager.qml</file>
         <file alias="PostFlightSummary.qml">qml/pages/PostFlightSummary.qml</file>
+        <file alias="FlightHistoryPage.qml">qml/pages/FlightHistoryPage.qml</file>
+        <file alias="AirspacePage.qml">qml/pages/AirspacePage.qml</file>
+        <file alias="AirButton.qml">qml/pages/AirButton.qml</file>
         <file alias="PreflightSettings.qml">qml/pages/PreflightSettings.qml</file>
         <file alias="VehicleManagement.qml">qml/pages/VehicleManagement.qml</file>
     </qresource>
@@ -77,11 +86,18 @@
         <file alias="TelemetryInfoBox.qml">qml/cpts/TelemetryInfoBox.qml</file>
         <file alias="VideoPreview.qml">qml/cpts/VideoPreview.qml</file>
         <file alias="WeatherPanel.qml">qml/cpts/WeatherPanel.qml</file>
+        <file alias="WeatherInfoPanel.qml">qml/cpts/WeatherInfoPanel.qml</file>
         <file alias="PriorityFixPanel.qml">qml/cpts/PriorityFixPanel.qml</file>
         <file alias="ArmGatePanel.qml">qml/cpts/ArmGatePanel.qml</file>
         <file alias="MotorCheckPanel.qml">qml/cpts/MotorCheckPanel.qml</file>
         <file alias="ChecklistEngine.qml">qml/cpts/ChecklistEngine.qml</file>
+        <file alias="SessionStartDialog.qml">qml/cpts/SessionStartDialog.qml</file>
+        <file alias="FlightFormDialog.qml">qml/cpts/FlightFormDialog.qml</file>
         <file alias="ArmGateDialogLoader.qml">qml/cpts/ArmGateDialogLoader.qml</file>
+        <file alias="WizardStepBar.qml">qml/cpts/WizardStepBar.qml</file>
+        <file alias="WizardStep1Operator.qml">qml/cpts/WizardStep1Operator.qml</file>
+        <file alias="WizardStep3Hardware.qml">qml/cpts/WizardStep3Hardware.qml</file>
+        <file alias="WizardStep4Review.qml">qml/cpts/WizardStep4Review.qml</file>
         <file alias="MotorTestUtils.js">qml/cpts/MotorTestUtils.js</file>
         <file alias="qmldir">qml/cpts/qmldir</file>
         <file alias="PreflightToolbarIndicator.qml">qml/PreflightToolbarIndicator.qml</file>

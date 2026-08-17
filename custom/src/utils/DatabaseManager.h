@@ -8,7 +8,7 @@
 // ============================================================================
 // DatabaseManager — Singleton providing all SQLite persistence for the
 // UAV Preflight Checklist plugin.  Owns a single .db file containing
-// 13 tables that together cover:
+// 15 tables that together cover:
 //
 //   Schema tracking     schema_version          Stores the current DB version
 //                                                for incremental migrations.
@@ -27,22 +27,27 @@
 //                                                props, batteries, etc.).
 //
 //   Vehicles            vehicles                Master vehicle registry keyed
-//                                                by device UID (hardware UID
-//                                                or fingerprint).
+//                                                  by device UID (hardware UID
+//                                                  or fingerprint).
 //                      vehicle_config          Per-vehicle check overrides as
-//                                                a JSON blob.
+//                                                  a JSON blob.
 //
 //   Batteries           batteries               Master battery registry keyed
-//                                                by serial number.
+//                                                  by serial number.
 //                      battery_cycles          Per-flight cycle & health data.
 //
 //   Flights             flight_sessions         Start/end time, payload,
-//                                                energy, and location per flight.
+//                                                  energy, and location per flight.
 //
 //   Check audit         check_results           Per-check pass/fail records
-//                                                tied to a flight session.
+//                                                  tied to a flight session.
 //                      check_config            Per-check key/value overrides,
-//                                                optionally scoped to a vehicle.
+//                                                  optionally scoped to a vehicle.
+//
+//   Airspace            no_fly_zones            Known restricted airspace
+//                                                  (regulatory, obstacle, etc.).
+//                      zone_compliance_log      Manual compliance check records
+//                                                  tied to a flight (audit trail).
 //
 // Thread affinity: All public methods MUST be called from the main (GUI)
 // thread.  DatabaseManager owns a QSqlDatabase connection which is not
@@ -62,6 +67,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QDateTime>
+#include <QVariantMap>
 
 /// Lightweight representation of a row in the vehicle registry.
 /// Used externally for serialisation; the DB methods return JSON strings
@@ -113,6 +119,9 @@ public:
     Q_INVOKABLE bool logMotorTestResult(int vehicleSysId, int motorIndex, int throttlePct,
                                         int durationSec, int expectedPwm, int actualPwm,
                                         int pwmDelta, const QString &result);
+    Q_INVOKABLE bool logSurfaceTestResult(int flightId, const QString &surfaceId, int channel,
+                                          int minPwmActual, int maxPwmActual,
+                                          int directionOk, const QString &result);
     Q_INVOKABLE QString getHardwareTestEvents(int flightId);
 
     // ── Component maintenance CRUD ────────────────────────────────────
@@ -213,6 +222,56 @@ public:
                                      const QString &checkId, const QString &status,
                                      const QString &message);
     Q_INVOKABLE QString getCheckResults(int flightSessionId);
+
+    // ── Operator CRUD ──────────────────────────────────────────────
+    Q_INVOKABLE int insertOperator(const QString &name, const QString &role);
+    Q_INVOKABLE QList<QVariantMap> getAllOperators();
+    Q_INVOKABLE bool updateOperatorStats(int operatorId, bool wasFlight);
+
+    // ── Flight session (new flight record system) ──────────────────
+    Q_INVOKABLE int openFlight(int operatorId, int vehicleId, const QString &mode,
+                               const QString &purpose, const QString &location,
+                               const QString &notes, const QString &weatherSummary);
+    Q_INVOKABLE bool setFlightPreChecklistComplete(int flightId);
+    Q_INVOKABLE bool setFlightPostChecklistComplete(int flightId);
+    Q_INVOKABLE bool setFlightArmedAt(int flightId, const QDateTime &time);
+    Q_INVOKABLE bool setFlightDisarmedAt(int flightId, const QDateTime &time);
+    Q_INVOKABLE bool closeFlight(int flightId, int durationSec,
+                                 double maxAltitude, double minBatteryV,
+                                 double maxBatteryV, int modeChanges);
+    Q_INVOKABLE QList<QVariantMap> getFlightsForVehicle(int vehicleId, int limit = 50);
+    Q_INVOKABLE QVariantMap getFlightById(int flightId);
+
+    // ── Flight check results ───────────────────────────────────────
+    Q_INVOKABLE bool insertFlightCheckResult(int flightId, const QString &checkId,
+                                             const QString &category, bool isPostFlight,
+                                             const QString &status, const QString &message,
+                                             int confirmedBy = -1);
+
+    // ── Flight telemetry events ─────────────────────────────────────
+    Q_INVOKABLE bool insertTelemetryEvent(int flightId, const QString &eventType,
+                                          const QString &triggeredBy, double batteryV,
+                                          double altitudeM, int gpsSats,
+                                          const QString &flightMode);
+
+    // ── No-fly zone CRUD ────────────────────────────────────────────
+    Q_INVOKABLE int insertZone(const QString &name, const QString &description,
+                               double lat, double lon, double radiusM,
+                               const QString &reason, int createdBy = -1);
+    Q_INVOKABLE bool updateZone(int id, const QString &name, const QString &description,
+                                double lat, double lon, double radiusM,
+                                const QString &reason, bool active);
+    Q_INVOKABLE bool deleteZone(int id);
+    Q_INVOKABLE QList<QVariantMap> getAllZones();
+    Q_INVOKABLE QList<QVariantMap> getActiveZones();
+
+    // ── Manual zone compliance logging ──────────────────────────────
+    Q_INVOKABLE bool insertComplianceRecord(int flightId, int operatorId,
+                                            const QString &result,
+                                            const QString &notes,
+                                            const QString &overrideReason);
+    Q_INVOKABLE QList<QVariantMap> getComplianceForFlight(int flightId);
+    Q_INVOKABLE QList<QVariantMap> getComplianceHistory(int limit = 100);
 
     int schemaVersion() const;
     Q_INVOKABLE int storedSchemaVersion() const;

@@ -155,7 +155,11 @@ bool DatabaseManager::initialize(const QString &dbPath)
 //   4 - Phase 8/9: fingerprint columns, vehicle_config table
 //   5 - plan_lat/plan_lon columns for per-plan location coordinates
 //   6 - energy_consumed_wh/distance_m on flight_sessions; check_config table
-static const int kLatestSchemaVersion = 8;
+//   7 - motor_test_results audit table
+//   8 - Expanded vehicle profile columns (vehicle_uuid, frame_class, frame_type, motor_count, motor_layout, param_snapshot_path, last_preflight_status, gps_latitude, gps_longitude, pilot_name, notes, thumbnail)
+//   9 - operators, flights, flight_check_results, flight_telemetry_events tables for flight record system
+//  10 - no_fly_zones + zone_compliance_log tables for the airspace compliance system
+static const int kLatestSchemaVersion = 10;
 
 bool DatabaseManager::createTables()
 {
@@ -247,6 +251,22 @@ bool DatabaseManager::createTables()
         qWarning() << "DatabaseManager: Failed to create hardware_test_events table:"
                    << query.lastError().text();
     }
+
+    // surface_test_results table (for control surface sweep testing)
+    const QString createSurfaceTests = R"(
+        CREATE TABLE IF NOT EXISTS surface_test_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            flight_id INTEGER REFERENCES flights(id),
+            surface_id TEXT NOT NULL,
+            channel INTEGER NOT NULL,
+            min_pwm_actual INTEGER,
+            max_pwm_actual INTEGER,
+            direction_ok INTEGER,
+            result TEXT NOT NULL,
+            timestamp TEXT NOT NULL
+        )
+    )";
+    query.exec(createSurfaceTests);
 
     // ── Indexes ──────────────────────────────────────────────────────
     query.exec("CREATE INDEX IF NOT EXISTS idx_hardware_flight ON hardware_test_events(flight_id)");
@@ -374,6 +394,45 @@ bool DatabaseManager::createTables()
     query.exec("CREATE INDEX IF NOT EXISTS idx_flight_sessions_vehicle ON flight_sessions(device_uid)");
     query.exec("CREATE INDEX IF NOT EXISTS idx_check_results_session ON check_results(flight_session_id)");
     query.exec("CREATE INDEX IF NOT EXISTS idx_check_results_vehicle ON check_results(device_uid)");
+
+    // ── no_fly_zones table ───────────────────────────────────────────
+    // Organizational knowledge base of known restricted airspace.  Purely a
+    // persistence store — NO automatic geometric checks are performed against
+    // missions; compliance is recorded manually via zone_compliance_log.
+    query.exec(R"(
+        CREATE TABLE IF NOT EXISTS no_fly_zones (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            description TEXT,
+            latitude REAL NOT NULL,
+            longitude REAL NOT NULL,
+            radius_m REAL NOT NULL,
+            reason TEXT NOT NULL DEFAULT 'Regulatory',
+            active INTEGER NOT NULL DEFAULT 1,
+            created_by INTEGER REFERENCES operators(id),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    )");
+
+    // ── zone_compliance_log table ────────────────────────────────────
+    // Audit trail of manual airspace compliance checks performed by the
+    // operator before a mission proceeds.
+    query.exec(R"(
+        CREATE TABLE IF NOT EXISTS zone_compliance_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            flight_id INTEGER REFERENCES flights(id),
+            operator_id INTEGER REFERENCES operators(id),
+            checked_at TEXT NOT NULL,
+            result TEXT NOT NULL,
+            notes TEXT,
+            override_reason TEXT
+        )
+    )");
+
+    query.exec("CREATE INDEX IF NOT EXISTS idx_zones_active ON no_fly_zones(active)");
+    query.exec("CREATE INDEX IF NOT EXISTS idx_compliance_flight ON zone_compliance_log(flight_id)");
+    query.exec("CREATE INDEX IF NOT EXISTS idx_compliance_checked ON zone_compliance_log(checked_at)");
 
     return true;
 }
@@ -644,6 +703,41 @@ bool DatabaseManager::logMotorTestResult(int vehicleSysId, int motorIndex,
 }
 
 /**
+ * @brief Log a control surface test result to the database
+ */
+bool DatabaseManager::logSurfaceTestResult(int flightId, const QString &surfaceId, int channel,
+                                           int minPwmActual, int maxPwmActual,
+                                           int directionOk, const QString &result)
+{
+    if (!m_initialized) return false;
+
+    QSqlQuery query(m_db);
+    query.prepare(
+        "INSERT INTO surface_test_results "
+        "(flight_id, surface_id, channel, min_pwm_actual, max_pwm_actual, direction_ok, result, timestamp) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    );
+    query.addBindValue(flightId);
+    query.addBindValue(surfaceId);
+    query.addBindValue(channel);
+    query.addBindValue(minPwmActual);
+    query.addBindValue(maxPwmActual);
+    if (directionOk < 0) {
+        query.addBindValue(QVariant(QMetaType::fromType<int>()));
+    } else {
+        query.addBindValue(directionOk);
+    }
+    query.addBindValue(result);
+    query.addBindValue(QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+
+    if (!query.exec()) {
+        qWarning() << "DatabaseManager: logSurfaceTestResult failed:" << query.lastError().text();
+        return false;
+    }
+    return true;
+}
+
+/**
  * @brief Query hardware test events for a flight
  *
  * Returns a JSON array of all servo test steps for the given flight ID,
@@ -877,6 +971,89 @@ bool DatabaseManager::migrateSchema()
             addCol(QStringLiteral("thumbnail TEXT DEFAULT ''"));
             q.exec("CREATE INDEX IF NOT EXISTS idx_vehicles_airframe ON vehicles(airframe_type)");
             q.exec("CREATE INDEX IF NOT EXISTS idx_vehicles_autopilot ON vehicles(autopilot_type)");
+            break;
+        }
+        case 9: {
+            // v9: operators, flights, flight_check_results, flight_telemetry_events tables
+            q.exec("CREATE TABLE IF NOT EXISTS operators ("
+                   "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                   "name TEXT NOT NULL,"
+                   "role TEXT NOT NULL DEFAULT 'Pilot',"
+                   "created_at TEXT NOT NULL,"
+                   "total_flights INTEGER NOT NULL DEFAULT 0,"
+                   "total_training INTEGER NOT NULL DEFAULT 0)");
+            q.exec("CREATE TABLE IF NOT EXISTS flights ("
+                   "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                   "operator_id INTEGER NOT NULL REFERENCES operators(id),"
+                   "vehicle_id INTEGER NOT NULL REFERENCES vehicles(id),"
+                   "mode TEXT NOT NULL,"
+                   "purpose TEXT,"
+                   "location TEXT,"
+                   "notes TEXT,"
+                   "weather_summary TEXT,"
+                   "pre_checklist_complete INTEGER NOT NULL DEFAULT 0,"
+                   "post_checklist_complete INTEGER NOT NULL DEFAULT 0,"
+                   "started_at TEXT NOT NULL,"
+                   "armed_at TEXT,"
+                   "disarmed_at TEXT,"
+                   "ended_at TEXT,"
+                   "duration_sec INTEGER,"
+                   "max_altitude_m REAL,"
+                   "min_battery_v REAL,"
+                   "max_battery_v REAL,"
+                   "flight_mode_changes INTEGER NOT NULL DEFAULT 0)");
+            q.exec("CREATE TABLE IF NOT EXISTS flight_check_results ("
+                   "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                   "flight_id INTEGER NOT NULL REFERENCES flights(id),"
+                   "check_id TEXT NOT NULL,"
+                   "category TEXT NOT NULL,"
+                   "is_post_flight INTEGER NOT NULL DEFAULT 0,"
+                   "status TEXT NOT NULL,"
+                   "message TEXT,"
+                   "confirmed_by INTEGER REFERENCES operators(id),"
+                   "evaluated_at TEXT NOT NULL)");
+            q.exec("CREATE TABLE IF NOT EXISTS flight_telemetry_events ("
+                   "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                   "flight_id INTEGER NOT NULL REFERENCES flights(id),"
+                   "event_type TEXT NOT NULL,"
+                   "triggered_by TEXT,"
+                   "battery_v REAL,"
+                   "altitude_m REAL,"
+                   "gps_sats INTEGER,"
+                   "flight_mode TEXT,"
+                   "timestamp TEXT NOT NULL)");
+            q.exec("CREATE INDEX IF NOT EXISTS idx_flights_operator ON flights(operator_id)");
+            q.exec("CREATE INDEX IF NOT EXISTS idx_flights_vehicle ON flights(vehicle_id)");
+            q.exec("CREATE INDEX IF NOT EXISTS idx_flights_mode ON flights(mode)");
+            q.exec("CREATE INDEX IF NOT EXISTS idx_flight_check_results_flight ON flight_check_results(flight_id)");
+            q.exec("CREATE INDEX IF NOT EXISTS idx_telemetry_events_flight ON flight_telemetry_events(flight_id)");
+            break;
+        }
+        case 10: {
+            // v10: no_fly_zones + zone_compliance_log tables (airspace compliance)
+            q.exec("CREATE TABLE IF NOT EXISTS no_fly_zones ("
+                   "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                   "name TEXT NOT NULL,"
+                   "description TEXT,"
+                   "latitude REAL NOT NULL,"
+                   "longitude REAL NOT NULL,"
+                   "radius_m REAL NOT NULL,"
+                   "reason TEXT NOT NULL DEFAULT 'Regulatory',"
+                   "active INTEGER NOT NULL DEFAULT 1,"
+                   "created_by INTEGER REFERENCES operators(id),"
+                   "created_at TEXT NOT NULL,"
+                   "updated_at TEXT NOT NULL)");
+            q.exec("CREATE TABLE IF NOT EXISTS zone_compliance_log ("
+                   "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                   "flight_id INTEGER REFERENCES flights(id),"
+                   "operator_id INTEGER REFERENCES operators(id),"
+                   "checked_at TEXT NOT NULL,"
+                   "result TEXT NOT NULL,"
+                   "notes TEXT,"
+                   "override_reason TEXT)");
+            q.exec("CREATE INDEX IF NOT EXISTS idx_zones_active ON no_fly_zones(active)");
+            q.exec("CREATE INDEX IF NOT EXISTS idx_compliance_flight ON zone_compliance_log(flight_id)");
+            q.exec("CREATE INDEX IF NOT EXISTS idx_compliance_checked ON zone_compliance_log(checked_at)");
             break;
         }
         default:
@@ -1328,6 +1505,247 @@ QString DatabaseManager::searchVehicles(const QString &query)
         }
     }
     return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
+}
+
+// ── Operator CRUD ───────────────────────────────────────────────────────────
+
+int DatabaseManager::insertOperator(const QString &name, const QString &role)
+{
+    if (!m_initialized || name.trimmed().isEmpty()) return -1;
+    QSqlQuery q(m_db);
+    q.prepare("INSERT INTO operators (name, role, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)");
+    q.addBindValue(name.trimmed());
+    q.addBindValue(role.isEmpty() ? QStringLiteral("Pilot") : role);
+    if (!execOrWarn(q, "insertOperator")) return -1;
+    return q.lastInsertId().toInt();
+}
+
+QList<QVariantMap> DatabaseManager::getAllOperators()
+{
+    QList<QVariantMap> result;
+    if (!m_initialized) return result;
+    QSqlQuery q(m_db);
+    q.exec("SELECT id, name, role, total_flights, total_training FROM operators ORDER BY name ASC");
+    while (q.next()) {
+        QVariantMap row;
+        row["id"] = q.value(0).toInt();
+        row["name"] = q.value(1).toString();
+        row["role"] = q.value(2).toString();
+        row["total_flights"] = q.value(3).toInt();
+        row["total_training"] = q.value(4).toInt();
+        result.append(row);
+    }
+    return result;
+}
+
+bool DatabaseManager::updateOperatorStats(int operatorId, bool wasFlight)
+{
+    if (!m_initialized || operatorId <= 0) return false;
+    QSqlQuery q(m_db);
+    if (wasFlight) {
+        q.prepare("UPDATE operators SET total_flights = total_flights + 1 WHERE id = ?");
+    } else {
+        q.prepare("UPDATE operators SET total_training = total_training + 1 WHERE id = ?");
+    }
+    q.addBindValue(operatorId);
+    return execOrWarn(q, "updateOperatorStats");
+}
+
+// ── Flight session (new flight record system) ───────────────────────────────
+
+int DatabaseManager::openFlight(int operatorId, int vehicleId, const QString &mode,
+                                const QString &purpose, const QString &location,
+                                const QString &notes, const QString &weatherSummary)
+{
+    if (!m_initialized || operatorId <= 0 || vehicleId <= 0) return -1;
+    QSqlQuery q(m_db);
+    q.prepare("INSERT INTO flights (operator_id, vehicle_id, mode, purpose, location, notes, "
+              "weather_summary, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)");
+    q.addBindValue(operatorId);
+    q.addBindValue(vehicleId);
+    q.addBindValue(mode);
+    q.addBindValue(purpose);
+    q.addBindValue(location);
+    q.addBindValue(notes);
+    q.addBindValue(weatherSummary);
+    if (!execOrWarn(q, "openFlight")) return -1;
+    return q.lastInsertId().toInt();
+}
+
+bool DatabaseManager::setFlightPreChecklistComplete(int flightId)
+{
+    if (!m_initialized || flightId <= 0) return false;
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE flights SET pre_checklist_complete = 1 WHERE id = ?");
+    q.addBindValue(flightId);
+    return execOrWarn(q, "setFlightPreChecklistComplete");
+}
+
+bool DatabaseManager::setFlightPostChecklistComplete(int flightId)
+{
+    if (!m_initialized || flightId <= 0) return false;
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE flights SET post_checklist_complete = 1 WHERE id = ?");
+    q.addBindValue(flightId);
+    return execOrWarn(q, "setFlightPostChecklistComplete");
+}
+
+bool DatabaseManager::setFlightArmedAt(int flightId, const QDateTime &time)
+{
+    if (!m_initialized || flightId <= 0) return false;
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE flights SET armed_at = ? WHERE id = ?");
+    q.addBindValue(time.toString(Qt::ISODate));
+    q.addBindValue(flightId);
+    return execOrWarn(q, "setFlightArmedAt");
+}
+
+bool DatabaseManager::setFlightDisarmedAt(int flightId, const QDateTime &time)
+{
+    if (!m_initialized || flightId <= 0) return false;
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE flights SET disarmed_at = ? WHERE id = ?");
+    q.addBindValue(time.toString(Qt::ISODate));
+    q.addBindValue(flightId);
+    return execOrWarn(q, "setFlightDisarmedAt");
+}
+
+bool DatabaseManager::closeFlight(int flightId, int durationSec,
+                                  double maxAltitude, double minBatteryV,
+                                  double maxBatteryV, int modeChanges)
+{
+    if (!m_initialized || flightId <= 0) return false;
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE flights SET ended_at = CURRENT_TIMESTAMP, duration_sec = ?, "
+              "max_altitude_m = ?, min_battery_v = ?, max_battery_v = ?, "
+              "flight_mode_changes = ? WHERE id = ?");
+    q.addBindValue(durationSec);
+    q.addBindValue(maxAltitude);
+    q.addBindValue(minBatteryV);
+    q.addBindValue(maxBatteryV);
+    q.addBindValue(modeChanges);
+    q.addBindValue(flightId);
+    return execOrWarn(q, "closeFlight");
+}
+
+QList<QVariantMap> DatabaseManager::getFlightsForVehicle(int vehicleId, int limit)
+{
+    QList<QVariantMap> result;
+    if (!m_initialized || vehicleId <= 0) return result;
+    QSqlQuery q(m_db);
+    q.prepare("SELECT id, operator_id, vehicle_id, mode, purpose, location, notes, "
+              "weather_summary, pre_checklist_complete, post_checklist_complete, "
+              "started_at, armed_at, disarmed_at, ended_at, duration_sec, "
+              "max_altitude_m, min_battery_v, max_battery_v, flight_mode_changes "
+              "FROM flights WHERE vehicle_id = ? ORDER BY started_at DESC LIMIT ?");
+    q.addBindValue(vehicleId);
+    q.addBindValue(limit);
+    if (!q.exec()) return result;
+    while (q.next()) {
+        QVariantMap row;
+        row["id"] = q.value(0).toInt();
+        row["operator_id"] = q.value(1).toInt();
+        row["vehicle_id"] = q.value(2).toInt();
+        row["mode"] = q.value(3).toString();
+        row["purpose"] = q.value(4).toString();
+        row["location"] = q.value(5).toString();
+        row["notes"] = q.value(6).toString();
+        row["weather_summary"] = q.value(7).toString();
+        row["pre_checklist_complete"] = q.value(8).toInt();
+        row["post_checklist_complete"] = q.value(9).toInt();
+        row["started_at"] = q.value(10).toString();
+        row["armed_at"] = q.value(11).toString();
+        row["disarmed_at"] = q.value(12).toString();
+        row["ended_at"] = q.value(13).toString();
+        row["duration_sec"] = q.value(14).toInt();
+        row["max_altitude_m"] = q.value(15).toDouble();
+        row["min_battery_v"] = q.value(16).toDouble();
+        row["max_battery_v"] = q.value(17).toDouble();
+        row["flight_mode_changes"] = q.value(18).toInt();
+        result.append(row);
+    }
+    return result;
+}
+
+QVariantMap DatabaseManager::getFlightById(int flightId)
+{
+    QVariantMap row;
+    if (!m_initialized || flightId <= 0) return row;
+    QSqlQuery q(m_db);
+    q.prepare("SELECT id, operator_id, vehicle_id, mode, purpose, location, notes, "
+              "weather_summary, pre_checklist_complete, post_checklist_complete, "
+              "started_at, armed_at, disarmed_at, ended_at, duration_sec, "
+              "max_altitude_m, min_battery_v, max_battery_v, flight_mode_changes "
+              "FROM flights WHERE id = ?");
+    q.addBindValue(flightId);
+    if (!q.exec() || !q.next()) return row;
+    row["id"] = q.value(0).toInt();
+    row["operator_id"] = q.value(1).toInt();
+    row["vehicle_id"] = q.value(2).toInt();
+    row["mode"] = q.value(3).toString();
+    row["purpose"] = q.value(4).toString();
+    row["location"] = q.value(5).toString();
+    row["notes"] = q.value(6).toString();
+    row["weather_summary"] = q.value(7).toString();
+    row["pre_checklist_complete"] = q.value(8).toInt();
+    row["post_checklist_complete"] = q.value(9).toInt();
+    row["started_at"] = q.value(10).toString();
+    row["armed_at"] = q.value(11).toString();
+    row["disarmed_at"] = q.value(12).toString();
+    row["ended_at"] = q.value(13).toString();
+    row["duration_sec"] = q.value(14).toInt();
+    row["max_altitude_m"] = q.value(15).toDouble();
+    row["min_battery_v"] = q.value(16).toDouble();
+    row["max_battery_v"] = q.value(17).toDouble();
+    row["flight_mode_changes"] = q.value(18).toInt();
+    return row;
+}
+
+// ── Flight check results ────────────────────────────────────────────────────
+
+bool DatabaseManager::insertFlightCheckResult(int flightId, const QString &checkId,
+                                              const QString &category, bool isPostFlight,
+                                              const QString &status, const QString &message,
+                                              int confirmedBy)
+{
+    if (!m_initialized || flightId <= 0 || checkId.isEmpty()) return false;
+    QSqlQuery q(m_db);
+    q.prepare("INSERT INTO flight_check_results (flight_id, check_id, category, "
+              "is_post_flight, status, message, confirmed_by, evaluated_at) "
+              "VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)");
+    q.addBindValue(flightId);
+    q.addBindValue(checkId);
+    q.addBindValue(category);
+    q.addBindValue(isPostFlight ? 1 : 0);
+    q.addBindValue(status);
+    q.addBindValue(message);
+    if (confirmedBy > 0)
+        q.addBindValue(confirmedBy);
+    else
+        q.addBindValue(QVariant());
+    return execOrWarn(q, "insertFlightCheckResult");
+}
+
+// ── Flight telemetry events ─────────────────────────────────────────────────
+
+bool DatabaseManager::insertTelemetryEvent(int flightId, const QString &eventType,
+                                           const QString &triggeredBy, double batteryV,
+                                           double altitudeM, int gpsSats,
+                                           const QString &flightMode)
+{
+    if (!m_initialized || flightId <= 0 || eventType.isEmpty()) return false;
+    QSqlQuery q(m_db);
+    q.prepare("INSERT INTO flight_telemetry_events (flight_id, event_type, triggered_by, "
+              "battery_v, altitude_m, gps_sats, flight_mode, timestamp) "
+              "VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)");
+    q.addBindValue(flightId);
+    q.addBindValue(eventType);
+    q.addBindValue(triggeredBy);
+    q.addBindValue(batteryV);
+    q.addBindValue(altitudeM);
+    q.addBindValue(gpsSats);
+    q.addBindValue(flightMode);
+    return execOrWarn(q, "insertTelemetryEvent");
 }
 
 // ── Vehicle registry (fingerprint-based) ────────────────────────────────────
@@ -1962,4 +2380,197 @@ QString DatabaseManager::getCheckResults(int flightSessionId)
         arr.append(o);
     }
     return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
+}
+
+// ── No-fly zone CRUD ────────────────────────────────────────────────────────
+
+/// Inserts a new restricted-airspace zone.  Returns the new row id (or -1 on error).
+int DatabaseManager::insertZone(const QString &name, const QString &description,
+                                double lat, double lon, double radiusM,
+                                const QString &reason, int createdBy)
+{
+    if (!m_initialized || name.trimmed().isEmpty()) return -1;
+    QSqlQuery q(m_db);
+    q.prepare("INSERT INTO no_fly_zones "
+              "(name, description, latitude, longitude, radius_m, reason, created_by, created_at, updated_at) "
+              "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    q.addBindValue(name.trimmed());
+    q.addBindValue(description);
+    q.addBindValue(lat);
+    q.addBindValue(lon);
+    q.addBindValue(radiusM);
+    q.addBindValue(reason.isEmpty() ? QStringLiteral("Regulatory") : reason);
+    if (createdBy > 0) q.addBindValue(createdBy); else q.addBindValue(QVariant(QMetaType::fromType<int>()));
+    const QString now = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+    q.addBindValue(now);
+    q.addBindValue(now);
+    if (!q.exec()) {
+        qWarning() << "DatabaseManager: insertZone failed:" << q.lastError().text();
+        return -1;
+    }
+    return q.lastInsertId().toInt();
+}
+
+bool DatabaseManager::updateZone(int id, const QString &name, const QString &description,
+                                 double lat, double lon, double radiusM,
+                                 const QString &reason, bool active)
+{
+    if (!m_initialized || id <= 0) return false;
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE no_fly_zones SET "
+              "name = ?, description = ?, latitude = ?, longitude = ?, radius_m = ?, "
+              "reason = ?, active = ?, updated_at = ? WHERE id = ?");
+    q.addBindValue(name.trimmed());
+    q.addBindValue(description);
+    q.addBindValue(lat);
+    q.addBindValue(lon);
+    q.addBindValue(radiusM);
+    q.addBindValue(reason.isEmpty() ? QStringLiteral("Regulatory") : reason);
+    q.addBindValue(active ? 1 : 0);
+    q.addBindValue(QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+    q.addBindValue(id);
+    return execOrWarn(q, "updateZone");
+}
+
+bool DatabaseManager::deleteZone(int id)
+{
+    if (!m_initialized || id <= 0) return false;
+    QSqlQuery q(m_db);
+    q.prepare("DELETE FROM no_fly_zones WHERE id = ?");
+    q.addBindValue(id);
+    return execOrWarn(q, "deleteZone");
+}
+
+QList<QVariantMap> DatabaseManager::getAllZones()
+{
+    QList<QVariantMap> zones;
+    if (!m_initialized) return zones;
+    QSqlQuery q(m_db);
+    q.prepare("SELECT nz.id, nz.name, nz.description, nz.latitude, nz.longitude, nz.radius_m, "
+              "nz.reason, nz.active, nz.created_at, nz.updated_at, "
+              "nz.created_by, op.name AS creator_name "
+              "FROM no_fly_zones nz LEFT JOIN operators op ON op.id = nz.created_by "
+              "ORDER BY nz.id DESC");
+    if (!q.exec()) return zones;
+    while (q.next()) {
+        QVariantMap z;
+        z[QStringLiteral("id")] = q.value(0).toInt();
+        z[QStringLiteral("name")] = q.value(1).toString();
+        z[QStringLiteral("description")] = q.value(2).toString();
+        z[QStringLiteral("latitude")] = q.value(3).toDouble();
+        z[QStringLiteral("longitude")] = q.value(4).toDouble();
+        z[QStringLiteral("radius_m")] = q.value(5).toDouble();
+        z[QStringLiteral("reason")] = q.value(6).toString();
+        z[QStringLiteral("active")] = q.value(7).toInt() != 0;
+        z[QStringLiteral("created_at")] = q.value(8).toString();
+        z[QStringLiteral("updated_at")] = q.value(9).toString();
+        z[QStringLiteral("created_by")] = q.value(10).toInt();
+        z[QStringLiteral("created_by_name")] = q.value(11).toString();
+        zones.append(z);
+    }
+    return zones;
+}
+
+QList<QVariantMap> DatabaseManager::getActiveZones()
+{
+    QList<QVariantMap> zones;
+    if (!m_initialized) return zones;
+    QSqlQuery q(m_db);
+    q.prepare("SELECT nz.id, nz.name, nz.description, nz.latitude, nz.longitude, nz.radius_m, "
+              "nz.reason, nz.active, nz.created_at, nz.updated_at, "
+              "nz.created_by, op.name AS creator_name "
+              "FROM no_fly_zones nz LEFT JOIN operators op ON op.id = nz.created_by "
+              "WHERE nz.active = 1 ORDER BY nz.id DESC");
+    if (!q.exec()) return zones;
+    while (q.next()) {
+        QVariantMap z;
+        z[QStringLiteral("id")] = q.value(0).toInt();
+        z[QStringLiteral("name")] = q.value(1).toString();
+        z[QStringLiteral("description")] = q.value(2).toString();
+        z[QStringLiteral("latitude")] = q.value(3).toDouble();
+        z[QStringLiteral("longitude")] = q.value(4).toDouble();
+        z[QStringLiteral("radius_m")] = q.value(5).toDouble();
+        z[QStringLiteral("reason")] = q.value(6).toString();
+        z[QStringLiteral("active")] = q.value(7).toInt() != 0;
+        z[QStringLiteral("created_at")] = q.value(8).toString();
+        z[QStringLiteral("updated_at")] = q.value(9).toString();
+        z[QStringLiteral("created_by")] = q.value(10).toInt();
+        z[QStringLiteral("created_by_name")] = q.value(11).toString();
+        zones.append(z);
+    }
+    return zones;
+}
+
+// ── Manual zone compliance logging ──────────────────────────────────────────
+
+/// Records a manual airspace compliance check for a flight (audit trail).
+bool DatabaseManager::insertComplianceRecord(int flightId, int operatorId,
+                                             const QString &result,
+                                             const QString &notes,
+                                             const QString &overrideReason)
+{
+    if (!m_initialized) return false;
+    QSqlQuery q(m_db);
+    q.prepare("INSERT INTO zone_compliance_log "
+              "(flight_id, operator_id, checked_at, result, notes, override_reason) "
+              "VALUES (?, ?, ?, ?, ?, ?)");
+    if (flightId > 0) q.addBindValue(flightId); else q.addBindValue(QVariant(QMetaType::fromType<int>()));
+    if (operatorId > 0) q.addBindValue(operatorId); else q.addBindValue(QVariant(QMetaType::fromType<int>()));
+    q.addBindValue(QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+    q.addBindValue(result);
+    q.addBindValue(notes);
+    q.addBindValue(overrideReason);
+    return execOrWarn(q, "insertComplianceRecord");
+}
+
+QList<QVariantMap> DatabaseManager::getComplianceForFlight(int flightId)
+{
+    QList<QVariantMap> records;
+    if (!m_initialized || flightId <= 0) return records;
+    QSqlQuery q(m_db);
+    q.prepare("SELECT zcl.id, zcl.flight_id, zcl.operator_id, zcl.checked_at, "
+              "zcl.result, zcl.notes, zcl.override_reason, op.name AS operator_name "
+              "FROM zone_compliance_log zcl LEFT JOIN operators op ON op.id = zcl.operator_id "
+              "WHERE zcl.flight_id = ? ORDER BY zcl.checked_at DESC");
+    q.addBindValue(flightId);
+    if (!q.exec()) return records;
+    while (q.next()) {
+        QVariantMap r;
+        r[QStringLiteral("id")] = q.value(0).toInt();
+        r[QStringLiteral("flight_id")] = q.value(1).toInt();
+        r[QStringLiteral("operator_id")] = q.value(2).toInt();
+        r[QStringLiteral("checked_at")] = q.value(3).toString();
+        r[QStringLiteral("result")] = q.value(4).toString();
+        r[QStringLiteral("notes")] = q.value(5).toString();
+        r[QStringLiteral("override_reason")] = q.value(6).toString();
+        r[QStringLiteral("operator_name")] = q.value(7).toString();
+        records.append(r);
+    }
+    return records;
+}
+
+QList<QVariantMap> DatabaseManager::getComplianceHistory(int limit)
+{
+    QList<QVariantMap> records;
+    if (!m_initialized) return records;
+    QSqlQuery q(m_db);
+    q.prepare("SELECT zcl.id, zcl.flight_id, zcl.operator_id, zcl.checked_at, "
+              "zcl.result, zcl.notes, zcl.override_reason, op.name AS operator_name "
+              "FROM zone_compliance_log zcl LEFT JOIN operators op ON op.id = zcl.operator_id "
+              "ORDER BY zcl.checked_at DESC LIMIT ?");
+    q.addBindValue(limit);
+    if (!q.exec()) return records;
+    while (q.next()) {
+        QVariantMap r;
+        r[QStringLiteral("id")] = q.value(0).toInt();
+        r[QStringLiteral("flight_id")] = q.value(1).toInt();
+        r[QStringLiteral("operator_id")] = q.value(2).toInt();
+        r[QStringLiteral("checked_at")] = q.value(3).toString();
+        r[QStringLiteral("result")] = q.value(4).toString();
+        r[QStringLiteral("notes")] = q.value(5).toString();
+        r[QStringLiteral("override_reason")] = q.value(6).toString();
+        r[QStringLiteral("operator_name")] = q.value(7).toString();
+        records.append(r);
+    }
+    return records;
 }

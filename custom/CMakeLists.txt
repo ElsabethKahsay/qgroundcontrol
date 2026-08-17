@@ -63,6 +63,8 @@ set(CUSTOM_SOURCE_REL
     src/adapters/TelemetryBridge.h
     src/controllers/HardwareTestController.cpp
     src/controllers/HardwareTestController.h
+    src/controllers/ControlSurfaceTestController.cpp
+    src/controllers/ControlSurfaceTestController.h
     src/controllers/HardwareTestProfile.cpp
     src/controllers/HardwareTestProfile.h
     src/core/AbstractCheck.cpp
@@ -77,6 +79,8 @@ set(CUSTOM_SOURCE_REL
     src/core/AttitudeCheck.h
     src/core/BatteryFailsafeCheck.cpp
     src/core/BatteryFailsafeCheck.h
+    src/core/BatteryFailsafeParamCheck.cpp
+    src/core/BatteryFailsafeParamCheck.h
     src/core/BatteryTemperatureCheck.cpp
     src/core/BatteryTemperatureCheck.h
     src/core/BatteryVoltageCheck.cpp
@@ -93,8 +97,6 @@ set(CUSTOM_SOURCE_REL
     src/core/GcsFailsafeCheck.h
     src/core/GimbalLinkCheck.cpp
     src/core/GimbalLinkCheck.h
-    src/core/GpsBaroAltConsistencyCheck.cpp
-    src/core/GpsBaroAltConsistencyCheck.h
     src/core/GpsFixCheck.cpp
     src/core/GpsFixCheck.h
     src/core/GpsSpeedAccuracyCheck.cpp
@@ -111,14 +113,8 @@ set(CUSTOM_SOURCE_REL
     src/core/ManualConfirmCheck.h
     src/core/MavlinkProtocolCheck.cpp
     src/core/MavlinkProtocolCheck.h
-    src/core/MetarCeilingCheck.cpp
-    src/core/MetarCeilingCheck.h
-    src/core/MetarPrecipitationCheck.cpp
-    src/core/MetarPrecipitationCheck.h
-    src/core/MetarVisibilityCheck.cpp
-    src/core/MetarVisibilityCheck.h
-    src/core/MissionCountCheck.cpp
-    src/core/MissionCountCheck.h
+    src/core/MissionEnergyCheck.cpp
+    src/core/MissionEnergyCheck.h
     src/core/MotorCountCheck.cpp
     src/core/MotorCountCheck.h
     src/core/MotorSpinCheck.cpp
@@ -154,8 +150,6 @@ set(CUSTOM_SOURCE_REL
     src/core/VehicleProfileManager.h
     src/core/VideoFeedCheck.cpp
     src/core/VideoFeedCheck.h
-    src/core/WindSpeedCheck.cpp
-    src/core/WindSpeedCheck.h
     src/mission/WaypointMath.cpp
     src/mission/WaypointMath.h
     src/mission/WaypointMathHelper.cpp
@@ -186,7 +180,19 @@ set(CUSTOM_SOURCE_REL
     src/utils/WeatherProvider.h
     src/detection/VehicleRegistry.cpp
     src/detection/VehicleRegistry.h
+    src/managers/OperatorManager.cpp
+    src/managers/OperatorManager.h
+    src/managers/FlightSession.cpp
+    src/managers/FlightSession.h
+    src/managers/TelemetryEventLogger.cpp
+    src/managers/TelemetryEventLogger.h
+    src/models/FlightHistoryModel.cpp
+    src/models/FlightHistoryModel.h
+    src/models/NoFlyZoneModel.cpp
+    src/models/NoFlyZoneModel.h
 )
+
+set(CUSTOM_SOURCES "")
 
 foreach(_src IN LISTS CUSTOM_SOURCE_REL)
     list(APPEND CUSTOM_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/${_src}")
@@ -207,6 +213,8 @@ set(CUSTOM_INCLUDE_DIRECTORIES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/controllers
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mission
     ${CMAKE_CURRENT_SOURCE_DIR}/src/detection
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/managers
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/models
     CACHE INTERNAL "" FORCE
 )
 
