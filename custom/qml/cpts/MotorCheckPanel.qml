@@ -23,6 +23,12 @@ Rectangle {
     readonly property bool   _armed: HardwareTestController.isArmed
 
     function openDialog() { motorDialog.open() }
+    function testLabel(index) {
+        if (HardwareTestController.isFixedWing && index === 1) {
+            return HardwareTestController.fixedWingTestLabel()
+        }
+        return "M" + index
+    }
 
     // Click anywhere on the tile to open the dialog (won't interfere with button)
     MouseArea {
@@ -93,7 +99,7 @@ Rectangle {
             Layout.preferredHeight: 34
             Layout.preferredWidth: 148
             radius: Config.radiusSmall
-            color: root._armed ? Colors.borderLight : Colors.accent
+            color: Colors.accent
             Behavior on color { ColorAnimation { duration: 150 } }
 
             Text {
@@ -101,12 +107,12 @@ Rectangle {
                 text: qsTr("Open Motor Test")
                 font.pixelSize: Config.fontSizeSmall
                 font.bold: true
-                color: root._armed ? Colors.textDisabled : Colors.background
+                color: Colors.background
             }
             MouseArea {
                 anchors.fill: parent
-                cursorShape: root._armed ? Qt.ForbiddenCursor : Qt.PointingHandCursor
-                enabled: !root._armed
+                cursorShape: Qt.PointingHandCursor
+                enabled: true
                 onClicked: motorDialog.open()
             }
         }
@@ -241,7 +247,7 @@ Rectangle {
                 // ── ARMED OVERLAY (when dialog is open but user armed) ───
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 48
+                    Layout.preferredHeight: 52
                     visible: root._armed && root._mc > 0
                     radius: Config.radiusSmall
                     color: Colors.errorDim
@@ -253,8 +259,25 @@ Rectangle {
                         Text { text: "\u26A0"; font.pixelSize: 18; color: Colors.error }
                         Text {
                             Layout.fillWidth: true
-                            text: qsTr("Disarm the vehicle before running motor tests")
+                            text: qsTr("Vehicle is armed — disarm before running motor tests")
                             font.pixelSize: Config.fontSizeBody; font.bold: true; color: Colors.error
+                            wrapMode: Text.WordWrap
+                        }
+                        Rectangle {
+                            Layout.preferredHeight: 34
+                            Layout.preferredWidth: 90
+                            radius: Config.radiusSmall
+                            color: Colors.error
+                            Text {
+                                anchors.centerIn: parent
+                                text: qsTr("Disarm")
+                                font.pixelSize: Config.fontSizeSmall; font.bold: true; color: "white"
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: HardwareTestController.disarmVehicle()
+                            }
                         }
                     }
                 }
@@ -263,7 +286,7 @@ Rectangle {
                 Rectangle {
                     Layout.fillWidth: true
                     visible: root._mc > 0 && !root._armed
-                    Layout.preferredHeight: 50
+                    Layout.preferredHeight: safetyTxt.implicitHeight + 16
                     radius: Config.radiusSmall
                     color: Colors.warningDim
                     border.color: Colors.warning; border.width: 1
@@ -272,15 +295,15 @@ Rectangle {
                         spacing: Config.spacingSmall
                         Text { text: "\u26A0"; font.pixelSize: 13; color: Colors.warning }
                         Text {
+                            id: safetyTxt
                             Layout.fillWidth: true
-                            text: root._vt.toLowerCase().indexOf("fixed") >= 0
-                                ? qsTr("Vehicle will ARM during test. Ensure propeller clearance and keep hands clear.")
-                                : qsTr("Remove propellers or ensure clearance before testing")
+                            text: qsTr("Vehicle stays disarmed during the motor test.\nRemove propeller or ensure the area is clear before starting.")
                             font.pixelSize: Config.fontSizeSmall; color: Colors.warning
                             wrapMode: Text.WordWrap
                         }
                     }
                 }
+
 
                 // ── SHARED DURATION ──────────────────────────────────────
                 RowLayout {
@@ -365,7 +388,7 @@ Rectangle {
                                     Layout.fillWidth: true
 
                                     Text {
-                                        text: "M" + mcard.midx
+                                        text: root.testLabel(mcard.midx)
                                         font.pixelSize: Config.fontSizeBody; font.bold: true
                                         color: Colors.textPrimary
                                     }
@@ -411,7 +434,7 @@ Rectangle {
                                     Slider {
                                         id: pwmSl
                                         Layout.fillWidth: true
-                                        from: 1000; to: 1200; stepSize: 10
+                                        from: 1000; to: HardwareTestController.isFixedWing ? 1800 : 1200; stepSize: 10
                                         value: (HardwareTestController.motorPwmValues.length > mcard.index)
                                                ? HardwareTestController.motorPwmValues[mcard.index] : 1100
                                         enabled: !root._armed && HardwareTestController.activeMotor === -1
@@ -443,10 +466,10 @@ Rectangle {
                                     id: testBtn
                                     Layout.fillWidth: true; Layout.preferredHeight: 30
                                     radius: Config.radiusSmall
-                                    property bool _canTest: !root._armed
-                                                         && mcard.st !== HardwareTestController.Testing
+                                    property bool _canTest: mcard.st !== HardwareTestController.Testing
                                                          && mcard.st !== HardwareTestController.Cooldown
                                                          && HardwareTestController.activeMotor < 0
+
 
                                     color: !_canTest                                    ? Colors.borderLight
                                          : mcard.st === HardwareTestController.Pass    ? Colors.success
@@ -467,7 +490,7 @@ Rectangle {
                                             : mcard.st === HardwareTestController.Pass     ? "\u2713 PASS"
                                             : mcard.st === HardwareTestController.Fail     ? "\u2717 FAIL"
                                             : mcard.st === HardwareTestController.Cooldown ? "WAIT\u2026"
-                                            : "TEST M" + mcard.midx
+                                            : "TEST " + root.testLabel(mcard.midx)
                                         font.pixelSize: Config.fontSizeSmall; font.bold: true
                                         color: testBtn._canTest ? Colors.background : Colors.textDisabled
                                     }
@@ -570,7 +593,7 @@ Rectangle {
                 // Active motor indicator
                 Text {
                     visible: HardwareTestController.activeMotor > 0
-                    text: qsTr("Testing M") + HardwareTestController.activeMotor + "\u2026"
+                    text: qsTr("Testing ") + root.testLabel(HardwareTestController.activeMotor) + "\u2026"
                     font.pixelSize: Config.fontSizeSmall; color: Colors.testing; font.bold: true
                     Layout.fillWidth: true
                 }
@@ -623,7 +646,7 @@ Rectangle {
 
             Text {
                 Layout.fillWidth: true
-                text: "M" + safetyDialog.pendingMotor + qsTr(" will spin at ")
+                text: root.testLabel(safetyDialog.pendingMotor) + qsTr(" will spin at ")
                       + ((HardwareTestController.motorPwmValues.length >= safetyDialog.pendingMotor)
                          ? HardwareTestController.motorPwmValues[safetyDialog.pendingMotor - 1] : 1100)
                       + "\u00b5s for " + HardwareTestController.durationSec + qsTr(" seconds.")

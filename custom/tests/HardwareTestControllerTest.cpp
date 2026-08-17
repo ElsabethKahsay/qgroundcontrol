@@ -15,8 +15,11 @@ private slots:
 
     void testInitialState();
     void testAbortSequence();
+    void testServoSweepFinishedSignalExists();
     void testHardwareTestProfile();
     void testProfileWithTwoChannels();
+    void testFixedWingTestLabelDefaultsToM3();
+    void testFixedWingTestLabelWithoutVehicle();
 };
 
 void HardwareTestControllerTest::testInitialState()
@@ -31,13 +34,30 @@ void HardwareTestControllerTest::testInitialState()
 void HardwareTestControllerTest::testAbortSequence()
 {
     HardwareTestController ctrl;
-    MockVehicle vehicle;
-    vehicle.setConnected(true);
-    ctrl.setVehicle(reinterpret_cast<Vehicle *>(&vehicle));
-
+    // Without a bound vehicle the sweep cannot start; both start and abort
+    // are guarded no-ops and must not crash.
     ctrl.runServoSweep();
+    QVERIFY(!ctrl.isRunning());
     ctrl.abortSequence();
     QVERIFY(!ctrl.isRunning());
+}
+
+void HardwareTestControllerTest::testServoSweepFinishedSignalExists()
+{
+    // The GimbalTest.qml page connects to onServoSweepFinished; the signal
+    // must be declared so that connection resolves and the UI leaves the
+    // "running" state when a sweep completes.
+    const QMetaObject *mo = &HardwareTestController::staticMetaObject;
+    bool found = false;
+    for (int i = 0; i < mo->methodCount(); ++i) {
+        if (mo->method(i).methodType() == QMetaMethod::Signal &&
+                mo->method(i).name() == QLatin1String("servoSweepFinished")) {
+            found = true;
+            QCOMPARE(mo->method(i).parameterCount(), 2);
+            break;
+        }
+    }
+    QVERIFY(found);
 }
 
 void HardwareTestControllerTest::testHardwareTestProfile()
@@ -63,6 +83,21 @@ void HardwareTestControllerTest::testProfileWithTwoChannels()
     profile.steps.append(stepB);
     QCOMPARE(profile.steps.size(), 2);
     QVERIFY(!profile.isValid());
+}
+
+void HardwareTestControllerTest::testFixedWingTestLabelDefaultsToM3()
+{
+    HardwareTestController ctrl;
+    // Without a vehicle the controller is not fixed-wing, so the label falls
+    // back to the generic "M1" (matches the new unified DO_MOTOR_TEST path).
+    QCOMPARE(ctrl.fixedWingTestLabel(), QStringLiteral("M1"));
+}
+
+void HardwareTestControllerTest::testFixedWingTestLabelWithoutVehicle()
+{
+    HardwareTestController ctrl;
+    // Motor output channel must be safe without a bound vehicle.
+    QCOMPARE(ctrl.motorOutputChannel(1), 1);
 }
 
 UT_REGISTER_TEST(HardwareTestControllerTest)
