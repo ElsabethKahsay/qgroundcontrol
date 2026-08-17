@@ -19,10 +19,62 @@
 #include "utils/Config.h"
 #include "DatabaseManager.h"
 #include "TelemetryBridge.h"
+#include "MAVLink/QGCMAVLink.h"
+
+VehicleProfileManager *VehicleProfileManager::s_instance = nullptr;
+
+VehicleProfileManager *VehicleProfileManager::instance()
+{
+    return s_instance;
+}
 
 VehicleProfileManager::VehicleProfileManager(QObject *parent)
     : QObject(parent)
 {
+    s_instance = this;
+}
+
+/// Map a MAVLink MAV_TYPE to the canonical VehicleKind.
+VehicleKind VehicleProfileManager::kindFromMavType(int mavType)
+{
+    switch (mavType) {
+    case MAV_TYPE_QUADROTOR:
+    case MAV_TYPE_HEXAROTOR:
+    case MAV_TYPE_OCTOROTOR:
+    case MAV_TYPE_TRICOPTER: return VehicleKind::Multirotor;
+    case MAV_TYPE_FIXED_WING:
+    case MAV_TYPE_FLAPPING_WING: return VehicleKind::FixedWing;
+    case MAV_TYPE_VTOL_FIXEDROTOR:
+    case MAV_TYPE_VTOL_RESERVED5: return VehicleKind::VtolConventional;
+    default: return VehicleKind::Unknown;
+    }
+}
+
+/// Map a resolved vehicle-type string to the canonical VehicleKind.
+VehicleKind VehicleProfileManager::kindFromTypeString(const QString &type)
+{
+    QString t = type.toUpper();
+    if (t == QStringLiteral("QUAD") || t == QStringLiteral("HEX")
+        || t == QStringLiteral("OCTA") || t == QStringLiteral("TRI")
+        || t == QStringLiteral("COPTER") || t == QStringLiteral("MULTIROTOR"))
+        return VehicleKind::Multirotor;
+    if (t == QStringLiteral("FIXED_WING") || t == QStringLiteral("PLANE")
+        || t == QStringLiteral("FIXEDWING") || t == QStringLiteral("FIXED"))
+        return VehicleKind::FixedWing;
+    if (t == QStringLiteral("VTOL") || t == QStringLiteral("VTOL_CONVENTIONAL"))
+        return VehicleKind::VtolConventional;
+    return VehicleKind::Unknown;
+}
+
+QString VehicleProfileManager::kindString(VehicleKind kind)
+{
+    switch (kind) {
+    case VehicleKind::Multirotor: return QStringLiteral("MULTIROTOR");
+    case VehicleKind::FixedWing: return QStringLiteral("FIXED_WING");
+    case VehicleKind::VtolConventional: return QStringLiteral("VTOL_CONVENTIONAL");
+    case VehicleKind::Unknown: return QStringLiteral("UNKNOWN");
+    }
+    return QStringLiteral("UNKNOWN");
 }
 
 /// Swap the telemetry bridge, reconnecting signals for connection and arm state.
@@ -38,6 +90,111 @@ void VehicleProfileManager::setTelemetryBridge(TelemetryBridge *bridge)
         connect(m_telemetry, &TelemetryBridge::armedChanged, this, [this]() {
             _onArmedChanged(m_telemetry->armed());
         });
+        connect(m_telemetry, &TelemetryBridge::parametersReadyChanged, this, &VehicleProfileManager::resolveVehicleTypeAndMotorCount);
+        connect(m_telemetry, &TelemetryBridge::parameterUpdated, this, [this](const QString &, float) {
+            resolveVehicleTypeAndMotorCount();
+        });
+    }
+}
+
+void VehicleProfileManager::resolveVehicleTypeAndMotorCount()
+{
+    if (!m_telemetry || !m_telemetry->isConnected()) {
+        if (m_typeResolved) {
+            m_typeResolved = false;
+            m_vehicleType = QStringLiteral("UNKNOWN");
+            m_kind = VehicleKind::Unknown;
+            m_motorCount = 0;
+            emit vehicleTypeResolved();
+        }
+        return;
+    }
+
+    Vehicle *v = m_telemetry->vehicle();
+    if (!v) return;
+
+    bool resolved = false;
+    QString vType = QStringLiteral("UNKNOWN");
+    int mCount = 1;
+
+    // ArduPilot priority: FRAME_CLASS
+    if (v->apmFirmware() || m_telemetry->hasParameter(QStringLiteral("FRAME_CLASS"))) {
+        if (m_telemetry->hasParameter(QStringLiteral("FRAME_CLASS"))) {
+            int fc = static_cast<int>(m_telemetry->parameterValue(QStringLiteral("FRAME_CLASS"), -1.0f));
+            switch (fc) {
+            case 1: vType = QStringLiteral("QUAD");       mCount = 4; resolved = true; break;
+            case 2: vType = QStringLiteral("HEX");        mCount = 6; resolved = true; break;
+            case 3: vType = QStringLiteral("OCTA");       mCount = 8; resolved = true; break;
+            case 4: vType = QStringLiteral("OCTA");       mCount = 8; resolved = true; break;
+            case 5: vType = QStringLiteral("HEX");        mCount = 6; resolved = true; break;
+            case 6: vType = QStringLiteral("HELI");       mCount = 1; resolved = true; break;
+            case 7: vType = QStringLiteral("TRI");        mCount = 3; resolved = true; break;
+            case 0: vType = QStringLiteral("FIXED_WING"); mCount = 1; resolved = true; break;
+            default: break;
+            }
+        }
+    }
+
+    // PX4 priority: CA_AIRFRAME
+    if (!resolved && (v->px4Firmware() || m_telemetry->hasParameter(QStringLiteral("CA_AIRFRAME")))) {
+        if (m_telemetry->hasParameter(QStringLiteral("CA_AIRFRAME"))) {
+            int ca = static_cast<int>(m_telemetry->parameterValue(QStringLiteral("CA_AIRFRAME"), -1.0f));
+            if (ca == 0) {
+                int rc = m_telemetry->hasParameter(QStringLiteral("CA_ROTOR_CNT"))
+                             ? static_cast<int>(m_telemetry->parameterValue(QStringLiteral("CA_ROTOR_CNT"), 4.0f))
+                             : 4;
+                mCount = rc;
+                if (rc == 6) vType = QStringLiteral("HEX");
+                else if (rc == 8) vType = QStringLiteral("OCTA");
+                else if (rc == 3) vType = QStringLiteral("TRI");
+                else vType = QStringLiteral("QUAD");
+                resolved = true;
+            } else if (ca == 1 || ca == 2) {
+                vType = QStringLiteral("FIXED_WING");
+                mCount = 1;
+                resolved = true;
+            } else if (ca == 4 || ca == 5) {
+                vType = QStringLiteral("VTOL");
+                mCount = 5;
+                resolved = true;
+            } else if (ca == 6 || ca == 7) {
+                vType = QStringLiteral("ROVER");
+                mCount = 0;
+                resolved = true;
+            }
+        }
+    }
+
+    // Fallback: HEARTBEAT.type
+    if (!resolved) {
+        int mavType = v->vehicleType();
+        if (v->fixedWing() || mavType == 1) {
+            vType = QStringLiteral("FIXED_WING"); mCount = 1;
+        } else if (mavType == 2) {
+            vType = QStringLiteral("QUAD"); mCount = 4;
+        } else if (mavType == 13) {
+            vType = QStringLiteral("HEX"); mCount = 6;
+        } else if (mavType == 14) {
+            vType = QStringLiteral("OCTA"); mCount = 8;
+        } else if (mavType == 15) {
+            vType = QStringLiteral("TRI"); mCount = 3;
+        } else if (v->vtol() || (mavType >= 19 && mavType <= 24)) {
+            vType = QStringLiteral("VTOL"); mCount = 4;
+        } else if (v->multiRotor()) {
+            vType = QStringLiteral("QUAD"); mCount = 4;
+        }
+        if (m_telemetry->parametersReady()) {
+            resolved = true;
+        }
+    }
+
+    m_vehicleType = vType;
+    m_kind = kindFromTypeString(vType);
+    m_motorCount = mCount;
+
+    if (resolved && !m_typeResolved) {
+        m_typeResolved = true;
+        emit vehicleTypeResolved();
     }
 }
 

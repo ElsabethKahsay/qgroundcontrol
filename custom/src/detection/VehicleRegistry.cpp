@@ -10,6 +10,7 @@
 #include "Vehicle/Vehicle.h"
 #include "MultiVehicleManager.h"
 #include "utils/DatabaseManager.h"
+#include "managers/FlightSession.h"
 
 Q_APPLICATION_STATIC(VehicleRegistry, _vehicleRegistryInstance)
 
@@ -35,18 +36,64 @@ VehicleRegistry::VehicleRegistry(QObject *parent)
     Vehicle *activeVehicle = MultiVehicleManager::instance()->activeVehicle();
     if (activeVehicle) {
         _extractVehicleInfo(activeVehicle);
+        if (m_currentUid == 0) {
+            // Defer registration until the hardware UID arrives (see _onVehicleAdded).
+            m_pendingVehicle = activeVehicle;
+            connect(activeVehicle, &Vehicle::vehicleUIDChanged, this, &VehicleRegistry::_onVehicleUidChanged);
+        } else {
+            _registerOrUpdateCurrentVehicle();
+        }
     }
 }
 
 /// When a vehicle connects, build its fingerprint and check the database:
 /// - Known vehicle: load friendly name, update last-seen timestamp, emit knownVehicleConnected.
 /// - Unknown vehicle: generate a default name, persist a new record, emit newVehicleRegistered.
+///
+/// The fingerprint depends on the hardware UID (vehicleUID()), which is only
+/// populated after the AUTOPILOT_VERSION request completes asynchronously.
+/// If the UID is not known yet, defer registration until vehicleUIDChanged fires,
+/// otherwise every board would hash to the same fingerprint (UID == 0) and all
+/// devices would collapse into a single database record.
 void VehicleRegistry::_onVehicleAdded(Vehicle *vehicle)
 {
     if (!vehicle) return;
     qCDebug(vehicleRegistryLog) << "Vehicle added: sysid" << vehicle->id();
 
     _extractVehicleInfo(vehicle);
+
+    if (m_currentUid == 0) {
+        qCDebug(vehicleRegistryLog) << "UID not yet available — deferring registration until AUTOPILOT_VERSION arrives";
+        if (m_pendingVehicle) {
+            disconnect(m_pendingVehicle, &Vehicle::vehicleUIDChanged, this, &VehicleRegistry::_onVehicleUidChanged);
+        }
+        m_pendingVehicle = vehicle;
+        connect(vehicle, &Vehicle::vehicleUIDChanged, this, &VehicleRegistry::_onVehicleUidChanged);
+        return;
+    }
+
+    _registerOrUpdateCurrentVehicle();
+}
+
+void VehicleRegistry::_onVehicleUidChanged()
+{
+    if (!m_pendingVehicle) return;
+    qCDebug(vehicleRegistryLog) << "Vehicle UID now known:" << m_pendingVehicle->vehicleUID();
+
+    Vehicle *vehicle = m_pendingVehicle;
+    m_pendingVehicle = nullptr;
+    disconnect(vehicle, &Vehicle::vehicleUIDChanged, this, &VehicleRegistry::_onVehicleUidChanged);
+
+    _extractVehicleInfo(vehicle);
+    _registerOrUpdateCurrentVehicle();
+}
+
+void VehicleRegistry::_registerOrUpdateCurrentVehicle()
+{
+    if (m_currentUid == 0 || m_currentFingerprint.isEmpty()) {
+        qCWarning(vehicleRegistryLog) << "Cannot register vehicle without a hardware UID";
+        return;
+    }
 
     QString json = DatabaseManager::instance().lookupVehicleByFingerprint(m_currentFingerprint);
     if (!json.isEmpty()) {
@@ -89,6 +136,14 @@ void VehicleRegistry::_onVehicleRemoved(Vehicle *vehicle)
     if (!vehicle) return;
     qCDebug(vehicleRegistryLog) << "Vehicle removed: sysid" << vehicle->id();
 
+    if (m_pendingVehicle == vehicle) {
+        disconnect(vehicle, &Vehicle::vehicleUIDChanged, this, &VehicleRegistry::_onVehicleUidChanged);
+        m_pendingVehicle = nullptr;
+    }
+
+    FlightSession *fs = FlightSession::instance();
+    if (fs) fs->closeSession();
+
     // Record the last-seen time before clearing state.
     if (!m_currentFingerprint.isEmpty()) {
         DatabaseManager::instance().updateVehicleLastSeen(m_currentFingerprint);
@@ -107,6 +162,10 @@ void VehicleRegistry::_onActiveVehicleChanged(Vehicle *vehicle)
     if (vehicle) {
         _extractVehicleInfo(vehicle);
     } else {
+        if (m_pendingVehicle) {
+            disconnect(m_pendingVehicle, &Vehicle::vehicleUIDChanged, this, &VehicleRegistry::_onVehicleUidChanged);
+            m_pendingVehicle = nullptr;
+        }
         m_currentVehicleId = 0;
         m_currentFingerprint.clear();
         m_isKnownVehicle = false;

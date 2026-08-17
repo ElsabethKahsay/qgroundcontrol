@@ -20,6 +20,7 @@ class VehicleRegistry : public QObject
     Q_PROPERTY(int currentVehicleId READ currentVehicleId NOTIFY currentVehicleChanged)
     Q_PROPERTY(bool isKnownVehicle READ isKnownVehicle NOTIFY knownVehicleChanged)
     Q_PROPERTY(QString vehicleName READ vehicleName NOTIFY knownVehicleChanged)
+    Q_PROPERTY(QString currentVehicleName READ currentVehicleName NOTIFY currentVehicleChanged)
     Q_PROPERTY(QString currentFingerprint READ currentFingerprint NOTIFY currentVehicleChanged)
 
 public:
@@ -30,6 +31,7 @@ public:
     int currentVehicleId() const { return m_currentVehicleId; }
     bool isKnownVehicle() const { return m_isKnownVehicle; }
     QString vehicleName() const { return m_vehicleName; }
+    QString currentVehicleName() const { return m_vehicleName; }
     QString currentFingerprint() const { return m_currentFingerprint; }
 
     /// Search the vehicle database by name, UID, or fingerprint substring.
@@ -66,10 +68,15 @@ private slots:
     void _onVehicleAdded(Vehicle *vehicle);
     void _onVehicleRemoved(Vehicle *vehicle);
     void _onActiveVehicleChanged(Vehicle *vehicle);
+    void _onVehicleUidChanged();
 
 private:
     /// Read hardware identifiers from a Vehicle and populate m_currentFingerprint.
     void _extractVehicleInfo(Vehicle *vehicle);
+    /// Look up or register the current vehicle once hardware identity is known.
+    void _registerOrUpdateCurrentVehicle();
+
+    Vehicle *m_pendingVehicle = nullptr;
 
     int m_currentVehicleId = 0;
     bool m_isKnownVehicle = false;

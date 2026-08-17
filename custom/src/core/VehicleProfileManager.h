@@ -16,6 +16,15 @@
 
 class TelemetryBridge;
 
+/// Canonical vehicle classification used to decide which preflight checks block,
+/// which control surfaces exist, and what the hardware UI shows.
+enum class VehicleKind : int {
+    Multirotor,       ///< Quad, Hex, Octa, Tri
+    FixedWing,        ///< Fixed wing, flying wing
+    VtolConventional, ///< QuadPlane — has hover motors AND fixed-wing surfaces
+    Unknown
+};
+
 /// Manages per-vehicle profile data: device UID resolution, flight session lifecycle,
 /// battery tracking, and GPS/payload metadata.  Listens to TelemetryBridge for
 /// connection and arm/disarm events to auto-start and end flight sessions in the database.
@@ -29,9 +38,21 @@ class VehicleProfileManager : public QObject {
     Q_PROPERTY(QString currentLocationName READ currentLocationName WRITE setLocationName NOTIFY locationNameChanged)
     Q_PROPERTY(double planLatitude READ planLatitude WRITE setPlanLatitude NOTIFY planLatitudeChanged)
     Q_PROPERTY(double planLongitude READ planLongitude WRITE setPlanLongitude NOTIFY planLongitudeChanged)
+    Q_PROPERTY(QString vehicleType READ vehicleType NOTIFY vehicleTypeResolved)
+    Q_PROPERTY(QString vehicleKind READ vehicleKindString NOTIFY vehicleTypeResolved)
+    Q_PROPERTY(int motorCount READ motorCount NOTIFY vehicleTypeResolved)
+    Q_PROPERTY(bool typeResolved READ typeResolved NOTIFY vehicleTypeResolved)
 
 public:
+    static VehicleProfileManager *instance();
     explicit VehicleProfileManager(QObject *parent = nullptr);
+
+    /// Map a MAV_TYPE integer to its canonical VehicleKind.
+    static VehicleKind kindFromMavType(int mavType);
+    /// Map a vehicle-type string ("QUAD", "FIXED_WING", ...) to its VehicleKind.
+    static VehicleKind kindFromTypeString(const QString &type);
+    /// Uppercase kind string: "MULTIROTOR", "FIXED_WING", "VTOL_CONVENTIONAL", "UNKNOWN".
+    static QString kindString(VehicleKind kind);
 
     /// Connect to a TelemetryBridge to receive connection/arm state and vehicle parameters.
     void setTelemetryBridge(TelemetryBridge *bridge);
@@ -39,6 +60,12 @@ public:
     /// Resolve motor count from vehicle parameters (CA_AIRFRAME on PX4,
     /// FRAME_CLASS/FRAME_TYPE on ArduPilot). Falls back to defaultCount.
     static int resolveMotorCount(TelemetryBridge *telemetry, int defaultCount = 4);
+
+    QString vehicleType() const { return m_vehicleType; }
+    QString vehicleKindString() const { return kindString(m_kind); }
+    VehicleKind kind() const { return m_kind; }
+    int motorCount() const { return m_motorCount; }
+    bool typeResolved() const { return m_typeResolved; }
 
     QString currentDeviceUid() const { return m_currentDeviceUid; }
     QString currentVehicleHistoryJson() const { return m_currentVehicleHistoryJson; }
@@ -75,18 +102,27 @@ signals:
     void planLatitudeChanged();
     void planLongitudeChanged();
     void vehicleReconnected(const QString &deviceUid, const QString &friendlyName);
+    void vehicleTypeResolved();
 
 private slots:
     void onConnectionChanged();
     void _onArmedChanged(bool armed);
+    void resolveVehicleTypeAndMotorCount();
 
 private:
+    static VehicleProfileManager *s_instance;
+    QString m_vehicleType = QStringLiteral("UNKNOWN");
+    VehicleKind m_kind = VehicleKind::Unknown;
+    int m_motorCount = 0;
+    bool m_typeResolved = false;
+
     /// Resolve the vehicle's persistent device UID: tries hardware UID first,
     /// then falls back to composite key or system ID.
     QString resolveDeviceUid();
     QString autopilotTypeString();
     /// Determine airframe type from vehicle parameters, falling back to HEARTBEAT flags.
     QString airframeTypeString();
+
 
     TelemetryBridge *m_telemetry = nullptr;
     QString m_currentDeviceUid;
