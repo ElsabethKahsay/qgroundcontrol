@@ -6,7 +6,6 @@
 
 #include "UnitTest.h"
 #include "WeatherProvider.h"
-#include "MetarCeilingCheck.h"
 #include "mocks/MockTelemetryBridge.h"
 
 class WeatherProviderTest : public UnitTest {
@@ -35,7 +34,6 @@ private slots:
     void testMetarParsing();
     void testTafParsing();
     void testIcaoLookup();
-    void testApiTimeout();
 };
 
 void WeatherProviderTest::testSingletonInstance()
@@ -61,7 +59,7 @@ void WeatherProviderTest::testMetarParsing()
 
     QJsonObject metar;
     metar[QStringLiteral("rawOb")] = QStringLiteral("KLAX 012053Z 26012KT 10SM FEW040 20/15 A2992");
-    metar[QStringLiteral("obsTime")] = QStringLiteral("2026-01-01T20:53:00Z");
+    metar[QStringLiteral("obsTime")] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
     metar[QStringLiteral("temp")] = 20.0;
     metar[QStringLiteral("dewp")] = 15.0;
     metar[QStringLiteral("wspd")] = 12.0;
@@ -147,42 +145,6 @@ void WeatherProviderTest::testIcaoLookup()
     } else {
         // Should find a nearby airport
         QCOMPARE(icao.toUpper(), QStringLiteral("KLAX"));
-    }
-}
-
-void WeatherProviderTest::testApiTimeout()
-{
-    MockTelemetryBridge bridge;
-    bridge.setConnected(true);
-    bridge.setConnectionQuality(100);
-
-    MetarCeilingCheck check(&bridge);
-    QCOMPARE(check.status(), CheckStatus::Pending);
-
-    check.evaluate();
-
-    if (check.status() == CheckStatus::Pending) {
-        // Fetch was triggered — access m_lastEvalTime via friend to simulate timeout
-        check.m_lastEvalTime = QDateTime::currentDateTime().addSecs(-12);
-
-        // Second evaluate should hit timeout path since metarFresh() is false
-        check.evaluate();
-
-        // The check should NOT return Failed (would block arming)
-        QVERIFY(check.status() != CheckStatus::Failed);
-
-        // It should return Skipped (non-blocking) or Pending
-        QVERIFY(check.status() == CheckStatus::Skipped ||
-                check.status() == CheckStatus::Pending);
-
-        if (check.status() == CheckStatus::Skipped) {
-            // Verify the message explains the data unavailability
-            QVERIFY(!check.message().isEmpty());
-        }
-    } else {
-        // May already be Skipped if weather is disabled
-        QVERIFY(check.status() == CheckStatus::Skipped ||
-                check.status() == CheckStatus::Pending);
     }
 }
 

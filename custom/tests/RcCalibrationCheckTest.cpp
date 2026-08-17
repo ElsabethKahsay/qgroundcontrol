@@ -53,12 +53,12 @@ void RcCalibrationCheckTest::testCalibratedRangePasses()
 
     check.setTestValue(QStringLiteral("RC1_MIN"), 1000.0);
     check.setTestValue(QStringLiteral("RC1_MAX"), 2000.0);
-    check.setTestValue(QStringLiteral("RC2_MIN"), 1000.0);
-    check.setTestValue(QStringLiteral("RC2_MAX"), 2000.0);
-    check.setTestValue(QStringLiteral("RC3_MIN"), 1000.0);
-    check.setTestValue(QStringLiteral("RC3_MAX"), 2000.0);
-    check.setTestValue(QStringLiteral("RC4_MIN"), 1000.0);
-    check.setTestValue(QStringLiteral("RC4_MAX"), 2000.0);
+    check.setTestValue(QStringLiteral("RC2_MIN"), 950.0);
+    check.setTestValue(QStringLiteral("RC2_MAX"), 1950.0);
+    check.setTestValue(QStringLiteral("RC3_MIN"), 1050.0);
+    check.setTestValue(QStringLiteral("RC3_MAX"), 2050.0);
+    check.setTestValue(QStringLiteral("RC4_MIN"), 980.0);
+    check.setTestValue(QStringLiteral("RC4_MAX"), 1980.0);
 
     check.evaluate();
     QCOMPARE(check.status(), CheckStatus::Passed);

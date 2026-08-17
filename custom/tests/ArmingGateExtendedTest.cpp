@@ -3,6 +3,7 @@
 
 #include "UnitTest.h"
 #include "ArmingGate.h"
+#include "PreflightManager.h"
 #include "AbstractCheck.h"
 #include "mocks/MockTelemetryBridge.h"
 
@@ -94,7 +95,10 @@ void ArmingGateExtendedTest::testInterceptCommandLongActiveAllowsWhenPassed()
     PreflightManager *mgr = new PreflightManager(1, &gate);
     gate.setPreflightManager(mgr);
 
-    // With no checks, allMandatoryPassed is true
+    // Every mandatory check must pass before the gate opens in Active mode
+    for (auto *c : mgr->checks()) {
+        c->confirm();
+    }
     QMap<int, float> params;
     params[1] = 1.0f;
     bool allowed = gate.interceptCommandLong(400, params);

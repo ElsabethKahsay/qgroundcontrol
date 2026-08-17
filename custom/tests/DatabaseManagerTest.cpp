@@ -43,6 +43,8 @@ private slots:
     void testFlightSessionRoundTrip();
     void testCheckResultAuditTrail();
     void testSchemaMigration();
+    void testZoneCrud();
+    void testZoneComplianceLog();
 };
 
 void DatabaseManagerTest::testInitialize()
@@ -381,6 +383,92 @@ void DatabaseManagerTest::testSchemaMigration()
     QString results = db.getCheckResults(1);
     QVERIFY(!results.isEmpty());
     QVERIFY(results.contains(QStringLiteral("migration.check")));
+
+    // New no_fly_zones / zone_compliance_log tables created by migration
+    int zid = db.insertZone(QStringLiteral("Migrated Airport"), QString(),
+                            40.0, -3.0, 5000.0, QStringLiteral("Regulatory"));
+    QVERIFY(zid > 0);
+    QVERIFY(db.insertComplianceRecord(0, 0, QStringLiteral("Clear"), QString(), QString()));
+}
+
+void DatabaseManagerTest::testZoneCrud()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    QString tmpPath = QDir::tempPath() + QStringLiteral("/test_zones_XXXXXX.db");
+    QTemporaryFile tmpFile;
+    tmpFile.setFileTemplate(tmpPath);
+    tmpFile.open();
+    QVERIFY(db.initialize(tmpFile.fileName()));
+
+    // Create
+    int id1 = db.insertZone(QStringLiteral("Airport CTR"), QStringLiteral("Class D"),
+                            47.3977, 8.6611, 7500.0, QStringLiteral("Regulatory"));
+    QVERIFY(id1 > 0);
+    int id2 = db.insertZone(QStringLiteral("Cell Tower"), QString(),
+                            46.0, 7.0, 150.0, QStringLiteral("Obstacle"));
+    QVERIFY(id2 > 0);
+
+    auto zones = db.getAllZones();
+    QCOMPARE(zones.size(), 2);
+
+    // List all vs active
+    QCOMPARE(db.getActiveZones().size(), 2);
+
+    // Update
+    QVERIFY(db.updateZone(id1, QStringLiteral("Airport CTR v2"), QStringLiteral("Updated"),
+                          47.5, 8.6, 8000.0, QStringLiteral("Restricted"), false));
+    zones = db.getAllZones();
+    QCOMPARE(zones.size(), 2);
+    for (const QVariantMap &z : zones) {
+        if (z.value(QStringLiteral("id")).toInt() == id1) {
+            QCOMPARE(z.value(QStringLiteral("name")).toString(), QStringLiteral("Airport CTR v2"));
+            QCOMPARE(z.value(QStringLiteral("reason")).toString(), QStringLiteral("Restricted"));
+            QCOMPARE(z.value(QStringLiteral("active")).toBool(), false);
+        }
+    }
+
+    // Inactive zone hidden from getActiveZones
+    QCOMPARE(db.getActiveZones().size(), 1);
+
+    // Delete
+    QVERIFY(db.deleteZone(id2));
+    QCOMPARE(db.getAllZones().size(), 1);
+}
+
+void DatabaseManagerTest::testZoneComplianceLog()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    QString tmpPath = QDir::tempPath() + QStringLiteral("/test_compliance_XXXXXX.db");
+    QTemporaryFile tmpFile;
+    tmpFile.setFileTemplate(tmpPath);
+    tmpFile.open();
+    QVERIFY(db.initialize(tmpFile.fileName()));
+
+    int opId = db.insertOperator(QStringLiteral("Alice"), QStringLiteral("Pilot"));
+    QVERIFY(opId > 0);
+
+    // Two records for flight 5, one for flight 6
+    QVERIFY(db.insertComplianceRecord(5, opId, QStringLiteral("Clear"), QStringLiteral("All good"), QString()));
+    QVERIFY(db.insertComplianceRecord(5, opId, QStringLiteral("Conflict"), QStringLiteral("Near zone"),
+                                      QStringLiteral("Mission authorized by ops")));
+    QVERIFY(db.insertComplianceRecord(6, opId, QStringLiteral("Caution"), QString(), QString()));
+
+    auto forFlight = db.getComplianceForFlight(5);
+    QCOMPARE(forFlight.size(), 2);
+    bool hasOverride = false;
+    bool hasOperatorName = false;
+    for (const QVariantMap &r : forFlight) {
+        if (r.value(QStringLiteral("result")).toString() == QStringLiteral("Conflict")) {
+            hasOverride = r.value(QStringLiteral("override_reason")).toString().contains(QStringLiteral("ops"));
+        }
+        if (!r.value(QStringLiteral("operator_name")).toString().isEmpty())
+            hasOperatorName = true;
+    }
+    QVERIFY(hasOverride);
+    QVERIFY(hasOperatorName);
+
+    auto history = db.getComplianceHistory(100);
+    QCOMPARE(history.size(), 3);
 }
 
 UT_REGISTER_TEST(DatabaseManagerTest)

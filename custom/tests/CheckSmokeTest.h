@@ -22,6 +22,7 @@ private slots:
     // ManualConfirmCheck
     void testManualConfirmDefault();
     void testManualConfirmFlow();
+    void testManualInspectionItems();
 
     // ChecklistItemModel
     void testModelLoadFromJson();

@@ -60,7 +60,6 @@ class MockTelemetryBridge : public TelemetryBridge {
     Q_PROPERTY(bool gimbalDetected READ gimbalDetected NOTIFY gimbalDetectedChanged)
     Q_PROPERTY(double commDropRate READ commDropRate NOTIFY commDropRateChanged)
     Q_PROPERTY(bool companionDetected READ companionDetected NOTIFY companionDetectedChanged)
-    Q_PROPERTY(bool preArmOk READ preArmOk NOTIFY preArmOkChanged)
     Q_PROPERTY(double ekfVelVariance READ ekfVelVariance NOTIFY ekfVarianceChanged)
     Q_PROPERTY(double ekfPosHorizVariance READ ekfPosHorizVariance NOTIFY ekfVarianceChanged)
     Q_PROPERTY(double ekfPosVertVariance READ ekfPosVertVariance NOTIFY ekfVarianceChanged)

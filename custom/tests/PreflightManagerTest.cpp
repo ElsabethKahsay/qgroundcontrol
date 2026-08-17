@@ -4,6 +4,7 @@
 #include "UnitTest.h"
 #include "PreflightManager.h"
 #include "AbstractCheck.h"
+#include "ManualConfirmCheck.h"
 #include "mocks/MockTelemetryBridge.h"
 
 class PreflightManagerTest : public UnitTest {
@@ -21,15 +22,18 @@ private slots:
     void testEvaluateAll();
     void testArmingBlocker();
     void testResetAll();
+    void testApplyVehicleKindBlocking();
 };
 
 void PreflightManagerTest::testInitialState()
 {
     PreflightManager mgr;
-    QCOMPARE(mgr.totalChecks(), 0);
+    // Built-in phase-1 checks are auto-registered at construction
+    QVERIFY(mgr.totalChecks() > 0);
     QCOMPARE(mgr.passedChecks(), 0);
     QCOMPARE(mgr.failedChecks(), 0);
-    QCOMPARE(mgr.pendingChecks(), 0);
+    QCOMPARE(mgr.pendingChecks(), mgr.totalChecks());
+    // No vehicle connected -> no vehicle-specific critical check is mandatory yet.
     QVERIFY(mgr.allMandatoryPassed());
     QCOMPARE(mgr.completionPercent(), 0);
 }
@@ -37,14 +41,15 @@ void PreflightManagerTest::testInitialState()
 void PreflightManagerTest::testAddCheck()
 {
     PreflightManager mgr;
+    const int baseCount = mgr.totalChecks();
 
     auto *check = new ManualConfirmCheck(
         QStringLiteral("test.manual.confirm"),
         QStringLiteral("Test Check"), CheckCategory::Safety,
-        QStringLiteral("Test description"), {}, &mgr);
+        QStringLiteral("Test description"), QStringList(), QStringList(), &mgr);
 
     mgr.addCheck(check);
-    QCOMPARE(mgr.totalChecks(), 1);
+    QCOMPARE(mgr.totalChecks(), baseCount + 1);
     QVERIFY(mgr.checkById(QStringLiteral("test.manual.confirm")) != nullptr);
 }
 
@@ -54,7 +59,7 @@ void PreflightManagerTest::testCheckById()
     auto *check = new ManualConfirmCheck(
         QStringLiteral("test.findable"),
         QStringLiteral("Findable"), CheckCategory::Safety,
-        QStringLiteral("Desc"), {}, &mgr);
+        QStringLiteral("Desc"), QStringList(), QStringList(), &mgr);
     mgr.addCheck(check);
 
     QVERIFY(mgr.checkById(QStringLiteral("test.findable")) != nullptr);
@@ -64,22 +69,23 @@ void PreflightManagerTest::testCheckById()
 void PreflightManagerTest::testProgressCounters()
 {
     PreflightManager mgr;
+    const int baseCount = mgr.totalChecks();
 
     auto *check1 = new ManualConfirmCheck(
         QStringLiteral("test.a"), QStringLiteral("A"), CheckCategory::Safety,
-        QStringLiteral("Desc"), {}, &mgr);
+        QStringLiteral("Desc"), QStringList(), QStringList(), &mgr);
     auto *check2 = new ManualConfirmCheck(
         QStringLiteral("test.b"), QStringLiteral("B"), CheckCategory::Safety,
-        QStringLiteral("Desc"), {}, &mgr);
+        QStringLiteral("Desc"), QStringList(), QStringList(), &mgr);
     mgr.addCheck(check1);
     mgr.addCheck(check2);
 
-    QCOMPARE(mgr.totalChecks(), 2);
-    QCOMPARE(mgr.pendingChecks(), 2);
+    QCOMPARE(mgr.totalChecks(), baseCount + 2);
+    QCOMPARE(mgr.pendingChecks(), baseCount + 2);
 
     check1->confirm();
     QCOMPARE(mgr.passedChecks(), 1);
-    QCOMPARE(mgr.pendingChecks(), 1);
+    QCOMPARE(mgr.pendingChecks(), baseCount + 1);
 }
 
 void PreflightManagerTest::testAllMandatoryPassed()
@@ -87,12 +93,16 @@ void PreflightManagerTest::testAllMandatoryPassed()
     PreflightManager mgr;
     auto *check = new ManualConfirmCheck(
         QStringLiteral("test.mand"), QStringLiteral("Mand"), CheckCategory::Safety,
-        QStringLiteral("Desc"), {}, &mgr);
+        QStringLiteral("Desc"), QStringList(), QStringList(), &mgr);
+    check->setMandatory(true);
     mgr.addCheck(check);
 
     QVERIFY(!mgr.allMandatoryPassed());
 
-    check->confirm();
+    // Confirming a single check is not enough — every mandatory check must pass
+    for (auto *c : mgr.checks()) {
+        c->confirm();
+    }
     QVERIFY(mgr.allMandatoryPassed());
 }
 
@@ -148,7 +158,7 @@ void PreflightManagerTest::testResetAll()
     PreflightManager mgr;
     auto *check = new ManualConfirmCheck(
         QStringLiteral("test.rst"), QStringLiteral("Rst"), CheckCategory::Safety,
-        QStringLiteral("Desc"), {}, &mgr);
+        QStringLiteral("Desc"), QStringList(), QStringList(), &mgr);
     mgr.addCheck(check);
 
     check->confirm();
@@ -159,6 +169,42 @@ void PreflightManagerTest::testResetAll()
 
     QCOMPARE(check->status(), CheckStatus::Pending);
     QVERIFY(progressSpy.count() > 0);
+}
+
+void PreflightManagerTest::testApplyVehicleKindBlocking()
+{
+    PreflightManager mgr;
+
+    auto *motorCount = mgr.checkById(QStringLiteral("airframe.motor_count"));
+    auto *motorSpin  = mgr.checkById(QStringLiteral("propulsion.motors.spin"));
+    auto *airspeed   = mgr.checkById(QStringLiteral("sensors.airspeed"));
+    auto *rtlAlt     = mgr.checkById(QStringLiteral("safety.rtl_alt"));
+
+    QVERIFY(motorCount && motorSpin && airspeed && rtlAlt);
+
+    // Defaults before any kind is applied
+    QVERIFY(!motorCount->isBlocking());
+    QVERIFY(!airspeed->isBlocking());
+    QVERIFY(!rtlAlt->isBlocking());
+
+    // Multirotor: motors block, airspeed/rtl_alt advisory — airspeed must
+    // never block a quad from arming.
+    mgr.applyVehicleKind(QStringLiteral("MULTIROTOR"));
+    QVERIFY(motorCount->isBlocking());
+    QVERIFY(motorSpin->isBlocking());
+    QVERIFY(!airspeed->isBlocking());
+    QVERIFY(!rtlAlt->isBlocking());
+
+    // Fixed wing: airspeed + rtl_alt block; motor checks advisory.
+    mgr.applyVehicleKind(QStringLiteral("FIXED_WING"));
+    QVERIFY(!motorCount->isBlocking());
+    QVERIFY(!motorSpin->isBlocking());
+    QVERIFY(airspeed->isBlocking());
+    QVERIFY(rtlAlt->isBlocking());
+
+    // Unknown kind leaves the previous explicit decisions untouched.
+    mgr.applyVehicleKind(QStringLiteral("UNKNOWN"));
+    QVERIFY(airspeed->isBlocking());
 }
 
 UT_REGISTER_TEST(PreflightManagerTest)

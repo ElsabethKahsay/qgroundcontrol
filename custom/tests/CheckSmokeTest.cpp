@@ -98,13 +98,30 @@ void CheckSmokeTest::testManualConfirmDefault()
         QStringLiteral("Confirm Test"),
         CheckCategory::Airframe,
         QStringLiteral("Please confirm"),
-        {},
+        QStringList(),
+        QStringList(),
         this);
 
     QCOMPARE(check.id(), QStringLiteral("test.manual.confirm"));
     QCOMPARE(check.status(), CheckStatus::Pending);
     QCOMPARE(check.checkType(), CheckType::Manual);
     QVERIFY(!check.isAuto());
+}
+
+void CheckSmokeTest::testManualInspectionItems()
+{
+    ManualConfirmCheck check(
+        QStringLiteral("test.manual.inspect"),
+        QStringLiteral("Visual Inspection"),
+        CheckCategory::Airframe,
+        QStringLiteral("Perform visual inspection"),
+        {QStringLiteral("Damage inspection"), QStringLiteral("Screws")},
+        {},
+        this);
+
+    QCOMPARE(check.inspectionItems().size(), 2);
+    QCOMPARE(check.inspectionItems().at(0), QStringLiteral("Damage inspection"));
+    QVERIFY(check.inspectionItems().contains(QStringLiteral("Screws")));
 }
 
 void CheckSmokeTest::testManualConfirmFlow()
@@ -114,7 +131,8 @@ void CheckSmokeTest::testManualConfirmFlow()
         QStringLiteral("Confirm Test 2"),
         CheckCategory::Airframe,
         QStringLiteral("Please confirm manually"),
-        {},
+        QStringList(),
+        QStringList(),
         this);
 
     QCOMPARE(check.status(), CheckStatus::Pending);

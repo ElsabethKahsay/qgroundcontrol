@@ -38,9 +38,10 @@ void ArmingGateTest::testPassiveMode()
     ArmingGate gate;
     gate.setMode(ArmingGate::Passive);
     QCOMPARE(gate.mode(), ArmingGate::Passive);
-    QVERIFY(!gate.isArmingAllowed());
+    // Passive mode = log only, the gate is always open
+    QVERIFY(gate.isArmingAllowed());
 
-    gate.processArmRequest(5, 0);
+    QCOMPARE(gate.processArmRequest(5, 0), ArmingGate::GATE_OPEN);
     QVERIFY(gate.isArmingAllowed());
 }
 
@@ -73,11 +74,10 @@ void ArmingGateTest::testHybridModeOverride()
     QVERIFY(!gate.isArmingAllowed());
     QCOMPARE(gate.processArmRequest(1, 0), ArmingGate::GATE_CLOSED);
 
+    // Acknowledging is a one-time ALLOW_WITH_ACK bypass, not a persistent override
     QVERIFY(gate.acknowledgeOverride(QStringLiteral("TestPilot"), QStringLiteral("Test override")));
-    QVERIFY(gate.isOverrideActive());
-
     QCOMPARE(gate.processArmRequest(1, 0), ArmingGate::GATE_OPEN);
-    QVERIFY(gate.isArmingAllowed());
+    QCOMPARE(gate.processArmRequest(1, 0), ArmingGate::GATE_CLOSED);
 }
 
 void ArmingGateTest::testHybridModeOverrideLogged()
@@ -86,8 +86,9 @@ void ArmingGateTest::testHybridModeOverrideLogged()
     gate.setMode(ArmingGate::Hybrid);
     gate.processArmRequest(1, 0);
 
+    // overrideGate activates + logs a timed override for the audit trail
     QSignalSpy overrideSpy(&gate, &ArmingGate::gateOverrideLogged);
-    QVERIFY(gate.acknowledgeOverride(QStringLiteral("Pilot"), QStringLiteral("Test")));
+    gate.overrideGate(QStringLiteral("Test"), 30);
     QCOMPARE(overrideSpy.count(), 1);
 }
 
