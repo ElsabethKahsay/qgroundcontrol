@@ -35,6 +35,8 @@ import QGroundControl.Vehicle
 Item {
     id: _root
 
+    signal preflightChecklistRequested()
+
     property var    parentToolInsets
     property var    totalToolInsets:        _totalToolInsets
     property var    mapControl
@@ -148,10 +150,7 @@ Item {
         visible:                !QGroundControl.videoManager.fullScreen
 
         onDisplayPreFlightChecklist: {
-            if (!preFlightChecklistLoader.active) {
-                preFlightChecklistLoader.active = true
-            }
-            preFlightChecklistLoader.item.open()
+            _root.preflightChecklistRequested()
         }
 
         property real topEdgeLeftInset:     visible ? y + height : 0

@@ -2,6 +2,9 @@
 
 #include "PreflightChecklistModel.h"
 
+#include <QSet>
+#include <QString>
+
 PreflightChecklistFilterModel::PreflightChecklistFilterModel(QObject *parent)
     : QSortFilterProxyModel(parent)
 {
@@ -27,9 +30,20 @@ void PreflightChecklistFilterModel::setCategoryId(int id)
 /// Accept a row if no category filter is set (-1) or if the check's category matches.
 bool PreflightChecklistFilterModel::filterAcceptsRow(int sourceRow, const QModelIndex &sourceParent) const
 {
+    QModelIndex idx = sourceModel()->index(sourceRow, 0, sourceParent);
+    // Link-health checks are surfaced in the 30% info panel instead of the checklist grid.
+    static const QSet<QString> kHiddenFromChecklist = {
+        QStringLiteral("com.telemetry.drop_rate"),
+        QStringLiteral("comm.mavlink.protocol"),
+        QStringLiteral("comm.heartbeat"),
+        QStringLiteral("nav.home"),
+        QStringLiteral("nav.attitude"),
+    };
+    QString id = sourceModel()->data(idx, PreflightChecklistModel::IdRole).toString();
+    if (kHiddenFromChecklist.contains(id))
+        return false;
     if (m_categoryId < 0)
         return true;
-    QModelIndex idx = sourceModel()->index(sourceRow, 0, sourceParent);
     int cat = sourceModel()->data(idx, PreflightChecklistModel::CategoryRole).toInt();
     return cat == m_categoryId;
 }

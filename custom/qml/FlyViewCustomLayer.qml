@@ -19,6 +19,7 @@ import QGroundControl.Palette
 import QGroundControl.FlightMap
 
 import com.uav.preflight 1.0
+import cpts 1.0
 
 Item {
     id: _root
@@ -106,7 +107,7 @@ Item {
     Rectangle {
         id:                 newVehicleBanner
         x:                  (parent.width - width) / 2
-        y:                  ScreenTools.defaultFontPixelHeight * 0.4
+        y:                  ScreenTools.defaultFontPixelHeight * 3.0
         width:              bannerRow.width + ScreenTools.defaultFontPixelWidth * 2
         height:             bannerRow.height + ScreenTools.defaultFontPixelWidth
         radius:             height / 2
@@ -269,10 +270,7 @@ Item {
 
         MouseArea {
             anchors.fill: parent
-            onClicked: {
-                var obj = checklistDialog.createObject(mainWindow)
-                obj.open()
-            }
+            onClicked: _root.openPreflightDialog()
         }
     }
 
@@ -289,12 +287,11 @@ Item {
         z:                      QGroundControl.zOrderWidgets + 1
 
         color: {
-            if (!_activeVehicle) return Qt.rgba(Colors.textDisabled.r, Colors.textDisabled.g, Colors.textDisabled.b, 0.70)
             if (_btnMA.containsPress)  return Colors.tealDark
             if (_btnMA.containsMouse)  return Colors.tealLight
             return Colors.teal
         }
-        border.color: _activeVehicle ? Colors.accentCyan : Qt.rgba(0.5, 0.5, 0.55, 0.5)
+        border.color: Colors.accentCyan
         border.width: 1
 
         Behavior on color { ColorAnimation { duration: 120 } }
@@ -310,7 +307,6 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 text:                   qsTr("CHECK")
                 font.pixelSize:         ScreenTools.defaultFontPixelHeight * 1.1
-                opacity:                _activeVehicle ? 1.0 : 0.4
             }
 
             Text {
@@ -318,7 +314,7 @@ Item {
                 text:                   qsTr("Preflight Checklist")
                 font.pointSize:         ScreenTools.defaultFontPointSize * 0.95
                 font.weight:            Font.DemiBold
-                color:                  _activeVehicle ? Colors.dialogText : Colors.textDisabled
+                color:                  Colors.dialogText
             }
 
             Rectangle {
@@ -359,35 +355,182 @@ Item {
             id:             _btnMA
             anchors.fill:   parent
             hoverEnabled:   true
-            cursorShape:    _activeVehicle ? Qt.PointingHandCursor : Qt.ForbiddenCursor
-            enabled:        !!_activeVehicle
+            cursorShape:    Qt.PointingHandCursor
 
             ToolTip.visible: containsMouse
-            ToolTip.text:    _activeVehicle ? qsTr("Open Preflight Test Page")
-                                           : qsTr("Connect a vehicle first")
+            ToolTip.text:    qsTr("Open Preflight Test Page")
             ToolTip.delay:   400
 
-            onClicked: {
-                var obj = checklistDialog.createObject(mainWindow)
-                obj.open()
+            onClicked: openPreflightDialog()
+        }
+    }
+
+    property bool _preflightAnalyzePending: false
+    property url  _preflightAnalyzeSource: "qrc:/qml/cpts/PreflightChecklistView.qml"
+    property string _preflightAnalyzeTitle: qsTr("Preflight Checklist")
+
+    function _attemptOpenPreflightAnalyzePage() {
+        if (!mainWindow.toolDrawerLoader || !mainWindow.toolDrawerLoader.item || !mainWindow.toolDrawerLoader.item.panelLoader) {
+            console.log("FlyView: cannot open preflight analyze page yet")
+            return false
+        }
+
+        console.log("FlyView: setting preflight analyze page on toolDrawerLoader.item")
+        mainWindow.toolDrawerLoader.item.panelLoader.source = _preflightAnalyzeSource
+        mainWindow.toolDrawerLoader.item.panelLoader.title = _preflightAnalyzeTitle
+        if (typeof mainWindow.toolDrawerLoader.item._selectAnalyzeButton === 'function') {
+            mainWindow.toolDrawerLoader.item._selectAnalyzeButton(_preflightAnalyzeTitle, _preflightAnalyzeSource)
+        }
+        _preflightAnalyzePending = false
+        _openAnalyzeTimer.stop()
+        return true
+    }
+
+    // Opens the preflight checklist from the FlyView button by showing the
+    // Analyze Tools drawer and then directing the Analyze view to load the
+    // checklist page once the loader is ready.
+    Timer {
+        id: _openAnalyzeTimer
+        interval: 300
+        repeat: false
+        running: false
+        onTriggered: {
+            _attemptOpenPreflightAnalyzePage()
+        }
+    }
+
+    function openPreflightDialog() {
+        _preflightAnalyzePending = true
+        mainWindow.showAnalyzeTool()
+        _attemptOpenPreflightAnalyzePage()
+        _openAnalyzeTimer.restart()
+    }
+
+    Connections {
+        target: mainWindow.toolDrawerLoader
+        ignoreUnknownSignals: true
+        function onStatusChanged() {
+            if (_preflightAnalyzePending && mainWindow.toolDrawerLoader.status === Loader.Ready) {
+                _attemptOpenPreflightAnalyzePage()
             }
         }
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //  CHECKLIST DIALOG
+    //  SESSION START DIALOG — opens from the preflight checklist button;
+    //  tapping a mode card only selects the mode and closes the dialog.
+    // ═══════════════════════════════════════════════════════════════════
+    SessionStartDialog {
+        id: sessionStartDialog
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  TRAINING MODE BANNER — visible when in training mode
+    // ═══════════════════════════════════════════════════════════════════
+    Rectangle {
+        id: trainingBanner
+        visible: FlightSession.isTraining
+        anchors { top: parent.top; topMargin: _toolInsets.topEdgeCenterInset; left: parent.left; right: parent.right }
+        height: 40
+        z: QGroundControl.zOrderWidgets + 3
+        color: Qt.rgba(Colors.warning.r, Colors.warning.g, Colors.warning.b, 0.15)
+
+        Row {
+            anchors.centerIn: parent
+            spacing: Config.spacingSmall
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: qsTr("\u26A0")
+                font.pixelSize: 18
+            }
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: qsTr("TRAINING MODE \u2014 Arming disabled")
+                font.pixelSize: Config.fontSizeBody
+                font.bold: true
+                color: Colors.warning
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  TESTING MODE BANNER — visible when in testing mode
+    // ═══════════════════════════════════════════════════════════════════
+    Rectangle {
+        id: testingBanner
+        visible: FlightSession.isTesting
+        anchors { top: parent.top; topMargin: _toolInsets.topEdgeCenterInset; left: parent.left; right: parent.right }
+        height: 40
+        z: QGroundControl.zOrderWidgets + 3
+        color: Qt.rgba(Colors.accentCyan.r, Colors.accentCyan.g, Colors.accentCyan.b, 0.15)
+
+        Row {
+            anchors.centerIn: parent
+            spacing: Config.spacingSmall
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: qsTr("\u2699\uFE0F")
+                font.pixelSize: 18
+            }
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: qsTr("TESTING MODE \u2014 No audit logging")
+                font.pixelSize: Config.fontSizeBody
+                font.bold: true
+                color: Colors.accentCyan
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  POST-FLIGHT BANNER — appears when state is PostFlight
+    // ═══════════════════════════════════════════════════════════════════
+    Rectangle {
+        id: postFlightBanner
+        visible: FlightSession.state === FlightSession.PostFlight
+        anchors { top: parent.top; topMargin: _toolInsets.topEdgeCenterInset; left: parent.left; right: parent.right }
+        height: 40
+        z: QGroundControl.zOrderWidgets + 3
+        color: Qt.rgba(Colors.success.r, Colors.success.g, Colors.success.b, 0.15)
+
+        Row {
+            anchors.centerIn: parent
+            spacing: Config.spacingSmall
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: qsTr("\u2708\uFE0F")
+                font.pixelSize: 18
+            }
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: qsTr("Flight complete — complete the post-flight checklist")
+                font.pixelSize: Config.fontSizeBody
+                font.bold: true
+                color: Colors.success
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  CHECKLIST DIALOG — loads the new multi-step wizard
     // ═══════════════════════════════════════════════════════════════════
     Component {
         id: checklistDialog
         QGCPopupDialog {
-            title:   qsTr("Preflight Checklist")
+            title:   qsTr("Preflight Wizard")
             buttons: Dialog.Close
             modal:   true
 
             Loader {
-                source: "qrc:/qml/cpts/PreflightChecklistView.qml"
-                width:  ScreenTools.defaultFontPixelWidth * 80
-                height: ScreenTools.defaultFontPixelHeight * 40
+                source: "qrc:/qml/pages/PreFlightChecklist.qml"
+                width:  ScreenTools.defaultFontPixelWidth * 100
+                height: ScreenTools.defaultFontPixelHeight * 50
             }
         }
     }

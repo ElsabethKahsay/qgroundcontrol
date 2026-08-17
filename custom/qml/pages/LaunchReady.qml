@@ -52,6 +52,7 @@ Page {
                 Text { text: "Hardware Test: " + (VehicleTelemetry.hardwareTestPassed ? "PASS" : "INCOMPLETE"); font.pixelSize: Config.fontSizeSmall; color: VehicleTelemetry.hardwareTestPassed ? Colors.success : Colors.error }
                 Text { text: "Payload Secured: " + (VehicleTelemetry.payloadSecured ? "Yes" : "No"); font.pixelSize: Config.fontSizeSmall; color: Colors.textSecondary }
                 Text { text: "Final Checks: " + (VehicleTelemetry.allFinalChecksPassed ? "Complete" : "Incomplete"); font.pixelSize: Config.fontSizeSmall; color: Colors.textSecondary }
+                Text { text: "Airspace Compliance: " + (NoFlyZoneModel.complianceChecked ? "Checked ✓" : "NOT CHECKED"); font.pixelSize: Config.fontSizeSmall; color: NoFlyZoneModel.complianceChecked ? Colors.success : Colors.warning }
             }
         }
 
@@ -132,7 +133,7 @@ Page {
         // ── Launch block ──
         Rectangle {
             width: parent.width
-            visible: !VehicleTelemetry.readyToLaunch
+            visible: !VehicleTelemetry.readyToLaunch || !NoFlyZoneModel.complianceChecked
             color: Colors.error
             radius: Config.radiusSmall
             opacity: 0.25
@@ -146,18 +147,27 @@ Page {
                 horizontalAlignment: Text.AlignHCenter
                 text: !VehicleTelemetry.mavlinkConnected
                       ? "Launch blocked: connect to autopilot first"
-                      : (!VehicleTelemetry.hardwareTestPassed
-                         ? "Launch blocked: complete hardware actuator verification"
-                         : "Launch blocked: complete checklist, payload, and final checks")
+                      : (!NoFlyZoneModel.complianceChecked
+                         ? "Launch blocked: complete the manual airspace compliance check (Airspace page)"
+                         : (!VehicleTelemetry.hardwareTestPassed
+                            ? "Launch blocked: complete hardware actuator verification"
+                            : "Launch blocked: complete checklist, payload, and final checks"))
                 font.pixelSize: Config.fontSizeSmall
                 color: Colors.textPrimary
             }
         }
 
         CustomButton {
+            text: qsTr("Airspace / Compliance Check")
+            anchors.horizontalCenter: parent.horizontalCenter
+            baseColor: Colors.surface
+            onClicked: Window.window.mainStackView.push("AirspacePage.qml")
+        }
+
+        CustomButton {
             text: qsTr("Authorize Launch")
             anchors.horizontalCenter: parent.horizontalCenter
-            enabled: VehicleTelemetry.readyToLaunch
+            enabled: VehicleTelemetry.readyToLaunch && NoFlyZoneModel.complianceChecked
             onClicked: {
                 doExport("html")
                 VehicleTelemetry.exportStatus = "Launch authorized — report exported"

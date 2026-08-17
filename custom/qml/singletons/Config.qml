@@ -4,16 +4,16 @@ import QtQuick.Window
 
 QtObject {
     // Compact GCS — smaller fonts, tighter grid, unique styling
-    readonly property int fontSizeH1: 19
-    readonly property int fontSizeH2: 17
-    readonly property int fontSizeH3: 15
-    readonly property int fontSizeBody: 13
+    readonly property int fontSizeH1: 21
+    readonly property int fontSizeH2: 19
+    readonly property int fontSizeH3: 17
+    readonly property int fontSizeBody: 15
     readonly property int fontSizeSmall: 11
     readonly property int spacingSmall: 6
     readonly property int spacingMedium: 10
     readonly property int spacingLarge: 14
     readonly property int spacingXLarge: 20
-    readonly property int radiusSmall: 3
+    readonly property int radiusSmall: 4
     readonly property int radiusMedium: 6
     readonly property int radiusLarge: 10
 
@@ -66,7 +66,7 @@ QtObject {
 
     // Layout ratios
     readonly property real kTelemetryPanelRatio: 0.35
-    readonly property real kChecklistPanelRatio: 0.65
+    readonly property real kChecklistPanelRatio: 0.70
 
     // Telemetry row constants
     readonly property int kMinRowHeight: 56

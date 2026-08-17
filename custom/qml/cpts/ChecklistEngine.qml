@@ -15,15 +15,14 @@ QtObject {
         7: { label: "Arming Gate",     icon: "\u2699" }
     })
 
-    readonly property var catOrder: [1, 2, 3, 4, 5, 6, 0, 7]
+    readonly property var catOrder: [1, 2, 3, 4, 5, 0]
 
     readonly property var catGroups: [
         { label: "Power \u0026 Propulsion",     icon: "\u26A1", cats: [0, 1], accent: Colors.pastelGreen },
         { label: "GPS/Navigation \u0026 Sensors", icon: "\uD83D\uDEE0", cats: [2],    accent: Colors.pastelBlue },
         { label: "Communication \u0026 Control", icon: "\uD83D\uDCF6", cats: [3],    accent: Colors.pastelPurple },
         { label: "Airframe \u0026 Physical",    icon: "\uD83D\uDEE9", cats: [4],    accent: Colors.pastelPink },
-        { label: "Safety \u0026 Failsafes",     icon: "\uD83D\uDEE1", cats: [5],    accent: Colors.warning },
-        { label: "Environment \u0026 Mission",  icon: "\uD83C\uDF2C", cats: [6, 7], accent: Colors.info }
+        { label: "Safety \u0026 Failsafes",     icon: "\uD83D\uDEE1", cats: [5],    accent: Colors.warning }
     ]
 
     readonly property var typeNames: ["Auto", "Manual", "Action"]
@@ -54,7 +53,7 @@ QtObject {
         var n = 0
         for (var i = 0; i < arr.length; ++i) {
             var c = arr[i]
-            if (c.checkCategory === catId && (c.status === 2 || c.status === 4))
+            if (c.mandatory && c.checkCategory === catId && (c.status === 2 || c.status === 4))
                 n++
         }
         return n
@@ -130,8 +129,8 @@ QtObject {
             var c = checks[i]
             for (var j = 0; j < g.cats.length; ++j) {
                 if (c.checkCategory === g.cats[j]) {
-                    if (c.status === 0 || c.status === 3) { allPassed = false; anyPending = true }
-                    if (c.status === 2 || c.status === 4) { allPassed = false; anyFail = true }
+                    if (c.mandatory && (c.status === 0 || c.status === 3)) { allPassed = false; anyPending = true }
+                    if (c.mandatory && (c.status === 2 || c.status === 4)) { allPassed = false; anyFail = true }
                 }
             }
         }
@@ -151,8 +150,8 @@ QtObject {
             var c = checks[i]
             for (var j = 0; j < g.cats.length; ++j) {
                 if (c.checkCategory === g.cats[j]) {
-                    if (c.status === 2 || c.status === 4) anyFail = true
-                    if (c.status === 0 || c.status === 3) anyPending = true
+                    if (c.mandatory && (c.status === 2 || c.status === 4)) anyFail = true
+                    if (c.mandatory && (c.status === 0 || c.status === 3)) anyPending = true
                 }
             }
         }
@@ -188,7 +187,7 @@ QtObject {
         var n = 0
         var arr = _checks()
         for (var i = 0; i < arr.length; ++i) {
-            if (arr[i].status === 2 || arr[i].status === 4) n++
+            if (arr[i].mandatory && (arr[i].status === 2 || arr[i].status === 4)) n++
         }
         return n
     }

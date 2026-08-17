@@ -1,3 +1,10 @@
 module cpts
 ChecklistEngine 1.0 ChecklistEngine.qml
 ArmGateDialogLoader 1.0 ArmGateDialogLoader.qml
+SessionStartDialog 1.0 SessionStartDialog.qml
+FlightFormDialog 1.0 FlightFormDialog.qml
+WizardStepBar 1.0 WizardStepBar.qml
+WizardStep1Operator 1.0 WizardStep1Operator.qml
+WizardStep3Hardware 1.0 WizardStep3Hardware.qml
+WizardStep4Review 1.0 WizardStep4Review.qml
+WeatherPanel 1.0 WeatherPanel.qml

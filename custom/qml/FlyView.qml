@@ -365,6 +365,13 @@ Item {
             visible: false
         }
 
+        Connections {
+            target: widgetLayer
+            function onPreflightChecklistRequested() {
+                customOverlay.openPreflightDialog()
+            }
+        }
+
         GuidedActionsController {
             id: guidedActionsController
             missionController: _missionController

@@ -10,11 +10,12 @@ Rectangle {
     border.width: 1
 
     readonly property bool gateOpen: {
+        if (FlightSession.isTraining) return false
         if (ArmingGate.overrideActive) return true
         return PreflightManager.allMandatoryPassed
     }
 
-    readonly property int blockerCount: PreflightChecklistModel.blockingFailedCount
+    readonly property int blockerCount: FlightSession.isTraining ? 0 : PreflightChecklistModel.blockingFailedCount
 
     RowLayout {
         anchors.fill: parent
@@ -43,16 +44,18 @@ Rectangle {
         ColumnLayout {
             spacing: 0
             Text {
-                text: qsTr("Arming Gate")
+                text: FlightSession.isTraining ? qsTr("Training Session")
+                      : qsTr("Arming Gate")
                 font.pixelSize: Config.fontSizeSmall
                 font.bold: true
                 color: Colors.textPrimary
             }
             Text {
-                text: gateOpen ? "Open \u2014 arm allowed"
+                text: FlightSession.isTraining ? "Arming disabled"
+                      : gateOpen ? "Open \u2014 arm allowed"
                       : "Closed \u2014 " + blockerCount + " blocker(s)"
                 font.pixelSize: Config.fontSizeSmall
-                color: gateOpen ? Colors.success : Colors.error
+                color: FlightSession.isTraining ? Colors.warning : gateOpen ? Colors.success : Colors.error
             }
         }
 
@@ -86,13 +89,32 @@ Rectangle {
             }
         }
 
+        // Training badge
+        Rectangle {
+            Layout.preferredWidth: 96
+            Layout.preferredHeight: 32
+            radius: 16
+            color: Colors.warningDim
+            visible: FlightSession.isTraining
+            border.color: Colors.warning
+            border.width: 1
+
+            Text {
+                anchors.centerIn: parent
+                text: qsTr("TRAINING")
+                font.pixelSize: 11
+                font.bold: true
+                color: Colors.warning
+            }
+        }
+
         // Override button
         Rectangle {
             Layout.preferredHeight: 32
             Layout.preferredWidth: 96
             radius: 16
             color: Colors.error
-            visible: !gateOpen
+            visible: !gateOpen && !FlightSession.isTraining
             Text {
                 anchors.centerIn: parent
                 text: qsTr("Override")
@@ -113,6 +135,7 @@ Rectangle {
             Layout.preferredWidth: 104
             radius: 16
             color: Colors.warning
+            visible: !FlightSession.isTraining
             Text {
                 anchors.centerIn: parent
                 text: qsTr("Force Arm")

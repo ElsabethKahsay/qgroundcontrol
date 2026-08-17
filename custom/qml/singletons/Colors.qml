@@ -13,6 +13,7 @@ QtObject {
     readonly property color background:   "#0B0D12"
     readonly property color surface:      "#12151C"
     readonly property color surfaceLight: "#1A1E28"
+    readonly property color surface2:     "#1A1E28"   // slightly lighter surface (weather panel)
 
     // ── Brand / accent — all derived from skywinAccent ──
     readonly property color primary:      skywinAccent
@@ -49,6 +50,8 @@ QtObject {
     readonly property color testing:      "#FFD700"   // gold — motor/action testing
     readonly property color pass:         "#4ADE80"   // bright green — passed
     readonly property color fail:         "#F87171"   // soft red — failed
+    readonly property color statePass:    "#4ADE80"   // go/no-go pass
+    readonly property color stateFail:    "#F87171"   // go/no-go fail
 
     // ── Background surfaces (extended) ──
     readonly property color bgPrimary:    "#1F2937"   // card/section header bg

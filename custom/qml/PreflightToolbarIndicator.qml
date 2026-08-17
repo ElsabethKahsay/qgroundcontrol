@@ -86,9 +86,12 @@ Item {
             spacing: 0
 
             Text {
-                text: qsTr("Preflight")
+                text: FlightSession.mode === FlightSession.None ? qsTr("Preflight")
+                      : FlightSession.sessionSummary
                 font.pointSize: ScreenTools.smallFontPointSize
                 color: Colors.textPrimary
+                elide: Text.ElideRight
+                width: 160
             }
             Text {
                 text: _stateLabel()
