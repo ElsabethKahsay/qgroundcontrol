@@ -19,6 +19,7 @@
 #include "Vehicle/Vehicle.h"
 #include "utils/Config.h"
 #include "utils/DatabaseManager.h"
+#include "FlightSession.h"
 
 // Set up the override expiration timer and the periodic gate evaluation timer.
 ArmingGate::ArmingGate(QObject *parent)
@@ -91,6 +92,18 @@ void ArmingGate::setMode(Mode mode)
 // Only the arm command (param1=1) is intercepted; disarm passes through.
 bool ArmingGate::interceptCommandLong(uint16_t command, const QMap<int, float> &params)
 {
+    // Training mode hard block — cannot be overridden
+    FlightSession *session = FlightSession::instance();
+    if (session && session->isTraining()) {
+        qWarning().noquote() << QStringLiteral("ArmingGate: Arm blocked — training mode active");
+        m_denialReason = QStringLiteral("Arming is disabled in training mode");
+        m_armingAllowed = false;
+        emit armingAllowedChanged(false);
+        emit denialReasonChanged(m_denialReason);
+        emit armingDenied(command, m_denialReason);
+        return false;
+    }
+
     if (command != m_armCommandCode)
         return true;
 

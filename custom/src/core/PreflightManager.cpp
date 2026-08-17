@@ -1,13 +1,3 @@
-/**
- * @file PreflightManager.cpp
- * @brief Central manager that owns, evaluates, and tracks all preflight checks.
- *
- * Registers ~40 AbstractCheck instances at construction, runs periodic evaluation
- * via QTimer, tracks pass/fail/pending/stale progress counters for QML binding,
- * drives the PreflightStateMachine through its lifecycle, persists operator
- * overrides, and logs check results to DatabaseManager for audit trail.
- */
-
 #include "PreflightManager.h"
 
 #include <QDebug>
@@ -35,19 +25,11 @@
 #include "EkfFailsafeCheck.h"
 #include "GcsFailsafeCheck.h"
 #include "GimbalLinkCheck.h"
-#include "GpsBaroAltConsistencyCheck.h"
-#include "GpsFixCheck.h"
-#include "GpsSpeedAccuracyCheck.h"
 #include "HeartbeatCheck.h"
 #include "HomePositionCheck.h"
 #include "ImuTemperatureCheck.h"
-#include "LevelCalibrationCheck.h"
 #include "ManualConfirmCheck.h"
 #include "MavlinkProtocolCheck.h"
-#include "MetarCeilingCheck.h"
-#include "MetarPrecipitationCheck.h"
-#include "MetarVisibilityCheck.h"
-#include "MissionCountCheck.h"
 #include "MotorCountCheck.h"
 #include "MotorSpinCheck.h"
 #include "MotorTemperatureCheck.h"
@@ -462,7 +444,7 @@ void PreflightManager::attemptStateTransition() {
       break;
     }
   }
-
+//??
   if (allMandatoryPass) {
     emit allChecksPassed(m_sysId);
     if (m_stateMachine.state() < PreflightStateMachine::ArmingAllowed)
@@ -483,6 +465,18 @@ void PreflightManager::attemptStateTransition() {
 void PreflightManager::resetAll() {
   for (auto *check : m_checks) {
     check->reset();
+  }
+  emit modelChanged();
+  emit progressChanged();
+}
+
+void PreflightManager::activatePostFlightChecks() {
+  for (auto *check : m_checks) {
+    if (check->isPostFlight()) {
+      check->reset();
+    } else {
+      check->overrideStatus(QStringLiteral("Skipped"), QStringLiteral("Post-flight checklist"));
+    }
   }
   emit modelChanged();
   emit progressChanged();
@@ -690,6 +684,55 @@ void PreflightManager::addCheck(AbstractCheck *check) {
   emit modelChanged();
 }
 
+// Apply vehicle-kind-aware blocking rules. Called when the vehicle type
+// resolves so arming never blocks on a check that cannot apply to the
+// connected airframe.
+//
+// Multirotor:  motor count + motor spin BLOCK; airspeed / RTL alt advisory.
+// Fixed wing:  airspeed + RTL alt BLOCK; motor count / motor spin advisory.
+// VTOL conv.:  same as fixed wing.
+// Unknown:     leave defaults untouched.
+void PreflightManager::applyVehicleKind(const QString &kindString) {
+  updateCriticalChecks(kindString);
+  evaluateAll();
+  emit modelChanged();
+  emit progressChanged();
+}
+
+void PreflightManager::updateCriticalChecks(const QString &kindString) {
+  const QString kind = kindString.toUpper();
+
+  const bool multirotor = (kind == QStringLiteral("MULTIROTOR"));
+  const bool flightVehicle = (kind == QStringLiteral("FIXED_WING")
+                           || kind == QStringLiteral("VTOL_CONVENTIONAL"));
+
+  // Unknown / unresolved kind: leave any previously-applied decisions untouched
+  // so they are not silently reset before the airframe is identified.
+  if (!multirotor && !flightVehicle)
+    return;
+
+  for (AbstractCheck *check : m_checks) {
+    if (!check) continue;
+    const QString id = check->id();
+
+    if (id == QStringLiteral("airframe.motor_count")
+        || id == QStringLiteral("propulsion.motors.spin")) {
+      // Wrong motor count / non-responding motor = asymmetric thrust for
+      // multirotors (blocks arming). For fixed wing these are advisory.
+      check->setMandatory(multirotor);
+    } else if (id == QStringLiteral("sensors.airspeed")
+               || id == QStringLiteral("safety.rtl_alt")) {
+      // Airspeed + RTL altitude are safety-critical for fixed wing; on a
+      // multirotor airspeed must NEVER block arming.
+      check->setMandatory(flightVehicle);
+    } else if (check->isAuto()) {
+      // With an identified airframe, the remaining auto safety checks
+      // (battery, failsafe params, link, GPS, EKF, ...) block arming again.
+      check->setMandatory(true);
+    }
+  }
+}
+
 // Create and register all built-in preflight checks.
 // Checks are organized by tier/priority and category, then sorted by category
 // for deterministic display order. Duplicate IDs are removed as a safety measure.
@@ -699,7 +742,6 @@ void PreflightManager::createPhase1Checks() {
 
   // Auto checks (evaluated programmatically)
   m_checks.append(new BatteryVoltageCheck(m_telemetry, 0.0, 5.0, this));
-  m_checks.append(new GpsFixCheck(m_telemetry, 8, 2.0, this));
   m_checks.append(new AttitudeCheck(m_telemetry, 30.0, this));
   m_checks.append(new HeartbeatCheck(m_telemetry, 10, this));
   m_checks.append(new RtlAltParamCheck(m_telemetry, 10.0, 122.0, this));
@@ -723,18 +765,13 @@ void PreflightManager::createPhase1Checks() {
   m_checks.append(new GcsFailsafeCheck(m_telemetry, this));
   m_checks.append(new EkfFailsafeCheck(m_telemetry, this));
 
-  // Tier 2 — Geofence boundary validation
-  m_checks.append(new LevelCalibrationCheck(m_telemetry, 2.0, this));
+  // Tier 2 — rc communication
   m_checks.append(new RcModeSwitchCheck(m_telemetry, this));
   m_checks.append(new RcArmingSwitchCheck(m_telemetry, this));
   m_checks.append(new RcCalibrationCheck(m_telemetry, this));
 
-  // Tier 3 — Warning / non-blocking auto-checks
-  m_checks.append(new MetarVisibilityCheck(m_telemetry, this));
-  m_checks.append(new MetarCeilingCheck(m_telemetry, this));
-  m_checks.append(new MetarPrecipitationCheck(m_telemetry, this));
+  // Tier 3 — Warning / non-blocking auto-checks/ side bar info
   m_checks.append(new MotorCountCheck(m_telemetry, this));
-  m_checks.append(new MissionCountCheck(m_telemetry, 1, this));
 
   // Manual check (operator must confirm)
   m_checks.append(new MotorSpinCheck(m_telemetry, this));
@@ -742,51 +779,48 @@ void PreflightManager::createPhase1Checks() {
   // Tier 4 — Enhancement / Niche checks
   m_checks.append(new GimbalLinkCheck(m_telemetry, this));
   m_checks.append(new VideoFeedCheck(m_telemetry, this));
-  m_checks.append(new GpsSpeedAccuracyCheck(m_telemetry, 2.0, 2.0, this));
   m_checks.append(new ImuTemperatureCheck(m_telemetry, 85.0, -20.0, this));
   m_checks.append(new MotorTemperatureCheck(m_telemetry, 80.0, this));
-  m_checks.append(new GpsBaroAltConsistencyCheck(m_telemetry, 10.0, this));
 
   // ── Phase 3: Manual confirm checks ──
 
-  // Airframe (3 remaining)
+  // Airframe (2 remaining; antenna placement folded into visual inspection)
   m_checks.append(new ManualConfirmCheck(
       QStringLiteral("airframe.weight_balance"),
       QStringLiteral("Weight & Balance / CG"), CheckCategory::Airframe,
-      QStringLiteral("Confirm CG within limits and payload secure"), {}, this));
-  m_checks.append(new ManualConfirmCheck(
-      QStringLiteral("airframe.antenna"), QStringLiteral("Antenna Placement"), CheckCategory::Airframe,
-      QStringLiteral("Confirm antennas secure and unobstructed"), {}, this));
+      QStringLiteral("Confirm CG within limits and payload secure"), {}, {}, this));
   m_checks.append(new ManualConfirmCheck(
       QStringLiteral("airframe.visual_inspection"),
       QStringLiteral("Visual Damage Inspection"), CheckCategory::Airframe,
-      QStringLiteral("Confirm airframe free of cracks and damage"), {}, this));
+      QStringLiteral("Confirm airframe free of cracks and damage"),
+       {QStringLiteral("Antenna placement secure and unobstructed"),
+        QStringLiteral("Airframe free of cracks, chips, or structural damage"),
+        QStringLiteral("Fasteners, screws, and linkages tight"),
+        QStringLiteral("Wiring and connectors secure"),
+        QStringLiteral("Propeller/motor mounts undamaged")},
+      {}, this));
 
   // Propulsion (1 remaining)
   m_checks.append(new ManualConfirmCheck(
       QStringLiteral("propulsion.propeller.direction"),
       QStringLiteral("Propeller Direction"), CheckCategory::Propulsion,
       QStringLiteral("Confirm propeller direction correct"),
-      {QStringLiteral("MOT_SPIN_DIRECTION"), QStringLiteral("FRAME_TYPE")},
+      {}, {QStringLiteral("MOT_SPIN_DIRECTION"), QStringLiteral("FRAME_TYPE")},
       this));
-
-  // Power (2)
-  m_checks.append(new ManualConfirmCheck(
-      QStringLiteral("power.battery.physical"),
-      QStringLiteral("Battery Physical Condition"), CheckCategory::Power,
-      QStringLiteral("Confirm battery undamaged, no swelling/leaks"), {},
-      this));
-  m_checks.append(new ManualConfirmCheck(
-      QStringLiteral("power.battery.temp_visual"),
-      QStringLiteral("Battery Temperature"), CheckCategory::Power,
-      QStringLiteral("Confirm battery is at ambient temperature, not hot to touch"),
-      {}, this));
 
   // Navigation (1)
   m_checks.append(new ManualConfirmCheck(
-      QStringLiteral("nav.gps.antenna"),
-      QStringLiteral("GPS Antenna Condition"), CheckCategory::Navigation,
-      QStringLiteral("Confirm GPS antenna unobstructed"), {}, this));
+      QStringLiteral("sensors.compass.orientation"),
+      QStringLiteral("Compass Orientation"), CheckCategory::Navigation,
+      QStringLiteral("Confirm compass orientation setting matches installed direction"), {},
+      {}, this));
+
+  // Environment (replaced by METAR auto-checks above)
+  m_checks.append(new ManualConfirmCheck(
+      QStringLiteral("environment.magnetic_disturbance"),
+      QStringLiteral("Magnetic Disturbance Zone"), CheckCategory::Environment,
+      QStringLiteral("Confirm no magnetic interference sources nearby"), {},
+      {}, this));
 
   // Sort by category for deterministic order
   std::sort(m_checks.begin(), m_checks.end(),
@@ -806,6 +840,13 @@ void PreflightManager::createPhase1Checks() {
     } else {
       seenIds.insert(m_checks[i]->id());
     }
+  }
+
+  // Nothing blocks arming until an airframe kind has been identified.
+  // applyVehicleKind() re-marks the kind-relevant checks as mandatory when a
+  // vehicle connects and its type is resolved (see updateCriticalChecks).
+  for (auto *check : m_checks) {
+    check->setMandatory(false);
   }
 
   for (auto *check : m_checks) {

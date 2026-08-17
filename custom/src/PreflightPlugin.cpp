@@ -60,11 +60,17 @@ int qInitResources_qmlcache_VehicleSetupModule();
 #include "PreflightManager.h"
 #include "PreflightSettingsManager.h"
 #include "controllers/HardwareTestController.h"
+#include "controllers/ControlSurfaceTestController.h"
 #include "utils/Config.h"
 #include "detection/VehicleRegistry.h"
 #include "core/AbstractCheck.h"
 #include "utils/ExportHelper.h"
 #include "utils/WeatherProvider.h"
+#include "managers/OperatorManager.h"
+#include "managers/FlightSession.h"
+#include "managers/TelemetryEventLogger.h"
+#include "models/FlightHistoryModel.h"
+#include "models/NoFlyZoneModel.h"
 
 Q_LOGGING_CATEGORY(preflightPluginLog, "preflight.plugin")
 
@@ -145,6 +151,21 @@ void PreflightPlugin::init()
     _checklistModel->setPreflightManager(_preflightManager);
     _telemetryBridge = new TelemetryBridge(this);
 
+    // OperatorManager is QML_SINGLETON — instantiation registers it
+    new OperatorManager(this);
+    new FlightSession(this);
+    auto *telemetryLogger = new TelemetryEventLogger(this);
+    telemetryLogger->setDependencies(_telemetryBridge, _armingGate, _checklistEngine);
+
+    // Wire ArmingGate signals to FlightSession
+    connect(_armingGate, &ArmingGate::vehicleArmed,
+            FlightSession::instance(), &FlightSession::onVehicleArmed);
+    connect(_armingGate, &ArmingGate::vehicleDisarmed,
+            FlightSession::instance(), &FlightSession::onVehicleDisarmed);
+
+    connect(FlightSession::instance(), &FlightSession::postFlightChecklistRequired,
+            _preflightManager, &PreflightManager::activatePostFlightChecks);
+
     // Create one proxy model per checklist category (8 max) so QML can bind
     // each category section to its own filtered view of the source checklist.
     for (int i = 0; i < 8; ++i) {
@@ -158,11 +179,17 @@ void PreflightPlugin::init()
     connect(&_weatherRefreshTimer, &QTimer::timeout, this, &PreflightPlugin::_refreshWeather);
 
     _hardwareTestController = new HardwareTestController(this);
+    _controlSurfaceTestController = new ControlSurfaceTestController(this);
+
+    // The NoFlyZoneModel constructor reloads zones from the database, so the
+    // DB must be initialized before the model is created or the dropdown will
+    // always be empty.
+    DatabaseManager::instance().initialize();
+
+    _noFlyZoneModel = new NoFlyZoneModel(this);
 
     _powerModel = new PowerModel(this);
     _exportHelper = new ExportHelper(this);
-
-    DatabaseManager::instance().initialize();
 
     // Application branding used by the title bar and OS
     QCoreApplication::setApplicationName(QStringLiteral("Skywin GCS"));
@@ -175,7 +202,19 @@ void PreflightPlugin::init()
     _armingGate->setPreflightManager(_preflightManager);
     _armingGate->setTelemetryBridge(_telemetryBridge);
 
+    // TelemetryBridge needs the gate reference so arm() checks gate state before sending.
+    _telemetryBridge->setArmingGate(_armingGate);
+
     _preflightManager->setTelemetryBridge(_telemetryBridge);
+
+    // Keep blocking rules in sync with the resolved vehicle kind (quad vs
+    // fixed wing). Fires on connect and whenever the type re-resolves.
+    connect(_vehicleProfileManager, &VehicleProfileManager::vehicleTypeResolved,
+            _preflightManager, [this]() {
+        if (_vehicleProfileManager && _preflightManager) {
+            _preflightManager->applyVehicleKind(_vehicleProfileManager->vehicleKindString());
+        }
+    });
 
     // Flatten all checks into ChecklistItemModel and feed to ChecklistEngine
     // which evaluates them against live telemetry each cycle.
@@ -248,6 +287,11 @@ QQmlApplicationEngine *PreflightPlugin::createQmlApplicationEngine(QObject *pare
             return PreflightSettingsManager::instance();
         });
 
+    // FlightSession and OperatorManager are C++ singletons created in the plugin
+    // constructor; register them so QML can reference them via com.uav.preflight.
+    qmlRegisterSingletonInstance("com.uav.preflight", 1, 0, "FlightSession", FlightSession::instance());
+    qmlRegisterSingletonInstance("com.uav.preflight", 1, 0, "OperatorManager", OperatorManager::instance());
+
     // Expose C++ objects as QML context properties — available globally in QML
     // without needing an import. Each lets QML bind directly to the manager's
     // properties and invoke its methods.
@@ -278,6 +322,9 @@ QQmlApplicationEngine *PreflightPlugin::createQmlApplicationEngine(QObject *pare
     if (_hardwareTestController) {
         qmlEngine->rootContext()->setContextProperty(QStringLiteral("HardwareTestController"), _hardwareTestController);
     }
+    if (_controlSurfaceTestController) {
+        qmlEngine->rootContext()->setContextProperty(QStringLiteral("ControlSurfaceTestController"), _controlSurfaceTestController);
+    }
     if (_checklistItemModel) {
         qmlEngine->rootContext()->setContextProperty(QStringLiteral("PreflightModel"), _checklistItemModel);
     }
@@ -286,6 +333,16 @@ QQmlApplicationEngine *PreflightPlugin::createQmlApplicationEngine(QObject *pare
     }
     qmlEngine->rootContext()->setContextProperty(QStringLiteral("VehicleRegistry"), VehicleRegistry::instance());
     qmlEngine->rootContext()->setContextProperty(QStringLiteral("Database"), &DatabaseManager::instance());
+    qmlRegisterType<FlightHistoryModel>("com.uav.preflight", 1, 0, "FlightHistoryModel");
+    // Register the NoFlyZoneModel type (properties/enums only; the live instance
+    // is provided as the NoFlyZoneModel context property). QML cannot resolve
+    // Q_ENUM constants through a context-property instance, so the page uses
+    // NoFlyZoneModelRoles.<Role> for role IDs (see AirspacePage.qml).
+    qmlRegisterUncreatableType<NoFlyZoneModel>("com.uav.preflight", 1, 0, "NoFlyZoneModelRoles",
+                                               QStringLiteral("NoFlyZoneModelRoles provides NoFlyZoneModel role constants only"));
+    if (_noFlyZoneModel) {
+        qmlEngine->rootContext()->setContextProperty(QStringLiteral("NoFlyZoneModel"), _noFlyZoneModel);
+    }
 
     // Register per-category filter models as CatModel0..CatModel7 so QML
     // category sections can each bind to their own filtered checklist view.
@@ -479,6 +536,9 @@ void PreflightPlugin::_setupForVehicle(Vehicle *vehicle)
     if (_hardwareTestController) {
         _hardwareTestController->setVehicle(vehicle);
     }
+    if (_controlSurfaceTestController) {
+        _controlSurfaceTestController->setVehicle(vehicle);
+    }
     _preflightManager->startEvaluation(1000);
     if (_checklistEngine)
         _checklistEngine->start();
@@ -555,6 +615,20 @@ const QVariantList &PreflightPlugin::analyzePages()
                 tr("Vehicles"),
                 QUrl(QStringLiteral("qrc:/qml/analyze/VehiclesPage.qml")),
                 QUrl::fromUserInput(QStringLiteral("qrc:/qmlimages/Plan.svg")),
+                this)));
+
+        _analyzePages.append(QVariant::fromValue(
+            new QmlComponentInfo(
+                tr("Flight History"),
+                QUrl(QStringLiteral("qrc:/qml/pages/FlightHistoryPage.qml")),
+                QUrl::fromUserInput(QStringLiteral("qrc:/qmlimages/Plan.svg")),
+                this)));
+
+        _analyzePages.append(QVariant::fromValue(
+            new QmlComponentInfo(
+                tr("Airspace"),
+                QUrl(QStringLiteral("qrc:/qml/pages/AirspacePage.qml")),
+                QUrl::fromUserInput(QStringLiteral("qrc:/custom/icons/airspace.svg")),
                 this)));
     }
     return _analyzePages;
@@ -726,13 +800,52 @@ bool PreflightPlugin::adjustSettingMetaData(const QString &settingsGroup, FactMe
     return QGCCorePlugin::adjustSettingMetaData(settingsGroup, metaData);
 }
 
-// Passthrough — lets the message flow through to QGC's default handling.
+// Intercepts incoming MAVLink messages for arm/disarm gating.
+// COMMAND_LONG with MAV_CMD_COMPONENT_ARM_DISARM from companion/external GCS
+// is blocked when the gate is closed. COMMAND_ACK for arm/disarm is logged.
 bool PreflightPlugin::mavlinkMessage(Vehicle *vehicle, LinkInterface *link, const mavlink_message_t &message)
 {
-    Q_UNUSED(vehicle)
     Q_UNUSED(link)
-    Q_UNUSED(message)
-    return true;
+
+    if (message.msgid == MAVLINK_MSG_ID_COMMAND_LONG) {
+        mavlink_command_long_t cmd;
+        mavlink_msg_command_long_decode(&message, &cmd);
+
+        if (cmd.command == MAV_CMD_COMPONENT_ARM_DISARM) {
+            _lastArmDisarmParam = static_cast<int>(cmd.param1);
+            if (cmd.param1 == 1.0f) {
+                if (_armingGate && !_armingGate->isArmingAllowed() && !_armingGate->isOverrideActive()) {
+                    QString reason = _armingGate->denialReason();
+                    qWarning().noquote() << QStringLiteral("ArmingGate: BLOCKED incoming COMMAND_LONG arm from compid %1 — %2")
+                        .arg(message.compid).arg(reason);
+                    emit _armingGate->armingDenied(cmd.command, reason);
+                    return false;  // Consume the message — vehicle won't see it
+                }
+            }
+        }
+    }
+
+    if (message.msgid == MAVLINK_MSG_ID_COMMAND_ACK) {
+        mavlink_command_ack_t ack;
+        mavlink_msg_command_ack_decode(&message, &ack);
+
+        if (ack.command == MAV_CMD_COMPONENT_ARM_DISARM) {
+            if (ack.result == MAV_RESULT_ACCEPTED) {
+                qCWarning(preflightPluginLog) << "Vehicle armed/disarmed successfully";
+                if (_armingGate) {
+                    if (_lastArmDisarmParam == 1)
+                        emit _armingGate->vehicleArmed();
+                    else if (_lastArmDisarmParam == 0)
+                        emit _armingGate->vehicleDisarmed();
+                }
+            } else {
+                qCWarning(preflightPluginLog) << QStringLiteral("Vehicle arm DENIED (result=%1)").arg(ack.result);
+            }
+            _lastArmDisarmParam = -1;
+        }
+    }
+
+    return true;  // Let the message continue through QGC's normal processing
 }
 
 // Returns the list of custom toolbar indicators (shown in the top toolbar).

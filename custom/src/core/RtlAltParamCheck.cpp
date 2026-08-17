@@ -6,7 +6,7 @@ RtlAltParamCheck::RtlAltParamCheck(TelemetryBridge *telemetry,
                                    double minAlt, double maxAlt, QObject *parent)
     : AbstractCheck(QStringLiteral("safety.rtl_alt"),
                     QStringLiteral("RTL Altitude"),
-                    CheckCategory::Safety, CheckType::Auto, false, false, parent)
+                    CheckCategory::Navigation, CheckType::Auto, false, false, parent)
     , m_minAlt(minAlt)
     , m_maxAlt(maxAlt)
 {

@@ -110,6 +110,11 @@ signals:
     /// Emitted to log a gate-level override for audit trail.
     void gateOverrideLogged(const QString &reason, int timeoutSec);
 
+    /// Emitted when the vehicle confirms it has armed.
+    void vehicleArmed();
+    /// Emitted when the vehicle confirms it has disarmed.
+    void vehicleDisarmed();
+
 private slots:
     void onCheckFailed(const QString &checkId, const QString &reason);
     void onAllChecksPassed();

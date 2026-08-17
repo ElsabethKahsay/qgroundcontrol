@@ -101,6 +101,8 @@ class AbstractCheck : public QObject {
     Q_PROPERTY(QStringList fixSteps READ getFixSteps CONSTANT)
     /// Threshold/limit description for pass/fail criteria.
     Q_PROPERTY(QString threshold READ getThreshold CONSTANT)
+    /// Whether this check belongs to the post-flight phase.
+    Q_PROPERTY(bool isPostFlight READ isPostFlight CONSTANT)
 
 public:
     /// Construct a new check.
@@ -158,6 +160,12 @@ public:
     bool isBlocking() const { return m_mandatory; }
     /// Whether this check is evaluated automatically.
     bool isAuto() const { return m_type == CheckType::Auto; }
+    /// Whether this check belongs to the post-flight phase.
+    bool isPostFlight() const { return m_isPostFlight; }
+    /// Mark this check as a post-flight check.
+    void setIsPostFlight(bool v) { m_isPostFlight = v; }
+    /// Override whether this check is mandatory (blocks arming on failure).
+    void setMandatory(bool v) { m_mandatory = v; }
 
     /// Override the check status (e.g. force Passed).
     /// Returns true if the override was applied.
@@ -224,6 +232,7 @@ protected:
     QVariant m_currentValue;       ///< Latest telemetry value being monitored
     bool m_mandatory = true;       ///< If true, failure blocks arming
     bool m_canOverride = true;     ///< If operator may override result
+    bool m_isPostFlight = false;   ///< Whether this check belongs to the post-flight phase
     QDateTime m_lastEvalTime;      ///< Timestamp of last evaluate() call
     QList<OverrideRecord> m_overrideHistory; ///< Audit trail of overrides
 
@@ -238,7 +247,6 @@ private:
 #ifdef QT_DEBUG
     friend class CheckSmokeTest;
     friend class RcCalibrationCheckTest;
-    friend class CompassOrientationCheckTest;
     friend class WeatherProviderTest;
     QHash<QString, QVariant> m_testOverrides;
     Q_INVOKABLE void setTestValue(const QString &prop, const QVariant &val) {

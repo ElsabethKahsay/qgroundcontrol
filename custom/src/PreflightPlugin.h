@@ -30,10 +30,12 @@ class VehicleProfileManager;
 class PowerModel;
 class ExportHelper;
 class HardwareTestController;
+class ControlSurfaceTestController;
 class Vehicle;
 class ChecklistEngine;
 class ChecklistItemModel;
 class VehicleRegistry;
+class NoFlyZoneModel;
 
 class PreflightPlugin : public QGCCorePlugin
 {
@@ -90,12 +92,15 @@ private:
     ExportHelper *_exportHelper = nullptr;                  // Handles data export (logs, compliance, etc.)
     PowerModel *_powerModel = nullptr;                      // Battery/power estimation model
     HardwareTestController *_hardwareTestController = nullptr;     // Controls hardware test sequences (servo, motor)
+    ControlSurfaceTestController *_controlSurfaceTestController = nullptr; // Controls surface sweep tests
     VehicleProfileManager *_vehicleProfileManager = nullptr;      // Loads/saves per-vehicle configuration profiles
     ChecklistItemModel *_checklistItemModel = nullptr;      // Flattened checklist items for the QML ChecklistEngine
     ChecklistEngine *_checklistEngine = nullptr;            // Drives checklist evaluation using TelemetryBridge data
+    NoFlyZoneModel *_noFlyZoneModel = nullptr;              // Airspace knowledge base + manual compliance model
 
     // --- Flight session tracking ---
     int _currentSessionId = -1;       // Active DB flight session ID, -1 when no session is active
     QDateTime _sessionStartTime;      // Timestamp when gateOpened started the session
     QTimer _weatherRefreshTimer;      // Periodic timer that triggers weather data refresh
+    int _lastArmDisarmParam = -1;     // 1=arm, 0=disarm, -1=unknown from last COMMAND_LONG
 };

@@ -5,10 +5,12 @@
 ManualConfirmCheck::ManualConfirmCheck(const QString &id, const QString &label,
                                        CheckCategory category,
                                        const QString &prompt,
+                                       const QStringList &inspectionItems,
                                        const QStringList &paramNames,
                                        QObject *parent)
     : AbstractCheck(id, label, category, CheckType::Manual, false, true, parent)
     , m_prompt(prompt)
+    , m_inspectionItems(inspectionItems)
     , m_paramNames(paramNames)
 {
     m_telemetry = nullptr;

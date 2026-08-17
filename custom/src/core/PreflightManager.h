@@ -151,6 +151,12 @@ public slots:
     void evaluateAll();
     /// Reset all checks to Pending status.
     void resetAll();
+    /// Activate post-flight checks: skip non-post-flight, reset post-flight ones.
+    Q_INVOKABLE void activatePostFlightChecks();
+    /// Apply vehicle-kind-aware blocking rules ("MULTIROTOR", "FIXED_WING", ...).
+    /// Called when the vehicle type resolves so arming never blocks on a check
+    /// that cannot apply to the connected airframe.
+    Q_INVOKABLE void applyVehicleKind(const QString &kindString);
     /// Enable or disable periodic evaluation.
     void setActive(bool active);
     /// Timer tick — evaluates stale checks and drives state machine.
@@ -179,6 +185,8 @@ private:
     void attemptStateTransition();
     /// Create and register all ~40 built-in preflight checks.
     void createPhase1Checks();
+    /// Apply vehicle-type-aware critical (mandatory) check set for the given kind.
+    void updateCriticalChecks(const QString &kindString);
     /// Wire up statusChanged/checkFailed/checkPassed signals for a check.
     void connectCheckSignals(AbstractCheck *check);
     /// Pull initial parameter values from QGC's ParameterManager into UavParameterManager.
