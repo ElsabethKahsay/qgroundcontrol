@@ -71,6 +71,7 @@ int qInitResources_qmlcache_VehicleSetupModule();
 #include "managers/TelemetryEventLogger.h"
 #include "models/FlightHistoryModel.h"
 #include "models/NoFlyZoneModel.h"
+#include "models/VehicleListModel.h"
 
 Q_LOGGING_CATEGORY(preflightPluginLog, "preflight.plugin")
 
@@ -187,6 +188,7 @@ void PreflightPlugin::init()
     DatabaseManager::instance().initialize();
 
     _noFlyZoneModel = new NoFlyZoneModel(this);
+    _vehicleListModel = new VehicleListModel(this);
 
     _powerModel = new PowerModel(this);
     _exportHelper = new ExportHelper(this);
@@ -342,6 +344,9 @@ QQmlApplicationEngine *PreflightPlugin::createQmlApplicationEngine(QObject *pare
                                                QStringLiteral("NoFlyZoneModelRoles provides NoFlyZoneModel role constants only"));
     if (_noFlyZoneModel) {
         qmlEngine->rootContext()->setContextProperty(QStringLiteral("NoFlyZoneModel"), _noFlyZoneModel);
+    }
+    if (_vehicleListModel) {
+        qmlEngine->rootContext()->setContextProperty(QStringLiteral("VehicleListModel"), _vehicleListModel);
     }
 
     // Register per-category filter models as CatModel0..CatModel7 so QML

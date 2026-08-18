@@ -36,6 +36,7 @@ class ChecklistEngine;
 class ChecklistItemModel;
 class VehicleRegistry;
 class NoFlyZoneModel;
+class VehicleListModel;
 
 class PreflightPlugin : public QGCCorePlugin
 {
@@ -97,6 +98,7 @@ private:
     ChecklistItemModel *_checklistItemModel = nullptr;      // Flattened checklist items for the QML ChecklistEngine
     ChecklistEngine *_checklistEngine = nullptr;            // Drives checklist evaluation using TelemetryBridge data
     NoFlyZoneModel *_noFlyZoneModel = nullptr;              // Airspace knowledge base + manual compliance model
+    VehicleListModel *_vehicleListModel = nullptr;          // Vehicle registry list for the Vehicles page
 
     // --- Flight session tracking ---
     int _currentSessionId = -1;       // Active DB flight session ID, -1 when no session is active

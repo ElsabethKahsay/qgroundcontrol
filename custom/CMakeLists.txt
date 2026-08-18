@@ -190,6 +190,8 @@ set(CUSTOM_SOURCE_REL
     src/models/FlightHistoryModel.h
     src/models/NoFlyZoneModel.cpp
     src/models/NoFlyZoneModel.h
+    src/models/VehicleListModel.cpp
+    src/models/VehicleListModel.h
 )
 
 set(CUSTOM_SOURCES "")
