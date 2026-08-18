@@ -84,6 +84,7 @@ private slots:
     void _onVehicleRemoved(Vehicle *vehicle);
     void _onActiveVehicleChanged(Vehicle *vehicle);
     void _onVehicleUidChanged();
+    void _onFirmwareVersionChanged();
     void _requestAutopilotCapabilities();
     void _onMavlinkMessage(const mavlink_message_t &message);
 

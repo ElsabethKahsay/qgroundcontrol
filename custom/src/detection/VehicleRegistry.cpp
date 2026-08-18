@@ -78,6 +78,8 @@ void VehicleRegistry::_onVehicleAdded(Vehicle *vehicle)
 
     connect(vehicle, &Vehicle::vehicleUIDChanged,
             this, &VehicleRegistry::_onVehicleUidChanged, Qt::UniqueConnection);
+    connect(vehicle, &Vehicle::firmwareVersionChanged,
+            this, &VehicleRegistry::_onFirmwareVersionChanged, Qt::UniqueConnection);
     connect(vehicle, &Vehicle::mavlinkMessageReceived,
             this, &VehicleRegistry::_onMavlinkMessage, Qt::UniqueConnection);
 
@@ -95,6 +97,19 @@ void VehicleRegistry::_onVehicleUidChanged()
 
     _extractVehicleInfo(m_currentVehicle);
     _registerOrUpdateCurrentVehicle();
+}
+
+/// QGC parses AUTOPILOT_VERSION asynchronously (after our registration already
+/// ran with an empty firmware string).  Re-extract when the firmware arrives so
+/// the database never keeps an empty or stale version.
+void VehicleRegistry::_onFirmwareVersionChanged()
+{
+    if (!m_currentVehicle) return;
+    qCDebug(vehicleRegistryLog) << "Firmware version changed, refreshing attributes:"
+                                << m_currentFirmwareVersion;
+
+    _extractVehicleInfo(m_currentVehicle);
+    _updateCurrentVehicleAttributes(m_currentVehicle);
 }
 
 /// Explicitly request the autopilot capabilities (AUTOPILOT_VERSION).  QGC's
@@ -342,10 +357,9 @@ void VehicleRegistry::_extractVehicleInfo(Vehicle *vehicle)
     int majorVer = vehicle->firmwareMajorVersion();
     int minorVer = vehicle->firmwareMinorVersion();
     int patchVer = vehicle->firmwarePatchVersion();
-    m_currentFirmwareVersion = QStringLiteral("%1.%2.%3")
-                                   .arg(majorVer)
-                                   .arg(minorVer)
-                                   .arg(patchVer);
+    m_currentFirmwareVersion = (majorVer >= 0 && minorVer >= 0 && patchVer >= 0)
+        ? QStringLiteral("%1.%2.%3").arg(majorVer).arg(minorVer).arg(patchVer)
+        : QString();
 
     // Hardware-UID fingerprint when available, otherwise a sysid-based fallback
     // so every board still gets a distinct database record.
