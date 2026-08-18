@@ -394,10 +394,11 @@ QString VehicleRegistry::generateFingerprint(quint64 uid, int autopilotType, con
 QString VehicleRegistry::autopilotTypeString(int autopilotType)
 {
     switch (autopilotType) {
-    case 0:  return QStringLiteral("Generic");
-    case 1:  return QStringLiteral("PX4");
-    case 2:  return QStringLiteral("ArduPilot");
-    default: return QStringLiteral("Unknown(%1)").arg(autopilotType);
+    case MAV_AUTOPILOT_GENERIC:       return QStringLiteral("Generic");
+    case MAV_AUTOPILOT_ARDUPILOTMEGA: return QStringLiteral("ArduPilot");
+    case MAV_AUTOPILOT_INVALID:       return QStringLiteral("Invalid");
+    case MAV_AUTOPILOT_PX4:           return QStringLiteral("PX4");
+    default:                          return QStringLiteral("Unknown(%1)").arg(autopilotType);
     }
 }
 
