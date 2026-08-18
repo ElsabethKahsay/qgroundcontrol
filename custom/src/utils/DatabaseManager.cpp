@@ -8,6 +8,7 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QDir>
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -159,7 +160,7 @@ bool DatabaseManager::initialize(const QString &dbPath)
 //   8 - Expanded vehicle profile columns (vehicle_uuid, frame_class, frame_type, motor_count, motor_layout, param_snapshot_path, last_preflight_status, gps_latitude, gps_longitude, pilot_name, notes, thumbnail)
 //   9 - operators, flights, flight_check_results, flight_telemetry_events tables for flight record system
 //  10 - no_fly_zones + zone_compliance_log tables for the airspace compliance system
-static const int kLatestSchemaVersion = 10;
+static const int kLatestSchemaVersion = 11;
 
 bool DatabaseManager::createTables()
 {
@@ -1056,6 +1057,33 @@ bool DatabaseManager::migrateSchema()
             q.exec("CREATE INDEX IF NOT EXISTS idx_compliance_checked ON zone_compliance_log(checked_at)");
             break;
         }
+        case 11: {
+            // v11: expanded vehicle identity + attribute columns for the
+            // Vehicles page.  fingerprint_source records how each vehicle was
+            // identified (HARDWARE_UID or SYSID_TYPE_FALLBACK); the remaining
+            // columns track the human-readable vehicle type, raw hardware UID,
+            // sysid, and accumulated flight time in seconds.
+            auto addColV11 = [&](const QString &colDef) {
+                QSqlQuery pragma11(m_db);
+                pragma11.exec("PRAGMA table_info(vehicles)");
+                bool has = false;
+                QString colName = colDef.section(' ', 0, 0);
+                while (pragma11.next()) {
+                    if (pragma11.value(1).toString() == colName) { has = true; break; }
+                }
+                if (!has) {
+                    q.exec(QStringLiteral("ALTER TABLE vehicles ADD COLUMN %1").arg(colDef));
+                }
+            };
+            addColV11(QStringLiteral("fingerprint_source TEXT DEFAULT 'UNKNOWN'"));
+            addColV11(QStringLiteral("vehicle_type_name TEXT DEFAULT ''"));
+            addColV11(QStringLiteral("hardware_uid TEXT DEFAULT ''"));
+            addColV11(QStringLiteral("sysid INTEGER DEFAULT 0"));
+            addColV11(QStringLiteral("total_flight_time_sec INTEGER DEFAULT 0"));
+            q.exec("CREATE INDEX IF NOT EXISTS idx_vehicles_sysid ON vehicles(sysid)");
+            q.exec("CREATE INDEX IF NOT EXISTS idx_vehicles_source ON vehicles(fingerprint_source)");
+            break;
+        }
         default:
             qWarning() << "DatabaseManager: unknown migration version" << v;
             return false;
@@ -1779,26 +1807,37 @@ QString DatabaseManager::lookupVehicleByFingerprint(const QString &fingerprint)
 
 bool DatabaseManager::registerNewVehicle(const QString &fingerprint, int sysid, int compid,
                                           const QString &autopilotType, const QString &vehicleType,
-                                          const QString &firmwareVersion, quint64 uid,
-                                          const QString &boardVersion, const QString &displayName)
+                                          const QString &vehicleTypeName, const QString &firmwareVersion,
+                                          quint64 uid, const QString &hardwareUid,
+                                          const QString &boardVersion, const QString &displayName,
+                                          const QString &fingerprintSource)
 {
     if (!m_initialized || fingerprint.isEmpty()) return false;
     QSqlQuery q(m_db);
+    // device_uid is the table PK; for hardware-resolved vehicles we key it to
+    // the UID as before.  For sysid-fallback vehicles the UID is 0 (which would
+    // collide), so we key device_uid to the sysid instead.
+    const QString deviceUid = (uid != 0) ? QString::number(uid) : QStringLiteral("sys|%1").arg(sysid);
     q.prepare(R"(
         INSERT INTO vehicles (device_uid, friendly_name, autopilot_type, airframe_type,
                               first_seen, last_seen, identity_source,
-                              fingerprint, compid, firmware_version, board_version)
+                              fingerprint, compid, firmware_version, board_version,
+                              fingerprint_source, vehicle_type_name, hardware_uid, sysid)
         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'fingerprint',
-                ?, ?, ?, ?)
+                ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(fingerprint) DO UPDATE SET
             friendly_name = CASE WHEN ? != '' THEN ? ELSE friendly_name END,
             autopilot_type = ?,
             airframe_type = ?,
             firmware_version = ?,
             board_version = ?,
+            fingerprint_source = ?,
+            vehicle_type_name = ?,
+            hardware_uid = ?,
+            sysid = ?,
             last_seen = CURRENT_TIMESTAMP
     )");
-    q.addBindValue(QString::number(uid));
+    q.addBindValue(deviceUid);
     q.addBindValue(displayName);
     q.addBindValue(autopilotType);
     q.addBindValue(vehicleType);
@@ -1806,12 +1845,20 @@ bool DatabaseManager::registerNewVehicle(const QString &fingerprint, int sysid, 
     q.addBindValue(compid);
     q.addBindValue(firmwareVersion);
     q.addBindValue(boardVersion);
+    q.addBindValue(fingerprintSource);
+    q.addBindValue(vehicleTypeName);
+    q.addBindValue(hardwareUid);
+    q.addBindValue(sysid);
     q.addBindValue(displayName);
     q.addBindValue(displayName);
     q.addBindValue(autopilotType);
     q.addBindValue(vehicleType);
     q.addBindValue(firmwareVersion);
     q.addBindValue(boardVersion);
+    q.addBindValue(fingerprintSource);
+    q.addBindValue(vehicleTypeName);
+    q.addBindValue(hardwareUid);
+    q.addBindValue(sysid);
     return execOrWarn(q, "registerNewVehicle");
 }
 
@@ -1844,13 +1891,92 @@ bool DatabaseManager::updateVehicleFirmware(const QString &fingerprint, const QS
     return execOrWarn(q, "updateVehicleFirmware");
 }
 
+/** @brief Re-keys a vehicle to a new (better) fingerprint, e.g. when the
+ *         hardware UID arrives and upgrades a sysid-based fallback identity. */
+bool DatabaseManager::updateVehicleFingerprint(const QString &oldFingerprint, const QString &newFingerprint,
+                                               const QString &newSource)
+{
+    if (!m_initialized || oldFingerprint.isEmpty() || newFingerprint.isEmpty()) return false;
+    QSqlQuery q(m_db);
+    q.prepare(R"(
+        UPDATE vehicles
+        SET fingerprint = ?, fingerprint_source = ?
+        WHERE fingerprint = ? AND fingerprint_source = 'SYSID_TYPE_FALLBACK'
+    )");
+    q.addBindValue(newFingerprint);
+    q.addBindValue(newSource);
+    q.addBindValue(oldFingerprint);
+    return execOrWarn(q, "updateVehicleFingerprint");
+}
+
+/** @brief Refreshes the live attribute columns for a known fingerprint.
+ *         Called on every connect so the Vehicles page always reflects the
+ *         current firmware, airframe and autopilot details. */
+bool DatabaseManager::updateVehicleAttributes(const QString &fingerprint, const QString &autopilotType,
+                                              const QString &vehicleType, const QString &vehicleTypeName,
+                                              const QString &firmwareVersion, const QString &hardwareUid,
+                                              int sysid, const QString &boardVersion,
+                                              int frameClass, int motorCount)
+{
+    if (!m_initialized || fingerprint.isEmpty()) return false;
+    QSqlQuery q(m_db);
+    q.prepare(R"(
+        UPDATE vehicles SET
+            autopilot_type = ?,
+            airframe_type = ?,
+            vehicle_type_name = ?,
+            firmware_version = ?,
+            hardware_uid = ?,
+            sysid = ?,
+            board_version = ?,
+            frame_class = ?,
+            motor_count = ?,
+            identity_source = 'fingerprint',
+            last_seen = CURRENT_TIMESTAMP
+        WHERE fingerprint = ?
+    )");
+    q.addBindValue(autopilotType);
+    q.addBindValue(vehicleType);
+    q.addBindValue(vehicleTypeName);
+    q.addBindValue(firmwareVersion);
+    q.addBindValue(hardwareUid);
+    q.addBindValue(sysid);
+    q.addBindValue(boardVersion);
+    q.addBindValue(frameClass);
+    q.addBindValue(motorCount);
+    q.addBindValue(fingerprint);
+    return execOrWarn(q, "updateVehicleAttributes");
+}
+
+/** @brief Accumulates flight time onto a vehicle's totals. Called by
+ *         FlightSession::closeSession() so the Vehicles page shows real
+ *         accumulated flight time per airframe. */
+bool DatabaseManager::incrementVehicleFlightTime(const QString &fingerprint, int durationSeconds)
+{
+    if (!m_initialized || fingerprint.isEmpty() || durationSeconds <= 0) return false;
+    QSqlQuery q(m_db);
+    q.prepare(R"(
+        UPDATE vehicles SET
+            total_flight_time_sec = total_flight_time_sec + ?,
+            total_flight_count = total_flight_count + 1,
+            total_flight_hours = (total_flight_time_sec + ?) / 3600.0
+        WHERE fingerprint = ?
+    )");
+    q.addBindValue(durationSeconds);
+    q.addBindValue(durationSeconds);
+    q.addBindValue(fingerprint);
+    return execOrWarn(q, "incrementVehicleFlightTime");
+}
+
 QString DatabaseManager::getAllVehiclesJson()
 {
     if (!m_initialized) return QStringLiteral("[]");
     QSqlQuery q(m_db);
     q.exec("SELECT device_uid, friendly_name, autopilot_type, airframe_type, "
            "first_seen, last_seen, total_flight_count, total_flight_hours, "
-           "compid, firmware_version, board_version, fingerprint "
+           "compid, firmware_version, board_version, fingerprint, "
+           "fingerprint_source, vehicle_type_name, hardware_uid, sysid, "
+           "frame_class, motor_count, total_flight_time_sec, notes "
            "FROM vehicles ORDER BY last_seen DESC");
 
     QJsonArray arr;
@@ -1868,9 +1994,94 @@ QString DatabaseManager::getAllVehiclesJson()
         o["firmwareVersion"] = q.value(9).toString();
         o["boardVersion"] = q.value(10).toString();
         o["fingerprint"] = q.value(11).toString();
+        o["fingerprintSource"] = q.value(12).toString();
+        o["vehicleTypeName"] = q.value(13).toString();
+        o["hardwareUid"] = q.value(14).toString();
+        o["sysid"] = q.value(15).toInt();
+        o["frameClass"] = q.value(16).toInt();
+        o["motorCount"] = q.value(17).toInt();
+        o["totalFlightTimeSec"] = q.value(18).toInt();
+        o["notes"] = q.value(19).toString();
         arr.append(o);
     }
     return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
+}
+
+static QString csvQuote(const QString &value)
+{
+    QString v = value;
+    if (v.contains(',') || v.contains('"') || v.contains('\n') || v.contains('\r'))
+        return QStringLiteral("\"%1\"").arg(QString(v).replace(QStringLiteral("\""), QStringLiteral("\"\"")));
+    return v;
+}
+
+/** @brief Exports the vehicle registry to a CSV file in the user's Documents
+ *         folder, optionally filtered by a last-seen date range (YYYY-MM-DD).
+ * @return absolute path of the written file, or an empty string on failure. */
+QString DatabaseManager::exportVehiclesCsv(const QString &fromDate, const QString &toDate)
+{
+    if (!m_initialized) return {};
+
+    QString query = "SELECT device_uid, friendly_name, vehicle_type_name, autopilot_type, "
+                    "firmware_version, hardware_uid, fingerprint, fingerprint_source, sysid, "
+                    "motor_count, frame_class, first_seen, last_seen, total_flight_count, "
+                    "total_flight_time_sec, notes "
+                    "FROM vehicles WHERE 1=1";
+    QVariantList binds;
+    if (!fromDate.isEmpty()) {
+        query += " AND last_seen >= ?";
+        binds << QStringLiteral("%1 00:00:00").arg(fromDate);
+    }
+    if (!toDate.isEmpty()) {
+        query += " AND last_seen <= ?";
+        binds << QStringLiteral("%1 23:59:59").arg(toDate);
+    }
+    query += " ORDER BY last_seen DESC";
+
+    QSqlQuery q(m_db);
+    q.prepare(query);
+    for (const QVariant &b : binds)
+        q.addBindValue(b);
+    if (!q.exec()) {
+        qWarning() << "DatabaseManager: exportVehiclesCsv query failed:" << q.lastError().text();
+        return {};
+    }
+
+    QStringList lines;
+    lines << QStringLiteral(
+        "ID,Display Name,Vehicle Type,Autopilot,Firmware Version,Hardware UID,Fingerprint,"
+        "Fingerprint Source,SysID,Motor Count,Frame Class,First Seen,Last Seen,Total Flights,"
+        "Total Flight Time (sec),Notes");
+    while (q.next())
+        lines << QStringList{
+            csvQuote(q.value(0).toString()), csvQuote(q.value(1).toString()),
+            csvQuote(q.value(2).toString()), csvQuote(q.value(3).toString()),
+            csvQuote(q.value(4).toString()), csvQuote(q.value(5).toString()),
+            csvQuote(q.value(6).toString()), csvQuote(q.value(7).toString()),
+            QString::number(q.value(8).toInt()), QString::number(q.value(9).toInt()),
+            QString::number(q.value(10).toInt()),
+            csvQuote(q.value(11).toString()), csvQuote(q.value(12).toString()),
+            QString::number(q.value(13).toInt()), QString::number(q.value(14).toInt()),
+            csvQuote(q.value(15).toString())
+        }.join(',');
+
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    if (dir.isEmpty()) return {};
+    QDir d(dir);
+    if (!d.exists()) d.mkpath(dir);
+
+    const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"));
+    const QString path = QStringLiteral("%1/skywin_vehicles_%2.csv").arg(dir, stamp);
+
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        qWarning() << "DatabaseManager: exportVehiclesCsv cannot write" << path;
+        return {};
+    }
+    f.write(lines.join('\n').toUtf8());
+    f.close();
+    qDebug() << "DatabaseManager: exported" << lines.size() - 1 << "vehicles to" << path;
+    return path;
 }
 
 // ── Vehicle check config ─────────────────────────────────────────────────────

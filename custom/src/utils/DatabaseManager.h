@@ -76,16 +76,23 @@ struct VehicleRecord {
     int sysid = 0;
     int compid = 0;
     QString fingerprint;
-    QString autopilotType;
-    QString vehicleType;
-    QString firmwareVersion;
-    quint64 uid = 0;
-    QString boardVersion;
+    QString fingerprintSource;    ///< "HARDWARE_UID" or "SYSID_TYPE_FALLBACK"
+    QString autopilotType;        ///< "ArduPilot", "PX4", "Unknown"
+    QString vehicleType;          ///< short airframe string ("FixedWing", "MultiRotor")
+    QString vehicleTypeName;      ///< human-readable ("Fixed Wing", "Quadcopter", ...)
+    QString firmwareVersion;      ///< e.g. "4.5.2"
+    quint64 uid = 0;              ///< numeric UID (0 = not resolved)
+    QString hardwareUid;          ///< raw hex UID string from AUTOPILOT_VERSION
+    QString boardVersion;         ///< firmware_board_product_id as string
     QString displayName;
     QDateTime firstSeen;
     QDateTime lastSeen;
     int totalFlightCount = 0;
     double totalFlightHours = 0.0;
+    int totalFlightTimeSec = 0;
+    int frameClass = -1;          ///< FRAME_CLASS / CA_AIRFRAME value, -1 = unknown
+    int motorCount = 0;
+    QString notes;
 };
 
 class DatabaseManager : public QObject {
@@ -162,11 +169,22 @@ public:
     Q_INVOKABLE QString lookupVehicleByFingerprint(const QString &fingerprint);
     Q_INVOKABLE bool registerNewVehicle(const QString &fingerprint, int sysid, int compid,
                                         const QString &autopilotType, const QString &vehicleType,
-                                        const QString &firmwareVersion, quint64 uid,
-                                        const QString &boardVersion, const QString &displayName);
+                                        const QString &vehicleTypeName, const QString &firmwareVersion,
+                                        quint64 uid, const QString &hardwareUid,
+                                        const QString &boardVersion, const QString &displayName,
+                                        const QString &fingerprintSource);
     Q_INVOKABLE bool updateVehicleLastSeen(const QString &fingerprint);
     Q_INVOKABLE bool updateVehicleFirmware(const QString &fingerprint, const QString &firmwareVersion);
     Q_INVOKABLE bool updateVehicleName(const QString &fingerprint, const QString &name);
+    Q_INVOKABLE bool updateVehicleFingerprint(const QString &oldFingerprint, const QString &newFingerprint,
+                                              const QString &newSource);
+    Q_INVOKABLE bool updateVehicleAttributes(const QString &fingerprint, const QString &autopilotType,
+                                             const QString &vehicleType, const QString &vehicleTypeName,
+                                             const QString &firmwareVersion, const QString &hardwareUid,
+                                             int sysid, const QString &boardVersion,
+                                             int frameClass, int motorCount);
+    Q_INVOKABLE bool incrementVehicleFlightTime(const QString &fingerprint, int durationSeconds);
+    Q_INVOKABLE QString exportVehiclesCsv(const QString &fromDate, const QString &toDate);
     Q_INVOKABLE QString getAllVehiclesJson();
 
     // ── Vehicle check config ──────────────────────────────────────────
