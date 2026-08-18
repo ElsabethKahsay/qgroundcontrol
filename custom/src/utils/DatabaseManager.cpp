@@ -1815,9 +1815,11 @@ bool DatabaseManager::registerNewVehicle(const QString &fingerprint, int sysid, 
     if (!m_initialized || fingerprint.isEmpty()) return false;
     QSqlQuery q(m_db);
     // device_uid is the table PK; for hardware-resolved vehicles we key it to
-    // the UID as before.  For sysid-fallback vehicles the UID is 0 (which would
-    // collide), so we key device_uid to the sysid instead.
-    const QString deviceUid = (uid != 0) ? QString::number(uid) : QStringLiteral("sys|%1").arg(sysid);
+    // the UID as before.  For sysid-fallback vehicles the UID is 0 and the raw
+    // sysid alone would collide for two different vehicle types on the same
+    // sysid (quad/fixed-wing SITL pair), so we key device_uid to the unique
+    // fingerprint instead.
+    const QString deviceUid = (uid != 0) ? QString::number(uid) : fingerprint;
     q.prepare(R"(
         INSERT INTO vehicles (device_uid, friendly_name, autopilot_type, airframe_type,
                               first_seen, last_seen, identity_source,
@@ -1900,11 +1902,14 @@ bool DatabaseManager::updateVehicleFingerprint(const QString &oldFingerprint, co
     QSqlQuery q(m_db);
     q.prepare(R"(
         UPDATE vehicles
-        SET fingerprint = ?, fingerprint_source = ?
+        SET fingerprint = ?, fingerprint_source = ?,
+            device_uid = CASE WHEN device_uid = ? THEN ? ELSE device_uid END
         WHERE fingerprint = ? AND fingerprint_source = 'SYSID_TYPE_FALLBACK'
     )");
     q.addBindValue(newFingerprint);
     q.addBindValue(newSource);
+    q.addBindValue(oldFingerprint);
+    q.addBindValue(newFingerprint);
     q.addBindValue(oldFingerprint);
     return execOrWarn(q, "updateVehicleFingerprint");
 }
@@ -1925,7 +1930,7 @@ bool DatabaseManager::updateVehicleAttributes(const QString &fingerprint, const 
             autopilot_type = ?,
             airframe_type = ?,
             vehicle_type_name = ?,
-            firmware_version = ?,
+            firmware_version = COALESCE(NULLIF(?, ''), firmware_version),
             hardware_uid = ?,
             sysid = ?,
             board_version = ?,
