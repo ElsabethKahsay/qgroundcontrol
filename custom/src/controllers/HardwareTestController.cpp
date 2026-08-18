@@ -317,6 +317,84 @@ QString HardwareTestController::_vehicleTypeLabelFromSource(const QString &sourc
     return QStringLiteral("Multirotor");
 }
 
+QString HardwareTestController::vehicleTypeLabelFromMavType(int mavType)
+{
+    switch (mavType) {
+    case MAV_TYPE_QUADROTOR:       return QStringLiteral("Quadcopter");
+    case MAV_TYPE_HEXAROTOR:       return QStringLiteral("Hexarotor");
+    case MAV_TYPE_OCTOROTOR:       return QStringLiteral("Octorotor");
+    case MAV_TYPE_TRICOPTER:       return QStringLiteral("Tricopter");
+    case MAV_TYPE_COAXIAL:         return QStringLiteral("Coaxial Rotorcraft");
+    case MAV_TYPE_FIXED_WING:      return QStringLiteral("Fixed Wing");
+    case MAV_TYPE_GROUND_ROVER:    return QStringLiteral("Rover");
+    case MAV_TYPE_SURFACE_BOAT:    return QStringLiteral("Boat");
+    case MAV_TYPE_SUBMARINE:       return QStringLiteral("Submarine");
+    case MAV_TYPE_HELICOPTER:      return QStringLiteral("Helicopter");
+    case MAV_TYPE_VTOL_TAILSITTER_DUOROTOR:
+    case MAV_TYPE_VTOL_TAILSITTER_QUADROTOR:
+    case MAV_TYPE_VTOL_TILTROTOR:
+    case MAV_TYPE_VTOL_FIXEDROTOR:
+    case MAV_TYPE_VTOL_TAILSITTER:
+    case MAV_TYPE_VTOL_TILTWING:
+    case MAV_TYPE_VTOL_RESERVED5:
+        return QStringLiteral("VTOL");
+    case MAV_TYPE_FLAPPING_WING:   return QStringLiteral("Flapping Wing");
+    case MAV_TYPE_KITE:            return QStringLiteral("Kite");
+    case MAV_TYPE_ONBOARD_CONTROLLER: return QStringLiteral("Onboard Controller");
+    case MAV_TYPE_GCS:             return QStringLiteral("GCS");
+    case MAV_TYPE_AIRSHIP:         return QStringLiteral("Airship");
+    case MAV_TYPE_FREE_BALLOON:    return QStringLiteral("Free Balloon");
+    case MAV_TYPE_ROCKET:          return QStringLiteral("Rocket");
+    case MAV_TYPE_GIMBAL:          return QStringLiteral("Gimbal");
+    default:                       return QStringLiteral("Unknown Device");
+    }
+}
+
+int HardwareTestController::motorCountFromMavType(int mavType)
+{
+    switch (mavType) {
+    case MAV_TYPE_QUADROTOR:  return 4;
+    case MAV_TYPE_HEXAROTOR:  return 6;
+    case MAV_TYPE_OCTOROTOR:  return 8;
+    case MAV_TYPE_TRICOPTER:  return 3;
+    case MAV_TYPE_FIXED_WING:
+    case MAV_TYPE_HELICOPTER: return 1;
+    case MAV_TYPE_GROUND_ROVER:
+    case MAV_TYPE_SURFACE_BOAT:
+    case MAV_TYPE_SUBMARINE:  return 0;
+    default:                  return 4;
+    }
+}
+
+int HardwareTestController::motorCountFromFrameClass(int frameClass)
+{
+    switch (frameClass) {
+    case 1: return 4;   // Quad
+    case 2: return 6;   // Hexa
+    case 3: return 8;   // Octa
+    case 4: return 8;   // OctaQuad
+    case 5: return 6;   // Y6
+    case 6: return 1;   // Heli
+    case 7: return 3;   // Tri
+    default: return -1;
+    }
+}
+
+int HardwareTestController::motorCountFromCaAirframe(int caAirframe)
+{
+    switch (caAirframe) {
+    case 1: return 1;   // Plane
+    case 2: return 1;   // Flying wing
+    case 3: return 0;   // Rover
+    case 6: return 4;   // Tailsitter
+    case 7: return 0;   // Boat
+    case 8: return 4;   // Quad
+    case 9: return 6;   // Hexa
+    case 10: return 8;  // Octo
+    default: return -1;
+    }
+}
+
 void HardwareTestController::setFirstTestDone(bool done)
 {
     if (_firstTestDone != done) {

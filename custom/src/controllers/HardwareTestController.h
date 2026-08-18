@@ -253,6 +253,23 @@ private:
     /// Derives a human-readable vehicle type label from the motor-count resolution source string.
     QString _vehicleTypeLabelFromSource(const QString &source) const;
 
+public:
+    /// Human-readable vehicle type label for a MAVLink MAV_TYPE value
+    /// (e.g. MAV_TYPE_QUADROTOR → "Quadcopter", MAV_TYPE_FIXED_WING → "Fixed Wing").
+    static QString vehicleTypeLabelFromMavType(int mavType);
+
+    /// Best-guess motor count for a MAVLink MAV_TYPE value (used as the
+    /// HEARTBEAT fallback when parameters are unavailable).
+    static int motorCountFromMavType(int mavType);
+
+    /// Motor count for an ArduPilot FRAME_CLASS value, or -1 when unknown.
+    static int motorCountFromFrameClass(int frameClass);
+
+    /// Motor count for a PX4 CA_AIRFRAME value, or -1 when unknown
+    /// (case 0 and unknown classes resolve rotor count externally).
+    static int motorCountFromCaAirframe(int caAirframe);
+
+private:
     /// Writes a test result row (motor, throttle, PWM, delta, result) to the database and logs it.
     void _logTestResult(int motorIndex, int throttlePct, int durationSec,
                         int expectedPwm, int actualPwm, int pwmDelta,

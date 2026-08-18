@@ -162,6 +162,13 @@ void FlightSession::closeSession()
             m_maxAltitude, m_minBatteryV, m_maxBatteryV, m_modeChanges);
         DatabaseManager::instance().updateOperatorStats(
             OperatorManager::instance()->currentOperatorId(), true);
+
+        // Accumulate flight time onto the connected vehicle's record so the
+        // Vehicles page shows real total flight time per airframe.
+        const QString fingerprint = VehicleRegistry::instance()->currentFingerprint();
+        if (!fingerprint.isEmpty()) {
+            DatabaseManager::instance().incrementVehicleFlightTime(fingerprint, durationSec);
+        }
     }
 
     int closedId = m_flightId;
