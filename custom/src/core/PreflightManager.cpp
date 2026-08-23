@@ -44,6 +44,7 @@
 #include "TelemetryBridge.h"
 #include "TelemetryDropRateCheck.h"
 #include "VideoFeedCheck.h"
+#include "ZoneComplianceCheck.h"
 
 #include <algorithm>
 
@@ -739,6 +740,11 @@ void PreflightManager::updateCriticalChecks(const QString &kindString) {
 void PreflightManager::createPhase1Checks() {
   // ── New SRS coverage additions ──
   m_checks.append(new MavlinkProtocolCheck(m_telemetry, this));
+
+  // Airspace: planned route vs no-fly zones.  The zone model and mission
+  // controller are wired in later by PreflightPlugin (they don't exist yet
+  // at this point); until then the check reports "No mission loaded".
+  m_checks.append(new ZoneComplianceCheck(nullptr, this));
 
   // Auto checks (evaluated programmatically)
   m_checks.append(new BatteryVoltageCheck(m_telemetry, 0.0, 5.0, this));

@@ -72,6 +72,9 @@ int qInitResources_qmlcache_VehicleSetupModule();
 #include "models/FlightHistoryModel.h"
 #include "models/NoFlyZoneModel.h"
 #include "models/VehicleListModel.h"
+#include "core/ZoneComplianceCheck.h"
+#include "MissionManager/MissionController.h"
+#include "MissionManager/PlanMasterController.h"
 
 Q_LOGGING_CATEGORY(preflightPluginLog, "preflight.plugin")
 
@@ -189,6 +192,10 @@ void PreflightPlugin::init()
 
     _noFlyZoneModel = new NoFlyZoneModel(this);
     _vehicleListModel = new VehicleListModel(this);
+
+    // The zone-compliance check was registered during PreflightManager
+    // construction (before the model existed) — wire it up now.
+    _wireZoneComplianceCheck();
 
     _powerModel = new PowerModel(this);
     _exportHelper = new ExportHelper(this);
@@ -358,6 +365,73 @@ QQmlApplicationEngine *PreflightPlugin::createQmlApplicationEngine(QObject *pare
 
     qCDebug(preflightPluginLog) << "PreflightPlugin: QML context properties and singletons registered";
     return qmlEngine;
+}
+
+// ---------------------------------------------------------------------------
+// createRootWindow() — Loads the main window QML, then resolves the Plan
+// View's MissionController so the zone-compliance check can read the planned
+// route.  MainWindow.qml instantiates PlanView (with its PlanMasterController)
+// eagerly but hidden, so the controller exists by the time the load completes.
+// ---------------------------------------------------------------------------
+void PreflightPlugin::createRootWindow(QQmlApplicationEngine *qmlEngine)
+{
+    QGCCorePlugin::createRootWindow(qmlEngine);
+    _resolvePlanMissionController(qmlEngine);
+}
+
+void PreflightPlugin::_resolvePlanMissionController(QQmlApplicationEngine *qmlEngine)
+{
+    QList<PlanMasterController *> found;
+    const auto roots = qmlEngine->rootObjects();
+    for (QObject *root : roots) {
+        found.append(root->findChildren<PlanMasterController *>());
+    }
+
+    // Prefer the Plan View's controller (flyView == false) — that is the
+    // mission the operator edits.  Fall back to the Fly View's copy.
+    PlanMasterController *planController = nullptr;
+    PlanMasterController *flyController = nullptr;
+    for (PlanMasterController *pmc : found) {
+        if (pmc->property("flyView").toBool()) {
+            if (!flyController)
+                flyController = pmc;
+        } else if (!planController) {
+            planController = pmc;
+        }
+    }
+
+    PlanMasterController *chosen = planController ? planController : flyController;
+    if (!chosen) {
+        qCWarning(preflightPluginLog) << "PreflightPlugin: no PlanMasterController found — zone compliance check will report no mission";
+        return;
+    }
+
+    _planMissionController = chosen->missionController();
+    if (auto *zoneCheck = qobject_cast<ZoneComplianceCheck *>(
+            _preflightManager
+                ? _preflightManager->checkById(QStringLiteral("airspace.zone_compliance"))
+                : nullptr)) {
+        zoneCheck->setMissionController(_planMissionController);
+        qCDebug(preflightPluginLog) << "PreflightPlugin: zone compliance check wired to"
+                                    << (planController ? QStringLiteral("Plan View") : QStringLiteral("Fly View"))
+                                    << "mission controller";
+    }
+}
+
+void PreflightPlugin::_wireZoneComplianceCheck()
+{
+    if (!_preflightManager || !_noFlyZoneModel)
+        return;
+
+    auto *zoneCheck = qobject_cast<ZoneComplianceCheck *>(
+        _preflightManager->checkById(QStringLiteral("airspace.zone_compliance")));
+    if (!zoneCheck)
+        return;
+
+    zoneCheck->setZoneModel(_noFlyZoneModel);
+    // Re-evaluate whenever the zone set changes (CRUD, activate/deactivate).
+    connect(_noFlyZoneModel, &NoFlyZoneModel::zonesChanged,
+            zoneCheck, &ZoneComplianceCheck::evaluate);
 }
 
 // ---------------------------------------------------------------------------

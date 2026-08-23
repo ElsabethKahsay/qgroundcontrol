@@ -37,6 +37,7 @@ class ChecklistItemModel;
 class VehicleRegistry;
 class NoFlyZoneModel;
 class VehicleListModel;
+class MissionController;
 
 class PreflightPlugin : public QGCCorePlugin
 {
@@ -58,6 +59,7 @@ public:
     const QVariantList &toolBarIndicators() override;
 
     QQmlApplicationEngine *createQmlApplicationEngine(QObject *parent) override;
+    void createRootWindow(QQmlApplicationEngine *qmlEngine) override;
 
     QString brandImageIndoor() const override { return QStringLiteral("qrc:/custom/brand/logo"); }
     QString brandImageOutdoor() const override { return QStringLiteral("qrc:/custom/brand/logo"); }
@@ -79,6 +81,8 @@ private:
     void _setupForVehicle(Vehicle *vehicle);
     void _startWeatherRefresh();
     void _populateChecklistModel();
+    void _wireZoneComplianceCheck();
+    void _resolvePlanMissionController(QQmlApplicationEngine *qmlEngine);
 
     // --- Owned managers and models (all parented to this for cleanup) ---
     QVariantList _analyzePages;                // Lazily-built list of Analyze tab pages
@@ -99,6 +103,7 @@ private:
     ChecklistEngine *_checklistEngine = nullptr;            // Drives checklist evaluation using TelemetryBridge data
     NoFlyZoneModel *_noFlyZoneModel = nullptr;              // Airspace knowledge base + manual compliance model
     VehicleListModel *_vehicleListModel = nullptr;          // Vehicle registry list for the Vehicles page
+    MissionController *_planMissionController = nullptr;    // Plan View's mission controller (zone compliance source)
 
     // --- Flight session tracking ---
     int _currentSessionId = -1;       // Active DB flight session ID, -1 when no session is active

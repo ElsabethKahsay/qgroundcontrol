@@ -148,6 +148,8 @@ set(CUSTOM_SOURCE_REL
     src/core/UavParameterManager.h
     src/core/VehicleProfileManager.cpp
     src/core/VehicleProfileManager.h
+    src/core/ZoneComplianceCheck.cpp
+    src/core/ZoneComplianceCheck.h
     src/core/VideoFeedCheck.cpp
     src/core/VideoFeedCheck.h
     src/mission/WaypointMath.cpp
