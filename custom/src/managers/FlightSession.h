@@ -69,7 +69,9 @@ public:
 
     void onVehicleArmed();
     void onVehicleDisarmed();
-    void onDisarmedWithStats(double maxAltitude, double minBatteryV, double maxBatteryV, int modeChanges);
+    void onDisarmedWithStats(double maxAltitude, double minBatteryV, double maxBatteryV, int modeChanges,
+                             double maxGroundSpeedMs = 0.0, double maxVerticalSpeedMs = 0.0,
+                             double distanceFlownM = 0.0, double avgBatteryV = 0.0);
     void onFlightModeChanged(const QString &mode);
     void onCheckDegraded(const QString &checkId, const QString &newStatus);
     void onBatteryWarning(double voltageV, bool isCritical);
@@ -105,6 +107,10 @@ private:
     double       m_minBatteryV  = 999.0;
     double       m_maxBatteryV  = 0.0;
     int          m_modeChanges  = 0;
+    double       m_maxGroundSpeedMs = 0.0;
+    double       m_maxVerticalSpeedMs = 0.0;
+    double       m_distanceFlownM = 0.0;
+    double       m_avgBatteryV  = 0.0;
     int          m_instructorId = -1;
     QString      m_instructorName;
 };

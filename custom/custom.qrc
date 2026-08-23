@@ -33,6 +33,12 @@
     </qresource>
     <qresource prefix="/qml/QGroundControl/AnalyzeView">
         <file alias="AnalyzeView.qml">qml/AnalyzeView.qml</file>
+        <file alias="LogDownloadPage.qml">../src/AnalyzeView/LogDownloadPage.qml</file>
+        <file alias="GeoTagPage.qml">../src/AnalyzeView/GeoTagPage.qml</file>
+        <file alias="MavlinkConsolePage.qml">../src/AnalyzeView/MAVLinkConsolePage.qml</file>
+        <file alias="MAVLinkConsolePage.qml">../src/AnalyzeView/MAVLinkConsolePage.qml</file>
+        <file alias="MAVLinkInspectorPage.qml">../src/AnalyzeView/MAVLinkInspectorPage.qml</file>
+        <file alias="VibrationPage.qml">../src/AnalyzeView/VibrationPage.qml</file>
     </qresource>
     <qresource prefix="/qml/QGroundControl/FlightMap">
         <file alias="QGCVideoBackground.qml">qml/QGCVideoBackground.qml</file>
@@ -74,6 +80,7 @@
         <file alias="AutoCheckCard.qml">qml/cpts/AutoCheckCard.qml</file>
         <file alias="ChecklistItem.qml">qml/cpts/ChecklistItem.qml</file>
         <file alias="CollapsibleSection.qml">qml/cpts/CollapsibleSection.qml</file>
+        <file alias="StatBox.qml">qml/cpts/StatBox.qml</file>
         <file alias="CustomButton.qml">qml/cpts/CustomButton.qml</file>
         <file alias="HardwareTestCard.qml">qml/cpts/HardwareTestCard.qml</file>
         <file alias="ManualCheckCard.qml">qml/cpts/ManualCheckCard.qml</file>

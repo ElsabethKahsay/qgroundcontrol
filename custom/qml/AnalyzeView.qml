@@ -94,12 +94,15 @@ Rectangle {
 
                 Component.onCompleted:  {
                     console.log("AnalyzeView: buttonRepeater count=", buttonRepeater.count)
-                    for (var i = 0; i < buttonRepeater.count; i++) {
-                        try {
-                            console.log("AnalyzeView: page[" + i + "] ->", buttonRepeater.itemAt(i).text, buttonRepeater.itemAt(i).imageResource)
-                        } catch (e) {}
+                    // Mark the first button as active and load its page on startup
+                    if (buttonRepeater.count > 0) {
+                        itemAt(0).checked = true
+                        var firstPage = QGroundControl.corePlugin.analyzePages[0]
+                        if (firstPage && firstPage.url) {
+                            panelLoader.source = firstPage.url.toString()
+                            panelLoader.title  = firstPage.title
+                        }
                     }
-                    itemAt(0).checked = true
                 }
 
                 SubMenuButton {
@@ -107,6 +110,25 @@ Rectangle {
                     imageResource:      modelData.icon
                     checkable:          true
                     text:               modelData.title
+
+                    // Active no-fly-zone count badge on the Airspace entry
+                    Label {
+                        anchors.top:        parent.top
+                        anchors.right:      parent.right
+                        anchors.margins:    2
+                        visible:            modelData.title === "Airspace" && NoFlyZoneModel.activeCount > 0
+                        text:               NoFlyZoneModel.activeCount
+                        font.pixelSize:     9
+                        font.bold:          true
+                        color:              "#ffffff"
+                        padding:            3
+                        background: Rectangle {
+                            radius:     width / 2
+                            color:      "#b91c1c"
+                            border.color: "#ffffff"
+                            border.width: 1
+                        }
+                    }
 
                     onClicked: {
                         _clearAnalyzeButtonSelection()
@@ -116,13 +138,13 @@ Rectangle {
                         var isPreflight = urlString.indexOf("PreflightChecklistView.qml") !== -1
                         if (!isPreflight && modelData.title && modelData.title.indexOf("Preflight") !== -1) isPreflight = true
                         if (isPreflight && FlightSession.mode === FlightSession.None) {
-                            console.log("AnalyzeView: storing pendingSource=", modelData.url)
+                            console.log("AnalyzeView: storing pendingSource=", urlString)
                             pendingSource = modelData.url
                             pendingTitle = modelData.title
                             sessionStartDialog.open()
                         } else {
-                            console.log("AnalyzeView: loading directly ->", modelData.url)
-                            panelLoader.source  = modelData.url
+                            console.log("AnalyzeView: loading directly ->", urlString)
+                            panelLoader.source  = urlString
                             panelLoader.title   = modelData.title
                         }
                     }
@@ -153,9 +175,13 @@ Rectangle {
         anchors.right:          parent.right
         anchors.top:            parent.top
         anchors.bottom:         parent.bottom
-        source:                 "LogDownloadPage.qml"
+        source:                 "qrc:/qml/QGroundControl/AnalyzeView/LogDownloadPage.qml"
 
-        property string title
+        property string title:  qsTr("Log Download")
+
+        onStatusChanged: {
+            console.log("AnalyzeView: panelLoader status=", status, "source=", source, "error=", errorString())
+        }
 
         Connections {
             target:     panelLoader.item

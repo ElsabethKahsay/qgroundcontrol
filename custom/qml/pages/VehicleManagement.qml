@@ -33,7 +33,7 @@ Page {
 
         Text {
             text: vehiclesModel.length + " vehicle(s) registered"
-            font.pixelSize: Config.fontSizeSmall
+            font.pixelSize: Config.fontSizeBody
             color: Colors.textSecondary
             anchors.horizontalCenter: parent.horizontalCenter
         }
@@ -66,7 +66,7 @@ Page {
                 Rectangle {
                     id: profileBox
                     width: parent.width
-                    height: 40
+                    height: 52
                     color: Colors.surface
                     radius: 4
                     border.color: Colors.border
@@ -75,18 +75,18 @@ Page {
 
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: Config.spacingSmall; anchors.rightMargin: Config.spacingSmall
+                        anchors.leftMargin: Config.spacingMedium; anchors.rightMargin: Config.spacingMedium
                         spacing: Config.spacingSmall
 
-                        Text { text: "Payload (kg)"; font.pixelSize: Config.fontSizeSmall; color: Colors.textSecondary; font.bold: true }
+                        Text { text: "Payload (kg)"; font.pixelSize: Config.fontSizeBody; color: Colors.textSecondary; font.bold: true }
                         Rectangle {
-                            Layout.preferredWidth: 70; Layout.preferredHeight: 24
+                            Layout.preferredWidth: 90; Layout.preferredHeight: 32
                             radius: 3
                             border.color: Colors.border; border.width: 1
                             color: Colors.surface
                             TextInput {
-                                anchors.fill: parent; anchors.margins: 2
-                                font.pixelSize: Config.fontSizeSmall; font.family: "monospace"
+                                anchors.fill: parent; anchors.margins: 4
+                                font.pixelSize: Config.fontSizeBody; font.family: "monospace"
                                 horizontalAlignment: TextInput.AlignHCenter; verticalAlignment: TextInput.AlignVCenter
                                 color: Colors.textPrimary
                                 inputMethodHints: Qt.ImhFormattedNumbersOnly
@@ -115,7 +115,7 @@ Page {
 
                     delegate: Rectangle {
                         width: parent.width
-                        height: Math.max(80, row.implicitHeight + Config.spacingMedium * 2)
+                        height: Math.max(110, row.implicitHeight + Config.spacingMedium * 2)
                         color: Colors.surface
                         radius: Config.radiusMedium
                         border.color: Colors.border
@@ -132,11 +132,11 @@ Page {
 
                             Column {
                                 width: parent.width - renameBtn.width - Config.spacingMedium * 2
-                                spacing: 4
+                                spacing: 6
 
                                 Text {
                                     text: modelData.friendlyName || "unnamed"
-                                    font.pixelSize: Config.fontSizeBody
+                                    font.pixelSize: Config.fontSizeH3
                                     font.bold: true
                                     color: Colors.textPrimary
                                     elide: Text.ElideRight
@@ -145,26 +145,26 @@ Page {
                                 Text {
                                     text: modelData.autopilotType + " · " + modelData.airframeType
                                            + " · v" + modelData.firmwareVersion
-                                    font.pixelSize: Config.fontSizeSmall
+                                    font.pixelSize: Config.fontSizeBody
                                     color: Colors.textSecondary
                                 }
 
                                 Text {
                                     text: "Flights: " + modelData.totalFlightCount
                                            + " · Hours: " + modelData.totalFlightHours.toFixed(1)
-                                    font.pixelSize: Config.fontSizeSmall
+                                    font.pixelSize: Config.fontSizeBody
                                     color: Colors.textSecondary
                                 }
 
                                 Text {
                                     text: "Last seen: " + (modelData.lastSeen || "never")
-                                    font.pixelSize: Config.fontSizeSmall
-                                    color: Colors.textDisabled
+                                    font.pixelSize: Config.fontSizeBody
+                                    color: Colors.textMuted
                                 }
 
                                 Text {
                                     text: "UID: " + modelData.deviceUid
-                                    font.pixelSize: Config.fontSizeTiny
+                                    font.pixelSize: Config.fontSizeSmall
                                     color: Colors.textDisabled
                                 }
                             }
@@ -176,8 +176,8 @@ Page {
 
                                 CustomButton {
                                     text: editing ? "Save" : "Rename"
-                                    width: 70
-                                    height: 26
+                                    width: 90
+                                    height: 34
                                     baseColor: Colors.surface
                                     onClicked: {
                                         if (editing) {
@@ -195,8 +195,8 @@ Page {
 
                                 CustomButton {
                                     text: qsTr("History")
-                                    width: 70
-                                    height: 26
+                                    width: 90
+                                    height: 34
                                     baseColor: Colors.surface
                                     onClicked: {
                                         // Show flight sessions for this vehicle

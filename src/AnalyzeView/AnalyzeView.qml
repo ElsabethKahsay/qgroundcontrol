@@ -84,13 +84,14 @@ Rectangle {
 
                 Component.onCompleted:  {
                     console.log("AnalyzeView(src): buttonRepeater count=", buttonRepeater.count)
-                    for (var i = 0; i < buttonRepeater.count; i++) {
-                        try {
-                            console.log("AnalyzeView(src): page[" + i + "] ->", buttonRepeater.itemAt(i).text, buttonRepeater.itemAt(i).imageResource)
-                        } catch (e) {
+                    if (buttonRepeater.count > 0) {
+                        itemAt(0).checked = true
+                        var firstPage = QGroundControl.corePlugin.analyzePages[0]
+                        if (firstPage && firstPage.url) {
+                            panelLoader.source = firstPage.url.toString()
+                            panelLoader.title  = firstPage.title
                         }
                     }
-                    itemAt(0).checked = true
                 }
 
                 SubMenuButton {
@@ -105,13 +106,13 @@ Rectangle {
                         var isPreflight = urlString.indexOf("PreflightChecklistView.qml") !== -1
                         if (!isPreflight && modelData.title && modelData.title.indexOf("Preflight") !== -1) isPreflight = true
                         if (isPreflight && FlightSession.mode === FlightSession.None) {
-                            console.log("AnalyzeView(src): storing pendingSource=", modelData.url)
-                            pendingSource = modelData.url
+                            console.log("AnalyzeView(src): storing pendingSource=", urlString)
+                            pendingSource = urlString
                             pendingTitle = modelData.title
                             sessionStartDialog.open()
                         } else {
-                            console.log("AnalyzeView(src): loading directly ->", modelData.url)
-                            panelLoader.source  = modelData.url
+                            console.log("AnalyzeView(src): loading directly ->", urlString)
+                            panelLoader.source  = urlString
                             panelLoader.title   = modelData.title
                             checked             = true
                         }
@@ -154,7 +155,7 @@ Rectangle {
             if (pendingSource !== "" && FlightSession.mode !== FlightSession.None) {
                 console.log("AnalyzeView(src): loading pendingSource ->", pendingSource)
                 panelLoader.source = pendingSource
-                panelLoader.title  = pendingTitle !== "" ? pendingTitle : "Preflight Checklist"
+                panelLoader.title  = pendingTitle !== "" ? pendingTitle : qsTr("Preflight Checklist")
                 pendingSource = ""
                 pendingTitle = ""
                 // attempt to mark the button checked
@@ -192,9 +193,13 @@ Rectangle {
         anchors.right:          parent.right
         anchors.top:            parent.top
         anchors.bottom:         parent.bottom
-        source:                 "LogDownloadPage.qml"
+        source:                 "qrc:/qml/QGroundControl/AnalyzeView/LogDownloadPage.qml"
 
-        property string title
+        property string title:  qsTr("Log Download")
+
+        onStatusChanged: {
+            console.log("AnalyzeView(src): panelLoader status=", status, "source=", source, "error=", errorString())
+        }
 
         Connections {
             target:     panelLoader.item

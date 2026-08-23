@@ -45,7 +45,7 @@
 ```
 
 | This project | C# / .NET Equivalent |
-|---|---|
+| --- | --- |
 | `custom/` | Your app project |
 | `QGroundControl/` | NuGet SDK package (reference only) |
 | `PreflightPlugin.cpp` | `Startup.cs` / `Program.cs` |
@@ -87,6 +87,7 @@ public class PreflightPlugin : QGCCorePlugin
 ```
 
 **QML gets C# objects via** `setContextProperty()`:
+
 ```csharp
 // Like: services.AddSingleton<IVehicleProfileService>();
 // Then in QML: VehicleProfileManager.propertyName
@@ -1156,7 +1157,7 @@ public class VehicleProfileManager : QObject, INotifyPropertyChanged
 ## 12. Key Architecture Patterns
 
 | Design Pattern | C# Equivalent | Our Implementation |
-|---|---|---|
+| --- | --- | --- |
 | **Singleton** | `Lazy<T>` | `DatabaseManager::instance()` static local |
 | **Observer** | `INotifyPropertyChanged` / events | Qt signals → QML bindings |
 | **Strategy** | Interface + DI | `ICheck` → `BatteryVoltageCheck`, `CompassOrientationCheck` |
@@ -1195,7 +1196,7 @@ cmake --build build                                            # Let cmake sync
 ## 14. Current Feature Inventory
 
 | Feature | C# Analogy | Key Files | Status |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | MAVLink telemetry pipeline | SignalR Hub + typed events | `TelemetryBridge.cs` | ✅ |
 | Vehicle detection + registration | Entity Framework change tracker | `VehicleRegistry.cs`, `DatabaseManager.cs` | ✅ |
 | Preflight checklist + rule engine | FluentValidation + reactive bindings | `ChecklistEngine.cs`, `PreflightManager.cs` | ✅ |
@@ -1216,7 +1217,7 @@ cmake --build build                                            # Let cmake sync
 ## 15. Key Gotchas (Things That Differ From .NET)
 
 | .NET Expectation | Reality in this project |
-|---|---|
+| --- | --- |
 | `async/await` HTTP calls | Qt signals/slots + event loop (callback-based) |
 | Entity Framework LINQ | Raw SQL (SQLite) + `QJsonDocument` |
 | DI container (`IServiceCollection`) | Manual `setContextProperty()` injection |

@@ -183,6 +183,9 @@ class TelemetryBridge : public QObject {
     /// Ground speed in m/s.
     Q_PROPERTY(double groundSpeed READ groundSpeed NOTIFY groundSpeedChanged)
 
+    /// Vertical (climb/descent) speed in m/s, positive = ascending.
+    Q_PROPERTY(double verticalSpeed READ verticalSpeed NOTIFY verticalSpeedChanged)
+
     /// Vehicle heading / yaw in degrees (0-360).
     Q_PROPERTY(double heading READ heading NOTIFY headingChanged)
 
@@ -552,6 +555,7 @@ public:
 
     double airspeed() const { return _airspeed; }
     double groundSpeed() const { return _groundSpeed; }
+    double verticalSpeed() const { return _verticalSpeed; }
     double heading() const { return _heading; }
     double altitudeRelative() const { return _altitudeRelative; }
 
@@ -731,6 +735,7 @@ signals:
     void baroChanged();
     void airspeedChanged();
     void groundSpeedChanged();
+    void verticalSpeedChanged();
     void headingChanged();
     void altitudeChanged();
     void rcRssiChanged();
@@ -868,6 +873,7 @@ private:
 
     double _airspeed = 0.0;
     double _groundSpeed = 0.0;
+    double _verticalSpeed = 0.0;
     double _heading = 0.0;
     double _altitudeRelative = 0.0;
 

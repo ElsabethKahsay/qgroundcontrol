@@ -157,17 +157,27 @@ void FlightSession::closeSession()
 {
     if (m_flightId > 0 && m_state != SessionState::Closed) {
         int durationSec = static_cast<int>(m_startedAt.secsTo(QDateTime::currentDateTimeUtc()));
-        DatabaseManager::instance().closeFlight(
+
+        DatabaseManager &db = DatabaseManager::instance();
+        QVariantMap counts = db.getCheckCountsForFlight(m_flightId);
+        int anomalies = db.getAnomalyCountForFlight(m_flightId);
+
+        db.closeFlight(
             m_flightId, durationSec,
-            m_maxAltitude, m_minBatteryV, m_maxBatteryV, m_modeChanges);
-        DatabaseManager::instance().updateOperatorStats(
+            m_maxAltitude, m_minBatteryV, m_maxBatteryV, m_modeChanges,
+            m_maxGroundSpeedMs, m_maxVerticalSpeedMs, m_distanceFlownM, m_avgBatteryV,
+            counts.value(QStringLiteral("pass")).toInt(),
+            counts.value(QStringLiteral("fail")).toInt(),
+            counts.value(QStringLiteral("warn")).toInt(),
+            anomalies);
+        db.updateOperatorStats(
             OperatorManager::instance()->currentOperatorId(), true);
 
         // Accumulate flight time onto the connected vehicle's record so the
         // Vehicles page shows real total flight time per airframe.
         const QString fingerprint = VehicleRegistry::instance()->currentFingerprint();
         if (!fingerprint.isEmpty()) {
-            DatabaseManager::instance().incrementVehicleFlightTime(fingerprint, durationSec);
+            db.incrementVehicleFlightTime(fingerprint, durationSec);
         }
     }
 
@@ -182,6 +192,10 @@ void FlightSession::closeSession()
     m_minBatteryV = 999.0;
     m_maxBatteryV = 0.0;
     m_modeChanges = 0;
+    m_maxGroundSpeedMs = 0.0;
+    m_maxVerticalSpeedMs = 0.0;
+    m_distanceFlownM = 0.0;
+    m_avgBatteryV = 0.0;
     emit flightIdChanged();
     emit armingPermittedChanged();
     emit formCompleteChanged();
@@ -201,10 +215,17 @@ void FlightSession::onVehicleArmed()
 
     // Only persist to DB for audited Flight sessions
     if (m_mode == SessionMode::Flight && m_flightId > 0) {
-        DatabaseManager::instance().setFlightArmedAt(m_flightId, m_armedAt);
-        DatabaseManager::instance().insertTelemetryEvent(
+        // Arm write = flights update + telemetry event → single atomic unit.
+        DatabaseManager &db = DatabaseManager::instance();
+        db.beginTransaction();
+        bool ok = true;
+        ok &= db.setFlightArmedAt(m_flightId, m_armedAt);
+        ok &= db.insertTelemetryEventSnapshot(
             m_flightId, QStringLiteral("ARM"), QString(),
-            0.0, 0.0, 0, QString());
+            0.0, 0.0, 0, QString(),
+            0.0, 0.0, 0.0, 0.0, 0.0);
+        if (ok) db.commitTransaction();
+        else    db.rollbackTransaction();
     }
     emit armingPermittedChanged();
 }
@@ -216,20 +237,35 @@ void FlightSession::onVehicleDisarmed()
 
     // Only persist to DB for audited Flight sessions
     if (m_mode == SessionMode::Flight && m_flightId > 0) {
-        DatabaseManager::instance().setFlightDisarmedAt(m_flightId, now);
-        DatabaseManager::instance().insertTelemetryEvent(
+        // Disarm write = flights update + telemetry event → single atomic unit.
+        DatabaseManager &db = DatabaseManager::instance();
+        db.beginTransaction();
+        bool ok = true;
+        ok &= db.setFlightDisarmedAt(m_flightId, now);
+        ok &= db.insertTelemetryEventSnapshot(
             m_flightId, QStringLiteral("DISARM"), QString(),
-            0.0, 0.0, 0, QString());
+            0.0, 0.0, 0, QString(),
+            0.0, 0.0, 0.0, 0.0, 0.0);
+        if (ok) db.commitTransaction();
+        else    db.rollbackTransaction();
     }
     emit postFlightChecklistRequired();
 }
 
-void FlightSession::onDisarmedWithStats(double maxAltitude, double minBatteryV, double maxBatteryV, int modeChanges)
+void FlightSession::onDisarmedWithStats(double maxAltitude, double minBatteryV, double maxBatteryV, int modeChanges,
+                                        double maxGroundSpeedMs, double maxVerticalSpeedMs,
+                                        double distanceFlownM, double avgBatteryV)
 {
     m_maxAltitude = qMax(m_maxAltitude, maxAltitude);
     if (minBatteryV >= 0.0) m_minBatteryV = qMin(m_minBatteryV, minBatteryV);
     m_maxBatteryV = qMax(m_maxBatteryV, maxBatteryV);
     m_modeChanges = qMax(m_modeChanges, modeChanges);
+    // Higher of the two possible sources wins; the logger value is
+    // authoritative when present.
+    if (maxGroundSpeedMs > 0.0) m_maxGroundSpeedMs = qMax(m_maxGroundSpeedMs, maxGroundSpeedMs);
+    if (maxVerticalSpeedMs > 0.0) m_maxVerticalSpeedMs = qMax(m_maxVerticalSpeedMs, maxVerticalSpeedMs);
+    if (distanceFlownM > 0.0) m_distanceFlownM = distanceFlownM;
+    if (avgBatteryV > 0.0) m_avgBatteryV = avgBatteryV;
 }
 
 void FlightSession::onFlightModeChanged(const QString &mode)

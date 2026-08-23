@@ -522,6 +522,13 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message)
             _altitudeRelative = relAlt;
             emit altitudeChanged();
         }
+
+        // Vertical speed (cm/s → m/s) from the same EKF solution.
+        double vs = gp.vz / 100.0;
+        if (gp.vz != INT32_MAX && qAbs(vs - _verticalSpeed) > 0.01) {
+            _verticalSpeed = vs;
+            emit verticalSpeedChanged();
+        }
         break;
     }
     case MAVLINK_MSG_ID_RC_CHANNELS: {

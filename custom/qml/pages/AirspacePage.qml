@@ -9,9 +9,13 @@ import com.uav.preflight 1.0
 
 // ── Airspace Compliance System ──────────────────────────────────────────────
 // Persistent knowledge base of known restricted airspace (no-fly zones).
-// Compliance is MANUAL: the operator reviews the zone list / map and records a
-// decision.  There is NO automatic geometry/intersection checking and NO
-// MAVLink geofence interaction — the Plan-view geofence is untouched.
+// Compliance has two layers:
+//   1. AUTOMATIC: ZoneComplianceCheck (preflight Safety category) tests the
+//      planned mission waypoints against every active zone and logs per-zone
+//      audit rows.  Intersected zones can be acknowledged here or from the
+//      preflight checklist.
+//   2. MANUAL: the operator reviews the zone list / map and records a decision.
+// There is NO MAVLink geofence interaction — the Plan-view geofence is untouched.
 //
 // This page follows the QGC AnalyzePage pattern (like FlightHistoryPage) so it
 // renders correctly inside the AnalyzeView panel loader.
@@ -19,14 +23,48 @@ import com.uav.preflight 1.0
 AnalyzePage {
     id: root
     pageName: qsTr("Airspace Compliance")
-    pageDescription: qsTr("Restricted-area knowledge base and manual compliance log")
+    pageDescription: qsTr("Restricted-area knowledge base, route compliance check and audit log")
 
     property bool _addZoneMode: false
     property var _lastMapCoord: null
     property int _selectedZoneId: -1
     property var _complianceRows: []
 
+    // Transient notice banner (errors / overlap advisories from the model)
+    property string _noticeText: ""
+    property bool _noticeIsError: false
+
     readonly property int _currentFlightId: FlightSession.currentFlightId > 0 ? FlightSession.currentFlightId : -1
+
+    // Automatic no-fly-zone route check (registered by PreflightManager)
+    readonly property var _zoneCheck: PreflightManager ? PreflightManager.checkById("airspace.zone_compliance") : null
+
+    // Compliance-log flight filter (-1 = all flights)
+    property int _flightFilterId: -1
+
+    Component.onCompleted: NoFlyZoneModel.reload()
+
+    function showNotice(text, isError) {
+        _noticeText = text;
+        _noticeIsError = isError === undefined ? false : isError;
+        noticeTimer.restart();
+    }
+
+    Timer {
+        id: noticeTimer
+        interval: 5000
+        onTriggered: root._noticeText = ""
+    }
+
+    Connections {
+        target: NoFlyZoneModel
+        function onErrorOccurred(message) {
+            root.showNotice(message, true);
+        }
+        function onOverlapWarning(message) {
+            root.showNotice(message, false);
+        }
+    }
 
     // Map tile colors by zone reason
     function reasonColor(reason) {
@@ -36,11 +74,11 @@ AnalyzePage {
         case "Obstacle":
             return "#f97316";
         case "Restricted":
-            return "#a855f7";
+            return "#7f1d1d";
         case "Temporary":
-            return "#3b82f6";
-        default:
             return "#eab308";
+        default:
+            return "#9ca3af";
         }
     }
 
@@ -48,9 +86,9 @@ AnalyzePage {
         switch (reason) {
         case "Regulatory": return "#b91c1c";
         case "Obstacle": return "#c2410c";
-        case "Restricted": return "#7e22ce";
-        case "Temporary": return "#1d4ed8";
-        default: return "#a16207";
+        case "Restricted": return "#991b1b";
+        case "Temporary": return "#a16207";
+        default: return "#6b7280";
         }
     }
 
@@ -66,6 +104,48 @@ AnalyzePage {
                 return i;
         }
         return -1;
+    }
+
+    function zoneNameById(id) {
+        var i = zoneById(id);
+        if (i < 0)
+            return "#" + id;
+        return NoFlyZoneModel.data(NoFlyZoneModel.index(i, 0), NoFlyZoneModelRoles.NameRole);
+    }
+
+    // CheckStatus enum: 0 Pending, 1 Passed, 2 Failed, 3 Warning
+    function checkStatusColor(statusInt) {
+        if (statusInt === 2) return Colors.error;
+        if (statusInt === 3) return Colors.warning;
+        if (statusInt === 1) return Colors.success;
+        return Colors.textSecondary;
+    }
+
+    // Compliance-log flight filter helpers
+    function filteredComplianceRows() {
+        var recs = NoFlyZoneModel.complianceRecords;
+        if (_flightFilterId < 0)
+            return recs;
+        var out = [];
+        for (var i = 0; i < recs.length; ++i) {
+            if (recs[i].flight_id === _flightFilterId)
+                out.push(recs[i]);
+        }
+        return out;
+    }
+
+    function flightFilterOptions() {
+        var opts = [{ text: qsTr("All flights"), value: -1 }];
+        var recs = NoFlyZoneModel.complianceRecords;
+        var seen = {};
+        for (var i = 0; i < recs.length; ++i) {
+            var fid = recs[i].flight_id;
+            if (fid > 0 && !seen[fid]) {
+                seen[fid] = true;
+                opts.push({ text: qsTr("Flight #%1").arg(fid), value: fid });
+            }
+        }
+        return opts;
     }
 
     function formatCoord(v, dp) {
@@ -137,10 +217,47 @@ AnalyzePage {
             height: root.availableHeight
             spacing: 0
 
+            // ── Transient notice banner (model errors / overlap advisories) ──
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 36
+                Layout.margins: Config.spacingSmall
+                radius: Config.radiusSmall
+                visible: root._noticeText.length > 0
+                color: root._noticeIsError ? Colors.errorDim : Colors.warningDim
+                border.color: root._noticeIsError ? Colors.error : Colors.warning
+                border.width: 1
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.margins: Config.spacingSmall
+                    spacing: Config.spacingSmall
+
+                    Text {
+                        text: root._noticeIsError ? "✕" : "⚠"
+                        font.pixelSize: 14
+                        font.bold: true
+                        color: root._noticeIsError ? Colors.error : Colors.warning
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: root._noticeText
+                        font.pixelSize: Config.fontSizeSmall
+                        color: Colors.textPrimary
+                        elide: Text.ElideRight
+                    }
+                }
+            }
+
             // ── Tabs ────────────────────────────────────────────────
             TabBar {
                 id: tabBar
                 Layout.fillWidth: true
+                onCurrentIndexChanged: {
+                    if (currentIndex === 1 && typeof map !== "undefined") {
+                        root._fitMapToZones(map);
+                    }
+                }
                 background: Rectangle {
                     color: "transparent"
                 }
@@ -234,6 +351,76 @@ AnalyzePage {
                                 font.bold: true
                                 color: Colors.textPrimary
                                 Layout.fillWidth: true
+                            }
+
+                            // ── Name search ──
+                            TextField {
+                                id: zoneSearchField
+                                Layout.preferredWidth: 200
+                                placeholderText: qsTr("Search zones…")
+                                font.pixelSize: Config.fontSizeSmall
+                                color: Colors.textPrimary
+                                background: Rectangle {
+                                    color: Colors.surfaceLight
+                                    radius: Config.radiusSmall
+                                    border.color: zoneSearchField.activeFocus ? Colors.accent : Colors.border
+                                    border.width: 1
+                                }
+                                onTextChanged: NoFlyZoneModel.setNameFilter(text)
+                                rightPadding: clearSearchBtn.visible ? clearSearchBtn.width : 8
+
+                                Text {
+                                    id: clearSearchBtn
+                                    anchors.right: parent.right
+                                    anchors.rightMargin: 6
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: "✕"
+                                    font.pixelSize: 12
+                                    color: Colors.textSecondary
+                                    visible: zoneSearchField.text.length > 0
+
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            zoneSearchField.text = "";
+                                            zoneSearchField.forceActiveFocus();
+                                        }
+                                    }
+                                }
+                            }
+
+                            // ── Sort mode ──
+                            ComboBox {
+                                id: sortCombo
+                                Layout.preferredWidth: 150
+                                model: ["Sort: Name", "Sort: Radius", "Sort: Reason", "Sort: Updated"]
+                                currentIndex: 0
+                                font.pixelSize: Config.fontSizeSmall
+                                background: Rectangle {
+                                    color: Colors.surfaceLight
+                                    radius: Config.radiusSmall
+                                    border.color: sortCombo.activeFocus ? Colors.accent : Colors.border
+                                    border.width: 1
+                                }
+                                indicator: Text {
+                                    x: sortCombo.width - width - Config.spacingSmall
+                                    y: (sortCombo.height - height) / 2
+                                    text: "\u25BC"
+                                    color: Colors.textSecondary
+                                    font.pixelSize: 10
+                                }
+                                contentItem: Text {
+                                    text: sortCombo.currentText
+                                    color: Colors.textPrimary
+                                    font.pixelSize: Config.fontSizeSmall
+                                    leftPadding: Config.spacingSmall
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                                onActivated: {
+                                    var modes = ["name", "radius", "reason", "updated"];
+                                    NoFlyZoneModel.setSortMode(modes[currentIndex]);
+                                }
                             }
 
                             AirButton {
@@ -485,10 +672,7 @@ AnalyzePage {
                                         text: qsTr("Delete")
                                         baseColor: Colors.error
                                         btnEnabled: detailPanel._row
-                                        onClicked: {
-                                            NoFlyZoneModel.removeZone(detailPanel._row.id);
-                                            root._selectedZoneId = -1;
-                                        }
+                                        onClicked: deleteConfirmDialog.openForZone(detailPanel._row)
                                     }
                                 }
                             }
@@ -837,6 +1021,143 @@ AnalyzePage {
                             }
                         }
 
+                        // ── Automatic route check (ZoneComplianceCheck) ──
+                        Rectangle {
+                            id: autoCheckCard
+                            Layout.fillWidth: true
+                            visible: root._zoneCheck !== null
+                            Layout.preferredHeight: visible ? autoCheckCol.implicitHeight + Config.spacingMedium * 2 : 0
+                            radius: Config.radiusSmall
+                            color: Colors.surfaceLight
+                            border.color: root._zoneCheck ? root.checkStatusColor(root._zoneCheck.status) : Colors.border
+                            border.width: 1
+
+                            // Re-computed whenever the check re-evaluates (message/status NOTIFY).
+                            property var _unackedIds: {
+                                if (!root._zoneCheck)
+                                    return [];
+                                var dep = root._zoneCheck.message + "/" + root._zoneCheck.status;
+                                return root._zoneCheck.unacknowledgedZoneIds();
+                            }
+
+                            ColumnLayout {
+                                id: autoCheckCol
+                                anchors.fill: parent
+                                anchors.margins: Config.spacingMedium
+                                spacing: Config.spacingSmall
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: Config.spacingSmall
+
+                                    Text {
+                                        text: qsTr("Automatic route check")
+                                        font.pixelSize: Config.fontSizeBody
+                                        font.bold: true
+                                        color: Colors.textPrimary
+                                        Layout.fillWidth: true
+                                    }
+                                    Text {
+                                        text: root._zoneCheck ? root._zoneCheck.statusText : ""
+                                        font.pixelSize: Config.fontSizeSmall
+                                        font.bold: true
+                                        color: root._zoneCheck ? root.checkStatusColor(root._zoneCheck.status) : Colors.textSecondary
+                                    }
+                                }
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    visible: root._zoneCheck && root._zoneCheck.message.length > 0
+                                    text: root._zoneCheck ? root._zoneCheck.message : ""
+                                    font.pixelSize: Config.fontSizeSmall
+                                    color: Colors.textSecondary
+                                    wrapMode: Text.WordWrap
+                                }
+
+                                // Unacknowledged intersecting zones — ack each with a reason
+                                Repeater {
+                                    model: autoCheckCard._unackedIds
+
+                                    delegate: RowLayout {
+                                        required property var modelData
+                                        Layout.fillWidth: true
+                                        spacing: Config.spacingSmall
+
+                                        Rectangle {
+                                            width: 10
+                                            height: 10
+                                            radius: 5
+                                            color: root.reasonColor("Restricted")
+                                            Layout.alignment: Qt.AlignVCenter
+                                        }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: root.zoneNameById(modelData)
+                                            font.pixelSize: Config.fontSizeSmall
+                                            font.bold: true
+                                            color: Colors.error
+                                            elide: Text.ElideRight
+                                        }
+                                        AirButton {
+                                            text: qsTr("Acknowledge")
+                                            baseColor: Colors.warning
+                                            onClicked: ackDialog.openForZone(modelData)
+                                        }
+                                    }
+                                }
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    visible: autoCheckCard._unackedIds.length === 0 && root._zoneCheck && root._zoneCheck.status === 1
+                                    text: qsTr("Route is clear of all active zones.")
+                                    font.pixelSize: Config.fontSizeSmall
+                                    color: Colors.success
+                                }
+                            }
+                        }
+
+                        // ── Flight filter ───────────────────────────
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: Config.spacingSmall
+
+                            Text {
+                                text: qsTr("Filter:")
+                                font.pixelSize: Config.fontSizeSmall
+                                color: Colors.textSecondary
+                            }
+                            ComboBox {
+                                id: flightFilterCombo
+                                Layout.preferredWidth: 170
+                                textRole: "text"
+                                valueRole: "value"
+                                model: root.flightFilterOptions()
+                                font.pixelSize: Config.fontSizeSmall
+                                background: Rectangle {
+                                    color: Colors.surfaceLight
+                                    radius: Config.radiusSmall
+                                    border.color: flightFilterCombo.activeFocus ? Colors.accent : Colors.border
+                                    border.width: 1
+                                }
+                                indicator: Text {
+                                    x: flightFilterCombo.width - width - Config.spacingSmall
+                                    y: (flightFilterCombo.height - height) / 2
+                                    text: "\u25BC"
+                                    color: Colors.textSecondary
+                                    font.pixelSize: 10
+                                }
+                                contentItem: Text {
+                                    text: flightFilterCombo.displayText
+                                    color: Colors.textPrimary
+                                    font.pixelSize: Config.fontSizeSmall
+                                    leftPadding: Config.spacingSmall
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                                onActivated: root._flightFilterId = currentValue
+                            }
+                            Item { Layout.fillWidth: true }
+                        }
+
                         // ── History table ───────────────────────────
                         Rectangle {
                             Layout.fillWidth: true
@@ -896,7 +1217,7 @@ AnalyzePage {
                             clip: true
                             spacing: 4
 
-                            model: NoFlyZoneModel.complianceRecords
+                            model: root.filteredComplianceRows()
 
                             delegate: Rectangle {
                                 width: complianceList.width
@@ -950,6 +1271,8 @@ AnalyzePage {
                                     Text {
                                         text: {
                                             var parts = [];
+                                            if (modelData.intersection)
+                                                parts.push("◉ " + qsTr("zone #%1").arg(modelData.zone_id));
                                             if (modelData.notes && modelData.notes.length > 0)
                                                 parts.push(modelData.notes);
                                             if (modelData.override_reason && modelData.override_reason.length > 0)
@@ -971,12 +1294,12 @@ AnalyzePage {
                             }
 
                             Text {
-                                text: qsTr("No compliance records yet. Run a compliance check to create the first audit entry.")
+                                text: qsTr("No compliance records for this filter. Run a compliance check to create the first audit entry.")
                                 font.pixelSize: Config.fontSizeBody
                                 color: Colors.textSecondary
                                 wrapMode: Text.WordWrap
                                 anchors.centerIn: parent
-                                visible: NoFlyZoneModel.complianceRecords.length === 0
+                                visible: root.filteredComplianceRows().length === 0
                             }
                         }
                     }
@@ -1304,6 +1627,118 @@ AnalyzePage {
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    // ZONE DELETE CONFIRMATION
+    // ═══════════════════════════════════════════════════════════════════
+    Dialog {
+        id: deleteConfirmDialog
+        property int _zoneId: -1
+        property string _zoneName: ""
+
+        title: qsTr("Delete Zone")
+        modal: true
+        anchors.centerIn: parent
+        width: 380
+        closePolicy: Popup.CloseOnEscape
+        padding: Config.spacingLarge
+        background: Rectangle {
+            color: Colors.surface
+            radius: Config.radiusMedium
+            border.color: Colors.border
+            border.width: 1
+        }
+        header: Label {
+            text: deleteConfirmDialog.title
+            font.bold: true
+            color: Colors.textPrimary
+            padding: Config.spacingMedium
+            background: Rectangle {
+                color: Colors.surfaceLight
+            }
+        }
+
+        function openForZone(row) {
+            _zoneId = row.id;
+            _zoneName = row.name;
+            open();
+        }
+
+        ColumnLayout {
+            width: parent.width
+            spacing: Config.spacingSmall
+
+            Text {
+                Layout.fillWidth: true
+                text: qsTr("Delete zone \"%1\"?").arg(deleteConfirmDialog._zoneName)
+                font.pixelSize: Config.fontSizeBody
+                font.bold: true
+                color: Colors.textPrimary
+                wrapMode: Text.WordWrap
+            }
+            Text {
+                Layout.fillWidth: true
+                text: qsTr("This permanently removes the zone from the knowledge base. Compliance log entries that reference it are kept (zone link is cleared).")
+                font.pixelSize: Config.fontSizeSmall
+                color: Colors.textSecondary
+                wrapMode: Text.WordWrap
+            }
+        }
+
+        footer: DialogButtonBox {
+            alignment: Qt.AlignRight
+            spacing: Config.spacingMedium
+            background: Rectangle {
+                color: Colors.surface
+                border.color: Colors.divider
+                border.width: 1
+            }
+
+            Button {
+                text: qsTr("Cancel")
+                font.pixelSize: Config.fontSizeBody
+                contentItem: Text {
+                    text: "Cancel"
+                    color: Colors.textSecondary
+                    font.pixelSize: Config.fontSizeBody
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                background: Rectangle {
+                    color: Colors.surfaceLight
+                    radius: Config.radiusSmall
+                    border.color: Colors.border
+                    border.width: 1
+                }
+                onClicked: deleteConfirmDialog.close()
+            }
+            Button {
+                text: qsTr("Delete")
+                font.pixelSize: Config.fontSizeBody
+                contentItem: Text {
+                    text: "Delete"
+                    color: Colors.background
+                    font.pixelSize: Config.fontSizeBody
+                    font.bold: true
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                background: Rectangle {
+                    color: Colors.error
+                    radius: Config.radiusSmall
+                    border.color: Colors.error
+                    border.width: 1
+                }
+                onClicked: {
+                    if (NoFlyZoneModel.removeZone(deleteConfirmDialog._zoneId)) {
+                        root._selectedZoneId = -1;
+                        root.showNotice(qsTr("Zone \"%1\" deleted.").arg(deleteConfirmDialog._zoneName), false);
+                    }
+                    deleteConfirmDialog.close();
+                }
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     // ZONE DETAIL POPUP (map tap)
     // ═══════════════════════════════════════════════════════════════════
     Popup {
@@ -1420,6 +1855,129 @@ AnalyzePage {
                 wrapMode: Text.WordWrap
                 visible: text.length > 0
                 width: parent.width
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // ZONE CROSSING ACKNOWLEDGEMENT (automatic route check)
+    // ═══════════════════════════════════════════════════════════════════
+    Dialog {
+        id: ackDialog
+        property int _zoneId: -1
+
+        title: qsTr("Acknowledge Zone Crossing")
+        modal: true
+        anchors.centerIn: parent
+        width: 420
+        closePolicy: Popup.CloseOnEscape
+        padding: Config.spacingLarge
+        background: Rectangle {
+            color: Colors.surface
+            radius: Config.radiusMedium
+            border.color: Colors.border
+            border.width: 1
+        }
+        header: Label {
+            text: ackDialog.title
+            font.bold: true
+            color: Colors.textPrimary
+            padding: Config.spacingMedium
+            background: Rectangle {
+                color: Colors.surfaceLight
+            }
+        }
+
+        function openForZone(zoneId) {
+            _zoneId = zoneId;
+            ackReasonField.text = "";
+            open();
+        }
+
+        ColumnLayout {
+            width: parent.width
+            spacing: Config.spacingSmall
+
+            Text {
+                Layout.fillWidth: true
+                text: qsTr("The planned route crosses zone \"%1\".").arg(root.zoneNameById(ackDialog._zoneId))
+                font.pixelSize: Config.fontSizeBody
+                font.bold: true
+                color: Colors.textPrimary
+                wrapMode: Text.WordWrap
+            }
+            Text {
+                Layout.fillWidth: true
+                text: qsTr("Acknowledging records your reason in the compliance log and clears the blocking warning for this flight.")
+                font.pixelSize: Config.fontSizeSmall
+                color: Colors.textSecondary
+                wrapMode: Text.WordWrap
+            }
+            TextArea {
+                id: ackReasonField
+                Layout.fillWidth: true
+                Layout.minimumHeight: 56
+                placeholderText: qsTr("Reason for proceeding (required)…")
+                font.pixelSize: Config.fontSizeSmall
+                wrapMode: TextArea.WordWrap
+                background: Rectangle {
+                    color: Colors.surfaceLight
+                    radius: Config.radiusSmall
+                    border.color: ackReasonField.activeFocus ? Colors.accent : Colors.border
+                    border.width: 1
+                }
+            }
+        }
+
+        footer: DialogButtonBox {
+            alignment: Qt.AlignRight
+            spacing: Config.spacingMedium
+            background: Rectangle {
+                color: Colors.surface
+                border.color: Colors.divider
+                border.width: 1
+            }
+
+            Button {
+                text: qsTr("Cancel")
+                font.pixelSize: Config.fontSizeBody
+                contentItem: Text {
+                    text: "Cancel"
+                    color: Colors.textSecondary
+                    font.pixelSize: Config.fontSizeBody
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                background: Rectangle {
+                    color: Colors.surfaceLight
+                    radius: Config.radiusSmall
+                    border.color: Colors.border
+                    border.width: 1
+                }
+                onClicked: ackDialog.close()
+            }
+            Button {
+                text: qsTr("Acknowledge")
+                font.pixelSize: Config.fontSizeBody
+                enabled: ackReasonField.text.trim().length > 0 && root._zoneCheck !== null
+                contentItem: Text {
+                    text: "Acknowledge"
+                    color: enabled ? Colors.background : Colors.textDisabled
+                    font.pixelSize: Config.fontSizeBody
+                    font.bold: true
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                background: Rectangle {
+                    color: enabled ? Colors.warning : Colors.surfaceLight
+                    radius: Config.radiusSmall
+                    border.color: enabled ? Colors.warning : Colors.border
+                    border.width: 1
+                }
+                onClicked: {
+                    if (root._zoneCheck.acknowledgeZone(ackDialog._zoneId, ackReasonField.text.trim()))
+                        ackDialog.close();
+                }
             }
         }
     }

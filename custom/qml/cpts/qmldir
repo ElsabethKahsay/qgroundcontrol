@@ -1,5 +1,7 @@
 module cpts
 ChecklistEngine 1.0 ChecklistEngine.qml
+CollapsibleSection 1.0 CollapsibleSection.qml
+StatBox 1.0 StatBox.qml
 ArmGateDialogLoader 1.0 ArmGateDialogLoader.qml
 SessionStartDialog 1.0 SessionStartDialog.qml
 FlightFormDialog 1.0 FlightFormDialog.qml

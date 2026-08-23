@@ -79,6 +79,17 @@ Rectangle {
         return true
     }
 
+    // Helper: display name for a no-fly-zone id (falls back to "#id")
+    function _zoneNameById(zoneId) {
+        if (typeof NoFlyZoneModel === "undefined") return "#" + zoneId
+        for (var i = 0; i < NoFlyZoneModel.count; ++i) {
+            var idx = NoFlyZoneModel.index(i, 0)
+            if (NoFlyZoneModel.data(idx, NoFlyZoneModelRoles.ZoneIdRole) === zoneId)
+                return NoFlyZoneModel.data(idx, NoFlyZoneModelRoles.NameRole)
+        }
+        return "#" + zoneId
+    }
+
     signal nextClicked()
 
     function nextBlocker(index) {
@@ -87,6 +98,103 @@ Rectangle {
         if (!b || b.length <= index) return ""
         var item = b[index]
         return item && item.label ? item.label : ""
+    }
+
+    // ── Zone crossing acknowledgement dialog ──
+    Dialog {
+        id: zoneAckDialog
+        property int _zoneId: -1
+        title: "Acknowledge Zone Crossing"
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(420, parent.width * 0.9)
+        closePolicy: Popup.CloseOnEscape
+        background: Rectangle { color: Colors.surface; border.color: Colors.checkWarn; border.width: 2; radius: 12 }
+        padding: 12
+
+        function openForZone(zoneId) {
+            _zoneId = zoneId
+            ackReasonInput.text = ""
+            open()
+        }
+
+        ColumnLayout {
+            width: parent.width
+            spacing: 8
+
+            Text {
+                Layout.fillWidth: true
+                text: "The planned route crosses zone \"" + root._zoneNameById(zoneAckDialog._zoneId) + "\"."
+                font.pixelSize: Config.fontSizeBody
+                font.bold: true
+                color: Colors.textPrimary
+                wrapMode: Text.WordWrap
+            }
+            Text {
+                Layout.fillWidth: true
+                text: "Acknowledging records your reason in the compliance log and clears the warning for this flight."
+                font.pixelSize: Config.fontSizeSmall
+                color: Colors.textSecondary
+                wrapMode: Text.WordWrap
+            }
+            TextArea {
+                id: ackReasonInput
+                Layout.fillWidth: true
+                Layout.minimumHeight: 52
+                placeholderText: "Reason for proceeding (required)…"
+                font.pixelSize: Config.fontSizeSmall
+                wrapMode: TextArea.WordWrap
+                background: Rectangle {
+                    color: Colors.surfaceLight
+                    radius: Config.radiusSmall
+                    border.color: ackReasonInput.activeFocus ? Colors.accent : Colors.border
+                    border.width: 1
+                }
+            }
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                spacing: 8
+
+                Rectangle {
+                    width: 70; height: 28
+                    radius: Config.radiusSmall
+                    color: Colors.surfaceLight
+                    border.color: Colors.border
+                    border.width: 1
+                    Text { anchors.centerIn: parent; text: "Cancel"; font.pixelSize: Config.fontSizeBody; color: Colors.textSecondary }
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: zoneAckDialog.close()
+                    }
+                }
+                Rectangle {
+                    width: 110; height: 28
+                    radius: Config.radiusSmall
+                    enabled: ackReasonInput.text.trim().length > 0 && typeof PreflightManager !== "undefined"
+                    color: enabled ? Colors.checkWarn : Colors.surfaceLight
+                    border.color: enabled ? Colors.checkWarn : Colors.border
+                    border.width: 1
+                    Text {
+                        anchors.centerIn: parent
+                        text: "Acknowledge"
+                        font.pixelSize: Config.fontSizeBody
+                        font.bold: true
+                        color: enabled ? Colors.background : Colors.textDisabled
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        enabled: parent.enabled
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            var chk = PreflightManager.checkById("airspace.zone_compliance")
+                            if (chk && chk.acknowledgeZone(zoneAckDialog._zoneId, ackReasonInput.text.trim()))
+                                zoneAckDialog.close()
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // ── Critical issues dialog ──
@@ -713,7 +821,8 @@ Rectangle {
                                         readonly property int collapsedH: isManual || isAction ? 72 : 56
                                         property string _checkTime: ""
                                         height: isMotorSpinCheck ? (motorPanelLoader.item ? motorPanelLoader.item.implicitHeight + 10 : collapsedH)
-                                              : (expanded ? expandedCol.implicitHeight + 10 : collapsedH)
+                                              : (expanded ? expandedCol.implicitHeight + 10
+                                                          : collapsedH + (zoneAckCol.visible ? zoneAckCol.implicitHeight + 4 : 0))
                                     ToolTip {
                                         visible: tooltipMa.containsMouse
                                         text: "ID: " + checkId + "\nType: " + _engine.typeNames[type]
@@ -845,6 +954,70 @@ Rectangle {
                                             elide: Text.ElideRight
                                             maximumLineCount: 1
                                             Layout.leftMargin: 20
+                                        }
+
+                                        // Row 2b: no-fly-zone inline acknowledgement.
+                                        // Only rendered for the zone compliance check (guarded by
+                                        // the presence of its unacknowledgedZoneIds() method).
+                                        ColumnLayout {
+                                            id: zoneAckCol
+                                            Layout.fillWidth: true
+                                            visible: checkObject
+                                                     && checkObject.unacknowledgedZoneIds !== undefined
+                                                     && status === 2
+                                            spacing: 3
+                                            Layout.leftMargin: 20
+
+                                            // Re-computed whenever the check re-evaluates
+                                            property var _unackedIds: {
+                                                if (!checkObject || checkObject.unacknowledgedZoneIds === undefined)
+                                                    return []
+                                                var dep = message + "/" + status
+                                                return checkObject.unacknowledgedZoneIds()
+                                            }
+
+                                            Repeater {
+                                                model: zoneAckCol._unackedIds
+
+                                                delegate: RowLayout {
+                                                    required property var modelData
+                                                    Layout.fillWidth: true
+                                                    spacing: 6
+
+                                                    Text {
+                                                        text: "\u26A0"
+                                                        font.pixelSize: Config.fontSizeBody
+                                                        color: Colors.error
+                                                    }
+                                                    Text {
+                                                        Layout.fillWidth: true
+                                                        text: root._zoneNameById(modelData)
+                                                        font.pixelSize: Config.fontSizeBody
+                                                        font.bold: true
+                                                        color: Colors.textPrimary
+                                                        elide: Text.ElideRight
+                                                    }
+                                                    Rectangle {
+                                                        Layout.preferredHeight: 22
+                                                        Layout.preferredWidth: ackTxt.implicitWidth + 16
+                                                        radius: Config.radiusSmall
+                                                        color: Colors.checkWarn
+                                                        Text {
+                                                            id: ackTxt
+                                                            anchors.centerIn: parent
+                                                            text: "Acknowledge"
+                                                            font.pixelSize: 11
+                                                            font.bold: true
+                                                            color: Colors.background
+                                                        }
+                                                        MouseArea {
+                                                            anchors.fill: parent
+                                                            cursorShape: Qt.PointingHandCursor
+                                                            onClicked: zoneAckDialog.openForZone(modelData)
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
 
                                         // Row 3: manual / action controls

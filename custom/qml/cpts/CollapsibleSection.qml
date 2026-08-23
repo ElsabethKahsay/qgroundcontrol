@@ -23,43 +23,50 @@ ColumnLayout {
 
     default property alias contentData: contentArea.data
 
+    Layout.fillWidth: true
     spacing: root.expanded ? Config.spacingSmall : 0
 
     Rectangle {
+        id: headerRect
         Layout.fillWidth: true
-        height: 28
+        Layout.preferredHeight: 36
+        implicitHeight: 36
         radius: Config.radiusSmall
         color: Colors.surfaceLight
 
         RowLayout {
             anchors.fill: parent
-            anchors.leftMargin: Config.spacingSmall
-            anchors.rightMargin: Config.spacingSmall
+            anchors.leftMargin: Config.spacingMedium
+            anchors.rightMargin: Config.spacingMedium
             spacing: Config.spacingMedium
 
             Text {
                 text: (root.expanded ? "▼" : "▶") + "  " + root.headerText
-                font.pixelSize: Config.fontSizeSmall * Config.fontScale
+                font.pixelSize: Config.fontSizeBody
                 font.bold: true
                 color: Colors.textPrimary
             }
             Item { Layout.fillWidth: true }
             Text {
                 text: root.summaryText
-                font.pixelSize: Config.fontSizeSmall * Config.fontScale
+                font.pixelSize: Config.fontSizeBody
                 color: root.summaryColor
                 font.family: "monospace"
                 visible: !root.expanded && root.summaryText.length > 0
                 elide: Text.ElideRight
-                Layout.maximumWidth: 300
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignRight
             }
         }
         MouseArea { anchors.fill: parent; onClicked: root.toggled() }
     }
 
     Rectangle {
+        id: containerRect
         Layout.fillWidth: true
         Layout.topMargin: root.expanded ? Config.spacingSmall : 0
+        Layout.preferredHeight: height
+        implicitHeight: height
         height: root.expanded ? contentArea.implicitHeight : 0
         clip: true
         color: "transparent"
@@ -74,3 +81,4 @@ ColumnLayout {
         }
     }
 }
+
