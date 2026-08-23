@@ -256,9 +256,77 @@ public:
     Q_INVOKABLE bool setFlightDisarmedAt(int flightId, const QDateTime &time);
     Q_INVOKABLE bool closeFlight(int flightId, int durationSec,
                                  double maxAltitude, double minBatteryV,
-                                 double maxBatteryV, int modeChanges);
+                                 double maxBatteryV, int modeChanges,
+                                 double maxGroundSpeedMs = 0.0,
+                                 double maxVerticalSpeedMs = 0.0,
+                                 double distanceFlownM = 0.0,
+                                 double avgBatteryV = 0.0,
+                                 int checkPassCount = 0,
+                                 int checkFailCount = 0,
+                                 int checkWarnCount = 0,
+                                 int anomalyCount = 0);
     Q_INVOKABLE QList<QVariantMap> getFlightsForVehicle(int vehicleId, int limit = 50);
     Q_INVOKABLE QVariantMap getFlightById(int flightId);
+
+    // ── Flight history (list + detail) ─────────────────────────────
+    /// Paginated, filtered flight list for the Flight History page.
+    /// Filters: fromDate/toDate (YYYY-MM-DD, inclusive), vehicleId (0 = any),
+    /// operatorId (0 = any), mode ("" = any), search (matches purpose,
+    /// location, operator name, vehicle name).  sortBy: "date_desc" (default),
+    /// "date_asc", "duration_desc", "operator", "vehicle", "pass_rate_desc".
+    /// Returns { "rows": [...], "totalCount": N }.  Each row carries the full
+    /// flights record plus operator_name and vehicle_name.
+    Q_INVOKABLE QVariantMap queryFlights(int page, const QString &fromDate = QString(),
+                                         const QString &toDate = QString(),
+                                         int vehicleId = 0, int operatorId = 0,
+                                         const QString &mode = QString(),
+                                         const QString &search = QString(),
+                                         const QString &sortBy = QStringLiteral("date_desc"),
+                                         int pageSize = 50);
+
+    /// Check results (pre/post) for a flight, grouped by category and ordered
+    /// by evaluated time.  isPostFlight selects the audit section.
+    Q_INVOKABLE QList<QVariantMap> getCheckResultsForFlight(int flightId, bool isPostFlight);
+    /// Telemetry events for a flight in chronological order (arm → disarm),
+    /// including lat/lon/HDOP/vertical speed/heading snapshot fields.
+    Q_INVOKABLE QList<QVariantMap> getTelemetryEventsForFlight(int flightId);
+    /// Trainer handover events recorded during a training session.
+    Q_INVOKABLE QList<QVariantMap> getHandoverEventsForFlight(int flightId);
+    /// Motor test audit rows for a vehicle (keyed by MAVLink sysid).
+    Q_INVOKABLE QList<QVariantMap> getMotorTestsForVehicle(int vehicleSysId);
+    /// Control-surface sweep test rows for a flight.
+    Q_INVOKABLE QList<QVariantMap> getSurfaceTestsForFlight(int flightId);
+
+    /// Exports the filtered flight list (same WHERE logic as queryFlights,
+    /// minus pagination/search) to a CSV in the user's Documents folder.
+    /// Returns the absolute path of the written file, or an empty string on
+    /// failure.  vehicleId is the MAVLink sysid (0 = any); mode "" = any.
+    Q_INVOKABLE QString exportFlightsCsv(const QString &fromDate = QString(),
+                                         const QString &toDate = QString(),
+                                         int vehicleId = 0,
+                                         const QString &mode = QString());
+    /// Exports every event, check result and test for ONE flight as a
+    /// multi-section CSV (metadata, pre/post checks, telemetry events,
+    /// handovers, motor tests, surface tests, zone compliance).
+    /// Returns the absolute path of the written file, or an empty string on
+    /// failure.
+    Q_INVOKABLE QString exportFlightDetailCsv(int flightId);
+
+    /// Aggregated statistics over the filtered flight set (same WHERE logic
+    /// as queryFlights, minus pagination/search).  Returns a map with keys:
+    /// totalFlights, totalHoursStr, avgPassRate, anomalyRate, vehicleCount,
+    /// operatorCount.
+    Q_INVOKABLE QVariantMap getFlightStats(const QString &fromDate = QString(),
+                                           const QString &toDate = QString(),
+                                           int vehicleId = 0,
+                                           const QString &mode = QString());
+
+    // ── Flight summary helpers ────────────────────────────────────
+    /// Counts flight check results grouped by verdict (pass/fail/warn).
+    /// Returns a map with integer keys "pass", "fail" and "warn".
+    Q_INVOKABLE QVariantMap getCheckCountsForFlight(int flightId);
+    /// Number of anomaly events (CHECK_DEGRADED / BATTERY_WARN) during a flight.
+    Q_INVOKABLE int getAnomalyCountForFlight(int flightId);
 
     // ── Flight check results ───────────────────────────────────────
     Q_INVOKABLE bool insertFlightCheckResult(int flightId, const QString &checkId,
@@ -271,6 +339,22 @@ public:
                                           const QString &triggeredBy, double batteryV,
                                           double altitudeM, int gpsSats,
                                           const QString &flightMode);
+    /// Full telemetry snapshot write (also records GPS position, HDOP,
+    /// vertical speed and heading so the flight detail view can show a
+    /// richer timeline).  Basic fields kept in sync with insertTelemetryEvent.
+    Q_INVOKABLE bool insertTelemetryEventSnapshot(int flightId, const QString &eventType,
+                                                  const QString &triggeredBy, double batteryV,
+                                                  double altitudeM, int gpsSats,
+                                                  const QString &flightMode,
+                                                  double latitude, double longitude,
+                                                  double hdop, double verticalSpeed,
+                                                  double headingDeg);
+
+    // ── Transactions ──────────────────────────────────────────────
+    /// Begin an explicit SQLite transaction (multi-table write atomicy).
+    Q_INVOKABLE bool beginTransaction();
+    Q_INVOKABLE bool commitTransaction();
+    Q_INVOKABLE bool rollbackTransaction();
 
     // ── No-fly zone CRUD ────────────────────────────────────────────
     Q_INVOKABLE int insertZone(const QString &name, const QString &description,
@@ -282,18 +366,33 @@ public:
     Q_INVOKABLE bool deleteZone(int id);
     Q_INVOKABLE QList<QVariantMap> getAllZones();
     Q_INVOKABLE QList<QVariantMap> getActiveZones();
+    /// Case-insensitive lookup by exact name.  Returns an empty map when no
+    /// zone matches (used by NoFlyZoneModel's duplicate-name guard).
+    Q_INVOKABLE QVariantMap getZoneByName(const QString &name);
+    /// Seeds default sample restricted-airspace zones if table is empty.
+    Q_INVOKABLE bool seedDefaultZonesIfNeeded();
 
     // ── Manual zone compliance logging ──────────────────────────────
+    /// Writes one audit row.  When zoneId > 0 the row is tied to that zone and
+    /// records whether the mission intersected it (per-zone compliance log).
     Q_INVOKABLE bool insertComplianceRecord(int flightId, int operatorId,
                                             const QString &result,
                                             const QString &notes,
-                                            const QString &overrideReason);
+                                            const QString &overrideReason,
+                                            int zoneId = -1, bool intersecting = false);
+    /// Stamps the operator's acknowledgement reason onto the newest log row
+    /// for the given zone/flight pair.  Returns false when no row matches.
+    Q_INVOKABLE bool updateComplianceOverrideReason(int zoneId, int flightId,
+                                                    const QString &reason);
     Q_INVOKABLE QList<QVariantMap> getComplianceForFlight(int flightId);
     Q_INVOKABLE QList<QVariantMap> getComplianceHistory(int limit = 100);
 
     int schemaVersion() const;
     Q_INVOKABLE int storedSchemaVersion() const;
     Q_INVOKABLE bool migrateSchema();
+    /// Closes flight records left open by a crash or power loss.  Called once
+    /// at startup after migrations so interrupted sessions don't skew stats.
+    bool recoverOrphanedSessions();
     void reset();
 
 private:
@@ -308,7 +407,15 @@ private:
     bool execOrWarn(QSqlQuery &query, const char *tableName);
     /// Escapes special characters for safe embedding in JSON strings.
     QString escapeJson(const QString &raw);
+    /// Copies the DB file to "<dbPath>.bak" before a schema migration so a
+    /// failed migration can be rolled back manually.
+    void backupBeforeMigration();
+    /// Runs a passive WAL checkpoint; used by the periodic reliability timer.
+    void walCheckpoint();
+    /// Schedules the periodic WAL checkpoint (every 5 minutes).
+    void startMaintenanceTimer();
 
     QSqlDatabase m_db;
     bool m_initialized = false;
+    QTimer m_maintenanceTimer;
 };
