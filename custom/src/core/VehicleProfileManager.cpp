@@ -223,6 +223,10 @@ void VehicleProfileManager::onConnectionChanged()
         m_flightSessionId = -1;
         m_currentDeviceUid.clear();
         m_currentVehicleHistoryJson.clear();
+        if (m_uavWeightKg != 0.0) {
+            m_uavWeightKg = 0.0;
+            emit uavWeightChanged();
+        }
         emit currentVehicleChanged();
         return;
     }
@@ -259,8 +263,7 @@ void VehicleProfileManager::onConnectionChanged()
                                                  gpsLat, gpsLon);
 
     // Load full history
-    m_currentVehicleHistoryJson = DatabaseManager::instance().getVehicleHistory(m_currentDeviceUid);
-    if (m_currentVehicleHistoryJson.isEmpty()) {
+    m_currentVehicleHistoryJson = DatabaseManager::instance().getVehicleHistory(m_currentDeviceUid);    if (m_currentVehicleHistoryJson.isEmpty()) {
         // Minimal JSON if no db record
         QJsonObject o;
         o["deviceUid"] = m_currentDeviceUid;
@@ -268,6 +271,10 @@ void VehicleProfileManager::onConnectionChanged()
         o["airframeType"] = afType;
         m_currentVehicleHistoryJson = QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
     }
+
+    // Restore the persisted empty-airframe weight for this vehicle
+    m_uavWeightKg = DatabaseManager::instance().vehicleUavWeight(m_currentDeviceUid);
+    emit uavWeightChanged();
 
     // Start flight session with current payload weight
     m_flightSessionId = DatabaseManager::instance().startFlightSession(m_currentDeviceUid, m_batterySerial, m_payloadWeightKg);
@@ -477,6 +484,35 @@ void VehicleProfileManager::setPayloadWeightKg(double kg)
         DatabaseManager::instance().updateFlightSessionPayload(m_flightSessionId, m_payloadWeightKg);
     }
     emit payloadWeightChanged();
+}
+
+void VehicleProfileManager::setUavWeight(double value, const QString &unit)
+{
+    double kg = value;
+    if (unit.compare(QStringLiteral("lbs"), Qt::CaseInsensitive) == 0)
+        kg = value * 0.453592;
+    // Sanity clamp: 50 g .. 500 kg
+    kg = qBound(0.05, kg, 500.0);
+    if (qFuzzyCompare(m_uavWeightKg, kg)) return;
+    m_uavWeightKg = kg;
+    if (!m_currentDeviceUid.isEmpty())
+        DatabaseManager::instance().updateVehicleUavWeight(m_currentDeviceUid, m_uavWeightKg);
+    emit uavWeightChanged();
+}
+
+double VehicleProfileManager::batteryWh() const
+{
+    if (!m_telemetry) return 0.0;
+
+    double capacityMah = -1.0;
+    if (m_telemetry->hasParameter(QStringLiteral("BATT_CAPACITY")))
+        capacityMah = static_cast<double>(m_telemetry->parameterValue(QStringLiteral("BATT_CAPACITY")));
+    if (capacityMah <= 0) return 0.0;
+
+    constexpr double kNominalCellVoltage = 3.7;
+    double voltage = m_telemetry->batteryVoltage();
+    double cellCount = voltage > 0 ? qRound(voltage / 4.2) : 6;  // assume 6S fallback
+    return capacityMah * cellCount * kNominalCellVoltage / 1000.0;
 }
 
 // Update the operation location name and persist to the active flight session.

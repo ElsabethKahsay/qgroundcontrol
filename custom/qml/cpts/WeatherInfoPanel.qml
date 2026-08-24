@@ -113,6 +113,30 @@ Rectangle {
                 }
             }
 
+            // ── Live telemetry: altitude & GPS fix ────────────────────
+            GridLayout {
+                width: parent.width
+                columns: 2
+                columnSpacing: 16
+                rowSpacing: 10
+
+                InfoCell {
+                    icon: "\u2B06"   // ⬆
+                    label: qsTr("Altitude MSL")
+                    value: TelemetryProvider.gpsSatellites > 0
+                           ? TelemetryProvider.globalAltitude.toFixed(1) + " m"
+                           : qsTr("Waiting for GPS\u2026")
+                }
+                InfoCell {
+                    icon: "\u{1F4CD}"   // 📍
+                    label: qsTr("GPS Position")
+                    value: TelemetryProvider.gpsSatellites > 0
+                           ? TelemetryProvider.gpsLatitude.toFixed(5) + ", "
+                             + TelemetryProvider.gpsLongitude.toFixed(5)
+                           : qsTr("No fix")
+                }
+            }
+
             SectionDivider {}
 
             // ── Conditions (2-column grid) ──────────────────────────

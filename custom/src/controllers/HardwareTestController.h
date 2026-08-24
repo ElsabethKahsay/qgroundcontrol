@@ -54,6 +54,7 @@ class HardwareTestController : public QObject
     Q_PROPERTY(QString vehicleAutopilotLabel READ vehicleAutopilotLabel NOTIFY vehicleTypeLabelChanged)
     Q_PROPERTY(bool isFixedWing READ isFixedWing NOTIFY vehicleTypeLabelChanged)
     Q_PROPERTY(bool firstTestDone READ firstTestDone WRITE setFirstTestDone NOTIFY firstTestDoneChanged)
+    Q_PROPERTY(bool rcOverrideActive READ rcOverrideActive NOTIFY rcOverrideActiveChanged)
     Q_PROPERTY(int durationSec READ durationSec WRITE setDurationSec NOTIFY durationSecChanged)
     Q_PROPERTY(QVariantList motorPwmValues READ motorPwmValues NOTIFY motorPwmValuesChanged)
 
@@ -155,6 +156,13 @@ public:
     /// Emergency stop: sends zero throttle to all motors and resets timers.
     Q_INVOKABLE void stopAll();
 
+    /// RC override hold: while active, streams RC_CHANNELS_OVERRIDE at 10 Hz
+    /// holding roll/pitch/yaw (RC1/2/4) neutral at 1500 µs so attitude
+    /// stabilization doesn't fight bench-test commands; the throttle channel is
+    /// left free for motor tests.  Deactivating releases all 18 channels (65535).
+    Q_INVOKABLE void setRcOverrideActive(bool active);
+    bool rcOverrideActive() const { return _rcOverrideActive; }
+
     /// Sends a normal MAVLink disarm command (no force flag).
     /// Use this to recover when the vehicle is left armed after a failed test.
     Q_INVOKABLE void disarmVehicle();
@@ -198,6 +206,7 @@ signals:
     void vtolChanged();
     void vehicleTypeLabelChanged();
     void firstTestDoneChanged();
+    void rcOverrideActiveChanged();
 
     // Per-motor slider updates
     void targetThrottleChanged(int motorIndex, double pct);
@@ -427,6 +436,20 @@ private:
     /// Re-sends RC_CHANNELS_OVERRIDE every second while the FW motor spins
     /// (ArduPilot drops the override after RC_OVERRIDE_TIME without refresh).
     QTimer _fwOverrideTimer;
+
+    // ── RC override hold (MANUAL-mode bench testing) ────────────────────
+
+    /// Streams a neutral-hold RC_CHANNELS_OVERRIDE while _rcOverrideActive.
+    QTimer _rcOverrideTimer;
+    bool _rcOverrideActive = false;
+
+    /// Sends one RC_CHANNELS_OVERRIDE with the given 18 channel values
+    /// (65535 = release/ignore channel).
+    void _sendRawRcOverride(const uint16_t *vals);
+
+    /// Hold message: RC1/2/4 (roll/pitch/yaw) at 1500 µs, everything else released.
+    void _sendControlNeutralHold();
+
     /// Single-shot timer advancing the FW phase machine (arm-wait, spin, spin-down, disarm).
     QTimer _fwPhaseTimer;
     /// 0-based motor index currently under the FW test, or -1 when idle.

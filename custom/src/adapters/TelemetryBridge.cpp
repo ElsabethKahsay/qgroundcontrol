@@ -508,7 +508,7 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message)
         mavlink_global_position_int_t gp;
         mavlink_msg_global_position_int_decode(&message, &gp);
 
-        // MSL altitude (cm → m) from EKF-blended solution.
+        // MSL altitude (mm → m) from EKF-blended solution.
         double altMsl = gp.alt / 1000.0;
         if (gp.alt != INT32_MAX && qAbs(altMsl - _globalAltitude) > 0.1) {
             _globalAltitude = altMsl;

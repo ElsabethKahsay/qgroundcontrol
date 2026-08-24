@@ -64,6 +64,7 @@
     <qresource prefix="qml/singletons">
         <file alias="Colors.qml">qml/singletons/Colors.qml</file>
         <file alias="Config.qml">qml/singletons/Config.qml</file>
+        <file alias="DistanceTracker.qml">qml/singletons/DistanceTracker.qml</file>
         <file alias="VehicleTelemetry.qml">qml/singletons/VehicleTelemetry.qml</file>
     </qresource>
     <qresource prefix="qml/analyze">

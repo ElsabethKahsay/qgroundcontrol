@@ -82,6 +82,10 @@ HardwareTestController::HardwareTestController(QObject *parent)
 
     _fwPhaseTimer.setSingleShot(true);
     connect(&_fwPhaseTimer, &QTimer::timeout, this, &HardwareTestController::_fwAdvancePhase);
+
+    // RC override hold — ArduPilot expires overrides quickly, so stream at 10 Hz.
+    _rcOverrideTimer.setInterval(100);
+    connect(&_rcOverrideTimer, &QTimer::timeout, this, &HardwareTestController::_sendControlNeutralHold);
 }
 
 /// Binds this controller to a vehicle.  Disconnects from any previous vehicle,
@@ -89,6 +93,10 @@ HardwareTestController::HardwareTestController(QObject *parent)
 /// and kicks off parameter loading / motor-count resolution.
 void HardwareTestController::setVehicle(Vehicle *vehicle)
 {
+    // Never carry an RC override hold across a vehicle change/disconnect.
+    if (_rcOverrideActive)
+        setRcOverrideActive(false);
+
     if (_vehicle) {
         disconnect(_vehicle, &Vehicle::mavCommandResult, this, &HardwareTestController::_onCommandResult);
         disconnect(_vehicle, &Vehicle::mavlinkMessageReceived, this, &HardwareTestController::_onMavlinkMessage);
@@ -1157,9 +1165,73 @@ void HardwareTestController::_onCommandResult(int vehicleId, int targetComponent
 /// Emergency stop: immediately halts all motor activity.
 /// Sends DO_MOTOR_TEST with 1000 µs (disarmed) to each motor, cancels any active
 /// test, and resets all timers, state arrays, and cooldown tracking.
+// ── RC override hold (MANUAL-mode bench testing) ────────────────────────────
+
+/// Sends one RC_CHANNELS_OVERRIDE frame with the given channel values.
+void HardwareTestController::_sendRawRcOverride(const uint16_t *vals)
+{
+    if (!_vehicle)
+        return;
+
+    MAVLinkProtocol *proto = MAVLinkProtocol::instance();
+    mavlink_message_t msg;
+    mavlink_msg_rc_channels_override_pack(
+        proto ? proto->getSystemId() : 255,
+        MAVLinkProtocol::getComponentId(),
+        &msg,
+        static_cast<uint8_t>(_vehicle->id()),
+        0,
+        vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], vals[6], vals[7],
+        vals[8], vals[9], vals[10], vals[11], vals[12], vals[13], vals[14], vals[15],
+        vals[16], vals[17]);
+
+    SharedLinkInterfacePtr sharedLink = _vehicle->vehicleLinkManager()->primaryLink().lock();
+    if (sharedLink) {
+        _vehicle->sendMessageOnLinkThreadSafe(sharedLink.get(), msg);
+    }
+}
+
+/// Hold message: roll/pitch/yaw pinned to 1500 µs so stabilization doesn't
+/// fight bench tests; throttle and all other channels released (65535).
+void HardwareTestController::_sendControlNeutralHold()
+{
+    uint16_t vals[18];
+    for (int i = 0; i < 18; ++i)
+        vals[i] = 65535;
+    vals[0] = 1500; // RC1 (Roll / Aileron)
+    vals[1] = 1500; // RC2 (Pitch / Elevator)
+    vals[3] = 1500; // RC4 (Yaw / Rudder)
+    _sendRawRcOverride(vals);
+}
+
+void HardwareTestController::setRcOverrideActive(bool active)
+{
+    if (_rcOverrideActive == active)
+        return;
+    _rcOverrideActive = active;
+
+    qCDebug(hardwareTestLog) << "RC override" << (active ? "ON — control channels held neutral"
+                                                         : "OFF — releasing all channels");
+    if (active) {
+        _sendControlNeutralHold();
+        _rcOverrideTimer.start();
+    } else {
+        _rcOverrideTimer.stop();
+        uint16_t release[18];
+        for (int i = 0; i < 18; ++i)
+            release[i] = 65535;
+        _sendRawRcOverride(release);
+    }
+    emit rcOverrideActiveChanged();
+}
+
 void HardwareTestController::stopAll()
 {
     if (!_vehicle) return;
+
+    // Release any active RC override hold so controls return to the pilot.
+    if (_rcOverrideActive)
+        setRcOverrideActive(false);
 
     // A deferred motor test waiting on a disarm ACK must be cancelled so it
     // cannot auto-start after STOP ALL.

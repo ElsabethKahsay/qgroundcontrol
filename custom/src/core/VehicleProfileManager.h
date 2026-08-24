@@ -43,6 +43,10 @@ class VehicleProfileManager : public QObject {
     Q_PROPERTY(int motorCount READ motorCount NOTIFY vehicleTypeResolved)
     Q_PROPERTY(bool typeResolved READ typeResolved NOTIFY vehicleTypeResolved)
 
+    /// Empty-airframe weight in kg (persisted per vehicle, used by the
+    /// payload/battery flight-time estimate).
+    Q_PROPERTY(double uavWeightKg READ uavWeightKg NOTIFY uavWeightChanged)
+
 public:
     static VehicleProfileManager *instance();
     explicit VehicleProfileManager(QObject *parent = nullptr);
@@ -75,6 +79,15 @@ public:
     double currentPayloadWeightKg() const { return m_payloadWeightKg; }
     void setPayloadWeightKg(double kg);
 
+    /// Sets the empty-airframe weight. Accepts "kg" (default) or "lbs" and
+    /// converts to kg before persisting to vehicles.uav_weight_kg.
+    Q_INVOKABLE void setUavWeight(double value, const QString &unit = QStringLiteral("kg"));
+    double uavWeightKg() const { return m_uavWeightKg; }
+
+    /// Battery capacity in Wh from BATT_CAPACITY (mAh) × cell voltage, using
+    /// live pack voltage to infer cell count (6S fallback). 0 when unknown.
+    Q_INVOKABLE double batteryWh() const;
+
     QString currentLocationName() const { return m_locationName; }
     void setLocationName(const QString &name);
 
@@ -96,6 +109,7 @@ public:
 
 signals:
     void currentVehicleChanged();
+    void uavWeightChanged();
     void currentBatteryChanged();
     void payloadWeightChanged();
     void locationNameChanged();
@@ -130,6 +144,7 @@ private:
     QString m_batterySerial;
     int m_flightSessionId = -1;
     double m_payloadWeightKg = 0.0;
+    double m_uavWeightKg = 0.0;
     QString m_locationName;
     double m_planLat = 0.0;
     double m_planLon = 0.0;
