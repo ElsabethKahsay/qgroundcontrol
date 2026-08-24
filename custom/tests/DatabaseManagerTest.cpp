@@ -412,6 +412,14 @@ void DatabaseManagerTest::testZoneCrud()
     tmpFile.open();
     QVERIFY(db.initialize(tmpFile.fileName()));
 
+    // Fresh databases are seeded with default airspace zones (Bole Airport
+    // exclusion etc.).  Remove them so the CRUD counts below stay exact.
+    const auto seeded = db.getAllZones();
+    for (const QVariantMap &z : seeded) {
+        QVERIFY(db.deleteZone(z.value(QStringLiteral("id")).toInt()));
+    }
+    QCOMPARE(db.getAllZones().size(), 0);
+
     // Create
     int id1 = db.insertZone(QStringLiteral("Airport CTR"), QStringLiteral("Class D"),
                             47.3977, 8.6611, 7500.0, QStringLiteral("Regulatory"));
@@ -550,7 +558,7 @@ void DatabaseManagerTest::testV12Migration()
 
     db.reset();
     QVERIFY(db.initialize(dbPath));
-    QCOMPARE(db.storedSchemaVersion(), 13);
+    QCOMPARE(db.storedSchemaVersion(), 14);
 
     // v13: zone_id + intersection columns exist on zone_compliance_log.
     {
@@ -572,6 +580,32 @@ void DatabaseManagerTest::testV12Migration()
         checkDb.close();
     }
     QSqlDatabase::removeDatabase(QStringLiteral("v13_col_conn"));
+
+    // v14: uav_weight_kg column exists on vehicles and round-trips through
+    // the weight accessors (0 default → stored value → readable back).
+    {
+        QSqlDatabase checkDb = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                                         QStringLiteral("v14_col_conn"));
+        checkDb.setDatabaseName(dbPath);
+        QVERIFY(checkDb.open());
+        QSqlQuery q(checkDb);
+        QVERIFY(q.exec(QStringLiteral("PRAGMA table_info(vehicles)")));
+        bool hasUavWeight = false;
+        while (q.next()) {
+            if (q.value(1).toString() == QStringLiteral("uav_weight_kg"))
+                hasUavWeight = true;
+        }
+        QVERIFY(hasUavWeight);
+        checkDb.close();
+    }
+    QSqlDatabase::removeDatabase(QStringLiteral("v14_col_conn"));
+
+    // Exercise the production write path used by VehicleProfileManager.
+    QVERIFY(db.upsertVehicleEx(QStringLiteral("uid-v14-test"), QStringLiteral("Test Rig"),
+                               QStringLiteral("ardupilotmega"), QStringLiteral("quad")));
+    QVERIFY(db.updateVehicleUavWeight(QStringLiteral("uid-v14-test"), 1.850));
+    QCOMPARE(db.vehicleUavWeight(QStringLiteral("uid-v14-test")), 1.850);
+    QCOMPARE(db.vehicleUavWeight(QStringLiteral("uid-unknown")), 0.0);
 
     // New summary columns exist on flights.
     auto flight = db.getFlightById(1);

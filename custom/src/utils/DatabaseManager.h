@@ -148,6 +148,10 @@ public:
                                      int frameClass = -1, int frameType = -1,
                                      int motorCount = 0, const QString &motorLayout = QString(),
                                      double gpsLat = 0.0, double gpsLon = 0.0);
+
+    /// Empty-airframe weight (kg) persistence for the payload/battery estimate.
+    Q_INVOKABLE bool updateVehicleUavWeight(const QString &deviceUid, double weightKg);
+    Q_INVOKABLE double vehicleUavWeight(const QString &deviceUid) const;
     Q_INVOKABLE QString getVehicle(const QString &deviceUid);
     Q_INVOKABLE QStringList listVehicles();
     Q_INVOKABLE bool deleteVehicle(const QString &deviceUid);
@@ -211,6 +215,14 @@ public:
     Q_INVOKABLE bool updateFlightSessionPayload(int sessionId, double payloadWeightKg);
     Q_INVOKABLE bool updateFlightSessionLocation(int sessionId, const QString &locationName);
     Q_INVOKABLE bool updateFlightSessionPlanLocation(int sessionId, double lat, double lon);
+    /// Persists the operator-confirmed target location for a flight session
+    /// (lat/lon plus a source tag: "map center" / "manual").  Returns false
+    /// when the session id is unknown or the values are out of range.
+    Q_INVOKABLE bool saveTargetLocation(int sessionId, double lat, double lon,
+                                        const QString &source);
+    /// Returns {lat, lon, source} for the session, or an empty map when no
+    /// target location was saved (or the session id is unknown).
+    Q_INVOKABLE QVariantMap getTargetLocation(int sessionId);
     Q_INVOKABLE bool endFlightSession(int sessionId, double durationSeconds);
     Q_INVOKABLE bool updateFlightSessionEnergy(int sessionId, double energyConsumedWh, double distanceM);
     Q_INVOKABLE QString getFlightSessions(const QString &deviceUid, int limit = 10);

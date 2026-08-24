@@ -5,6 +5,7 @@
 #include "WeatherProvider.h"
 
 #include <QDebug>
+#include <cmath>
 
 static FlightSession *s_instance = nullptr;
 
@@ -141,9 +142,64 @@ void FlightSession::startFlightSession(const QString &purpose,
     m_startedAt = QDateTime::currentDateTimeUtc();
     _setMode(SessionMode::Flight);
     _setState(SessionState::PreFlight);
+    reloadTargetLocation();
     emit flightIdChanged();
     emit armingPermittedChanged();
     emit sessionStarted(SessionMode::Flight);
+}
+
+bool FlightSession::saveTargetLocation(double lat, double lon, const QString &source)
+{
+    auto fail = [this](const QString &why) {
+        if (m_lastTargetError != why) {
+            m_lastTargetError = why;
+            emit lastTargetErrorChanged();
+        }
+        return false;
+    };
+
+    if (m_flightId <= 0)
+        return fail(QStringLiteral("No active flight session"));
+    if (!std::isfinite(lat) || !std::isfinite(lon))
+        return fail(QStringLiteral("Enter a valid latitude and longitude"));
+    if (lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0)
+        return fail(QStringLiteral("Latitude must be \u00B190, longitude \u00B1180"));
+    if (source.trimmed().isEmpty())
+        return fail(QStringLiteral("Missing location source"));
+
+    if (!DatabaseManager::instance().saveTargetLocation(m_flightId, lat, lon, source.trimmed()))
+        return fail(QStringLiteral("Failed to save target location"));
+
+    m_targetLat = lat;
+    m_targetLon = lon;
+    m_targetSource = source.trimmed();
+    emit targetLocationChanged();
+
+    if (!m_lastTargetError.isEmpty()) {
+        m_lastTargetError.clear();
+        emit lastTargetErrorChanged();
+    }
+    return true;
+}
+
+void FlightSession::reloadTargetLocation()
+{
+    QVariantMap loc = DatabaseManager::instance().getTargetLocation(m_flightId);
+    if (loc.isEmpty()) {
+        // No persisted location for this flight — clear the cache.
+        if (!std::isnan(m_targetLat) || !std::isnan(m_targetLon)
+                || !m_targetSource.isEmpty()) {
+            m_targetLat = std::numeric_limits<double>::quiet_NaN();
+            m_targetLon = std::numeric_limits<double>::quiet_NaN();
+            m_targetSource.clear();
+            emit targetLocationChanged();
+        }
+        return;
+    }
+    m_targetLat = loc.value(QStringLiteral("lat")).toDouble();
+    m_targetLon = loc.value(QStringLiteral("lon")).toDouble();
+    m_targetSource = loc.value(QStringLiteral("source")).toString();
+    emit targetLocationChanged();
 }
 
 void FlightSession::onPreFlightComplete()
@@ -196,6 +252,10 @@ void FlightSession::closeSession()
     m_maxVerticalSpeedMs = 0.0;
     m_distanceFlownM = 0.0;
     m_avgBatteryV = 0.0;
+    m_targetLat = std::numeric_limits<double>::quiet_NaN();
+    m_targetLon = std::numeric_limits<double>::quiet_NaN();
+    m_targetSource.clear();
+    emit targetLocationChanged();
     emit flightIdChanged();
     emit armingPermittedChanged();
     emit formCompleteChanged();

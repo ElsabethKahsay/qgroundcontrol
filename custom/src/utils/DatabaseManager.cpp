@@ -21,6 +21,7 @@ Q_LOGGING_CATEGORY(dbLog, "database.manager")
 #include <QStandardPaths>
 #include <QTimer>
 #include <QFileInfo>
+#include <cmath>
 
 /**
  * @brief Get the singleton instance of DatabaseManager
@@ -237,7 +238,7 @@ bool DatabaseManager::initialize(const QString &dbPath)
 //  13 - zone_id + intersection columns on zone_compliance_log so the automatic
 //       ZoneComplianceCheck can write one audit row per active zone.  zone_id is
 //       ON DELETE SET NULL so deleting a zone never breaks the audit trail.
-static const int kLatestSchemaVersion = 13;
+static const int kLatestSchemaVersion = 15;
 
 bool DatabaseManager::createTables()
 {
@@ -381,6 +382,7 @@ bool DatabaseManager::createTables()
             last_seen TEXT NOT NULL,
             total_flight_count INTEGER NOT NULL DEFAULT 0,
             total_flight_hours REAL NOT NULL DEFAULT 0.0,
+            uav_weight_kg REAL NOT NULL DEFAULT 0.0,
             identity_source TEXT NOT NULL DEFAULT 'hardware_uid'
         )
     )");
@@ -1307,6 +1309,78 @@ bool DatabaseManager::migrateSchema()
             q.exec("CREATE INDEX IF NOT EXISTS idx_compliance_zone ON zone_compliance_log(zone_id)");
             break;
         }
+        case 14: {
+            // v14: uav_weight_kg on vehicles — empty-airframe weight used by the
+            // payload/battery flight-time estimate in the gimbal/payload UI.
+            QSqlQuery pragma14(m_db);
+            pragma14.exec("PRAGMA table_info(vehicles)");
+            bool hasWeight = false;
+            while (pragma14.next()) {
+                if (pragma14.value(1).toString() == QLatin1String("uav_weight_kg")) { hasWeight = true; break; }
+            }
+            if (!hasWeight) {
+                if (!q.exec(QStringLiteral(
+                        "ALTER TABLE vehicles ADD COLUMN uav_weight_kg REAL NOT NULL DEFAULT 0.0")))
+                    qWarning() << "DatabaseManager: v14 add column failed:" << q.lastError().text();
+            }
+
+            // Self-heal vehicle columns introduced by earlier migrations.  A
+            // database that skipped a step (partial restore, hand-built file)
+            // would otherwise leave upsertVehicleEx() failing to prepare — its
+            // INSERT references frame/motor/gps columns that only cases 8–11
+            // add.  ALTER ADD is idempotent per-column via the PRAGMA check.
+            const QStringList v14VehicleCols = {
+                QStringLiteral("fingerprint TEXT DEFAULT ''"),
+                QStringLiteral("compid INTEGER DEFAULT 0"),
+                QStringLiteral("firmware_version TEXT DEFAULT ''"),
+                QStringLiteral("board_version TEXT DEFAULT ''"),
+                QStringLiteral("sysid INTEGER"),
+                QStringLiteral("fingerprint_source TEXT DEFAULT ''"),
+                QStringLiteral("frame_class INTEGER DEFAULT -1"),
+                QStringLiteral("frame_type INTEGER DEFAULT -1"),
+                QStringLiteral("motor_count INTEGER DEFAULT 0"),
+                QStringLiteral("motor_layout TEXT DEFAULT ''"),
+                QStringLiteral("gps_latitude REAL DEFAULT 0"),
+                QStringLiteral("gps_longitude REAL DEFAULT 0"),
+                QStringLiteral("identity_source TEXT DEFAULT ''")
+            };
+            for (const QString &colDef : v14VehicleCols) {
+                QSqlQuery pragmaV(m_db);
+                pragmaV.exec(QStringLiteral("PRAGMA table_info(vehicles)"));
+                const QString colName = colDef.section(QLatin1Char(' '), 0, 0);
+                bool present = false;
+                while (pragmaV.next()) {
+                    if (pragmaV.value(1).toString() == colName) { present = true; break; }
+                }
+                if (!present) {
+                    q.exec(QStringLiteral("ALTER TABLE vehicles ADD COLUMN %1").arg(colDef));
+                }
+            }
+            break;
+        }
+        case 15: {
+            // v15: target location columns on flight_sessions — the
+            // operator-confirmed target (lat/lon + source tag) submitted from
+            // the preflight checklist.  Kept on the session row so the value
+            // is available for the whole flight record.
+            auto addColV15 = [&](const QString &colDef) {
+                QSqlQuery pragma15(m_db);
+                pragma15.exec("PRAGMA table_info(flight_sessions)");
+                bool has = false;
+                QString colName = colDef.section(' ', 0, 0);
+                while (pragma15.next()) {
+                    if (pragma15.value(1).toString() == colName) { has = true; break; }
+                }
+                if (!has) {
+                    if (!q.exec(QStringLiteral("ALTER TABLE flight_sessions ADD COLUMN %1").arg(colDef)))
+                        qWarning() << "DatabaseManager: v15 add column failed:" << q.lastError().text();
+                }
+            };
+            addColV15(QStringLiteral("target_lat REAL NOT NULL DEFAULT 0.0"));
+            addColV15(QStringLiteral("target_lon REAL NOT NULL DEFAULT 0.0"));
+            addColV15(QStringLiteral("target_source TEXT NOT NULL DEFAULT ''"));
+            break;
+        }
         default:
             qWarning() << "DatabaseManager: unknown migration version" << v;
             return false;
@@ -1559,6 +1633,31 @@ bool DatabaseManager::upsertVehicleEx(const QString &deviceUid, const QString &f
     q.addBindValue(gpsLon);
     q.addBindValue(gpsLon);
     return execOrWarn(q, "upsertVehicleEx");
+}
+
+/** @brief Stores the empty-airframe weight (kg) for a vehicle profile. */
+bool DatabaseManager::updateVehicleUavWeight(const QString &deviceUid, double weightKg)
+{
+    if (!m_initialized || deviceUid.isEmpty()) return false;
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE vehicles SET uav_weight_kg = ? WHERE device_uid = ?");
+    q.addBindValue(weightKg);
+    q.addBindValue(deviceUid);
+    return execOrWarn(q, "updateVehicleUavWeight");
+}
+
+/** @brief Returns the stored empty-airframe weight (kg), or 0 when unknown. */
+double DatabaseManager::vehicleUavWeight(const QString &deviceUid) const
+{
+    if (!m_initialized || deviceUid.isEmpty()) return 0.0;
+    QSqlQuery q(m_db);
+    q.prepare("SELECT uav_weight_kg FROM vehicles WHERE device_uid = ?");
+    q.addBindValue(deviceUid);
+    if (!q.exec() || !q.next()) {
+        qWarning() << "DatabaseManager: vehicleUavWeight query failed:" << q.lastError().text();
+        return 0.0;
+    }
+    return q.value(0).toDouble();
 }
 
 QString DatabaseManager::getVehicle(const QString &deviceUid)
@@ -3373,6 +3472,46 @@ bool DatabaseManager::updateFlightSessionPlanLocation(int sessionId, double lat,
     q.addBindValue(lon);
     q.addBindValue(sessionId);
     return execOrWarn(q, "updateFlightSessionPlanLocation");
+}
+
+bool DatabaseManager::saveTargetLocation(int sessionId, double lat, double lon,
+                                         const QString &source)
+{
+    if (!m_initialized) return false;
+    if (sessionId <= 0) return false;
+    if (!std::isfinite(lat) || !std::isfinite(lon)) return false;
+    if (lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0) return false;
+
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE flight_sessions "
+              "SET target_lat = ?, target_lon = ?, target_source = ? WHERE id = ?");
+    q.addBindValue(lat);
+    q.addBindValue(lon);
+    q.addBindValue(source);
+    q.addBindValue(sessionId);
+    return execOrWarn(q, "saveTargetLocation");
+}
+
+QVariantMap DatabaseManager::getTargetLocation(int sessionId)
+{
+    QVariantMap out;
+    if (!m_initialized || sessionId <= 0) return out;
+    QSqlQuery q(m_db);
+    q.prepare("SELECT target_lat, target_lon, target_source "
+              "FROM flight_sessions WHERE id = ?");
+    q.addBindValue(sessionId);
+    if (!execOrWarn(q, "getTargetLocation")) return out;
+    if (!q.next()) return out;
+    const double lat = q.value(0).toDouble();
+    const double lon = q.value(1).toDouble();
+    const QString source = q.value(2).toString();
+    // A never-saved session row carries the column defaults (0/0/"") —
+    // report that as "no location" instead of a fake coordinate.
+    if (source.isEmpty() && lat == 0.0 && lon == 0.0) return out;
+    out.insert(QStringLiteral("lat"), lat);
+    out.insert(QStringLiteral("lon"), lon);
+    out.insert(QStringLiteral("source"), source);
+    return out;
 }
 
 bool DatabaseManager::endFlightSession(int sessionId, double durationSeconds)

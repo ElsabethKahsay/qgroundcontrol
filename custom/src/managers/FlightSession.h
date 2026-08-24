@@ -2,6 +2,7 @@
 #include <QObject>
 #include <QDateTime>
 #include <QVariantMap>
+#include <limits>
 #include <QtQml/qqmlregistration.h>
 
 class FlightSession : public QObject
@@ -19,6 +20,13 @@ class FlightSession : public QObject
     Q_PROPERTY(bool         formComplete  READ formComplete  NOTIFY formCompleteChanged)
     Q_PROPERTY(QString      sessionSummary READ sessionSummary NOTIFY stateChanged)
     Q_PROPERTY(QString      instructorName READ instructorName NOTIFY instructorChanged)
+    /// Operator-confirmed target location for the current flight (persisted
+    /// on flight_sessions via saveTargetLocation).  NaN/"" when not yet set.
+    Q_PROPERTY(double       targetLat    READ targetLat    NOTIFY targetLocationChanged)
+    Q_PROPERTY(double       targetLon    READ targetLon    NOTIFY targetLocationChanged)
+    Q_PROPERTY(QString      targetSource READ targetSource NOTIFY targetLocationChanged)
+    /// Last saveTargetLocation() failure reason ("" when the last call succeeded).
+    Q_PROPERTY(QString      lastTargetError READ lastTargetError NOTIFY lastTargetErrorChanged)
 
 public:
     enum class SessionMode {
@@ -53,6 +61,18 @@ public:
     bool         isFlight()     const { return m_mode == SessionMode::Flight; }
     bool         formComplete() const { return m_formComplete; }
     QString      sessionSummary() const;
+    double       targetLat()    const { return m_targetLat; }
+    double       targetLon()    const { return m_targetLon; }
+    QString      targetSource() const { return m_targetSource; }
+    QString      lastTargetError() const { return m_lastTargetError; }
+
+    /// Validates and persists the target location for the current flight.
+    /// source is a short tag such as "map center" or "manual".  Returns false
+    /// (with lastTargetError set) when no flight is active or the coordinates
+    /// are missing/out of range — nothing is written to the DB in that case.
+    Q_INVOKABLE bool saveTargetLocation(double lat, double lon, const QString &source);
+    /// Re-reads the persisted target location for the current flight id.
+    Q_INVOKABLE void reloadTargetLocation();
 
     Q_INVOKABLE void onVehicleConnected();
     Q_INVOKABLE void setMode(const QString &mode);
@@ -91,6 +111,8 @@ signals:
     void sessionClosed(int flightId);
     void instructorChanged();
     void postFlightChecklistRequired();
+    void targetLocationChanged();
+    void lastTargetErrorChanged();
 
 private:
     void _setState(SessionState s);
@@ -113,4 +135,8 @@ private:
     double       m_avgBatteryV  = 0.0;
     int          m_instructorId = -1;
     QString      m_instructorName;
+    double       m_targetLat    = std::numeric_limits<double>::quiet_NaN();
+    double       m_targetLon    = std::numeric_limits<double>::quiet_NaN();
+    QString      m_targetSource;
+    QString      m_lastTargetError;
 };
