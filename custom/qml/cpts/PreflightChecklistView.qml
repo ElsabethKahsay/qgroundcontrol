@@ -40,6 +40,9 @@ Rectangle {
     property var _runningChecks: ({})
     property var _expandedChecks: ({})
     property bool _priorityListVisible: false
+    // True when the target-location fields were last filled from the map center
+    // (drives the source tag persisted with the submitted location).
+    property bool _targetFromMap: false
 
     // Captured once on load — do NOT bind live; values must be stable for the session
     property string _vehicleType: "UNKNOWN"
@@ -48,6 +51,12 @@ Rectangle {
     Component.onCompleted: {
         _vehicleType = (typeof VehicleProfileManager !== "undefined") ? VehicleProfileManager.vehicleType : "UNKNOWN"
         _motorCount  = (typeof VehicleProfileManager !== "undefined") ? VehicleProfileManager.motorCount  : 0
+        // Restore a previously submitted target location for this flight, if any.
+        if (!isNaN(FlightSession.targetLat) && !isNaN(FlightSession.targetLon)) {
+            targetLat.text = FlightSession.targetLat.toFixed(6)
+            targetLon.text = FlightSession.targetLon.toFixed(6)
+            root._targetFromMap = (FlightSession.targetSource === qsTr("map center"))
+        }
     }
 
     // Re-capture when resolved (once only)
@@ -76,19 +85,17 @@ Rectangle {
         if (multi) {
             if (cId === "sensors.airspeed")             return false
         }
+        // Zone compliance is managed from the Gimbal/Payload page's
+        // restricted-zones checklist — not shown as a preflight row.
+        if (cId === "airspace.zone_compliance")     return false
         return true
     }
 
-    // Helper: display name for a no-fly-zone id (falls back to "#id")
-    function _zoneNameById(zoneId) {
-        if (typeof NoFlyZoneModel === "undefined") return "#" + zoneId
-        for (var i = 0; i < NoFlyZoneModel.count; ++i) {
-            var idx = NoFlyZoneModel.index(i, 0)
-            if (NoFlyZoneModel.data(idx, NoFlyZoneModelRoles.ZoneIdRole) === zoneId)
-                return NoFlyZoneModel.data(idx, NoFlyZoneModelRoles.NameRole)
-        }
-        return "#" + zoneId
-    }
+    // NOTE: per-zone acknowledge UI (inline rows + dialog) was moved off this
+    // page and the "No-Fly Zone Compliance" row is hidden from the list
+    // (_checkVisible above).  The check itself stays registered and keeps
+    // evaluating; the Gimbal/Payload page's restricted-zones dropdown reads
+    // it via PreflightManager.checkById("airspace.zone_compliance").
 
     signal nextClicked()
 
@@ -98,103 +105,6 @@ Rectangle {
         if (!b || b.length <= index) return ""
         var item = b[index]
         return item && item.label ? item.label : ""
-    }
-
-    // ── Zone crossing acknowledgement dialog ──
-    Dialog {
-        id: zoneAckDialog
-        property int _zoneId: -1
-        title: "Acknowledge Zone Crossing"
-        modal: true
-        anchors.centerIn: parent
-        width: Math.min(420, parent.width * 0.9)
-        closePolicy: Popup.CloseOnEscape
-        background: Rectangle { color: Colors.surface; border.color: Colors.checkWarn; border.width: 2; radius: 12 }
-        padding: 12
-
-        function openForZone(zoneId) {
-            _zoneId = zoneId
-            ackReasonInput.text = ""
-            open()
-        }
-
-        ColumnLayout {
-            width: parent.width
-            spacing: 8
-
-            Text {
-                Layout.fillWidth: true
-                text: "The planned route crosses zone \"" + root._zoneNameById(zoneAckDialog._zoneId) + "\"."
-                font.pixelSize: Config.fontSizeBody
-                font.bold: true
-                color: Colors.textPrimary
-                wrapMode: Text.WordWrap
-            }
-            Text {
-                Layout.fillWidth: true
-                text: "Acknowledging records your reason in the compliance log and clears the warning for this flight."
-                font.pixelSize: Config.fontSizeSmall
-                color: Colors.textSecondary
-                wrapMode: Text.WordWrap
-            }
-            TextArea {
-                id: ackReasonInput
-                Layout.fillWidth: true
-                Layout.minimumHeight: 52
-                placeholderText: "Reason for proceeding (required)…"
-                font.pixelSize: Config.fontSizeSmall
-                wrapMode: TextArea.WordWrap
-                background: Rectangle {
-                    color: Colors.surfaceLight
-                    radius: Config.radiusSmall
-                    border.color: ackReasonInput.activeFocus ? Colors.accent : Colors.border
-                    border.width: 1
-                }
-            }
-            RowLayout {
-                Layout.alignment: Qt.AlignRight
-                spacing: 8
-
-                Rectangle {
-                    width: 70; height: 28
-                    radius: Config.radiusSmall
-                    color: Colors.surfaceLight
-                    border.color: Colors.border
-                    border.width: 1
-                    Text { anchors.centerIn: parent; text: "Cancel"; font.pixelSize: Config.fontSizeBody; color: Colors.textSecondary }
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: zoneAckDialog.close()
-                    }
-                }
-                Rectangle {
-                    width: 110; height: 28
-                    radius: Config.radiusSmall
-                    enabled: ackReasonInput.text.trim().length > 0 && typeof PreflightManager !== "undefined"
-                    color: enabled ? Colors.checkWarn : Colors.surfaceLight
-                    border.color: enabled ? Colors.checkWarn : Colors.border
-                    border.width: 1
-                    Text {
-                        anchors.centerIn: parent
-                        text: "Acknowledge"
-                        font.pixelSize: Config.fontSizeBody
-                        font.bold: true
-                        color: enabled ? Colors.background : Colors.textDisabled
-                    }
-                    MouseArea {
-                        anchors.fill: parent
-                        enabled: parent.enabled
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            var chk = PreflightManager.checkById("airspace.zone_compliance")
-                            if (chk && chk.acknowledgeZone(zoneAckDialog._zoneId, ackReasonInput.text.trim()))
-                                zoneAckDialog.close()
-                        }
-                    }
-                }
-            }
-        }
     }
 
     // ── Critical issues dialog ──
@@ -661,7 +571,121 @@ Rectangle {
             Layout.rightMargin: Config.spacingMedium
         }
 
+        // ── Target Location — live distance/bearing from drone to target ──
+        RowLayout {
+            spacing: 8
+            Layout.leftMargin: Config.spacingMedium
+            Layout.rightMargin: Config.spacingMedium
 
+            Label {
+                text: qsTr("Target Location:")
+                font.pixelSize: Config.fontSizeBody
+                color: Colors.textPrimary
+                anchors.verticalCenter: parent.verticalCenter
+            }
+            TextField {
+                id: targetLat
+                width: 110
+                placeholderText: qsTr("Latitude")
+                font.pixelSize: Config.fontSizeSmall
+                color: Colors.textPrimary
+                background: Rectangle {
+                    color: Colors.surfaceLight
+                    radius: Config.radiusSmall
+                    border.color: targetLat.activeFocus ? Colors.accent : Colors.border
+                    border.width: 1
+                }
+                onTextChanged: {
+                    root._targetFromMap = false
+                    DistanceTracker.setTarget(
+                        parseFloat(targetLat.text), parseFloat(targetLon.text))
+                }
+            }
+            TextField {
+                id: targetLon
+                width: 110
+                placeholderText: qsTr("Longitude")
+                font.pixelSize: Config.fontSizeSmall
+                color: Colors.textPrimary
+                background: Rectangle {
+                    color: Colors.surfaceLight
+                    radius: Config.radiusSmall
+                    border.color: targetLon.activeFocus ? Colors.accent : Colors.border
+                    border.width: 1
+                }
+                onTextChanged: {
+                    root._targetFromMap = false
+                    DistanceTracker.setTarget(
+                        parseFloat(targetLat.text), parseFloat(targetLon.text))
+                }
+            }
+            Button {
+                text: qsTr("📍 Use Map Center")
+                font.pixelSize: Config.fontSizeSmall
+                onClicked: {
+                    targetLat.text = QGroundControl.flightMapPosition.latitude.toFixed(6)
+                    targetLon.text = QGroundControl.flightMapPosition.longitude.toFixed(6)
+                    root._targetFromMap = true
+                }
+                ToolTip.text: qsTr("Use the current map center as the target location")
+                ToolTip.visible: hovered
+            }
+            Button {
+                id: targetSubmitBtn
+                text: qsTr("Submit")
+                font.pixelSize: Config.fontSizeSmall
+                enabled: FlightSession.currentFlightId > 0
+                onClicked: {
+                    var lat = parseFloat(targetLat.text)
+                    var lon = parseFloat(targetLon.text)
+                    if (isNaN(lat) || isNaN(lon)) {
+                        targetStatus.show(qsTr("Enter latitude and longitude before saving"), false)
+                        return
+                    }
+                    var src = root._targetFromMap ? qsTr("map center") : qsTr("manual")
+                    if (FlightSession.saveTargetLocation(lat, lon, src)) {
+                        var detail = src
+                        if (DistanceTracker.hasTarget && DistanceTracker.distanceStr.length > 0)
+                            detail += qsTr(" \u00B7 %1 from vehicle").arg(DistanceTracker.distanceStr)
+                        targetStatus.show(qsTr("Target location saved (%1)").arg(detail), true)
+                    } else {
+                        targetStatus.show(FlightSession.lastTargetError, false)
+                    }
+                }
+                ToolTip.text: qsTr("Save this target location for the current flight")
+                ToolTip.visible: hovered
+            }
+            Label {
+                id: targetStatus
+                function show(msg, ok) {
+                    targetStatus._ok = ok
+                    targetStatus.text = msg
+                    if (ok) targetStatusTimer.restart()
+                }
+                property bool _ok: false
+                visible: text.length > 0
+                font.pixelSize: Config.fontSizeSmall
+                font.bold: true
+                color: _ok ? Colors.statePass : Colors.error
+                wrapMode: Text.WordWrap
+                Layout.maximumWidth: 260
+                anchors.verticalCenter: parent.verticalCenter
+                Timer {
+                    id: targetStatusTimer
+                    interval: 4000
+                    onTriggered: targetStatus.text = ""
+                }
+            }
+            Label {
+                visible: DistanceTracker.hasTarget && !isNaN(DistanceTracker.distanceM)
+                text: qsTr("Distance: ") + DistanceTracker.distanceStr
+                      + "  ·  " + qsTr("Bearing: ") + DistanceTracker.bearingStr
+                font.bold: true
+                font.pixelSize: Config.fontSizeBody
+                color: DistanceTracker.distanceM > 1000 ? Colors.warning : Colors.statePass
+                anchors.verticalCenter: parent.verticalCenter
+            }
+        }
 
         // Scrollable categories
         Flickable {
@@ -821,8 +845,8 @@ Rectangle {
                                         readonly property int collapsedH: isManual || isAction ? 72 : 56
                                         property string _checkTime: ""
                                         height: isMotorSpinCheck ? (motorPanelLoader.item ? motorPanelLoader.item.implicitHeight + 10 : collapsedH)
-                                              : (expanded ? expandedCol.implicitHeight + 10
-                                                          : collapsedH + (zoneAckCol.visible ? zoneAckCol.implicitHeight + 4 : 0))
+                                               : (expanded ? expandedCol.implicitHeight + 10
+                                                           : collapsedH)
                                     ToolTip {
                                         visible: tooltipMa.containsMouse
                                         text: "ID: " + checkId + "\nType: " + _engine.typeNames[type]
@@ -954,70 +978,6 @@ Rectangle {
                                             elide: Text.ElideRight
                                             maximumLineCount: 1
                                             Layout.leftMargin: 20
-                                        }
-
-                                        // Row 2b: no-fly-zone inline acknowledgement.
-                                        // Only rendered for the zone compliance check (guarded by
-                                        // the presence of its unacknowledgedZoneIds() method).
-                                        ColumnLayout {
-                                            id: zoneAckCol
-                                            Layout.fillWidth: true
-                                            visible: checkObject
-                                                     && checkObject.unacknowledgedZoneIds !== undefined
-                                                     && status === 2
-                                            spacing: 3
-                                            Layout.leftMargin: 20
-
-                                            // Re-computed whenever the check re-evaluates
-                                            property var _unackedIds: {
-                                                if (!checkObject || checkObject.unacknowledgedZoneIds === undefined)
-                                                    return []
-                                                var dep = message + "/" + status
-                                                return checkObject.unacknowledgedZoneIds()
-                                            }
-
-                                            Repeater {
-                                                model: zoneAckCol._unackedIds
-
-                                                delegate: RowLayout {
-                                                    required property var modelData
-                                                    Layout.fillWidth: true
-                                                    spacing: 6
-
-                                                    Text {
-                                                        text: "\u26A0"
-                                                        font.pixelSize: Config.fontSizeBody
-                                                        color: Colors.error
-                                                    }
-                                                    Text {
-                                                        Layout.fillWidth: true
-                                                        text: root._zoneNameById(modelData)
-                                                        font.pixelSize: Config.fontSizeBody
-                                                        font.bold: true
-                                                        color: Colors.textPrimary
-                                                        elide: Text.ElideRight
-                                                    }
-                                                    Rectangle {
-                                                        Layout.preferredHeight: 22
-                                                        Layout.preferredWidth: ackTxt.implicitWidth + 16
-                                                        radius: Config.radiusSmall
-                                                        color: Colors.checkWarn
-                                                        Text {
-                                                            id: ackTxt
-                                                            anchors.centerIn: parent
-                                                            text: "Acknowledge"
-                                                            font.pixelSize: 11
-                                                            font.bold: true
-                                                            color: Colors.background
-                                                        }
-                                                        MouseArea {
-                                                            anchors.fill: parent
-                                                            cursorShape: Qt.PointingHandCursor
-                                                            onClicked: zoneAckDialog.openForZone(modelData)
-                                                        }
-                                                    }
-                                                }
-                                            }
                                         }
 
                                         // Row 3: manual / action controls

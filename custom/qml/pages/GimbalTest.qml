@@ -202,56 +202,450 @@ Page {
                     }
                 }
 
-                // ── Restricted Zones Dropdown ──
+                // ── Payload & Battery Estimate ──
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 56
+                    implicitHeight: payloadCol.implicitHeight + Config.spacingMedium * 2
                     color: Colors.surface
                     radius: Config.radiusMedium
                     border.color: Colors.border
                     border.width: 1
 
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.margins: Config.spacingMedium
-                        spacing: Config.spacingMedium
+                    // Flight-time estimator — calibrated per-vehicle Wh/km model
+                    // with linear payload scaling; falls back to airframe defaults.
+                    QtObject {
+                        id: estimator
+
+                        property double estimatedMinutes: 0
+                        property string estimatedTimeStr: "—"
+                        property string baseTimeStr: "—"
+                        property string totalWeightStr: "—"
+                        property bool ready: false
+
+                        function calculate() {
+                            var uavKg = VehicleProfileManager.uavWeightKg
+                            var battWh = VehicleProfileManager.batteryWh()
+                            if (uavKg <= 0 || battWh <= 0) {
+                                ready = false
+                                estimatedTimeStr = qsTr("Configure vehicle weight")
+                                baseTimeStr = "—"
+                                totalWeightStr = "—"
+                                estimatedMinutes = 0
+                                return
+                            }
+                            ready = true
+
+                            var raw = parseFloat(payloadField.text)
+                            var payloadKg = isNaN(raw) ? 0 : qmlPayloadToKg(raw)
+                            VehicleProfileManager.currentPayloadWeightKg = payloadKg
+
+                            var uid = VehicleProfileManager.currentDeviceUid
+                            var est = PowerModel.estimateToMap(uid, payloadKg, battWh, -1, "")
+                            var base = PowerModel.estimateToMap(uid, 0, battWh, -1, "")
+
+                            estimatedMinutes = est.flightTimeMin
+                            estimatedTimeStr = est.flightTimeMin.toFixed(1) + qsTr(" min")
+                            baseTimeStr = base.flightTimeMin.toFixed(1) + qsTr(" min")
+
+                            var totalKg = uavKg + payloadKg
+                            totalWeightStr = totalKg.toFixed(2) + qsTr(" kg")
+                                            + qsTr(" (%1 lbs)").arg((totalKg / 0.453592).toFixed(2))
+                        }
+
+                        function qmlPayloadToKg(v) {
+                            return unitToggle.checked ? v * 0.453592 : v
+                        }
+                    }
+
+                    ColumnLayout {
+                        id: payloadCol
+                        anchors {
+                            fill: parent
+                            margins: Config.spacingMedium
+                        }
+                        spacing: Config.spacingSmall
 
                         Text {
-                            text: "\uD83D\uDEA9 Restricted Zones"
+                            text: qsTr("Payload & Battery Estimate")
                             font.pixelSize: Config.fontSizeBody
                             font.bold: true
                             color: Colors.textPrimary
                         }
 
-                        ComboBox {
-                            id: zoneCombo
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 36
-                            enabled: NoFlyZoneModel.count > 0
-                            model: NoFlyZoneModel
-                            textRole: "name"
-                            currentIndex: -1
-                            font.pixelSize: Config.fontSizeSmall
-                            displayText: count === 0 ? "No restricted zones defined" : currentIndex < 0 ? "Select a zone…" : currentText
-                            background: Rectangle {
-                                color: Colors.surfaceLight
-                                radius: Config.radiusSmall
-                                border.color: zoneCombo.activeFocus ? Colors.accent : Colors.border
-                                border.width: 1
-                            }
-                            contentItem: Text {
-                                text: zoneCombo.displayText
-                                color: zoneCombo.count === 0 ? Colors.textDisabled : Colors.textPrimary
+                        RowLayout {
+                            spacing: 8
+
+                            Label {
+                                text: qsTr("UAV Weight:")
                                 font.pixelSize: Config.fontSizeSmall
-                                leftPadding: Config.spacingSmall
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                            indicator: Text {
-                                x: zoneCombo.width - width - Config.spacingSmall
-                                y: (zoneCombo.height - height) / 2
-                                text: "\u25BC"
                                 color: Colors.textSecondary
-                                font.pixelSize: 10
+                                Layout.preferredWidth: 100
+                            }
+                            TextField {
+                                id: uavWeightField
+                                width: 80
+                                Layout.preferredWidth: 80
+                                font.pixelSize: Config.fontSizeSmall
+                                color: Colors.textPrimary
+                                text: VehicleProfileManager.uavWeightKg > 0
+                                      ? VehicleProfileManager.uavWeightKg.toFixed(2) : ""
+                                placeholderText: qsTr("kg")
+                                validator: DoubleValidator { bottom: 0.05; top: 500; decimals: 2 }
+                                background: Rectangle {
+                                    color: Colors.surfaceLight
+                                    radius: Config.radiusSmall
+                                    border.color: uavWeightField.activeFocus ? Colors.accent : Colors.border
+                                    border.width: 1
+                                }
+                                onEditingFinished: {
+                                    var v = parseFloat(text)
+                                    if (!isNaN(v)) {
+                                        VehicleProfileManager.setUavWeight(
+                                            v, unitToggle.checked ? "lbs" : "kg")
+                                        text = VehicleProfileManager.uavWeightKg.toFixed(2)
+                                    }
+                                    estimator.calculate()
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            spacing: 8
+
+                            Label {
+                                text: qsTr("Payload:")
+                                font.pixelSize: Config.fontSizeSmall
+                                color: Colors.textSecondary
+                                Layout.preferredWidth: 100
+                            }
+                            TextField {
+                                id: payloadField
+                                width: 80
+                                Layout.preferredWidth: 80
+                                font.pixelSize: Config.fontSizeSmall
+                                color: Colors.textPrimary
+                                placeholderText: unitToggle.checked ? qsTr("lbs") : qsTr("kg")
+                                validator: DoubleValidator { bottom: 0; top: 30; decimals: 2 }
+                                background: Rectangle {
+                                    color: Colors.surfaceLight
+                                    radius: Config.radiusSmall
+                                    border.color: payloadField.activeFocus ? Colors.accent : Colors.border
+                                    border.width: 1
+                                }
+                                onEditingFinished: estimator.calculate()
+                            }
+                            Label {
+                                text: qsTr("kg")
+                                font.pixelSize: Config.fontSizeSmall
+                                color: !unitToggle.checked ? Colors.textPrimary : Colors.textSecondary
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            Switch {
+                                id: unitToggle
+                                onToggled: {
+                                    // Convert the visible payload value to the new unit
+                                    var v = parseFloat(payloadField.text)
+                                    if (!isNaN(v))
+                                        payloadField.text = (checked ? v / 0.453592 : v * 0.453592).toFixed(2)
+                                    estimator.calculate()
+                                }
+                            }
+                            Label {
+                                text: qsTr("lbs")
+                                font.pixelSize: Config.fontSizeSmall
+                                color: unitToggle.checked ? Colors.textPrimary : Colors.textSecondary
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 64
+                            radius: Config.radiusSmall
+                            color: Colors.surfaceLight
+                            border.color: Colors.border
+                            border.width: 1
+
+                            ColumnLayout {
+                                anchors.centerIn: parent
+                                spacing: 2
+
+                                Text {
+                                    text: qsTr("Est. flight time: ") + estimator.estimatedTimeStr
+                                    font.bold: true
+                                    font.pixelSize: Config.fontSizeBody
+                                    color: !estimator.ready ? Colors.textSecondary
+                                          : estimator.estimatedMinutes < 5 ? Colors.error
+                                          : estimator.estimatedMinutes < 10 ? Colors.warning
+                                          : Colors.statePass
+                                }
+                                Text {
+                                    text: qsTr("Base (no payload): ") + estimator.baseTimeStr
+                                    font.pixelSize: Config.fontSizeSmall
+                                    color: Colors.textSecondary
+                                }
+                                Text {
+                                    text: qsTr("Total weight: ") + estimator.totalWeightStr
+                                    font.pixelSize: Config.fontSizeSmall
+                                    color: Colors.textSecondary
+                                }
+                            }
+                        }
+                    }
+
+                    Connections {
+                        target: VehicleProfileManager
+                        function onUavWeightChanged() { estimator.calculate() }
+                        function onVehicleTypeResolved() { estimator.calculate() }
+                    }
+                    Component.onCompleted: estimator.calculate()
+                }
+
+                // ── Restricted Zones — dropdown compliance checklist ────────
+                // Lists every active knowledge-base zone that the planned route
+                // intersects (from ZoneComplianceCheck).  The operator ticks each
+                // zone to acknowledge it; acknowledgements are recorded in the
+                // zone_compliance_log audit trail (operator id, zone id,
+                // timestamp, flight id).  This is organizational compliance ONLY:
+                // nothing is uploaded to the vehicle and no MAVLink fence
+                // messages are ever sent from here.
+                Rectangle {
+                    id: zoneCard
+                    Layout.fillWidth: true
+                    color: Colors.surface
+                    radius: Config.radiusMedium
+                    border.color: Colors.border
+                    border.width: 1
+                    implicitHeight: zoneCol.implicitHeight
+
+                    property bool expanded: false
+
+                    // Automatic route-compliance check registered by PreflightManager.
+                    readonly property var _zoneCheck: (typeof PreflightManager !== "undefined")
+                        ? PreflightManager.checkById("airspace.zone_compliance") : null
+
+                    // Snapshot binding: re-reads the intersecting/unacked lists
+                    // whenever the check re-evaluates (status/message NOTIFY).
+                    readonly property string _snap: _zoneCheck
+                        ? (_zoneCheck.status + "|" + _zoneCheck.message) : ""
+                        property var _intersecting: []
+                        property var _unacked: []
+
+                    function refresh() {
+                        var inter = [], un = []
+                        if (_zoneCheck && _zoneCheck.intersectingZoneIds !== undefined) {
+                            inter = _zoneCheck.intersectingZoneIds()
+                            un = _zoneCheck.unacknowledgedZoneIds()
+                        }
+                        zoneCard._intersecting = inter
+                        zoneCard._unacked = un
+                        // Auto-open while work remains for the operator.
+                        if (un.length > 0) zoneCard.expanded = true
+                    }
+                    on_SnapChanged: refresh()
+                    Component.onCompleted: refresh()
+
+                    function zoneName(zoneId) {
+                        if (typeof NoFlyZoneModel === "undefined") return "#" + zoneId
+                        for (var i = 0; i < NoFlyZoneModel.count; ++i) {
+                            var idx = NoFlyZoneModel.index(i, 0)
+                            if (NoFlyZoneModel.data(idx, NoFlyZoneModelRoles.ZoneIdRole) === zoneId)
+                                return NoFlyZoneModel.data(idx, NoFlyZoneModelRoles.NameRole)
+                        }
+                        return "#" + zoneId
+                    }
+
+                    // Overall status chip state: 0 fail, 1 pass, 2 acknowledged-pass, 3 n/a
+                    readonly property int _overall: {
+                        var total = _intersecting.length
+                        var unacked = _unacked.length
+                        if (total === 0)
+                            return (_zoneCheck && _zoneCheck.status === 1) ? 1 : 3
+                        return unacked > 0 ? 0 : 2
+                    }
+
+                    ColumnLayout {
+                        id: zoneCol
+                        width: parent.width
+                        spacing: Config.spacingSmall
+
+                        // ── Header (click to expand/collapse) ──
+                        Rectangle {
+                            id: zoneHeader
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 56
+                            color: zoneHeaderMa.containsMouse ? Colors.surfaceLight : "transparent"
+                            radius: Config.radiusMedium
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.margins: Config.spacingMedium
+                                spacing: Config.spacingMedium
+
+                                Text {
+                                    text: "\uD83D\uDEA9 Restricted Zones"
+                                    font.pixelSize: Config.fontSizeBody
+                                    font.bold: true
+                                    color: Colors.textPrimary
+                                }
+
+                                Item { Layout.fillWidth: true }
+
+                                Rectangle {
+                                    Layout.preferredHeight: 24
+                                    Layout.preferredWidth: overallTxt.implicitWidth + 16
+                                    radius: Config.radiusSmall
+                                    color: zoneCard._overall === 0 ? Colors.errorDim
+                                         : zoneCard._overall === 1 ? Colors.successDim
+                                         : zoneCard._overall === 2 ? Colors.checkWarnDim
+                                                                   : Colors.surfaceLight
+                                    border.color: zoneCard._overall === 0 ? Colors.error
+                                                : zoneCard._overall === 1 ? Colors.success
+                                                : zoneCard._overall === 2 ? Colors.checkWarn
+                                                                          : Colors.border
+                                    border.width: 1
+                                    Text {
+                                        id: overallTxt
+                                        anchors.centerIn: parent
+                                        text: zoneCard._overall === 0
+                                              ? qsTr("FAIL \u2014 %n zone(s) to acknowledge", "", zoneCard._unacked.length)
+                                              : zoneCard._overall === 1 ? qsTr("PASS \u2014 Route clear")
+                                              : zoneCard._overall === 2 ? qsTr("ACKNOWLEDGED")
+                                                                        : qsTr("NO MISSION LOADED")
+                                        font.pixelSize: Config.fontSizeSmall
+                                        font.bold: true
+                                        color: zoneCard._overall === 0 ? Colors.error
+                                             : zoneCard._overall === 1 ? Colors.statePass
+                                             : zoneCard._overall === 2 ? Colors.checkWarn
+                                                                       : Colors.textDisabled
+                                    }
+                                }
+
+                                Text {
+                                    text: zoneCard.expanded ? "\u25B2" : "\u25BC"
+                                    font.pixelSize: 12
+                                    color: Colors.textSecondary
+                                }
+                            }
+                            MouseArea {
+                                id: zoneHeaderMa
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: zoneCard.expanded = !zoneCard.expanded
+                            }
+                        }
+
+                        // ── Expanded checklist body ──
+                        ColumnLayout {
+                            visible: zoneCard.expanded
+                            Layout.fillWidth: true
+                            Layout.leftMargin: Config.spacingMedium
+                            Layout.rightMargin: Config.spacingMedium
+                            Layout.bottomMargin: Config.spacingSmall
+                            spacing: 6
+
+                            Text {
+                                visible: zoneCard._intersecting.length === 0
+                                text: zoneCard._zoneCheck && zoneCard._zoneCheck.status !== 1
+                                      ? qsTr("Load a mission in Plan View to test the route against restricted zones.")
+                                      : qsTr("No restricted zones intersect the planned route.")
+                                font.pixelSize: Config.fontSizeSmall
+                                color: Colors.textSecondary
+                                wrapMode: Text.WordWrap
+                                Layout.fillWidth: true
+                            }
+
+                            // Scrollable zone list — caps at ~5 rows, scrolls beyond
+                            ScrollView {
+                                id: zoneScroll
+                                visible: zoneCard._intersecting.length > 0
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: Math.min(zoneListCol.implicitHeight, 244)
+                                clip: true
+                                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+                                ColumnLayout {
+                                    id: zoneListCol
+                                    width: zoneScroll.availableWidth
+                                    spacing: 6
+
+                                    Repeater {
+                                        model: zoneCard._intersecting
+
+                                        delegate: Rectangle {
+                                            id: zoneRow
+                                            required property var modelData
+                                            readonly property int zoneId: parseInt(modelData)
+                                            readonly property bool acked: zoneCard._unacked.indexOf(modelData) < 0
+                                            Layout.fillWidth: true
+                                            Layout.preferredHeight: 40
+                                            radius: Config.radiusSmall
+                                            color: acked ? Colors.successDim : Colors.surfaceLight
+                                            border.color: acked ? Colors.success : Colors.border
+                                            border.width: 1
+
+                                            RowLayout {
+                                                anchors.fill: parent
+                                                anchors.margins: Config.spacingSmall
+                                                spacing: Config.spacingSmall
+
+                                                // Checkable tick box — ticking records the acknowledgement
+                                                Rectangle {
+                                                    id: zoneTick
+                                                    width: 22; height: 22; radius: 4
+                                                    color: zoneRow.acked ? Colors.success : "transparent"
+                                                    border.color: zoneRow.acked ? Colors.success : Colors.border
+                                                    border.width: 1
+                                                    Text {
+                                                        anchors.centerIn: parent
+                                                        text: "\u2713"
+                                                        font.pixelSize: 13
+                                                        font.bold: true
+                                                        color: Colors.background
+                                                        visible: zoneRow.acked
+                                                    }
+                                                    MouseArea {
+                                                        anchors.fill: parent
+                                                        enabled: !zoneRow.acked
+                                                        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                                        onClicked: {
+                                                            if (zoneCard._zoneCheck && zoneCard._zoneCheck.acknowledgeZone(
+                                                                    zoneRow.zoneId,
+                                                                    qsTr("Acknowledged via payload page checklist")))
+                                                                zoneCard.refresh()
+                                                        }
+                                                    }
+                                                }
+
+                                                Text {
+                                                    Layout.fillWidth: true
+                                                    text: zoneCard.zoneName(zoneRow.zoneId)
+                                                    font.pixelSize: Config.fontSizeBody
+                                                    font.bold: true
+                                                    color: Colors.textPrimary
+                                                    elide: Text.ElideRight
+                                                }
+
+                                                Text {
+                                                    text: zoneRow.acked
+                                                          ? qsTr("\u2713 Recorded to compliance log")
+                                                          : qsTr("Tick to acknowledge crossing")
+                                                    font.pixelSize: Config.fontSizeSmall
+                                                    color: zoneRow.acked ? Colors.statePass : Colors.textSecondary
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: qsTr("Acknowledgements are stored in the compliance audit log (operator · zone · time · flight). Organizational record only — no geofence is uploaded to the vehicle.")
+                                font.pixelSize: Config.fontSizeSmall - 1
+                                color: Colors.textDisabled
+                                wrapMode: Text.WordWrap
                             }
                         }
                     }

@@ -11,8 +11,9 @@ Rectangle {
 
     property var checklistCheck
 
-    // Compact height for inline row
-    implicitHeight: launcherRow.implicitHeight + Config.spacingMedium * 2
+    // Compact height for inline row — kept aligned with sibling action cards
+    // (collapsed action card height is 72 incl. the loader's 10px padding).
+    implicitHeight: Math.max(launcherRow.implicitHeight + Config.spacingMedium * 2, 62)
     radius: Config.radiusMedium
     color: Colors.surface
     border.color: Colors.border
@@ -70,6 +71,8 @@ Rectangle {
                 font.pixelSize: Config.fontSizeBody
                 font.bold: true
                 color: Colors.textPrimary
+                elide: Text.ElideRight
+                Layout.fillWidth: true
             }
             Text {
                 text: root._mc > 0
@@ -78,6 +81,8 @@ Rectangle {
                     : qsTr("Waiting for vehicle parameters\u2026")
                 font.pixelSize: Config.fontSizeSmall
                 color: root._mc > 0 ? Colors.textSecondary : Colors.textDisabled
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
             }
         }
 
@@ -93,16 +98,17 @@ Rectangle {
             Text { id: armedTxt; anchors.centerIn: parent; text: "\u26A0 DISARM"; font.pixelSize: Config.fontSizeSmall; font.bold: true; color: Colors.error }
         }
 
-        // Open dialog button
+        // Open dialog button — width follows its label so the text can never clip
         Rectangle {
             id: openBtn
             Layout.preferredHeight: 34
-            Layout.preferredWidth: 148
+            Layout.preferredWidth: Math.max(openBtnTxt.implicitWidth + 24, 120)
             radius: Config.radiusSmall
             color: Colors.accent
             Behavior on color { ColorAnimation { duration: 150 } }
 
             Text {
+                id: openBtnTxt
                 anchors.centerIn: parent
                 text: qsTr("Open Motor Test")
                 font.pixelSize: Config.fontSizeSmall
@@ -221,6 +227,63 @@ Rectangle {
                 width: dialogScroll.availableWidth
                 spacing: Config.spacingMedium
 
+                // ── MANUAL mode + RC override (fixed wing / VTOL only) ──
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: VehicleProfileManager.vehicleKind === "FIXED_WING"
+                          || VehicleProfileManager.vehicleKind === "VTOL_CONVENTIONAL"
+                    spacing: Config.spacingMedium
+
+                    Button {
+                        id: manualModeBtn
+                        property bool _inManual: {
+                            var v = QGroundControl.multiVehicleManager.activeVehicle
+                            return v ? v.flightMode === "MANUAL" : false
+                        }
+                        Layout.preferredHeight: 34
+                        text: _inManual ? qsTr("✓ MANUAL Mode") : qsTr("Switch to MANUAL")
+                        enabled: !!QGroundControl.multiVehicleManager.activeVehicle && !_inManual
+                        onClicked: {
+                            var v = QGroundControl.multiVehicleManager.activeVehicle
+                            if (v) v.flightMode = "MANUAL"
+                        }
+                        background: Rectangle {
+                            radius: 6
+                            color: manualModeBtn._inManual ? "#1A3A2A" : Colors.warning
+                            border.color: manualModeBtn._inManual ? Colors.statePass : Colors.warning
+                            border.width: 1
+                        }
+                        contentItem: Text {
+                            text: manualModeBtn.text
+                            font.pixelSize: Config.fontSizeSmall
+                            font.bold: true
+                            color: manualModeBtn._inManual ? Colors.statePass : Colors.background
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        ToolTip.text: qsTr("Motor and surface tests require MANUAL flight mode")
+                        ToolTip.visible: hovered
+                    }
+
+                    Label {
+                        text: qsTr("RC Override:")
+                        font.pixelSize: Config.fontSizeSmall
+                        color: Colors.textSecondary
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                    Switch {
+                        id: rcOverrideSwitch
+                        enabled: !!QGroundControl.multiVehicleManager.activeVehicle
+                        checked: HardwareTestController.rcOverrideActive
+                        onToggled: HardwareTestController.setRcOverrideActive(checked)
+                        ToolTip.text: checked
+                            ? qsTr("RC override ON — attitude control neutralized for testing")
+                            : qsTr("RC override OFF — normal RC input active")
+                        ToolTip.visible: hovered
+                    }
+                    Item { Layout.fillWidth: true }
+                }
+
                 // ── LOADING STATE ────────────────────────────────────────
                 ColumnLayout {
                     Layout.fillWidth: true
@@ -312,6 +375,13 @@ Rectangle {
                     spacing: Config.spacingSmall
 
                     Text { text: qsTr("Duration:"); font.pixelSize: Config.fontSizeSmall; color: Colors.textSecondary; Layout.preferredWidth: 64 }
+                    Text {
+                        text: HardwareTestController.durationSec + "s"
+                        font.pixelSize: Config.fontSizeSmall
+                        font.bold: true
+                        color: Colors.textPrimary
+                        Layout.preferredWidth: 28
+                    }
 
                     Slider {
                         id: durSlider
@@ -319,7 +389,14 @@ Rectangle {
                         from: 1; to: 10; stepSize: 1
                         value: HardwareTestController.durationSec
                         enabled: HardwareTestController.activeMotor === -1
-                        onMoved: HardwareTestController.durationSec = value
+                                 && !HardwareTestController.isArmed
+                                 && !root._armed
+                        // onMoved (not onValueChanged) + re-bind afterwards so the
+                        // C++ property remains the source of truth in both directions.
+                        onMoved: {
+                            HardwareTestController.setDurationSec(Math.round(value))
+                            value = Qt.binding(function() { return HardwareTestController.durationSec })
+                        }
 
                         background: Rectangle {
                             x: durSlider.leftPadding
@@ -337,7 +414,7 @@ Rectangle {
                     }
 
                     Text {
-                        text: durSlider.value + "s"
+                        text: Math.round(durSlider.value) + "s"
                         font.pixelSize: Config.fontSizeSmall; font.bold: true; color: Colors.textPrimary
                         Layout.preferredWidth: 28
                     }
@@ -438,7 +515,14 @@ Rectangle {
                                         value: (HardwareTestController.motorPwmValues.length > mcard.index)
                                                ? HardwareTestController.motorPwmValues[mcard.index] : 1100
                                         enabled: !root._armed && HardwareTestController.activeMotor === -1
-                                        onMoved: HardwareTestController.setMotorPwm(mcard.midx, value)
+                                        // onMoved + re-bind keeps C++ ↔ QML in sync after drags
+                                        onMoved: {
+                                            HardwareTestController.setMotorPwm(mcard.midx, Math.round(value))
+                                            value = Qt.binding(function() {
+                                                return (HardwareTestController.motorPwmValues.length > mcard.index)
+                                                       ? HardwareTestController.motorPwmValues[mcard.index] : 1100
+                                            })
+                                        }
 
                                         background: Rectangle {
                                             x: pwmSl.leftPadding; y: pwmSl.topPadding + pwmSl.availableHeight / 2 - height / 2
@@ -455,7 +539,7 @@ Rectangle {
                                     }
 
                                     Text {
-                                        text: pwmSl.value + "\u00b5s"
+                                        text: Math.round(pwmSl.value) + "\u00b5s"
                                         font.pixelSize: Config.fontSizeSmall; font.bold: true; color: Colors.textPrimary
                                         Layout.preferredWidth: 52
                                     }

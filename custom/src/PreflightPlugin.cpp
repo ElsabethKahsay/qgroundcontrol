@@ -289,6 +289,7 @@ QQmlApplicationEngine *PreflightPlugin::createQmlApplicationEngine(QObject *pare
     qmlRegisterSingletonType(QUrl(QStringLiteral("qrc:/qml/singletons/Colors.qml")), "com.uav.preflight", 1, 0, "Colors");
     qmlRegisterSingletonType(QUrl(QStringLiteral("qrc:/qml/singletons/Config.qml")), "com.uav.preflight", 1, 0, "Config");
     qmlRegisterSingletonType(QUrl(QStringLiteral("qrc:/qml/singletons/VehicleTelemetry.qml")), "com.uav.preflight", 1, 0, "VehicleTelemetry");
+    qmlRegisterSingletonType(QUrl(QStringLiteral("qrc:/qml/singletons/DistanceTracker.qml")), "com.uav.preflight", 1, 0, "DistanceTracker");
     qmlRegisterUncreatableType<AbstractCheck>("com.uav.preflight", 1, 0, "AbstractCheck", QStringLiteral("Cannot create AbstractCheck from QML"));
     qmlRegisterSingletonType<PreflightSettingsManager>("com.uav.preflight", 1, 0, "PreflightSettingsManager",
         [](QQmlEngine *engine, QJSEngine *jsEngine) -> QObject * {
@@ -779,8 +780,12 @@ void PreflightPlugin::paletteOverride(const QString &colorName, QGCPalette::Pale
         colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kAccentDim;
         colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = kAccent;
     } else if (colorName == QStringLiteral("buttonHighlightText")) {
+        // Text drawn ON TOP of buttonHighlight (e.g. checked SubMenuButton in
+        // the Analyze Tools sidebar).  Must contrast with the kAccent button
+        // highlight background — using kAccent here rendered the selected nav
+        // item invisible (teal-on-teal).  Off-white keeps the label readable.
         colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kTextDisabled;
-        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = kAccent;
+        colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = QColor("#F2F6FA");
     } else if (colorName == QStringLiteral("primaryButton")) {
         colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupDisabled]  = kAccentDim;
         colorInfo[QGCPalette::Dark][QGCPalette::ColorGroupEnabled]   = kAccent;

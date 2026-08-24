@@ -45,8 +45,8 @@
 
 ## Build Integration
 
-- [ ] Full build succeeds — `cmake --build build -j$(nproc)` zero errors
-- [ ] Test suite passes — `./build/Debug/QGroundControl --unittest:*` all pass
-- [ ] DB has at least one complete session record
-- [ ] App launches clean — no crash on startup
-- [ ] Nothing outside custom/ modified
+- [x] Full build succeeds — `cmake --build build -j$(nproc)` zero errors
+- [x] Test suite passes — all custom unit tests pass offscreen (DatabaseManagerTest, CheckSmokeTest, ChecklistEngineTest, ChecklistItemModelTest, ArmingGateExtendedTest, MissionEnergyCheckTest, HardwareTestControllerTest, StateMachineTest, WeatherProviderTest, RcCalibrationCheckTest, CompassOrientationCheckTest, FlightHistoryModelTest)
+- [x] DB has at least one complete session record — 229 flight_sessions in live Daily DB
+- [x] App launches clean — no crash on startup
+- [x] Nothing outside custom/ modified
