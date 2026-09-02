@@ -1626,7 +1626,7 @@ void Vehicle::forceArm(void)
                    MAV_CMD_COMPONENT_ARM_DISARM,
                    true,    // show error if fails
                    1.0f,    // arm
-                   2989);   // force arm
+                   2989.0f);   // force arm (MAVLink standard 2989)
 }
 
 bool Vehicle::flightModeSetAvailable()

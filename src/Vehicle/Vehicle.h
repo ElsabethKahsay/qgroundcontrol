@@ -790,6 +790,7 @@ public:
     void _setHomePosition(QGeoCoordinate& homeCoord);
     void _setMaxProtoVersion(unsigned version);
     void _setMaxProtoVersionFromBothSources();
+    void _updateArmed(bool armed);
 
     /// Vehicle is about to be deleted
     void prepareDelete();
@@ -989,7 +990,6 @@ private:
     void _commonInit                    ();
     void _setupAutoDisarmSignalling     ();
     void _setCapabilities               (uint64_t capabilityBits);
-    void _updateArmed                   (bool armed);
     bool _apmArmingNotRequired          ();
     void _initializeCsv                 ();
     void _writeCsvLine                  ();

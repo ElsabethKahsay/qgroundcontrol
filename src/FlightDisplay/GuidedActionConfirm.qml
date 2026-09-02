@@ -23,7 +23,7 @@ Rectangle {
     height:     mainLayout.height + (_margins * 2)
     radius:     ScreenTools.defaultFontPixelWidth / 2
     color:      qgcPal.window
-    visible:    _utmspEnabled === true ? utmspSliderTrigger: false
+    visible:    false
 
     property var    guidedController
     property var    guidedValueSlider

@@ -35,6 +35,10 @@ RowLayout {
     property var    _vehicleInAir:      _activeVehicle ? _activeVehicle.flying || _activeVehicle.landing : false
     property bool   _vtolInFWDFlight:   _activeVehicle ? _activeVehicle.vtolInFwdFlight : false
     property bool   _armed:             _activeVehicle ? _activeVehicle.armed : false
+    property bool   _communicationLost: _activeVehicle ? _activeVehicle.vehicleLinkManager.communicationLost : false
+    property bool   _flying:            _activeVehicle ? _activeVehicle.flying : false
+    property bool   _landing:           _activeVehicle ? _activeVehicle.landing : false
+    property bool   _readyToFly:        _activeVehicle ? _activeVehicle.readyToFly : false
     property real   _margins:           ScreenTools.defaultFontPixelWidth
     property real   _spacing:           ScreenTools.defaultFontPixelWidth / 2
     property bool   _healthAndArmingChecksSupported: _activeVehicle ? _activeVehicle.healthAndArmingCheckReport.supported : false
@@ -45,6 +49,10 @@ RowLayout {
     // Phase 7: Estimated flight time/range from power model
     property string _estRangeText: ""
     property string _estLabelColor: Colors.textDisabled
+
+    // Status label is a pure binding (no manual text assignments) so it can never
+    // be orphaned. All dependencies (_armed/_flying/_landing/_communicationLost/
+    // _readyToFly) are bound properties above and re-trigger the binding on change.
 
     ADL.ArmGateDialogLoader {
         id: armGateDialogLoader
@@ -61,7 +69,16 @@ RowLayout {
 
         QGCLabel {
             id:             mainStatusLabel
-            text:           mainStatusText()
+            text:           {
+                // Touch every dependency so the binding re-evaluates on change
+                var vehicle  = _root._activeVehicle
+                var armed    = _root._armed
+                var flying   = _root._flying
+                var landing  = _root._landing
+                var lost     = _root._communicationLost
+                var ready    = _root._readyToFly
+                return mainStatusText()
+            }
             font.pointSize: _vehicleInAir ? ScreenTools.defaultFontPointSize : ScreenTools.largeFontPointSize
 
             property string _commLostText:      qsTr("Communication Lost")
@@ -75,10 +92,11 @@ RowLayout {
             function mainStatusText() {
                 var statusText
                 if (_activeVehicle) {
-                    if (_communicationLost) {
+                    if (_root._communicationLost) {
                         _mainStatusBGColor = "red"
                         return mainStatusLabel._commLostText
                     }
+                    // Armed branch FIRST — never show Not Ready while armed
                     if (_activeVehicle.armed) {
                         _mainStatusBGColor = "green"
 
@@ -150,7 +168,7 @@ RowLayout {
         // Phase 7: Estimated flight time/range (visible when connected and not armed)
         QGCLabel {
             id:             estLabel
-            visible:        _activeVehicle && !_activeVehicle.armed && !_communicationLost && _estRangeText.length > 0
+            visible:        _activeVehicle && !_activeVehicle.armed && !_root._communicationLost && _estRangeText.length > 0
             text:           _estRangeText
             font.pointSize: ScreenTools.smallFontPointSize
             color:          _estLabelColor
@@ -158,7 +176,7 @@ RowLayout {
 
         Timer {
             interval: 5000
-            running: _activeVehicle && !_activeVehicle.armed && !_communicationLost
+            running: _activeVehicle && !_activeVehicle.armed && !_root._communicationLost
             repeat: true
             onTriggered: {
                 updateEstimate()
@@ -168,7 +186,7 @@ RowLayout {
         Component.onCompleted: updateEstimate()
 
         function updateEstimate() {
-            if (!_activeVehicle || _activeVehicle.armed || _communicationLost) {
+            if (!_activeVehicle || _activeVehicle.armed || _root._communicationLost) {
                 _estRangeText = ""
                 return
             }
@@ -318,7 +336,7 @@ RowLayout {
                                 if (typeof ArmingGate !== 'undefined' && ArmingGate) {
                                     ArmingGate.forceArm()
                                 }
-                                mainWindow.armVehicleRequest()
+                                mainWindow.forceArmVehicleRequest()
                                 forceArm = false
                                 mainWindow.hideIndicatorPopup()
                                 return
