@@ -56,8 +56,12 @@ void BatteryVoltageCheck::evaluate()
     }
 
     double voltage = getTelemetryDouble(QStringLiteral("batteryVoltage"));
-    double current = getTelemetryDouble(QStringLiteral("batteryCurrent"));
+    double current = getTelemetryDouble(QStringLiteral("batteryCurrentAmps"));
+    if (current <= 0.0) {
+        current = getTelemetryDouble(QStringLiteral("batteryCurrent"));
+    }
     int percent = static_cast<int>(getTelemetryDouble(QStringLiteral("batteryPercent")));
+    QString chargeState = getTelemetryVariant(QStringLiteral("batteryChargeState")).toString();
     int cells = effectiveCellCount();
 
     setCurrentValue(voltage);
@@ -71,12 +75,17 @@ void BatteryVoltageCheck::evaluate()
     bool voltageOk = voltage >= minV;
     double minPct = effectiveMinPercent();
     bool percentOk = percent >= minPct || (percent == 0 && voltage >= minV);
+    bool chargeOk = chargeState.isEmpty() || chargeState == QStringLiteral("OK");
 
     QString msg;
-    if (voltageOk) {
+    if (voltageOk && chargeOk) {
         msg = QStringLiteral("%1V %2S %3A — OK")
             .arg(voltage, 0, 'f', 1).arg(cells).arg(current, 0, 'f', 1);
         setStatus(CheckStatus::Passed, msg);
+    } else if (!chargeOk && (chargeState == QStringLiteral("critical") || chargeState == QStringLiteral("emergency"))) {
+        msg = QStringLiteral("%1V %2S — Battery state: %3")
+            .arg(voltage, 0, 'f', 1).arg(cells).arg(chargeState);
+        setStatus(CheckStatus::Failed, msg);
     } else if (percentOk) {
         msg = QStringLiteral("%1V %2S — %3%, low voltage")
             .arg(voltage, 0, 'f', 1).arg(cells).arg(percent);

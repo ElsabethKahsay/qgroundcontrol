@@ -558,7 +558,10 @@ void DatabaseManagerTest::testV12Migration()
 
     db.reset();
     QVERIFY(db.initialize(dbPath));
-    QCOMPARE(db.storedSchemaVersion(), 14);
+    // v16 adds motor_thrust_table to vehicles; its accessor round-trip lives
+    // in BatteryEstimatorTest::testMotorThrustTablePersistence. v17 adds the
+    // battery pack config columns to vehicles.
+    QCOMPARE(db.storedSchemaVersion(), 17);
 
     // v13: zone_id + intersection columns exist on zone_compliance_log.
     {

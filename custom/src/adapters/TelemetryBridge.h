@@ -68,6 +68,28 @@ class TelemetryBridge : public QObject {
     /// Primary battery temperature in degrees Celsius, NaN if unavailable.
     Q_PROPERTY(double batteryTemperature READ batteryTemperature NOTIFY batteryTemperatureChanged)
 
+    /// Primary battery charge state string ("OK", "low", "critical", "emergency").
+    Q_PROPERTY(QString batteryChargeState READ batteryChargeState NOTIFY batteryChargeStateChanged)
+
+    /// Primary battery current draw in amps (alias for batteryCurrent).
+    Q_PROPERTY(double batteryCurrentAmps READ batteryCurrentAmps NOTIFY batteryCurrentAmpsChanged)
+
+    /// Raw battery_remaining from the latest BATTERY_STATUS (0-100). -1 when
+    /// the flight controller does not report SOC (battery not configured).
+    Q_PROPERTY(int batterySocPct READ batterySocPct NOTIFY batterySocPctChanged)
+
+    /// 10-second exponential moving average of battery current (amps),
+    /// accumulated over every BATTERY_STATUS message (~1 Hz, alpha = 0.095).
+    /// Primed from the first valid sample; never reset between messages.
+    Q_PROPERTY(double batteryCurrentSmoothAmps READ batteryCurrentSmoothAmps NOTIFY batteryCurrentSmoothAmpsChanged)
+
+    /// True when batterySocPct is >= 0 AND a BATTERY_STATUS was received within
+    /// the last 5 seconds. False while stale or when the FC reports no SOC.
+    Q_PROPERTY(bool batteryDataValid READ batteryDataValid NOTIFY batteryDataValidChanged)
+
+    /// Primary battery estimated time remaining in seconds (-1 or NaN if unknown).
+    Q_PROPERTY(double batteryTimeRemainingSeconds READ batteryTimeRemainingSeconds NOTIFY batteryTimeRemainingSecondsChanged)
+
     /// Per-cell voltages for the primary battery (list of doubles in volts).
     Q_PROPERTY(QVariantList batteryCellVoltages READ batteryCellVoltages NOTIFY batteryCellVoltagesChanged)
 
@@ -515,7 +537,13 @@ public:
     virtual double batteryVoltage() const { return _batteryVoltage; }
     int batteryPercent() const { return _batteryPercent; }
     double batteryCurrent() const { return _batteryCurrent; }
+    double batteryCurrentAmps() const { return _batteryCurrentAmps; }
+    int batterySocPct() const { return _batterySocPct; }
+    double batteryCurrentSmoothAmps() const { return _batteryCurrentSmoothAmps; }
+    bool batteryDataValid() const { return _batteryDataValid; }
     double batteryTemperature() const { return _batteryTemperature; }
+    QString batteryChargeState() const { return _batteryChargeState; }
+    double batteryTimeRemainingSeconds() const { return _batteryTimeRemainingSeconds; }
     QVariantList batteryCellVoltages() const { return _batteryCellVoltages; }
     double sysVoltageBattery() const { return _sysVoltageBattery; }
     double battery2Voltage() const { return _battery2Voltage; }
@@ -683,6 +711,11 @@ public:
     /// or an override is active; otherwise it is silently blocked.
     Q_INVOKABLE void arm();
 
+    /// Force-arm the vehicle, bypassing all pre-arm checks.
+    /// Sends MAV_CMD_COMPONENT_ARM_DISARM with param1=1 and param2=21196 (ArduPilot
+    /// magic number). Does NOT consult the ArmingGate. Use with caution.
+    Q_INVOKABLE void forceArm();
+
     /// Set the arming gate reference so arm() can check gate state before sending.
     void setArmingGate(QObject* gate);
 
@@ -710,7 +743,13 @@ signals:
     void batteryVoltageChanged();
     void batteryPercentChanged();
     void batteryCurrentChanged();
+    void batteryCurrentAmpsChanged();
+    void batterySocPctChanged();
+    void batteryCurrentSmoothAmpsChanged();
+    void batteryDataValidChanged();
     void batteryTemperatureChanged();
+    void batteryChargeStateChanged();
+    void batteryTimeRemainingSecondsChanged();
     void batteryCellVoltagesChanged();
     void sysVoltageBatteryChanged();
     void battery2VoltageChanged();
@@ -827,7 +866,14 @@ private:
     double _batteryVoltage = 0.0;
     int _batteryPercent = 0;
     double _batteryCurrent = 0.0;
+    double _batteryCurrentAmps = 0.0;
+    int _batterySocPct = -1;                    ///< battery_remaining (0-100), -1 = FC not configured.
+    double _batteryCurrentSmoothAmps = 0.0;     ///< 10s EMA accumulated per BATTERY_STATUS message.
+    bool _batteryDataValid = false;             ///< SOC known AND BATTERY_STATUS < 5 s old.
+    QDateTime _lastBatteryStatusTime;           ///< Timestamp of the most recent BATTERY_STATUS.
     double _batteryTemperature = qQNaN();       ///< NaN = no temperature sensor.
+    QString _batteryChargeState = QStringLiteral("OK");
+    double _batteryTimeRemainingSeconds = qQNaN();
     QVariantList _batteryCellVoltages;
     double _sysVoltageBattery = 0.0;            ///< Voltage from SYS_STATUS power module.
 

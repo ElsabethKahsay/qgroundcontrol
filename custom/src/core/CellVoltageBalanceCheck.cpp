@@ -21,7 +21,7 @@ void CellVoltageBalanceCheck::evaluate()
         return;
     }
 
-    QVariantList cells = m_telemetry->property("batteryCellVoltages").toList();
+    QVariantList cells = getTelemetryVariant(QStringLiteral("batteryCellVoltages")).toList();
 
     if (cells.isEmpty()) {
         setStatus(CheckStatus::Pending, QStringLiteral("No cell voltage data"));

@@ -238,7 +238,7 @@ bool DatabaseManager::initialize(const QString &dbPath)
 //  13 - zone_id + intersection columns on zone_compliance_log so the automatic
 //       ZoneComplianceCheck can write one audit row per active zone.  zone_id is
 //       ON DELETE SET NULL so deleting a zone never breaks the audit trail.
-static const int kLatestSchemaVersion = 15;
+static const int kLatestSchemaVersion = 18;
 
 bool DatabaseManager::createTables()
 {
@@ -383,6 +383,11 @@ bool DatabaseManager::createTables()
             total_flight_count INTEGER NOT NULL DEFAULT 0,
             total_flight_hours REAL NOT NULL DEFAULT 0.0,
             uav_weight_kg REAL NOT NULL DEFAULT 0.0,
+            battery_series_cells INTEGER NOT NULL DEFAULT 6,
+            battery_parallel_cells INTEGER NOT NULL DEFAULT 1,
+            battery_cell_mah INTEGER NOT NULL DEFAULT 5000,
+            battery_reserve REAL NOT NULL DEFAULT 0.20,
+            battery_type TEXT NOT NULL DEFAULT 'LiPo',
             identity_source TEXT NOT NULL DEFAULT 'hardware_uid'
         )
     )");
@@ -1381,6 +1386,67 @@ bool DatabaseManager::migrateSchema()
             addColV15(QStringLiteral("target_source TEXT NOT NULL DEFAULT ''"));
             break;
         }
+        case 16: {
+            // v16: motor_thrust_table on vehicles — JSON blob holding the
+            // thrust(g)→current(A) pull-test datasheet used by the battery
+            // time estimator on the gimbal/payload page.  Empty string means
+            // "use the built-in default table".
+            QSqlQuery pragma16(m_db);
+            pragma16.exec("PRAGMA table_info(vehicles)");
+            bool hasThrustTable = false;
+            while (pragma16.next()) {
+                if (pragma16.value(1).toString() == QLatin1String("motor_thrust_table")) {
+                    hasThrustTable = true;
+                    break;
+                }
+            }
+            if (!hasThrustTable) {
+                if (!q.exec(QStringLiteral(
+                        "ALTER TABLE vehicles ADD COLUMN motor_thrust_table TEXT NOT NULL DEFAULT ''")))
+                    qWarning() << "DatabaseManager: v16 add column failed:" << q.lastError().text();
+            }
+            break;
+        }
+        case 17: {
+            // v17: battery pack config on vehicles — the per-profile pack
+            // inputs for the live battery flight-time estimate (N_series,
+            // N_parallel, cell mAh, reserve fraction).
+            const QStringList v17BattCols = {
+                QStringLiteral("battery_series_cells INTEGER NOT NULL DEFAULT 6"),
+                QStringLiteral("battery_parallel_cells INTEGER NOT NULL DEFAULT 1"),
+                QStringLiteral("battery_cell_mah INTEGER NOT NULL DEFAULT 5000"),
+                QStringLiteral("battery_reserve REAL NOT NULL DEFAULT 0.20"),
+            };
+            for (const QString &colDef : v17BattCols) {
+                QSqlQuery pragma17(m_db);
+                pragma17.exec("PRAGMA table_info(vehicles)");
+                const QString colName = colDef.section(QLatin1Char(' '), 0, 0);
+                bool present = false;
+                while (pragma17.next()) {
+                    if (pragma17.value(1).toString() == colName) { present = true; break; }
+                }
+                if (!present) {
+                    if (!q.exec(QStringLiteral("ALTER TABLE vehicles ADD COLUMN %1").arg(colDef)))
+                        qWarning() << "DatabaseManager: v17 add column failed:" << q.lastError().text();
+                }
+            }
+            break;
+        }
+        case 18: {
+            // v18: battery chemistry/type selector (LiPo/LiIon/LiHV) on vehicles.
+            QSqlQuery pragma18(m_db);
+            pragma18.exec("PRAGMA table_info(vehicles)");
+            bool hasType = false;
+            while (pragma18.next()) {
+                if (pragma18.value(1).toString() == "battery_type") { hasType = true; break; }
+            }
+            if (!hasType) {
+                if (!q.exec(QStringLiteral(
+                        "ALTER TABLE vehicles ADD COLUMN battery_type TEXT NOT NULL DEFAULT 'LiPo'")))
+                    qWarning() << "DatabaseManager: v18 add column failed:" << q.lastError().text();
+            }
+            break;
+        }
         default:
             qWarning() << "DatabaseManager: unknown migration version" << v;
             return false;
@@ -1658,6 +1724,69 @@ double DatabaseManager::vehicleUavWeight(const QString &deviceUid) const
         return 0.0;
     }
     return q.value(0).toDouble();
+}
+
+/** @brief Stores the thrust→current datasheet JSON for a vehicle profile. */
+bool DatabaseManager::updateVehicleMotorThrustTable(const QString &deviceUid, const QString &json)
+{
+    if (!m_initialized || deviceUid.isEmpty()) return false;
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE vehicles SET motor_thrust_table = ? WHERE device_uid = ?");
+    q.addBindValue(json);
+    q.addBindValue(deviceUid);
+    return execOrWarn(q, "updateVehicleMotorThrustTable");
+}
+
+/** @brief Returns the stored thrust→current datasheet JSON ('' when none). */
+QString DatabaseManager::vehicleMotorThrustTable(const QString &deviceUid) const
+{
+    if (!m_initialized || deviceUid.isEmpty()) return {};
+    QSqlQuery q(m_db);
+    q.prepare("SELECT motor_thrust_table FROM vehicles WHERE device_uid = ?");
+    q.addBindValue(deviceUid);
+    if (!q.exec() || !q.next()) {
+        qWarning() << "DatabaseManager: vehicleMotorThrustTable query failed:" << q.lastError().text();
+        return {};
+    }
+    return q.value(0).toString();
+}
+
+/** @brief Stores the battery pack config for a vehicle profile (v17). */
+bool DatabaseManager::updateVehicleBatteryConfig(const QString &deviceUid, int series,
+                                                 int parallel, int cellMah, double reserve,
+                                                 const QString &batteryType)
+{
+    if (!m_initialized || deviceUid.isEmpty()) return false;
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE vehicles SET battery_series_cells = ?, battery_parallel_cells = ?, "
+              "battery_cell_mah = ?, battery_reserve = ?, battery_type = ? WHERE device_uid = ?");
+    q.addBindValue(series);
+    q.addBindValue(parallel);
+    q.addBindValue(cellMah);
+    q.addBindValue(reserve);
+    q.addBindValue(batteryType);
+    q.addBindValue(deviceUid);
+    return execOrWarn(q, "updateVehicleBatteryConfig");
+}
+
+/** @brief Reads the battery pack config for a vehicle profile. Returns false when the
+ *         vehicle row is missing; output pointers are left untouched in that case. */
+bool DatabaseManager::vehicleBatteryConfig(const QString &deviceUid, int *series,
+                                           int *parallel, int *cellMah, double *reserve,
+                                           QString *batteryType) const
+{
+    if (!m_initialized || deviceUid.isEmpty()) return false;
+    QSqlQuery q(m_db);
+    q.prepare("SELECT battery_series_cells, battery_parallel_cells, battery_cell_mah, "
+              "battery_reserve, battery_type FROM vehicles WHERE device_uid = ?");
+    q.addBindValue(deviceUid);
+    if (!q.exec() || !q.next()) return false;
+    if (series)     *series      = q.value(0).toInt();
+    if (parallel)   *parallel    = q.value(1).toInt();
+    if (cellMah)    *cellMah     = q.value(2).toInt();
+    if (reserve)    *reserve     = q.value(3).toDouble();
+    if (batteryType)*batteryType = q.value(4).toString();
+    return true;
 }
 
 QString DatabaseManager::getVehicle(const QString &deviceUid)

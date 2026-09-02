@@ -152,6 +152,17 @@ public:
     /// Empty-airframe weight (kg) persistence for the payload/battery estimate.
     Q_INVOKABLE bool updateVehicleUavWeight(const QString &deviceUid, double weightKg);
     Q_INVOKABLE double vehicleUavWeight(const QString &deviceUid) const;
+
+    /// Thrust→current datasheet JSON persistence for the battery time estimator.
+    /// Empty string means "use the built-in default table".
+    Q_INVOKABLE bool updateVehicleMotorThrustTable(const QString &deviceUid, const QString &json);
+    Q_INVOKABLE QString vehicleMotorThrustTable(const QString &deviceUid) const;
+    Q_INVOKABLE bool updateVehicleBatteryConfig(const QString &deviceUid, int series,
+                                                int parallel, int cellMah, double reserve,
+                                                const QString &batteryType);
+    Q_INVOKABLE bool vehicleBatteryConfig(const QString &deviceUid, int *series,
+                                          int *parallel, int *cellMah, double *reserve,
+                                          QString *batteryType) const;
     Q_INVOKABLE QString getVehicle(const QString &deviceUid);
     Q_INVOKABLE QStringList listVehicles();
     Q_INVOKABLE bool deleteVehicle(const QString &deviceUid);
