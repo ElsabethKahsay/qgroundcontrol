@@ -110,6 +110,10 @@ signals:
     /// Emitted to log a gate-level override for audit trail.
     void gateOverrideLogged(const QString &reason, int timeoutSec);
 
+    /// Emitted when the vehicle rejects a command (arm, takeoff, mode change).
+    /// QML binds to this to show a toast/banner with the rejection reason.
+    void commandRejected(const QString &reason);
+
     /// Emitted when the vehicle confirms it has armed.
     void vehicleArmed();
     /// Emitted when the vehicle confirms it has disarmed.

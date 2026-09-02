@@ -83,6 +83,8 @@ private:
     void _populateChecklistModel();
     void _wireZoneComplianceCheck();
     void _resolvePlanMissionController(QQmlApplicationEngine *qmlEngine);
+    void _surfaceCommandRejection(const QString &command, const QString &reason);
+    static QString _mavResultToString(int result);
 
     // --- Owned managers and models (all parented to this for cleanup) ---
     QVariantList _analyzePages;                // Lazily-built list of Analyze tab pages

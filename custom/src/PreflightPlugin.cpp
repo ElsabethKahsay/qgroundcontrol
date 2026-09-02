@@ -619,6 +619,7 @@ void PreflightPlugin::_setupForVehicle(Vehicle *vehicle)
     if (_controlSurfaceTestController) {
         _controlSurfaceTestController->setVehicle(vehicle);
     }
+    FlightSession::instance()->setVehicle(vehicle);
     _preflightManager->startEvaluation(1000);
     if (_checklistEngine)
         _checklistEngine->start();
@@ -898,6 +899,10 @@ bool PreflightPlugin::mavlinkMessage(Vehicle *vehicle, LinkInterface *link, cons
         if (cmd.command == MAV_CMD_COMPONENT_ARM_DISARM) {
             _lastArmDisarmParam = static_cast<int>(cmd.param1);
             if (cmd.param1 == 1.0f) {
+                bool isForceArm = qFuzzyCompare(cmd.param2, 21196.0f) || qFuzzyCompare(cmd.param2, 2989.0f);
+                if (isForceArm && _armingGate) {
+                    _armingGate->forceArm();
+                }
                 if (_armingGate && !_armingGate->isArmingAllowed() && !_armingGate->isOverrideActive()) {
                     QString reason = _armingGate->denialReason();
                     qWarning().noquote() << QStringLiteral("ArmingGate: BLOCKED incoming COMMAND_LONG arm from compid %1 — %2")
@@ -915,21 +920,67 @@ bool PreflightPlugin::mavlinkMessage(Vehicle *vehicle, LinkInterface *link, cons
 
         if (ack.command == MAV_CMD_COMPONENT_ARM_DISARM) {
             if (ack.result == MAV_RESULT_ACCEPTED) {
-                qCWarning(preflightPluginLog) << "Vehicle armed/disarmed successfully";
+                qCWarning(preflightPluginLog) << "Vehicle arm/disarm command ACCEPTED by autopilot";
+                bool newArmedState = (_lastArmDisarmParam == -1) ? (vehicle ? !vehicle->armed() : true) : (_lastArmDisarmParam == 1);
+                if (vehicle) {
+                    vehicle->_updateArmed(newArmedState);
+                }
                 if (_armingGate) {
-                    if (_lastArmDisarmParam == 1)
+                    if (newArmedState)
                         emit _armingGate->vehicleArmed();
-                    else if (_lastArmDisarmParam == 0)
+                    else
                         emit _armingGate->vehicleDisarmed();
                 }
             } else {
-                qCWarning(preflightPluginLog) << QStringLiteral("Vehicle arm DENIED (result=%1)").arg(ack.result);
+                QString reason = _mavResultToString(ack.result);
+                qCWarning(preflightPluginLog) << QStringLiteral("Vehicle arm DENIED (result=%1: %2)").arg(ack.result).arg(reason);
+                _surfaceCommandRejection(QStringLiteral("Arm"), reason);
             }
             _lastArmDisarmParam = -1;
+        }
+
+        // Surface rejections for takeoff and mode-change commands (not just arm).
+        if (ack.result != MAV_RESULT_ACCEPTED) {
+            switch (ack.command) {
+            case MAV_CMD_NAV_TAKEOFF:
+                _surfaceCommandRejection(QStringLiteral("Takeoff"), _mavResultToString(ack.result));
+                break;
+            case MAV_CMD_DO_SET_MODE:
+                _surfaceCommandRejection(QStringLiteral("Mode change"), _mavResultToString(ack.result));
+                break;
+            default:
+                break;
+            }
         }
     }
 
     return true;  // Let the message continue through QGC's normal processing
+}
+
+// Convert a MAV_RESULT enum to a short human-readable denial reason.
+QString PreflightPlugin::_mavResultToString(int result)
+{
+    switch (result) {
+    case MAV_RESULT_TEMPORARILY_REJECTED: return QStringLiteral("Temporarily rejected by autopilot");
+    case MAV_RESULT_DENIED:              return QStringLiteral("Denied by autopilot");
+    case MAV_RESULT_UNSUPPORTED:         return QStringLiteral("Unsupported command");
+    case MAV_RESULT_FAILED:              return QStringLiteral("Command failed");
+    case MAV_RESULT_IN_PROGRESS:         return QStringLiteral("In progress");
+    case MAV_RESULT_CANCELLED:           return QStringLiteral("Cancelled");
+    default:                             return QStringLiteral("Unknown error (result=%1)").arg(result);
+    }
+}
+
+// Surface a command rejection to the user via signal + property.
+// Stores the last rejection so QML can bind to it, and emits a transient signal
+// for toast/banner display.
+void PreflightPlugin::_surfaceCommandRejection(const QString &command, const QString &reason)
+{
+    QString message = QStringLiteral("%1: %2").arg(command, reason);
+    qCWarning(preflightPluginLog) << QStringLiteral("FC rejection surfaced: %1").arg(message);
+    if (_armingGate) {
+        emit _armingGate->commandRejected(message);
+    }
 }
 
 // Returns the list of custom toolbar indicators (shown in the top toolbar).

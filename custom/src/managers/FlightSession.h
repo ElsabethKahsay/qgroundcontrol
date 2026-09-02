@@ -5,6 +5,8 @@
 #include <limits>
 #include <QtQml/qqmlregistration.h>
 
+class Vehicle;
+
 class FlightSession : public QObject
 {
     Q_OBJECT
@@ -74,6 +76,11 @@ public:
     /// Re-reads the persisted target location for the current flight id.
     Q_INVOKABLE void reloadTargetLocation();
 
+    /// Wires this session to a live vehicle so armed state is tracked from the
+    /// vehicle's own armedChanged signal (force-arm, normal arm, or external GCS
+    /// all converge on this single source of truth).  Pass nullptr on disconnect.
+    void setVehicle(QObject *vehicle);
+
     Q_INVOKABLE void onVehicleConnected();
     Q_INVOKABLE void setMode(const QString &mode);
     Q_INVOKABLE void requestForm();
@@ -118,6 +125,11 @@ private:
     void _setState(SessionState s);
     void _setMode(SessionMode m);
     QDateTime _sessionStartTime() const;
+    void _onVehicleArmedChanged(bool armed);
+    void _onVehicleDestroyed();
+
+    Vehicle *m_vehicle = nullptr;
+    QDateTime m_disarmedAt;
 
     SessionMode  m_mode         = SessionMode::None;
     SessionState m_state        = SessionState::Idle;

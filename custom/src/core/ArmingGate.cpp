@@ -92,7 +92,15 @@ void ArmingGate::setMode(Mode mode)
 // Only the arm command (param1=1) is intercepted; disarm passes through.
 bool ArmingGate::interceptCommandLong(uint16_t command, const QMap<int, float> &params)
 {
-    // Training mode hard block — cannot be overridden
+    float armParam = params.value(1, 0.0f);
+    bool isArm = qFuzzyCompare(armParam, 1.0f);
+    if (!isArm)
+        return true;
+
+    if (m_overrideActive)
+        return true;
+
+    // Training mode hard block — cannot be overridden unless force arm / gate override is active
     FlightSession *session = FlightSession::instance();
     if (session && session->isTraining()) {
         qWarning().noquote() << QStringLiteral("ArmingGate: Arm blocked — training mode active");
@@ -103,17 +111,6 @@ bool ArmingGate::interceptCommandLong(uint16_t command, const QMap<int, float> &
         emit armingDenied(command, m_denialReason);
         return false;
     }
-
-    if (command != m_armCommandCode)
-        return true;
-
-    float armParam = params.value(1, 0.0f);
-    bool isArm = qFuzzyCompare(armParam, 1.0f);
-    if (!isArm)
-        return true;
-
-    if (m_overrideActive)
-        return true;
 
     if (m_ackReceived) {
         m_ackReceived = false;

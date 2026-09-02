@@ -1013,6 +1013,14 @@ void ControlSurfaceTestController::stopAllSurfaces()
     }
 }
 
+void ControlSurfaceTestController::switchToManual()
+{
+    if (m_vehicle) {
+        m_vehicle->setFlightMode(QStringLiteral("MANUAL"));
+        qCWarning(controlSurfaceTestLog) << "Manually switching flight mode to MANUAL";
+    }
+}
+
 void ControlSurfaceTestController::_onCommandResult(int vehicleId, int targetComponent, int command, int ackResult, int failureCode)
 {
     Q_UNUSED(vehicleId)

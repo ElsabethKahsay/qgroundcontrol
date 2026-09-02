@@ -109,6 +109,7 @@ public:
     Q_INVOKABLE void testFlap();
     Q_INVOKABLE void confirmSurfaceDirection(const QString &surfaceId, bool correct);
     Q_INVOKABLE void stopAllSurfaces();
+    Q_INVOKABLE void switchToManual();
 
 signals:
     void surfacesChanged();

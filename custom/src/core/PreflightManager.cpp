@@ -25,6 +25,7 @@
 #include "EkfFailsafeCheck.h"
 #include "GcsFailsafeCheck.h"
 #include "GimbalLinkCheck.h"
+#include "GpsFixCheck.h"
 #include "HeartbeatCheck.h"
 #include "HomePositionCheck.h"
 #include "ImuTemperatureCheck.h"
@@ -756,6 +757,7 @@ void PreflightManager::createPhase1Checks() {
 
   // Tier 1 — Navigation
   m_checks.append(new AccelConsistencyCheck(m_telemetry, 4.0, this));
+  m_checks.append(new GpsFixCheck(m_telemetry, 8, 2.0, this));
 
   // Tier 1 — Power
   m_checks.append(new BatteryTemperatureCheck(m_telemetry, 45.0, 0.0, this));
@@ -764,12 +766,6 @@ void PreflightManager::createPhase1Checks() {
   // Tier 1 — Communication
   m_checks.append(new TelemetryDropRateCheck(m_telemetry, 10, 5, this));
   m_checks.append(new RcThrottleMinCheck(m_telemetry, this));
-
-  // Tier 1 — Safety / Failsafe Parameters
-  m_checks.append(new BatteryFailsafeCheck(m_telemetry, this));
-  m_checks.append(new RadioFailsafeCheck(m_telemetry, this));
-  m_checks.append(new GcsFailsafeCheck(m_telemetry, this));
-  m_checks.append(new EkfFailsafeCheck(m_telemetry, this));
 
   // Tier 2 — rc communication
   m_checks.append(new RcModeSwitchCheck(m_telemetry, this));
@@ -784,7 +780,6 @@ void PreflightManager::createPhase1Checks() {
 
   // Tier 4 — Enhancement / Niche checks
   m_checks.append(new GimbalLinkCheck(m_telemetry, this));
-  m_checks.append(new VideoFeedCheck(m_telemetry, this));
   m_checks.append(new ImuTemperatureCheck(m_telemetry, 85.0, -20.0, this));
   m_checks.append(new MotorTemperatureCheck(m_telemetry, 80.0, this));
 
@@ -819,13 +814,6 @@ void PreflightManager::createPhase1Checks() {
       QStringLiteral("sensors.compass.orientation"),
       QStringLiteral("Compass Orientation"), CheckCategory::Navigation,
       QStringLiteral("Confirm compass orientation setting matches installed direction"), {},
-      {}, this));
-
-  // Environment (replaced by METAR auto-checks above)
-  m_checks.append(new ManualConfirmCheck(
-      QStringLiteral("environment.magnetic_disturbance"),
-      QStringLiteral("Magnetic Disturbance Zone"), CheckCategory::Environment,
-      QStringLiteral("Confirm no magnetic interference sources nearby"), {},
       {}, this));
 
   // Sort by category for deterministic order

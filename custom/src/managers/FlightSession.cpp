@@ -4,6 +4,8 @@
 #include "VehicleRegistry.h"
 #include "WeatherProvider.h"
 
+#include "Vehicle/Vehicle.h"
+
 #include <QDebug>
 #include <cmath>
 
@@ -53,6 +55,64 @@ QString FlightSession::sessionSummary() const
     case SessionState::PostFlight:  return prefix + QStringLiteral(" \u2014 ") + op + QStringLiteral(" \u2014 Post-flight");
     default: return prefix + QStringLiteral(" \u2014 ") + op;
     }
+}
+
+void FlightSession::setVehicle(QObject *vehicle)
+{
+    // Drop any previous vehicle connection.
+    if (m_vehicle) {
+        disconnect(m_vehicle, &Vehicle::armedChanged, this, &FlightSession::_onVehicleArmedChanged);
+        disconnect(m_vehicle, &QObject::destroyed, this, &FlightSession::_onVehicleDestroyed);
+    }
+    m_vehicle = qobject_cast<Vehicle *>(vehicle);
+
+    if (m_vehicle) {
+        // Primary source of truth: the vehicle's own armed state.  Force-arm,
+        // normal arm, or an external ground station all surface here, so the
+        // session state (and toolbar "Armed" label) always reflects reality.
+        connect(m_vehicle, &Vehicle::armedChanged,
+                this, &FlightSession::_onVehicleArmedChanged);
+        connect(m_vehicle, &QObject::destroyed,
+                this, &FlightSession::_onVehicleDestroyed);
+
+        qInfo() << "FlightSession: tracking vehicle" << m_vehicle->id();
+    }
+}
+
+void FlightSession::_onVehicleArmedChanged(bool armed)
+{
+    if (armed) {
+        if (m_state != SessionState::Armed) {
+            m_armedAt = QDateTime::currentDateTimeUtc();
+            _setState(SessionState::Armed);
+
+            if (m_mode == SessionMode::Flight && m_flightId > 0) {
+                DatabaseManager &db = DatabaseManager::instance();
+                db.beginTransaction();
+                bool ok = db.setFlightArmedAt(m_flightId, m_armedAt);
+                ok &= db.insertTelemetryEventSnapshot(
+                    m_flightId, QStringLiteral("ARM"), QString(),
+                    0.0, 0.0, 0, QString(),
+                    0.0, 0.0, 0.0, 0.0, 0.0);
+                if (ok) db.commitTransaction();
+                else    db.rollbackTransaction();
+            }
+            emit armingPermittedChanged();
+            qInfo() << "Vehicle armed — state → ARMED (source: armedChanged)";
+        }
+    } else {
+        if (m_state == SessionState::Armed) {
+            m_disarmedAt = QDateTime::currentDateTimeUtc();
+            _setState(SessionState::PostFlight);
+            emit postFlightChecklistRequired();
+            qInfo() << "Vehicle disarmed — state → POST_FLIGHT";
+        }
+    }
+}
+
+void FlightSession::_onVehicleDestroyed()
+{
+    m_vehicle = nullptr;
 }
 
 void FlightSession::onVehicleConnected()
