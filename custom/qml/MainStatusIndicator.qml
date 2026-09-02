@@ -90,14 +90,13 @@ RowLayout {
             property string _landingText:       qsTr("Landing")
 
             function mainStatusText() {
-                var statusText
+                var baseText = ""
                 if (_activeVehicle) {
                     if (_root._communicationLost) {
                         _mainStatusBGColor = "red"
-                        return mainStatusLabel._commLostText
-                    }
-                    // Armed branch FIRST — never show Not Ready while armed
-                    if (_activeVehicle.armed) {
+                        baseText = mainStatusLabel._commLostText
+                    } else if (_root._armed) {
+                        // Armed branch ALWAYS overrides pre-arm health checks
                         _mainStatusBGColor = "green"
 
                         if (_healthAndArmingChecksSupported) {
@@ -110,14 +109,15 @@ RowLayout {
                             }
                         }
 
-                        if (_activeVehicle.flying) {
-                            return mainStatusLabel._flyingText
-                        } else if (_activeVehicle.landing) {
-                            return mainStatusLabel._landingText
+                        if (_root._flying) {
+                            baseText = mainStatusLabel._flyingText
+                        } else if (_root._landing) {
+                            baseText = mainStatusLabel._landingText
                         } else {
-                            return mainStatusLabel._armedText
+                            baseText = mainStatusLabel._armedText
                         }
                     } else {
+                        // Disarmed branch: Ready To Fly / Not Ready based on checks
                         if (_healthAndArmingChecksSupported) {
                             if (_activeVehicle.healthAndArmingCheckReport.canArm) {
                                 if (_activeVehicle.healthAndArmingCheckReport.hasWarningsOrErrors) {
@@ -125,34 +125,37 @@ RowLayout {
                                 } else {
                                     _mainStatusBGColor = "green"
                                 }
-                                return mainStatusLabel._readyToFlyText
+                                baseText = mainStatusLabel._readyToFlyText
                             } else {
                                 _mainStatusBGColor = "red"
-                                return mainStatusLabel._notReadyToFlyText
+                                baseText = mainStatusLabel._notReadyToFlyText
                             }
                         } else if (_activeVehicle.readyToFlyAvailable) {
-                            if (_activeVehicle.readyToFly) {
+                            if (_root._readyToFly) {
                                 _mainStatusBGColor = "green"
-                                return mainStatusLabel._readyToFlyText
+                                baseText = mainStatusLabel._readyToFlyText
                             } else {
                                 _mainStatusBGColor = "yellow"
-                                return mainStatusLabel._notReadyToFlyText
+                                baseText = mainStatusLabel._notReadyToFlyText
                             }
                         } else {
-                            // Best we can do is determine readiness based on AutoPilot component setup and health indicators from SYS_STATUS
                             if (_activeVehicle.allSensorsHealthy && _activeVehicle.autopilot.setupComplete) {
                                 _mainStatusBGColor = "green"
-                                return mainStatusLabel._readyToFlyText
+                                baseText = mainStatusLabel._readyToFlyText
                             } else {
                                 _mainStatusBGColor = "yellow"
-                                return mainStatusLabel._notReadyToFlyText
+                                baseText = mainStatusLabel._notReadyToFlyText
                             }
                         }
                     }
                 } else {
                     _mainStatusBGColor = Colors.dialogAccent
-                    return mainStatusLabel._disconnectedText
+                    baseText = mainStatusLabel._disconnectedText
                 }
+
+                // Step 1: Temporary debug state string (a=armed f=flying l=landing r=readyToFly lost=commLost)
+                var debugText = " [a=" + _root._armed + " f=" + _root._flying + " l=" + _root._landing + " r=" + _root._readyToFly + " lost=" + _root._communicationLost + "]"
+                return baseText + debugText
             }
 
             QGCMouseArea {
