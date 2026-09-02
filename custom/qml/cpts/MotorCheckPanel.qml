@@ -245,7 +245,12 @@ Rectangle {
                         enabled: !!QGroundControl.multiVehicleManager.activeVehicle && !_inManual
                         onClicked: {
                             var v = QGroundControl.multiVehicleManager.activeVehicle
-                            if (v) v.flightMode = "MANUAL"
+                            if (v && typeof v.setFlightMode === "function") {
+                                v.setFlightMode("MANUAL")
+                            }
+                            if (typeof ControlSurfaceTestController !== "undefined") {
+                                ControlSurfaceTestController.switchToManual()
+                            }
                         }
                         background: Rectangle {
                             radius: 6
@@ -550,12 +555,12 @@ Rectangle {
                                     id: testBtn
                                     Layout.fillWidth: true; Layout.preferredHeight: 30
                                     radius: Config.radiusSmall
-                                    property bool _canTest: mcard.st !== HardwareTestController.Testing
-                                                         && mcard.st !== HardwareTestController.Cooldown
-                                                         && HardwareTestController.activeMotor < 0
+                                    property bool canTest: mcard.st !== HardwareTestController.Testing
+                                                        && mcard.st !== HardwareTestController.Cooldown
+                                                        && HardwareTestController.activeMotor < 0
 
 
-                                    color: !_canTest                                    ? Colors.borderLight
+                                    color: !canTest                                     ? Colors.borderLight
                                          : mcard.st === HardwareTestController.Pass    ? Colors.success
                                          : mcard.st === HardwareTestController.Fail    ? Colors.error
                                          : Colors.accent
@@ -566,7 +571,7 @@ Rectangle {
                                         NumberAnimation { from: 1.0; to: 0.35; duration: 380 }
                                         NumberAnimation { from: 0.35; to: 1.0; duration: 380 }
                                     }
-                                    on_CanTestChanged: if (_canTest) opacity = 1.0
+                                    onCanTestChanged: if (canTest) opacity = 1.0
 
                                     Text {
                                         anchors.centerIn: parent
@@ -576,7 +581,7 @@ Rectangle {
                                             : mcard.st === HardwareTestController.Cooldown ? "WAIT\u2026"
                                             : "TEST " + root.testLabel(mcard.midx)
                                         font.pixelSize: Config.fontSizeSmall; font.bold: true
-                                        color: testBtn._canTest ? Colors.background : Colors.textDisabled
+                                        color: testBtn.canTest ? Colors.background : Colors.textDisabled
                                     }
 
                                     MouseArea {

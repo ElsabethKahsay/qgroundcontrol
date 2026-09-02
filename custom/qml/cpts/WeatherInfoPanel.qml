@@ -16,6 +16,7 @@ Rectangle {
     readonly property var _telemetryDrop: typeof PreflightManager !== "undefined" ? PreflightManager.checkById("com.telemetry.drop_rate") : null
     readonly property var _mavlinkProtocol: typeof PreflightManager !== "undefined" ? PreflightManager.checkById("comm.mavlink.protocol") : null
     readonly property var _heartbeat: typeof PreflightManager !== "undefined" ? PreflightManager.checkById("comm.heartbeat") : null
+    readonly property var _videoFeed: typeof PreflightManager !== "undefined" ? PreflightManager.checkById("video.feed") : null
     readonly property var _homePosition: typeof PreflightManager !== "undefined" ? PreflightManager.checkById("nav.home") : null
     readonly property var _attitude: typeof PreflightManager !== "undefined" ? PreflightManager.checkById("nav.attitude") : null
 
@@ -261,6 +262,12 @@ Rectangle {
                     label: qsTr("Heartbeat")
                     value: _heartbeat ? _heartbeat.statusText : "—"
                     valueColor: _statusColor(_heartbeat)
+                }
+                InfoCell {
+                    icon: "\u{1F4F9}"   // 📹
+                    label: qsTr("Video Feed")
+                    value: _videoFeed ? _videoFeed.statusText : "No video source"
+                    valueColor: _statusColor(_videoFeed)
                 }
             }
 

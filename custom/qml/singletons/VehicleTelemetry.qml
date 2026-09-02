@@ -78,6 +78,11 @@ QtObject {
     property real roll: TelemetryProvider ? TelemetryProvider.roll : 0.0
     property real pitch: TelemetryProvider ? TelemetryProvider.pitch : 0.0
     property real batteryCurrent: TelemetryProvider ? TelemetryProvider.batteryCurrent : 0.0
+    property real batteryCurrentAmps: TelemetryProvider ? TelemetryProvider.batteryCurrentAmps : 0.0
+    property real batteryTemperature: TelemetryProvider ? TelemetryProvider.batteryTemperature : NaN
+    property string batteryChargeState: TelemetryProvider ? TelemetryProvider.batteryChargeState : "OK"
+    property real batteryTimeRemainingSeconds: TelemetryProvider ? TelemetryProvider.batteryTimeRemainingSeconds : -1
+    property var batteryCellVoltages: TelemetryProvider ? TelemetryProvider.batteryCellVoltages : []
     property bool armed: TelemetryProvider ? TelemetryProvider.armed : false
     property string gpsFixTypeString: TelemetryProvider ? TelemetryProvider.gpsFixTypeString : "No GPS"
     property string servoOutputs: TelemetryProvider ? TelemetryProvider.servoOutputsString : ""
@@ -386,6 +391,21 @@ QtObject {
         }
         function onBatteryCurrentChanged() {
             batteryCurrent = TelemetryProvider.batteryCurrent
+        }
+        function onBatteryCurrentAmpsChanged() {
+            batteryCurrentAmps = TelemetryProvider.batteryCurrentAmps
+        }
+        function onBatteryTemperatureChanged() {
+            batteryTemperature = TelemetryProvider.batteryTemperature
+        }
+        function onBatteryChargeStateChanged() {
+            batteryChargeState = TelemetryProvider.batteryChargeState
+        }
+        function onBatteryTimeRemainingSecondsChanged() {
+            batteryTimeRemainingSeconds = TelemetryProvider.batteryTimeRemainingSeconds
+        }
+        function onBatteryCellVoltagesChanged() {
+            batteryCellVoltages = TelemetryProvider.batteryCellVoltages
         }
         function onArmedChanged() {
             armed = TelemetryProvider.armed

@@ -4,11 +4,11 @@ import QtQuick.Window
 
 QtObject {
     // Compact GCS — smaller fonts, tighter grid, unique styling
-    readonly property int fontSizeH1: 21
-    readonly property int fontSizeH2: 19
-    readonly property int fontSizeH3: 17
-    readonly property int fontSizeBody: 15
-    readonly property int fontSizeSmall: 11
+    readonly property int fontSizeH1: 22
+    readonly property int fontSizeH2: 20
+    readonly property int fontSizeH3: 18
+    readonly property int fontSizeBody: 16
+    readonly property int fontSizeSmall: 13
     readonly property int spacingSmall: 6
     readonly property int spacingMedium: 10
     readonly property int spacingLarge: 14

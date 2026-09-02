@@ -12,7 +12,7 @@ AnalyzePage {
 
     property var historyModel: FlightHistoryModel {}
     property int _selectedFlightId: -1
-    property var _detail: ({})
+    property var detail: ({})
 
     property var _flight: ({})
     property var _preChecks: []
@@ -23,15 +23,15 @@ AnalyzePage {
     property var _compliance: []
     property var _handovers: []
 
-    on_DetailChanged: {
-        _flight      = _detail && _detail.flight       ? _detail.flight       : ({})
-        _preChecks   = _detail && _detail.checks_pre   ? _detail.checks_pre   : []
-        _postChecks  = _detail && _detail.checks_post  ? _detail.checks_post  : []
-        _events      = _detail && _detail.events       ? _detail.events       : []
-        _motorTests  = _detail && _detail.motor_tests  ? _detail.motor_tests  : []
-        _surfaceTests= _detail && _detail.surface_tests? _detail.surface_tests: []
-        _compliance  = _detail && _detail.compliance   ? _detail.compliance   : []
-        _handovers   = _detail && _detail.handovers    ? _detail.handovers    : []
+    onDetailChanged: {
+        _flight      = detail && detail.flight       ? detail.flight       : ({})
+        _preChecks   = detail && detail.checks_pre   ? detail.checks_pre   : []
+        _postChecks  = detail && detail.checks_post  ? detail.checks_post  : []
+        _events      = detail && detail.events       ? detail.events       : []
+        _motorTests  = detail && detail.motor_tests  ? detail.motor_tests  : []
+        _surfaceTests= detail && detail.surface_tests? detail.surface_tests: []
+        _compliance  = detail && detail.compliance   ? detail.compliance   : []
+        _handovers   = detail && detail.handovers    ? detail.handovers    : []
     }
 
     // ── Helpers ──────────────────────────────────────────────────────
@@ -129,7 +129,7 @@ AnalyzePage {
 
     function loadDetail(flightId) {
         _selectedFlightId = flightId
-        _detail = historyModel.getFlightDetail(flightId)
+        detail = historyModel.getFlightDetail(flightId)
     }
 
     function exportFeedback(path) {

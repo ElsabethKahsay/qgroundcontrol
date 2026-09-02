@@ -71,8 +71,7 @@ Item {
                                             ? activeVehicle.batteries.get(0).percentRemaining.rawValue : -1
     readonly property real   _batV:     activeVehicle && activeVehicle.batteries && activeVehicle.batteries.count > 0
                                             ? activeVehicle.batteries.get(0).voltage.rawValue : 0
-    readonly property real   _batCur:   activeVehicle && activeVehicle.batteries && activeVehicle.batteries.count > 0
-                                            ? activeVehicle.batteries.get(0).current.rawValue : -1
+    readonly property real   _batCur:   _batteryCurrentFact()
     readonly property real   _distHome:   activeVehicle && activeVehicle.distanceToHome ? activeVehicle.distanceToHome.rawValue : 0
     readonly property real   _flightDist: activeVehicle && activeVehicle.flightDistance ? activeVehicle.flightDistance.rawValue : 0
     readonly property real   _currLat:    activeVehicle && activeVehicle.gps ? activeVehicle.gps.latitude.rawValue : 0
@@ -104,6 +103,20 @@ Item {
     function _battColor(p) { return (!activeVehicle || p === undefined || p === null || isNaN(p) || p < 0) ? Colors.textSecondary : p >= 40 ? Colors.pass : p >= 20 ? Colors.warning : Colors.fail }
     function _rssiColor(r) { return (!activeVehicle || r === undefined || r === null || isNaN(r) || r <= 0 || r > 100) ? Colors.textSecondary : r >= 70 ? Colors.pass : r >= 40 ? Colors.warning : Colors.fail }
     function _gpsColor(l)  { return (!activeVehicle || l === undefined || l === null || isNaN(l) || l < 2) ? Colors.fail : l >= 3 ? Colors.pass : Colors.warning }
+
+    // Battery current in amps.  Prefer TelemetryProvider (BATTERY_STATUS, always
+    // fresh and 0-sentineled), fall back to the vehicle battery fact.  Returns a
+    // value > 0 only when real current data is on the wire; otherwise -1 so the
+    // SYSTEM "Curr" cell shows "--" instead of "-1.0".
+    function _batteryCurrentFact() {
+        var tel = (typeof TelemetryProvider !== "undefined" && TelemetryProvider) ? TelemetryProvider : null
+        if (tel && tel.batteryCurrentAmps >= 0) return tel.batteryCurrentAmps
+        if (activeVehicle && activeVehicle.batteries && activeVehicle.batteries.count > 0) {
+            var c = activeVehicle.batteries.get(0).current.rawValue
+            if (!isNaN(c) && c >= 0) return c
+        }
+        return -1
+    }
     
     function _fixStr(l) {
         if (!activeVehicle || l === undefined || l === null || isNaN(l)) return "No GPS"
@@ -290,8 +303,8 @@ Item {
                       unit: activeVehicle && _rssi > 0 && _rssi <= 100 ? "%" : "",
                       vcolor: _rssiColor(_rssi) },
                     { label: "Curr",
-                      value: _formatVal(_batCur, 1),
-                      unit: "A",    vcolor: Colors.textPrimary }
+                      value: activeVehicle && _batCur > 0 ? _formatVal(_batCur, 1) : "--",
+                      unit: activeVehicle && _batCur > 0 ? "A" : "",    vcolor: Colors.textPrimary }
                 ] : [
                     { label: "Bat",
                       value: activeVehicle && _batPct >= 0 ? _batPct.toFixed(0) + "% (" + _formatVal(_batV, 1) + "V)" : "--",

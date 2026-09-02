@@ -400,12 +400,17 @@ Page {
                                 }
 
                                 // ── Gimbal Test view (inline, replaces checklist in left 70%) ──
-                                Loader {
+                                 Loader {
                                     id: gimbalLoader
                                     anchors.fill: parent
                                     active:  leftPanel._leftView === "gimbal"
                                     visible: leftPanel._leftView === "gimbal"
                                     source: active ? "GimbalTest.qml" : ""
+                                    onStatusChanged: {
+                                        if (status === Loader.Error) {
+                                            console.warn("[PreFlightChecklist] gimbalLoader failed to load GimbalTest.qml: " + errorString())
+                                        }
+                                    }
                                 }
                             }
 

@@ -10,12 +10,12 @@ import QGroundControl.ScreenToolsController
 Item {
     id: _screenTools
 
-    property real defaultFontPointSize:     10
-    property real platformFontPointSize:    10
+    property real defaultFontPointSize:     12
+    property real platformFontPointSize:    12
 
-    readonly property real smallFontPointRatio:      0.75
-    readonly property real mediumFontPointRatio:     1.25
-    readonly property real largeFontPointRatio:      1.5
+    readonly property real smallFontPointRatio:      0.9
+    readonly property real mediumFontPointRatio:     1.5
+    readonly property real largeFontPointRatio:      1.8
 
     property real defaultFontPixelHeight:   10
     property real largeFontPixelHeight:     defaultFontPixelHeight * largeFontPointRatio

@@ -40,6 +40,7 @@ Rectangle {
     property var _runningChecks: ({})
     property var _expandedChecks: ({})
     property bool _priorityListVisible: false
+    property bool statusBannerDismissed: false
     // True when the target-location fields were last filled from the map center
     // (drives the source tag persisted with the submitted location).
     property bool _targetFromMap: false
@@ -51,12 +52,6 @@ Rectangle {
     Component.onCompleted: {
         _vehicleType = (typeof VehicleProfileManager !== "undefined") ? VehicleProfileManager.vehicleType : "UNKNOWN"
         _motorCount  = (typeof VehicleProfileManager !== "undefined") ? VehicleProfileManager.motorCount  : 0
-        // Restore a previously submitted target location for this flight, if any.
-        if (!isNaN(FlightSession.targetLat) && !isNaN(FlightSession.targetLon)) {
-            targetLat.text = FlightSession.targetLat.toFixed(6)
-            targetLon.text = FlightSession.targetLon.toFixed(6)
-            root._targetFromMap = (FlightSession.targetSource === qsTr("map center"))
-        }
     }
 
     // Re-capture when resolved (once only)
@@ -88,6 +83,8 @@ Rectangle {
         // Zone compliance is managed from the Gimbal/Payload page's
         // restricted-zones checklist — not shown as a preflight row.
         if (cId === "airspace.zone_compliance")     return false
+        // Camera/Gimbal Link is shown inline on the GimbalTest page.
+        if (cId === "com.gimbal.link")              return false
         return true
     }
 
@@ -237,151 +234,162 @@ Rectangle {
         spacing: 0
 
         // ── Top-level summary box (pink/purple themed) ──
+        // Combined Top Status & Warning Header Card (Compact & Dismissable)
         Rectangle {
+            id: topStatusBox
             Layout.fillWidth: true
-            Layout.preferredHeight: 46
+            Layout.preferredHeight: visible ? (topStatusCol.implicitHeight + 16) : 0
             Layout.leftMargin: Config.spacingMedium
             Layout.rightMargin: Config.spacingMedium
             Layout.topMargin: Config.spacingSmall
-            radius: 10
-            visible: _total > 0
+            radius: 6
+            visible: (_total > 0) && !root.statusBannerDismissed
 
             gradient: Gradient {
                 orientation: Gradient.Horizontal
-                GradientStop { position: 0.0; color: "#2D1B4E" }
-                GradientStop { position: 0.5; color: "#4A1942" }
-                GradientStop { position: 1.0; color: "#6B1D5E" }
+                GradientStop { position: 0.0; color: "#2A123E" }
+                GradientStop { position: 0.5; color: "#421344" }
+                GradientStop { position: 1.0; color: "#59134E" }
             }
+            border.color: _blockers > 0 ? "#FF2A6D" : "#8E24AA"
+            border.width: 1
 
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: 16; anchors.rightMargin: 12
-                spacing: 16
+            ColumnLayout {
+                id: topStatusCol
+                anchors { left: parent.left; right: parent.right; top: parent.top; margins: 10 }
+                spacing: 6
 
-                // Pass count
-                ColumnLayout {
-                    spacing: 1
-                    Text {
-                        text: _passed + "/" + _total + " checks passed"
-                        font.pixelSize: 17; font.bold: true; color: "#F8BBD0"
-                    }
-                    Text {
-                        text: _issueCount > 0 ? _issueCount + " critical issue" + (_issueCount !== 1 ? "s" : "") : "No critical issues"
-                        font.pixelSize: 14
-                        color: _issueCount > 0 ? "#EF9A9A" : "#A5D6A7"
-                    }
-                }
-
-                Item { Layout.fillWidth: true }
-
-                // Circular progress indicator
-                Rectangle {
-                    width: 36; height: 36; radius: 18
-                    color: "transparent"
-                    border.color: "#CE93D8"; border.width: 2
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: _pct + "%"
-                        font.pixelSize: 12; font.bold: true; color: "#CE93D8"
-                    }
-                }
-
-                // Show button
-                Rectangle {
-                    width: 64; height: 30; radius: 8
-                    color: _issueCount > 0 ? "#E91E63" : "#9333ea"
-                    opacity: showBtnMa.containsMouse ? 0.9 : 1.0
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "Show"
-                        font.pixelSize: 13; font.bold: true; color: "#fff"
-                    }
-
-                    MouseArea {
-                        id: showBtnMa
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: criticalIssuesDialog.open()
-                    }
-                }
-            }
-        }
-
-        // Blocking banner with integrated issue list toggle
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: visible ? 48 : 0
-            Layout.topMargin: 6
-            Layout.leftMargin: Config.spacingMedium
-            Layout.rightMargin: Config.spacingMedium
-            color: Colors.errorDim
-            radius: Config.radiusSmall
-            visible: _blockers > 0
-
-            RowLayout {
-                anchors.fill: parent
-                anchors.margins: Config.spacingSmall
-                spacing: Config.spacingMedium
-
-                Text {
-                    text: "\u26A0 Arming blocked: " + _blockers + " critical " + (_blockers === 1 ? "item must" : "items must") + " be fixed"
-                    font.pixelSize: Config.fontSizeBody
-                    color: Colors.error
-                    Layout.preferredWidth: Math.max(220, parent.width * 0.35)
-                    wrapMode: Text.WordWrap
-                    maximumLineCount: 2
-                }
-
-                ColumnLayout {
-                    spacing: 0
+                // ── Section 1: Checks Passed & Progress ──
+                RowLayout {
                     Layout.fillWidth: true
-                    Text {
-                        text: nextBlocker(0).length > 0 ? "First: Fix " + nextBlocker(0) : ""
-                        font.pixelSize: Config.fontSizeBody
-                        color: Colors.error
-                        font.bold: true
-                        elide: Text.ElideRight
-                        Layout.fillWidth: true
-                        visible: nextBlocker(0).length > 0
+                    spacing: 12
+
+                    // Pass count
+                    ColumnLayout {
+                        spacing: 1
+                        Text {
+                            text: _passed + "/" + _total + " checks passed"
+                            font.pixelSize: 15; font.bold: true; color: "#FFFFFF"
+                        }
+                        Text {
+                            text: _issueCount > 0 ? _issueCount + " critical issue" + (_issueCount !== 1 ? "s" : "") : "No critical issues"
+                            font.pixelSize: 12; font.bold: true
+                            color: _issueCount > 0 ? "#FF5252" : "#66BB6A"
+                        }
                     }
-                    Text {
-                        text: nextBlocker(1).length > 0 ? "Next: Fix " + nextBlocker(1) : ""
-                        font.pixelSize: Config.fontSizeBody
-                        color: Colors.textSecondary
-                        elide: Text.ElideRight
-                        Layout.fillWidth: true
-                        visible: nextBlocker(1).length > 0
+
+                    Item { Layout.fillWidth: true }
+
+                    // Circular progress indicator
+                    Rectangle {
+                        width: 32; height: 32; radius: 16
+                        color: "#1F0A2E"
+                        border.color: "#E040FB"; border.width: 2
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: _pct + "%"
+                            font.pixelSize: 11; font.bold: true; color: "#FFFFFF"
+                        }
+                    }
+
+                    // Show button
+                    Rectangle {
+                        width: 60; height: 26; radius: 4
+                        color: _issueCount > 0 ? "#FF2A6D" : "#9333ea"
+                        opacity: showBtnMa.containsMouse ? 0.9 : 1.0
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "Show"
+                            font.pixelSize: 12; font.bold: true; color: "#FFFFFF"
+                        }
+
+                        MouseArea {
+                            id: showBtnMa
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: criticalIssuesDialog.open()
+                        }
+                    }
+
+                    // Dismiss (X) button
+                    Rectangle {
+                        width: 26; height: 26; radius: 13
+                        color: dismissMa.containsMouse ? "#ffffff33" : "transparent"
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "\u2715"
+                            font.pixelSize: 13
+                            font.bold: true
+                            color: "#FFFFFF"
+                        }
+
+                        MouseArea {
+                            id: dismissMa
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.statusBannerDismissed = true
+                        }
                     }
                 }
 
-                Text {
-                    text: _issueCount + " issue(s)"
-                    font.pixelSize: Config.fontSizeBody
-                    color: Colors.error
-                    font.bold: true
-                    visible: _issueCount > 0
-                }
-
+                // Divider line inside single box
                 Rectangle {
-                    Layout.preferredHeight: 22
-                    Layout.preferredWidth: 52
-                    radius: 3
-                    color: Colors.error
-                    visible: _issueCount > 0
+                    visible: _blockers > 0
+                    Layout.fillWidth: true
+                    height: 1
+                    color: "#ffffff44"
+                }
+
+                // ── Section 2: Arming Blocked Warning Section ──
+                RowLayout {
+                    visible: _blockers > 0
+                    Layout.fillWidth: true
+                    spacing: 8
+
                     Text {
-                        anchors.centerIn: parent
-                        text: root._priorityListVisible ? "HIDE" : "SHOW"
-                        font.pixelSize: 9
+                        text: "\u26A0 Arming blocked: " + _blockers + " item(s)"
+                        font.pixelSize: 12
+                        color: "#FF5252"
                         font.bold: true
-                        color: Colors.background
                     }
-                    MouseArea {
-                        anchors.fill: parent
-                        onClicked: root._priorityListVisible = !root._priorityListVisible
-                        cursorShape: Qt.PointingHandCursor
+
+                    ColumnLayout {
+                        spacing: 0
+                        Layout.fillWidth: true
+                        Text {
+                            text: nextBlocker(0).length > 0 ? "First: Fix " + nextBlocker(0) : ""
+                            font.pixelSize: 11
+                            color: "#FF8A80"
+                            font.bold: true
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                            visible: nextBlocker(0).length > 0
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.preferredHeight: 22
+                        Layout.preferredWidth: 50
+                        radius: 3
+                        color: "#FF2A6D"
+                        visible: _issueCount > 0
+                        Text {
+                            anchors.centerIn: parent
+                            text: root._priorityListVisible ? "HIDE" : "SHOW"
+                            font.pixelSize: 10
+                            font.bold: true
+                            color: "#FFFFFF"
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: root._priorityListVisible = !root._priorityListVisible
+                            cursorShape: Qt.PointingHandCursor
+                        }
                     }
                 }
             }
@@ -444,7 +452,7 @@ Rectangle {
 
                 ColumnLayout {
                     anchors.fill: parent
-                    spacing: 0
+                    spacing: 8
                     visible: left70Panel._leftView === "checklist" && root._typeResolved
 
         Rectangle {
@@ -459,70 +467,74 @@ Rectangle {
             Layout.rightMargin: Config.spacingMedium
             Column {
                 id: operatorCol
-                anchors.fill: parent
-                spacing: 10
-                padding: 16
+                width: parent.width
+                spacing: 8
+                padding: 12
 
                 Label {
                     text: qsTr("Who is conducting this preflight?")
-                    font.pixelSize: Config.fontSizeH2
+                    font.pixelSize: Config.fontSizeH3
                     font.bold: true
+                    color: Colors.textPrimary
                 }
 
-                // Pilot / trainee and instructor names in a single row
-                Row {
+                // Pilot / trainee, instructor names, role box, and Confirm button in a SINGLE row
+                RowLayout {
                     spacing: 8
+                    Layout.fillWidth: true
+
                     TextField {
                         id: operatorFirstField
                         placeholderText: qsTr("First name")
-                        width: 150
-                        font.pixelSize: Config.fontSizeBody + 2
+                        Layout.preferredWidth: 120
+                        font.pixelSize: Config.fontSizeBody
+                        color: Colors.textPrimary
+                        placeholderTextColor: Colors.textSecondary
+                        background: Rectangle { color: Colors.surfaceLight; radius: Config.radiusSmall; border.color: operatorFirstField.activeFocus ? Colors.accent : Colors.border; border.width: 1 }
                     }
                     TextField {
                         id: operatorLastField
                         placeholderText: qsTr("Last name")
-                        width: 150
-                        font.pixelSize: Config.fontSizeBody + 2
+                        Layout.preferredWidth: 120
+                        font.pixelSize: Config.fontSizeBody
+                        color: Colors.textPrimary
+                        placeholderTextColor: Colors.textSecondary
+                        background: Rectangle { color: Colors.surfaceLight; radius: Config.radiusSmall; border.color: operatorLastField.activeFocus ? Colors.accent : Colors.border; border.width: 1 }
                     }
                     TextField {
                         id: instructorFirstField
                         placeholderText: qsTr("Instructor first")
-                        width: 150
+                        Layout.preferredWidth: 120
                         visible: FlightSession.isTraining
-                        font.pixelSize: Config.fontSizeBody + 2
+                        font.pixelSize: Config.fontSizeBody
+                        color: Colors.textPrimary
+                        placeholderTextColor: Colors.textSecondary
+                        background: Rectangle { color: Colors.surfaceLight; radius: Config.radiusSmall; border.color: instructorFirstField.activeFocus ? Colors.accent : Colors.border; border.width: 1 }
                     }
                     TextField {
                         id: instructorLastField
                         placeholderText: qsTr("Instructor last")
-                        width: 150
+                        Layout.preferredWidth: 120
                         visible: FlightSession.isTraining
-                        font.pixelSize: Config.fontSizeBody + 2
+                        font.pixelSize: Config.fontSizeBody
+                        color: Colors.textPrimary
+                        placeholderTextColor: Colors.textSecondary
+                        background: Rectangle { color: Colors.surfaceLight; radius: Config.radiusSmall; border.color: instructorLastField.activeFocus ? Colors.accent : Colors.border; border.width: 1 }
                     }
                     ComboBox {
                         id: operatorRoleBox
                         model: ["Pilot", "Trainee", "Supervisor", "Inspector"]
-                        width: 140
+                        Layout.preferredWidth: 110
                         currentIndex: FlightSession.isTraining ? 1 : 0
-                        font.pixelSize: Config.fontSizeBody + 2
+                        font.pixelSize: Config.fontSizeBody
                     }
-                }
 
-                Row {
-                    visible: OperatorManager.operators.length > 0
-                    spacing: 8
-                    Label { text: qsTr("or returning operator:"); anchors.verticalCenter: parent.verticalCenter }
-                    ComboBox {
-                        id: returningPicker
-                        model: OperatorManager.operators
-                        textRole: "name"
-                        onActivated: OperatorManager.selectOperator(model[currentIndex].id)
-                    }
-                }
-
-                Row {
-                    spacing: 8
+                    // Confirm button next to the names
                     Button {
+                        id: confirmOperatorBtn
                         text: qsTr("Confirm")
+                        font.pixelSize: Config.fontSizeBody
+                        font.bold: true
                         enabled: operatorFirstField.text.trim().length > 0
                             && operatorLastField.text.trim().length > 0
                             && (!FlightSession.isTraining
@@ -554,6 +566,21 @@ Rectangle {
                             }
                         }
                     }
+
+                    Item { Layout.fillWidth: true }
+                }
+
+                Row {
+                    visible: OperatorManager.operators.length > 0
+                    spacing: 8
+                    Label { text: qsTr("or returning operator:"); font.pixelSize: Config.fontSizeSmall; color: Colors.textSecondary; anchors.verticalCenter: parent.verticalCenter }
+                    ComboBox {
+                        id: returningPicker
+                        model: OperatorManager.operators
+                        textRole: "name"
+                        font.pixelSize: Config.fontSizeSmall
+                        onActivated: OperatorManager.selectOperator(model[currentIndex].id)
+                    }
                 }
             }
         }
@@ -571,121 +598,7 @@ Rectangle {
             Layout.rightMargin: Config.spacingMedium
         }
 
-        // ── Target Location — live distance/bearing from drone to target ──
-        RowLayout {
-            spacing: 8
-            Layout.leftMargin: Config.spacingMedium
-            Layout.rightMargin: Config.spacingMedium
 
-            Label {
-                text: qsTr("Target Location:")
-                font.pixelSize: Config.fontSizeBody
-                color: Colors.textPrimary
-                anchors.verticalCenter: parent.verticalCenter
-            }
-            TextField {
-                id: targetLat
-                width: 110
-                placeholderText: qsTr("Latitude")
-                font.pixelSize: Config.fontSizeSmall
-                color: Colors.textPrimary
-                background: Rectangle {
-                    color: Colors.surfaceLight
-                    radius: Config.radiusSmall
-                    border.color: targetLat.activeFocus ? Colors.accent : Colors.border
-                    border.width: 1
-                }
-                onTextChanged: {
-                    root._targetFromMap = false
-                    DistanceTracker.setTarget(
-                        parseFloat(targetLat.text), parseFloat(targetLon.text))
-                }
-            }
-            TextField {
-                id: targetLon
-                width: 110
-                placeholderText: qsTr("Longitude")
-                font.pixelSize: Config.fontSizeSmall
-                color: Colors.textPrimary
-                background: Rectangle {
-                    color: Colors.surfaceLight
-                    radius: Config.radiusSmall
-                    border.color: targetLon.activeFocus ? Colors.accent : Colors.border
-                    border.width: 1
-                }
-                onTextChanged: {
-                    root._targetFromMap = false
-                    DistanceTracker.setTarget(
-                        parseFloat(targetLat.text), parseFloat(targetLon.text))
-                }
-            }
-            Button {
-                text: qsTr("📍 Use Map Center")
-                font.pixelSize: Config.fontSizeSmall
-                onClicked: {
-                    targetLat.text = QGroundControl.flightMapPosition.latitude.toFixed(6)
-                    targetLon.text = QGroundControl.flightMapPosition.longitude.toFixed(6)
-                    root._targetFromMap = true
-                }
-                ToolTip.text: qsTr("Use the current map center as the target location")
-                ToolTip.visible: hovered
-            }
-            Button {
-                id: targetSubmitBtn
-                text: qsTr("Submit")
-                font.pixelSize: Config.fontSizeSmall
-                enabled: FlightSession.currentFlightId > 0
-                onClicked: {
-                    var lat = parseFloat(targetLat.text)
-                    var lon = parseFloat(targetLon.text)
-                    if (isNaN(lat) || isNaN(lon)) {
-                        targetStatus.show(qsTr("Enter latitude and longitude before saving"), false)
-                        return
-                    }
-                    var src = root._targetFromMap ? qsTr("map center") : qsTr("manual")
-                    if (FlightSession.saveTargetLocation(lat, lon, src)) {
-                        var detail = src
-                        if (DistanceTracker.hasTarget && DistanceTracker.distanceStr.length > 0)
-                            detail += qsTr(" \u00B7 %1 from vehicle").arg(DistanceTracker.distanceStr)
-                        targetStatus.show(qsTr("Target location saved (%1)").arg(detail), true)
-                    } else {
-                        targetStatus.show(FlightSession.lastTargetError, false)
-                    }
-                }
-                ToolTip.text: qsTr("Save this target location for the current flight")
-                ToolTip.visible: hovered
-            }
-            Label {
-                id: targetStatus
-                function show(msg, ok) {
-                    targetStatus._ok = ok
-                    targetStatus.text = msg
-                    if (ok) targetStatusTimer.restart()
-                }
-                property bool _ok: false
-                visible: text.length > 0
-                font.pixelSize: Config.fontSizeSmall
-                font.bold: true
-                color: _ok ? Colors.statePass : Colors.error
-                wrapMode: Text.WordWrap
-                Layout.maximumWidth: 260
-                anchors.verticalCenter: parent.verticalCenter
-                Timer {
-                    id: targetStatusTimer
-                    interval: 4000
-                    onTriggered: targetStatus.text = ""
-                }
-            }
-            Label {
-                visible: DistanceTracker.hasTarget && !isNaN(DistanceTracker.distanceM)
-                text: qsTr("Distance: ") + DistanceTracker.distanceStr
-                      + "  ·  " + qsTr("Bearing: ") + DistanceTracker.bearingStr
-                font.bold: true
-                font.pixelSize: Config.fontSizeBody
-                color: DistanceTracker.distanceM > 1000 ? Colors.warning : Colors.statePass
-                anchors.verticalCenter: parent.verticalCenter
-            }
-        }
 
         // Scrollable categories
         Flickable {
@@ -763,6 +676,62 @@ Rectangle {
                                          : _engine.catWarnCount(catId, catModels[catId]) > 0 ? Colors.checkWarn
                                          : Colors.success
                                 }
+                            }
+                        }
+
+                        // Live Battery Telemetry Summary Bar for Power Category
+                        Rectangle {
+                            visible: catId === 1
+                            width: section.contentWidth
+                            x: Config.spacingMedium
+                            height: 38
+                            color: "#16162e"
+                            radius: Config.radiusSmall
+                            border.color: "#3d3d66"
+                            border.width: 1
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 12
+                                anchors.rightMargin: 12
+                                spacing: 16
+
+                                Text {
+                                    text: "\u26A1 Live Telemetry:"
+                                    font.pixelSize: Config.fontSizeBody
+                                    font.bold: true
+                                    color: "#CE93D8"
+                                }
+
+                                Text {
+                                    text: "Voltage: " + (typeof VehicleTelemetry !== "undefined" && VehicleTelemetry.batteryVoltage > 0 ? VehicleTelemetry.batteryVoltage.toFixed(1) + " V" : "—")
+                                    font.pixelSize: Config.fontSizeBody
+                                    font.bold: true
+                                    color: "#FFFFFF"
+                                }
+
+                                Text {
+                                    text: "Current: " + (typeof VehicleTelemetry !== "undefined" ? VehicleTelemetry.batteryCurrentAmps.toFixed(1) + " A" : "—")
+                                    font.pixelSize: Config.fontSizeBody
+                                    font.bold: true
+                                    color: "#FFFFFF"
+                                }
+
+                                Text {
+                                    text: "Temp: " + (typeof VehicleTelemetry !== "undefined" && !isNaN(VehicleTelemetry.batteryTemperature) ? VehicleTelemetry.batteryTemperature.toFixed(1) + " \u00B0C" : "N/A")
+                                    font.pixelSize: Config.fontSizeBody
+                                    font.bold: true
+                                    color: "#FFFFFF"
+                                }
+
+                                Text {
+                                    text: "State: " + (typeof VehicleTelemetry !== "undefined" ? VehicleTelemetry.batteryChargeState : "OK")
+                                    font.pixelSize: Config.fontSizeBody
+                                    font.bold: true
+                                    color: (typeof VehicleTelemetry !== "undefined" && (VehicleTelemetry.batteryChargeState === "critical" || VehicleTelemetry.batteryChargeState === "emergency")) ? "#FF5252" : "#66BB6A"
+                                }
+
+                                Item { Layout.fillWidth: true }
                             }
                         }
 
@@ -1277,10 +1246,16 @@ Rectangle {
                     visible: left70Panel._leftView === "gimbal"
 
                     Loader {
+                        id: gimbalLoader
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         active: left70Panel._leftView === "gimbal"
                         source: active ? "qrc:/qml/pages/GimbalTest.qml" : ""
+                        onStatusChanged: {
+                            if (status === Loader.Error) {
+                                console.warn("[PreflightChecklistView] gimbalLoader failed to load GimbalTest.qml: " + errorString())
+                            }
+                        }
                     }
 
                     // Gimbal view bottom bar

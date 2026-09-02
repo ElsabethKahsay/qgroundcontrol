@@ -81,6 +81,7 @@ Item {
     // strip (top-left of video panel) and compass (bottom-right of map panel).
 
     FlyViewMissionCompleteDialog {
+        id:                     missionCompleteDialog
         missionController:      _missionController
         geoFenceController:     _geoFenceController
         rallyPointController:   _rallyPointController
@@ -107,7 +108,7 @@ Item {
         anchors.bottom:             parent.bottom
         anchors.bottomMargin:       bottomLoaderMargin
         anchors.left:               parent.left   
-        anchors.leftMargin:         ( y > toolStrip.y + toolStrip.height ? toolStrip.width / 2 : toolStrip.width * 1.05 + toolStrip.x) 
+        anchors.leftMargin:         ScreenTools.defaultFontPixelWidth * 1.5
         source:                     "qrc:/qml/QGroundControl/FlightDisplay/VirtualJoystick.qml"
         active:                     _virtualJoystickEnabled && !(_activeVehicle ? _activeVehicle.usingHighLatencyLink : false)
 

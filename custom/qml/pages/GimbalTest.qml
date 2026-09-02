@@ -1,7 +1,9 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Window
 import com.uav.preflight 1.0
+import cpts 1.0
 
 Page {
     id: root
@@ -27,6 +29,7 @@ Page {
     property string _lastAck: ""
     property bool tiltTestRunning: false
     property bool tiltTestPassed: false
+    property bool _targetFromMap: false
 
     // Control surface test state (driven by ControlSurfaceTestController)
     readonly property var _surfaces: (typeof ControlSurfaceTestController !== "undefined") ? ControlSurfaceTestController.surfaces : []
@@ -48,7 +51,14 @@ Page {
         }
     }
 
-    Component.onCompleted: _loadSurfaces()
+    Component.onCompleted: {
+        _loadSurfaces()
+        if (!isNaN(FlightSession.targetLat) && !isNaN(FlightSession.targetLon)) {
+            targetLat.text = FlightSession.targetLat.toFixed(6)
+            targetLon.text = FlightSession.targetLon.toFixed(6)
+            root._targetFromMap = (FlightSession.targetSource === qsTr("map center"))
+        }
+    }
     Component.onDestruction: {
         if (typeof ControlSurfaceTestController !== "undefined")
             ControlSurfaceTestController.stopAllSurfaces()
@@ -90,7 +100,7 @@ Page {
     }
 
     Connections {
-        target: TelemetryProvider
+        target: (typeof TelemetryProvider !== "undefined") ? TelemetryProvider : null
         function onGimbalAttitudeChanged() {
             if (root.tiltTestRunning) {
                 root.tiltTestPassed = true;
@@ -137,278 +147,255 @@ Page {
                 width: parent.width
                 spacing: Config.spacingMedium
 
-                // ── Connection Status Banner ──
+                // ── Target Location Card (Top of GimbalTest page) ──
                 Rectangle {
+                    id: targetLocationCard
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 64
                     color: Colors.surface
                     radius: Config.radiusMedium
                     border.color: Colors.border
                     border.width: 1
-
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.margins: Config.spacingMedium
-                        spacing: Config.spacingMedium
-
-                        Rectangle {
-                            width: 14
-                            height: 14
-                            radius: 7
-                            color: TelemetryProvider.gimbalCalibrating ? Colors.warning : TelemetryProvider.gimbalDetected ? Colors.success : Colors.error
-                            border.color: Colors.textPrimary
-                            border.width: 1.5
-                            SequentialAnimation on opacity {
-                                loops: Animation.Infinite
-                                running: !TelemetryProvider.gimbalDetected || TelemetryProvider.gimbalCalibrating
-                                NumberAnimation {
-                                    from: 1.0
-                                    to: 0.3
-                                    duration: 800
-                                    easing.type: Easing.InOutQuad
-                                }
-                                NumberAnimation {
-                                    from: 0.3
-                                    to: 1.0
-                                    duration: 800
-                                    easing.type: Easing.InOutQuad
-                                }
-                            }
-                        }
-
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            spacing: 2
-                            Text {
-                                text: TelemetryProvider.gimbalDetected ? (TelemetryProvider.gimbalCalibrating ? "\u26A0 Calibrating Gimbal..." : "\u2713 Gimbal Connected") : "\u23F3 No Gimbal Detected"
-                                color: Colors.textPrimary
-                                font.pixelSize: Config.fontSizeBody
-                                font.bold: true
-                            }
-                            Text {
-                                text: TelemetryProvider.gimbalDetected ? "Gimbal telemetry & MAVLink control active" : "Ensure gimbal hardware is powered and connected"
-                                color: Colors.textSecondary
-                                font.pixelSize: Config.fontSizeSmall
-                            }
-                        }
-
-                        Text {
-                            id: statusToast
-                            font.pixelSize: Config.fontSizeSmall
-                            font.bold: true
-                            opacity: 0.0
-                            Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
-                        }
-                    }
-                }
-
-                // ── Payload & Battery Estimate ──
-                Rectangle {
-                    Layout.fillWidth: true
-                    implicitHeight: payloadCol.implicitHeight + Config.spacingMedium * 2
-                    color: Colors.surface
-                    radius: Config.radiusMedium
-                    border.color: Colors.border
-                    border.width: 1
-
-                    // Flight-time estimator — calibrated per-vehicle Wh/km model
-                    // with linear payload scaling; falls back to airframe defaults.
-                    QtObject {
-                        id: estimator
-
-                        property double estimatedMinutes: 0
-                        property string estimatedTimeStr: "—"
-                        property string baseTimeStr: "—"
-                        property string totalWeightStr: "—"
-                        property bool ready: false
-
-                        function calculate() {
-                            var uavKg = VehicleProfileManager.uavWeightKg
-                            var battWh = VehicleProfileManager.batteryWh()
-                            if (uavKg <= 0 || battWh <= 0) {
-                                ready = false
-                                estimatedTimeStr = qsTr("Configure vehicle weight")
-                                baseTimeStr = "—"
-                                totalWeightStr = "—"
-                                estimatedMinutes = 0
-                                return
-                            }
-                            ready = true
-
-                            var raw = parseFloat(payloadField.text)
-                            var payloadKg = isNaN(raw) ? 0 : qmlPayloadToKg(raw)
-                            VehicleProfileManager.currentPayloadWeightKg = payloadKg
-
-                            var uid = VehicleProfileManager.currentDeviceUid
-                            var est = PowerModel.estimateToMap(uid, payloadKg, battWh, -1, "")
-                            var base = PowerModel.estimateToMap(uid, 0, battWh, -1, "")
-
-                            estimatedMinutes = est.flightTimeMin
-                            estimatedTimeStr = est.flightTimeMin.toFixed(1) + qsTr(" min")
-                            baseTimeStr = base.flightTimeMin.toFixed(1) + qsTr(" min")
-
-                            var totalKg = uavKg + payloadKg
-                            totalWeightStr = totalKg.toFixed(2) + qsTr(" kg")
-                                            + qsTr(" (%1 lbs)").arg((totalKg / 0.453592).toFixed(2))
-                        }
-
-                        function qmlPayloadToKg(v) {
-                            return unitToggle.checked ? v * 0.453592 : v
-                        }
-                    }
+                    implicitHeight: targetCol.implicitHeight + Config.spacingMedium * 2
 
                     ColumnLayout {
-                        id: payloadCol
-                        anchors {
-                            fill: parent
-                            margins: Config.spacingMedium
-                        }
-                        spacing: Config.spacingSmall
+                        id: targetCol
+                        anchors { fill: parent; margins: Config.spacingMedium }
+                        spacing: 8
 
-                        Text {
-                            text: qsTr("Payload & Battery Estimate")
-                            font.pixelSize: Config.fontSizeBody
+                        Label {
+                            text: qsTr("Target Location")
+                            font.pixelSize: Config.fontSizeH3
                             font.bold: true
                             color: Colors.textPrimary
                         }
 
                         RowLayout {
+                            Layout.fillWidth: true
                             spacing: 8
 
                             Label {
-                                text: qsTr("UAV Weight:")
-                                font.pixelSize: Config.fontSizeSmall
+                                text: qsTr("Coordinates:")
+                                font.pixelSize: Config.fontSizeBody
                                 color: Colors.textSecondary
-                                Layout.preferredWidth: 100
+                                anchors.verticalCenter: parent.verticalCenter
                             }
                             TextField {
-                                id: uavWeightField
-                                width: 80
-                                Layout.preferredWidth: 80
+                                id: targetLat
+                                Layout.preferredWidth: 120
+                                placeholderText: qsTr("Latitude")
                                 font.pixelSize: Config.fontSizeSmall
                                 color: Colors.textPrimary
-                                text: VehicleProfileManager.uavWeightKg > 0
-                                      ? VehicleProfileManager.uavWeightKg.toFixed(2) : ""
-                                placeholderText: qsTr("kg")
-                                validator: DoubleValidator { bottom: 0.05; top: 500; decimals: 2 }
                                 background: Rectangle {
                                     color: Colors.surfaceLight
                                     radius: Config.radiusSmall
-                                    border.color: uavWeightField.activeFocus ? Colors.accent : Colors.border
+                                    border.color: targetLat.activeFocus ? Colors.accent : Colors.border
                                     border.width: 1
                                 }
-                                onEditingFinished: {
-                                    var v = parseFloat(text)
-                                    if (!isNaN(v)) {
-                                        VehicleProfileManager.setUavWeight(
-                                            v, unitToggle.checked ? "lbs" : "kg")
-                                        text = VehicleProfileManager.uavWeightKg.toFixed(2)
-                                    }
-                                    estimator.calculate()
+                                onTextChanged: {
+                                    root._targetFromMap = false
+                                    DistanceTracker.setTarget(
+                                        parseFloat(targetLat.text), parseFloat(targetLon.text))
                                 }
                             }
+                            TextField {
+                                id: targetLon
+                                Layout.preferredWidth: 120
+                                placeholderText: qsTr("Longitude")
+                                font.pixelSize: Config.fontSizeSmall
+                                color: Colors.textPrimary
+                                background: Rectangle {
+                                    color: Colors.surfaceLight
+                                    radius: Config.radiusSmall
+                                    border.color: targetLon.activeFocus ? Colors.accent : Colors.border
+                                    border.width: 1
+                                }
+                                onTextChanged: {
+                                    root._targetFromMap = false
+                                    DistanceTracker.setTarget(
+                                        parseFloat(targetLat.text), parseFloat(targetLon.text))
+                                }
+                            }
+                            Button {
+                                text: qsTr("📍 Use Map Center")
+                                font.pixelSize: Config.fontSizeSmall
+                                onClicked: {
+                                    targetLat.text = QGroundControl.flightMapPosition.latitude.toFixed(6)
+                                    targetLon.text = QGroundControl.flightMapPosition.longitude.toFixed(6)
+                                    root._targetFromMap = true
+                                }
+                                ToolTip.text: qsTr("Use the current map center as the target location")
+                                ToolTip.visible: hovered
+                            }
+                            Button {
+                                id: targetSubmitBtn
+                                text: qsTr("Submit Target")
+                                font.pixelSize: Config.fontSizeSmall
+                                enabled: FlightSession.currentFlightId > 0
+                                onClicked: {
+                                    var lat = parseFloat(targetLat.text)
+                                    var lon = parseFloat(targetLon.text)
+                                    if (isNaN(lat) || isNaN(lon)) {
+                                        targetStatus.show(qsTr("Enter latitude and longitude before saving"), false)
+                                        return
+                                    }
+                                    var src = root._targetFromMap ? qsTr("map center") : qsTr("manual")
+                                    if (FlightSession.saveTargetLocation(lat, lon, src)) {
+                                        var detail = src
+                                        if (DistanceTracker.hasTarget && DistanceTracker.distanceStr.length > 0)
+                                            detail += qsTr(" \u00B7 %1 from vehicle").arg(DistanceTracker.distanceStr)
+                                        targetStatus.show(qsTr("Target location saved (%1)").arg(detail), true)
+                                    } else {
+                                        targetStatus.show(FlightSession.lastTargetError, false)
+                                    }
+                                }
+                                ToolTip.text: qsTr("Save this target location for the current flight")
+                                ToolTip.visible: hovered
+                            }
+                            Item { Layout.fillWidth: true }
                         }
 
                         RowLayout {
-                            spacing: 8
-
-                            Label {
-                                text: qsTr("Payload:")
-                                font.pixelSize: Config.fontSizeSmall
-                                color: Colors.textSecondary
-                                Layout.preferredWidth: 100
-                            }
-                            TextField {
-                                id: payloadField
-                                width: 80
-                                Layout.preferredWidth: 80
-                                font.pixelSize: Config.fontSizeSmall
-                                color: Colors.textPrimary
-                                placeholderText: unitToggle.checked ? qsTr("lbs") : qsTr("kg")
-                                validator: DoubleValidator { bottom: 0; top: 30; decimals: 2 }
-                                background: Rectangle {
-                                    color: Colors.surfaceLight
-                                    radius: Config.radiusSmall
-                                    border.color: payloadField.activeFocus ? Colors.accent : Colors.border
-                                    border.width: 1
-                                }
-                                onEditingFinished: estimator.calculate()
-                            }
-                            Label {
-                                text: qsTr("kg")
-                                font.pixelSize: Config.fontSizeSmall
-                                color: !unitToggle.checked ? Colors.textPrimary : Colors.textSecondary
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                            Switch {
-                                id: unitToggle
-                                onToggled: {
-                                    // Convert the visible payload value to the new unit
-                                    var v = parseFloat(payloadField.text)
-                                    if (!isNaN(v))
-                                        payloadField.text = (checked ? v / 0.453592 : v * 0.453592).toFixed(2)
-                                    estimator.calculate()
-                                }
-                            }
-                            Label {
-                                text: qsTr("lbs")
-                                font.pixelSize: Config.fontSizeSmall
-                                color: unitToggle.checked ? Colors.textPrimary : Colors.textSecondary
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                        }
-
-                        Rectangle {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 64
-                            radius: Config.radiusSmall
-                            color: Colors.surfaceLight
-                            border.color: Colors.border
-                            border.width: 1
+                            spacing: 12
 
-                            ColumnLayout {
-                                anchors.centerIn: parent
-                                spacing: 2
+                            Label {
+                                id: targetStatus
+                                function show(msg, ok) {
+                                    targetStatus._ok = ok
+                                    targetStatus.text = msg
+                                    if (ok) targetStatusTimer.restart()
+                                }
+                                property bool _ok: false
+                                visible: text.length > 0
+                                font.pixelSize: Config.fontSizeSmall
+                                font.bold: true
+                                color: _ok ? Colors.statePass : Colors.error
+                                wrapMode: Text.WordWrap
+                                Layout.maximumWidth: 350
 
-                                Text {
-                                    text: qsTr("Est. flight time: ") + estimator.estimatedTimeStr
-                                    font.bold: true
-                                    font.pixelSize: Config.fontSizeBody
-                                    color: !estimator.ready ? Colors.textSecondary
-                                          : estimator.estimatedMinutes < 5 ? Colors.error
-                                          : estimator.estimatedMinutes < 10 ? Colors.warning
-                                          : Colors.statePass
+                                Timer {
+                                    id: targetStatusTimer
+                                    interval: 4000
+                                    onTriggered: targetStatus.text = ""
                                 }
-                                Text {
-                                    text: qsTr("Base (no payload): ") + estimator.baseTimeStr
-                                    font.pixelSize: Config.fontSizeSmall
-                                    color: Colors.textSecondary
-                                }
-                                Text {
-                                    text: qsTr("Total weight: ") + estimator.totalWeightStr
-                                    font.pixelSize: Config.fontSizeSmall
-                                    color: Colors.textSecondary
-                                }
+                            }
+
+                            Label {
+                                visible: DistanceTracker.hasTarget && !isNaN(DistanceTracker.distanceM)
+                                text: qsTr("Distance: ") + DistanceTracker.distanceStr
+                                      + "  ·  " + qsTr("Bearing: ") + DistanceTracker.bearingStr
+                                font.bold: true
+                                font.pixelSize: Config.fontSizeBody
+                                color: Colors.textSecondary
                             }
                         }
                     }
-
-                    Connections {
-                        target: VehicleProfileManager
-                        function onUavWeightChanged() { estimator.calculate() }
-                        function onVehicleTypeResolved() { estimator.calculate() }
-                    }
-                    Component.onCompleted: estimator.calculate()
                 }
 
-                // ── Restricted Zones — dropdown compliance checklist ────────
-                // Lists every active knowledge-base zone that the planned route
-                // intersects (from ZoneComplianceCheck).  The operator ticks each
-                // zone to acknowledge it; acknowledgements are recorded in the
-                // zone_compliance_log audit trail (operator id, zone id,
-                // timestamp, flight id).  This is organizational compliance ONLY:
-                // nothing is uploaded to the vehicle and no MAVLink fence
-                // messages are ever sent from here.
+                // ── Camera / Gimbal Link Status Card ──
+                Rectangle {
+                    id: gimbalLinkCard
+                    Layout.fillWidth: true
+                    radius: Config.radiusMedium
+                    border.width: 1
+                    implicitHeight: gimbalLinkRow.implicitHeight + Config.spacingMedium * 2
+
+                    readonly property var _check: (typeof PreflightManager !== "undefined")
+                        ? PreflightManager.checkById("com.gimbal.link") : null
+                    readonly property int  _status: _check ? _check.status : -1
+                    readonly property string _msg:  _check ? _check.message : qsTr("Waiting…")
+
+                    // 0 = Pending, 1 = Passed, 2 = Warning, 3 = Failed, 4 = Skipped
+                    readonly property color _bg: {
+                        if (_status === 1) return "#0D2B1A"        // pass — dark green
+                        if (_status === 2) return "#2B220A"        // warning — amber
+                        if (_status === 3) return "#2B0D0D"        // fail — dark red
+                        return Colors.surface
+                    }
+                    readonly property color _border: {
+                        if (_status === 1) return Colors.statePass
+                        if (_status === 2) return Colors.warning
+                        if (_status === 3) return Colors.error
+                        return Colors.border
+                    }
+                    readonly property string _dot: {
+                        if (_status === 1) return "✓"
+                        if (_status === 2) return "⚠"
+                        if (_status === 3) return "✗"
+                        return "…"
+                    }
+                    readonly property color _dotColor: {
+                        if (_status === 1) return Colors.statePass
+                        if (_status === 2) return Colors.warning
+                        if (_status === 3) return Colors.error
+                        return Colors.textDisabled
+                    }
+
+                    color:        _bg
+                    border.color: _border
+
+                    RowLayout {
+                        id: gimbalLinkRow
+                        anchors { fill: parent; margins: Config.spacingMedium }
+                        spacing: Config.spacingMedium
+
+                        // Status dot
+                        Text {
+                            text: gimbalLinkCard._dot
+                            font.pixelSize: Config.fontSizeH3
+                            font.bold: true
+                            color: gimbalLinkCard._dotColor
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 2
+
+                            Text {
+                                text: qsTr("Camera / Gimbal Link")
+                                font.pixelSize: Config.fontSizeBody
+                                font.bold: true
+                                color: Colors.textPrimary
+                            }
+                            Text {
+                                text: gimbalLinkCard._msg
+                                font.pixelSize: Config.fontSizeSmall
+                                color: gimbalLinkCard._status === 3 ? Colors.error
+                                     : gimbalLinkCard._status === 2 ? Colors.warning
+                                     : Colors.textSecondary
+                                wrapMode: Text.WordWrap
+                                Layout.fillWidth: true
+                            }
+                        }
+
+                        // Re-evaluate button
+                        Button {
+                            visible: gimbalLinkCard._status !== 1
+                            text: qsTr("Re-check")
+                            font.pixelSize: Config.fontSizeSmall
+                            onClicked: {
+                                if (gimbalLinkCard._check &&
+                                        typeof gimbalLinkCard._check.evaluate === "function")
+                                    gimbalLinkCard._check.evaluate()
+                            }
+                            background: Rectangle {
+                                radius: 4
+                                color: parent.enabled ? Colors.surfaceLight : Colors.surface
+                                border.color: Colors.border
+                                border.width: 1
+                            }
+                            contentItem: Text {
+                                text: parent.text
+                                font.pixelSize: Config.fontSizeSmall
+                                color: Colors.textSecondary
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                        }
+                    }
+                }
+
+                // ── Combined Warning & Airspace Status Card ──
                 Rectangle {
                     id: zoneCard
                     Layout.fillWidth: true
@@ -426,10 +413,10 @@ Page {
 
                     // Snapshot binding: re-reads the intersecting/unacked lists
                     // whenever the check re-evaluates (status/message NOTIFY).
-                    readonly property string _snap: _zoneCheck
+                    readonly property string snap: _zoneCheck
                         ? (_zoneCheck.status + "|" + _zoneCheck.message) : ""
-                        property var _intersecting: []
-                        property var _unacked: []
+                    property var _intersecting: []
+                    property var _unacked: []
 
                     function refresh() {
                         var inter = [], un = []
@@ -442,7 +429,7 @@ Page {
                         // Auto-open while work remains for the operator.
                         if (un.length > 0) zoneCard.expanded = true
                     }
-                    on_SnapChanged: refresh()
+                    onSnapChanged: refresh()
                     Component.onCompleted: refresh()
 
                     function zoneName(zoneId) {
@@ -467,13 +454,66 @@ Page {
                     ColumnLayout {
                         id: zoneCol
                         width: parent.width
-                        spacing: Config.spacingSmall
+                        spacing: 0
 
-                        // ── Header (click to expand/collapse) ──
+                        // ── Top Half: Hardware & Connection Status ──
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Layout.margins: Config.spacingMedium
+                            spacing: Config.spacingMedium
+
+                            Rectangle {
+                                width: 14
+                                height: 14
+                                radius: 7
+                                color: (typeof TelemetryProvider !== "undefined" && TelemetryProvider && TelemetryProvider.gimbalCalibrating) ? Colors.warning : ((typeof TelemetryProvider !== "undefined" && TelemetryProvider && TelemetryProvider.gimbalDetected) ? Colors.success : Colors.error)
+                                border.color: Colors.textPrimary
+                                border.width: 1.5
+                                SequentialAnimation on opacity {
+                                    loops: Animation.Infinite
+                                    running: (typeof TelemetryProvider === "undefined" || !TelemetryProvider) ? false : (!TelemetryProvider.gimbalDetected || TelemetryProvider.gimbalCalibrating)
+                                    NumberAnimation { from: 1.0; to: 0.3; duration: 800; easing.type: Easing.InOutQuad }
+                                    NumberAnimation { from: 0.3; to: 1.0; duration: 800; easing.type: Easing.InOutQuad }
+                                }
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+                                Text {
+                                    text: (typeof TelemetryProvider !== "undefined" && TelemetryProvider && TelemetryProvider.gimbalDetected) ? (TelemetryProvider.gimbalCalibrating ? "\u26A0 Calibrating Gimbal..." : "\u2713 Gimbal Connected") : "\u23F3 No Gimbal Detected"
+                                    color: Colors.textPrimary
+                                    font.pixelSize: Config.fontSizeBody
+                                    font.bold: true
+                                }
+                                Text {
+                                    text: (typeof TelemetryProvider !== "undefined" && TelemetryProvider && TelemetryProvider.gimbalDetected) ? "Gimbal telemetry & MAVLink control active" : "Ensure gimbal hardware is powered and connected"
+                                    color: Colors.textSecondary
+                                    font.pixelSize: Config.fontSizeSmall
+                                }
+                            }
+
+                            Text {
+                                id: statusToast
+                                font.pixelSize: Config.fontSizeSmall
+                                font.bold: true
+                                opacity: 0.0
+                                Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                            }
+                        }
+
+                        // Divider line
+                        Rectangle {
+                            Layout.fillWidth: true
+                            height: 1
+                            color: Colors.border
+                        }
+
+                        // ── Bottom Half: Restricted Zones Header (click to expand/collapse) ──
                         Rectangle {
                             id: zoneHeader
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 56
+                            Layout.preferredHeight: 52
                             color: zoneHeaderMa.containsMouse ? Colors.surfaceLight : "transparent"
                             radius: Config.radiusMedium
 
@@ -647,8 +687,14 @@ Page {
                                 color: Colors.textDisabled
                                 wrapMode: Text.WordWrap
                             }
-                        }
                     }
+                }
+            }
+
+                // ── Battery Time Estimator ──
+                BatteryTimeEstimatorPanel {
+                    Layout.fillWidth: true
+                    visible: false
                 }
 
                 // ── Three Numbers: Pitch / Roll / Yaw ──
@@ -682,7 +728,7 @@ Page {
                                     Layout.alignment: Qt.AlignHCenter
                                 }
                                 Text {
-                                    text: TelemetryProvider.gimbalPitch.toFixed(1) + "\u00B0"
+                                    text: (typeof TelemetryProvider !== "undefined" && TelemetryProvider && TelemetryProvider.gimbalPitch !== undefined ? TelemetryProvider.gimbalPitch : 0).toFixed(1) + "\u00B0"
                                     color: Colors.accent
                                     font.pixelSize: 20
                                     font.bold: true
@@ -709,7 +755,7 @@ Page {
                                     Layout.alignment: Qt.AlignHCenter
                                 }
                                 Text {
-                                    text: TelemetryProvider.gimbalRoll.toFixed(1) + "\u00B0"
+                                    text: (typeof TelemetryProvider !== "undefined" && TelemetryProvider && TelemetryProvider.gimbalRoll !== undefined ? TelemetryProvider.gimbalRoll : 0).toFixed(1) + "\u00B0"
                                     color: Colors.accent
                                     font.pixelSize: 20
                                     font.bold: true
@@ -736,7 +782,7 @@ Page {
                                     Layout.alignment: Qt.AlignHCenter
                                 }
                                 Text {
-                                    text: TelemetryProvider.gimbalYaw.toFixed(1) + "\u00B0"
+                                    text: (typeof TelemetryProvider !== "undefined" && TelemetryProvider && TelemetryProvider.gimbalYaw !== undefined ? TelemetryProvider.gimbalYaw : 0).toFixed(1) + "\u00B0"
                                     color: Colors.accent
                                     font.pixelSize: 20
                                     font.bold: true
@@ -892,12 +938,39 @@ Page {
                                     color: parent.parent._manual ? Colors.textPrimary : Colors.error
                                 }
 
-                                Text {
-                                    text: parent.parent._manual ? "" : "Switch to MANUAL for a valid sweep"
-                                    font.pixelSize: Config.fontSizeSmall
-                                    font.bold: true
-                                    color: Colors.error
+                                Rectangle {
                                     visible: !parent.parent._manual
+                                    implicitWidth: manualBtnText.implicitWidth + 16
+                                    implicitHeight: 22
+                                    radius: 4
+                                    color: manualMa.containsMouse ? "#D32F2F" : Colors.error
+                                    border.color: "#FF8A80"
+                                    border.width: 1
+
+                                    Text {
+                                        id: manualBtnText
+                                        anchors.centerIn: parent
+                                        text: "⚡ Switch to MANUAL"
+                                        font.pixelSize: Config.fontSizeSmall
+                                        font.bold: true
+                                        color: "#FFFFFF"
+                                    }
+
+                                    MouseArea {
+                                        id: manualMa
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            if (typeof ControlSurfaceTestController !== "undefined") {
+                                                ControlSurfaceTestController.switchToManual()
+                                            }
+                                            var v = QGroundControl.multiVehicleManager.activeVehicle
+                                            if (v && typeof v.setFlightMode === "function") {
+                                                v.setFlightMode("MANUAL")
+                                            }
+                                        }
+                                    }
                                 }
 
                                 Item { Layout.fillWidth: true }
