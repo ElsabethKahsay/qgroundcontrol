@@ -79,8 +79,14 @@
         <file alias="AlertBanner.qml">qml/cpts/AlertBanner.qml</file>
         <file alias="AlertPanel.qml">qml/cpts/AlertPanel.qml</file>
         <file alias="AutoCheckCard.qml">qml/cpts/AutoCheckCard.qml</file>
+        <file alias="BatteryTimeEstimatorPanel.qml">qml/cpts/BatteryTimeEstimatorPanel.qml</file>
+        <file alias="BatteryStatusChip.qml">qml/cpts/BatteryStatusChip.qml</file>
+        <file alias="FlyQuickActions.qml">qml/cpts/FlyQuickActions.qml</file>
+        <file alias="FcStatusPanel.qml">qml/cpts/FcStatusPanel.qml</file>
+        <file alias="EventLogPanel.qml">qml/cpts/EventLogPanel.qml</file>
         <file alias="ChecklistItem.qml">qml/cpts/ChecklistItem.qml</file>
         <file alias="CollapsibleSection.qml">qml/cpts/CollapsibleSection.qml</file>
+        <file alias="ControlSurfacePanel.qml">qml/cpts/ControlSurfacePanel.qml</file>
         <file alias="StatBox.qml">qml/cpts/StatBox.qml</file>
         <file alias="CustomButton.qml">qml/cpts/CustomButton.qml</file>
         <file alias="HardwareTestCard.qml">qml/cpts/HardwareTestCard.qml</file>

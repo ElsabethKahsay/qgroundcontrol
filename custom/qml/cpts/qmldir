@@ -10,3 +10,9 @@ WizardStep1Operator 1.0 WizardStep1Operator.qml
 WizardStep3Hardware 1.0 WizardStep3Hardware.qml
 WizardStep4Review 1.0 WizardStep4Review.qml
 WeatherPanel 1.0 WeatherPanel.qml
+BatteryTimeEstimatorPanel 1.0 BatteryTimeEstimatorPanel.qml
+BatteryStatusChip 1.0 BatteryStatusChip.qml
+FlyQuickActions 1.0 FlyQuickActions.qml
+FcStatusPanel 1.0 FcStatusPanel.qml
+EventLogPanel 1.0 EventLogPanel.qml
+ControlSurfacePanel 1.0 ControlSurfacePanel.qml

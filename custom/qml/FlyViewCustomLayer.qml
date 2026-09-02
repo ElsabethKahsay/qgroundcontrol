@@ -1,9 +1,10 @@
 // Component: FlyViewCustomLayer
 // Purpose: Custom Fly View overlay for the Enterprise GCS plugin.
+//   - Left-side quick-action column: BatteryStatusChip + FlyQuickActions
+//     (Checklist / Takeoff / Land / RTL / Pause / Flight time / FC status / Events)
 //   - Telemetry strip: bottom, spanning full width
 //   - Compass widget: top-right, overlaid on the map half
-//   - Preflight checklist button (bottom-left of video half)
-//   - Preflight status badge (top-right of map half)
+//   - Preflight status badge: top-right of map half
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 UAV Preflight Contributors
 
@@ -216,6 +217,65 @@ Item {
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    //  FC REJECTION TOAST — shows when autopilot rejects a command
+    // ═══════════════════════════════════════════════════════════════════
+    Rectangle {
+        id:                 fcRejectionToast
+        x:                  (parent.width - width) / 2
+        y:                  parent.height - height - ScreenTools.defaultFontPixelHeight * 2
+        width:              fcToastRow.width + ScreenTools.defaultFontPixelWidth * 2
+        height:             fcToastRow.height + ScreenTools.defaultFontPixelWidth
+        radius:             height / 2
+        color:              Qt.rgba(0.85, 0.15, 0.15, 0.92)
+        border.color:       Colors.error
+        border.width:       1
+        visible:            false
+        z:                  QGroundControl.zOrderWidgets + 2
+
+        Row {
+            id:             fcToastRow
+            anchors.centerIn: parent
+            spacing:        ScreenTools.defaultFontPixelWidth * 0.5
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text:                   "\u26A0\uFE0F"
+                font.pixelSize:         ScreenTools.defaultFontPixelHeight * 1.0
+            }
+
+            Text {
+                id:                 fcToastText
+                anchors.verticalCenter: parent.verticalCenter
+                text:               ""
+                font.pointSize:     ScreenTools.defaultFontPointSize
+                color:              Colors.dialogText
+                width:              Math.min(implicitWidth, parent.width * 0.6)
+                wrapMode:           Text.WordWrap
+            }
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            onClicked:    fcRejectionToast.visible = false
+        }
+
+        Timer {
+            id:             fcToastTimer
+            interval:       5000
+            onTriggered:    fcRejectionToast.visible = false
+        }
+    }
+
+    Connections {
+        target: typeof ArmingGate !== 'undefined' ? ArmingGate : null
+        function onCommandRejected(reason) {
+            fcToastText.text = reason
+            fcRejectionToast.visible = true
+            fcToastTimer.restart()
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     //  PREFLIGHT STATUS BADGE — top-right of map panel
     // ═══════════════════════════════════════════════════════════════════
     Rectangle {
@@ -275,95 +335,84 @@ Item {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //  PREFLIGHT BUTTON — bottom-left of the video panel
+    //  LIVE BATTERY CHIP + QUICK ACTIONS — far-left edge of the page
     // ═══════════════════════════════════════════════════════════════════
-    Rectangle {
-        id:                     preflightBtn
-        x:                      _videoPanelLeft + ScreenTools.defaultFontPixelWidth * 1.5
-        y:                      parent.height - height - ScreenTools.defaultFontPixelHeight * 2
-        width:                  btnRow.width + ScreenTools.defaultFontPixelWidth * 2
-        height:                 ScreenTools.defaultFontPixelHeight * 2.6
-        radius:                 height / 2
+    readonly property real _qaLeftX: ScreenTools.defaultFontPixelWidth * 1.5
+
+    // Y position just below the stock FlyViewToolStrip bottom edge
+    readonly property real _qaTopY: parentToolInsets.topEdgeLeftInset + ScreenTools.defaultFontPixelHeight * 0.6
+
+    Column {
+        id:                     leftActionsColumn
+        x:                      _qaLeftX
+        y:                      _root._qaTopY
+        spacing:                ScreenTools.defaultFontPixelHeight * 0.4
         z:                      QGroundControl.zOrderWidgets + 1
 
-        color: {
-            if (_btnMA.containsPress)  return Colors.tealDark
-            if (_btnMA.containsMouse)  return Colors.tealLight
-            return Colors.teal
-        }
-        border.color: Colors.accentCyan
-        border.width: 1
-
-        Behavior on color { ColorAnimation { duration: 120 } }
-
-        layer.enabled: true
-
-        Row {
-            id:                 btnRow
-            anchors.centerIn:   parent
-            spacing:            ScreenTools.defaultFontPixelWidth * 0.6
-
-            Text {
-                anchors.verticalCenter: parent.verticalCenter
-                text:                   qsTr("CHECK")
-                font.pixelSize:         ScreenTools.defaultFontPixelHeight * 1.1
-            }
-
-            Text {
-                anchors.verticalCenter: parent.verticalCenter
-                text:                   qsTr("Preflight Checklist")
-                font.pointSize:         ScreenTools.defaultFontPointSize * 0.95
-                font.weight:            Font.DemiBold
-                color:                  Colors.dialogText
-            }
-
-            Rectangle {
-                anchors.verticalCenter: parent.verticalCenter
-                width:                  badgeText.width + ScreenTools.defaultFontPixelWidth
-                height:                 ScreenTools.defaultFontPixelHeight * 1.2
-                radius:                 height / 2
-                visible:                _activeVehicle && typeof PreflightManager !== 'undefined'
-                                        && (typeof PreflightChecklistModel !== 'undefined')
-                color: {
-                    if (typeof PreflightChecklistModel === 'undefined') return "transparent"
-                    var f = PreflightChecklistModel.blockingFailedCount
-                    if (f > 0) return Colors.dialogFocus
-                    var p = typeof PreflightManager !== 'undefined' ? PreflightManager.pendingChecks : 0
-                    if (p > 0) return Colors.warning
-                    return Colors.success
-                }
-
-                Text {
-                    id:                 badgeText
-                    anchors.centerIn:   parent
-                    text: {
-                        if (typeof PreflightChecklistModel === 'undefined') return ""
-                        var f = PreflightChecklistModel.blockingFailedCount
-                        if (f > 0) return f.toString()
-                        var p = typeof PreflightManager !== 'undefined' ? PreflightManager.pendingChecks : 0
-                        if (p > 0) return p.toString()
-                        return "OK"
-                    }
-                    font.pointSize: ScreenTools.defaultFontPointSize * 0.8
-                    font.weight:    Font.Bold
-                    color:          Colors.dialogText
-                }
-            }
+        BatteryStatusChip {
+            id:                 batteryChip
         }
 
-        MouseArea {
-            id:             _btnMA
-            anchors.fill:   parent
-            hoverEnabled:   true
-            cursorShape:    Qt.PointingHandCursor
+        FlyQuickActions {
+            id:                 quickActions
+            hasVehicle:         _activeVehicle != null
+            checkedAction:      batteryChip.detailOpen ? "flightTime" : _root._openPanel
 
-            ToolTip.visible: containsMouse
-            ToolTip.text:    qsTr("Open Preflight Test Page")
-            ToolTip.delay:   400
+            onActionTriggered: (action) => {
+                if (action === "flightTime") {
+                    batteryChip.toggleDetail()
+                } else if (action === "checklist") {
+                    _root.openPreflightDialog()
+                } else if (action === "forceArm") {
+                    // Handled internally by FlyQuickActions (immediate arm).
+                } else {
+                    _root.togglePanel(action)
+                }
+            }        }
+    }
 
-            onClicked: openPreflightDialog()
+    // ── Single-overlay state for the FC status / Events panels ──
+    property string _openPanel: ""          // "", "fcStatus", "events"
+
+    function togglePanel(which) {
+        if (_openPanel === which) {
+            _openPanel = ""
+        } else {
+            _openPanel = which
         }
     }
+
+    FcStatusPanel {
+        id:                     fcStatusPanel
+        x:                      _qaLeftX
+        y:                      leftActionsColumn.y + leftActionsColumn.height + ScreenTools.defaultFontPixelHeight * 0.6
+        visiblePanel:           _root._openPanel === "fcStatus"
+        z:                      QGroundControl.zOrderWidgets + 1
+        onCloseRequested:       _root._openPanel = ""
+    }
+
+    EventLogPanel {
+        id:                     eventLogPanel
+        vehicle:                _activeVehicle
+        x:                      _qaLeftX
+        y:                      leftActionsColumn.y + leftActionsColumn.height + ScreenTools.defaultFontPixelHeight * 0.6
+        visible:                _root._openPanel === "events"
+        z:                      QGroundControl.zOrderWidgets + 1
+        onCloseRequested:       _root._openPanel = ""
+    }
+
+    // ── Battery time estimator overlay ──
+    BatteryTimeEstimatorPanel {
+        id:                     batteryEstimatePanel
+        x:                      _qaLeftX
+        y:                      leftActionsColumn.y + leftActionsColumn.height + ScreenTools.defaultFontPixelHeight * 0.6
+        width:                  ScreenTools.defaultFontPixelWidth * 32
+        visible:                _root._openPanel === "batteryEstimate"
+        z:                      QGroundControl.zOrderWidgets + 1
+        onCloseRequested:       _root._openPanel = ""
+    }
+
+
 
     property bool _preflightAnalyzePending: false
     property url  _preflightAnalyzeSource: "qrc:/qml/cpts/PreflightChecklistView.qml"
