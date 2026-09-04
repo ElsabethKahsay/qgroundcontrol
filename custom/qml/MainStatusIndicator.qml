@@ -153,9 +153,7 @@ RowLayout {
                     baseText = mainStatusLabel._disconnectedText
                 }
 
-                // Step 1: Temporary debug state string (a=armed f=flying l=landing r=readyToFly lost=commLost)
-                var debugText = " [a=" + _root._armed + " f=" + _root._flying + " l=" + _root._landing + " r=" + _root._readyToFly + " lost=" + _root._communicationLost + "]"
-                return baseText + debugText
+                return baseText
             }
 
             QGCMouseArea {

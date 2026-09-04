@@ -67,7 +67,7 @@ void FlightSession::setVehicle(QObject *vehicle)
     m_vehicle = qobject_cast<Vehicle *>(vehicle);
 
     if (m_vehicle) {
-        // Primary source of truth: the vehicle's own armed state.  Force-arm,
+        // Primary source of truth: the vehicle's own armed state. Force-arm,
         // normal arm, or an external ground station all surface here, so the
         // session state (and toolbar "Armed" label) always reflects reality.
         connect(m_vehicle, &Vehicle::armedChanged,
@@ -76,6 +76,9 @@ void FlightSession::setVehicle(QObject *vehicle)
                 this, &FlightSession::_onVehicleDestroyed);
 
         qInfo() << "FlightSession: tracking vehicle" << m_vehicle->id();
+        if (m_vehicle->armed()) {
+            _onVehicleArmedChanged(true);
+        }
     }
 }
 

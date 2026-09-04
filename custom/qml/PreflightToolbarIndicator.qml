@@ -26,6 +26,8 @@ Item {
     property var _gate: ArmingGate
 
     function _stateColor() {
+        var v = QGroundControl.multiVehicleManager.activeVehicle
+        if (v && v.armed) return Colors.success
         if (!_pfm) return Colors.textDisabled
         switch (_pfm.state) {
         case 0: return Colors.textDisabled
@@ -40,20 +42,18 @@ Item {
     }
 
     function _stateLabel() {
-        if (!_pfm) return "No Vehicle"
-        switch (_pfm.state) {
-        case 0: return "Disconnected"
-        case 1: return "Connecting..."
-        case 2: return "Loading Params"
-        case 3: return "Preflight Active"
-        case 4: return "Checks Passed"
-        case 5: return "Ready to Arm"
-        case 6: return "Armed"
-        default: return "Unknown"
-        }
+        var v = QGroundControl.multiVehicleManager.activeVehicle
+        if (!v) return qsTr("No Vehicle")
+        if (v.armed && v.flying) return qsTr("Flying")
+        if (v.armed) return qsTr("Armed")
+        var s = FlightSession.state
+        if (s >= FlightSession.ReadyToArm) return qsTr("Ready")
+        return qsTr("Not Ready")
     }
 
     function _gateBlocked() {
+        var v = QGroundControl.multiVehicleManager.activeVehicle
+        if (v && v.armed) return false
         return _gate && !_gate.armingAllowed && _gate.denialReason && _gate.denialReason.length > 0
     }
 
