@@ -156,6 +156,21 @@ void PreflightPlugin::init()
     _checklistModel->setPreflightManager(_preflightManager);
     _telemetryBridge = new TelemetryBridge(this);
 
+    // ArmingGate and ChecklistEngine must exist before any wiring below refers
+    // to them (TelemetryEventLogger::setDependencies and the FlightSession
+    // connects take real pointers, not nullptr).
+    _armingGate = new ArmingGate(this);
+    _armingGate->setPreflightManager(_preflightManager);
+    _armingGate->setTelemetryBridge(_telemetryBridge);
+    _telemetryBridge->setArmingGate(_armingGate);
+    _preflightManager->setTelemetryBridge(_telemetryBridge);
+
+    _checklistItemModel = new ChecklistItemModel(this);
+    _populateChecklistModel();
+    _checklistEngine = new ChecklistEngine(this);
+    _checklistEngine->setModel(_checklistItemModel);
+    _checklistEngine->setTelemetryBridge(_telemetryBridge);
+
     // OperatorManager is QML_SINGLETON — instantiation registers it
     new OperatorManager(this);
     new FlightSession(this);
@@ -207,16 +222,6 @@ void PreflightPlugin::init()
     _vehicleProfileManager = new VehicleProfileManager(this);
     _vehicleProfileManager->setTelemetryBridge(_telemetryBridge);
 
-    // --- Wire up the ArmingGate so it can query checks and telemetry ---
-    _armingGate = new ArmingGate(this);
-    _armingGate->setPreflightManager(_preflightManager);
-    _armingGate->setTelemetryBridge(_telemetryBridge);
-
-    // TelemetryBridge needs the gate reference so arm() checks gate state before sending.
-    _telemetryBridge->setArmingGate(_armingGate);
-
-    _preflightManager->setTelemetryBridge(_telemetryBridge);
-
     // Keep blocking rules in sync with the resolved vehicle kind (quad vs
     // fixed wing). Fires on connect and whenever the type re-resolves.
     connect(_vehicleProfileManager, &VehicleProfileManager::vehicleTypeResolved,
@@ -225,14 +230,6 @@ void PreflightPlugin::init()
             _preflightManager->applyVehicleKind(_vehicleProfileManager->vehicleKindString());
         }
     });
-
-    // Flatten all checks into ChecklistItemModel and feed to ChecklistEngine
-    // which evaluates them against live telemetry each cycle.
-    _checklistItemModel = new ChecklistItemModel(this);
-    _populateChecklistModel();
-    _checklistEngine = new ChecklistEngine(this);
-    _checklistEngine->setModel(_checklistItemModel);
-    _checklistEngine->setTelemetryBridge(_telemetryBridge);
 
     // When we get a battery voltage reading and no battery serial has been
     // assigned yet, create a synthetic serial ID from the vehicle ID so
