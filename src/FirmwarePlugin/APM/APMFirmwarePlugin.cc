@@ -30,16 +30,18 @@
 #include "APMParameterMetaData.h"
 #include "LinkManager.h"
 #include "Vehicle.h"
+#include "VehicleLinkManager.h"
 #include "StatusTextHandler.h"
 #include "MAVLinkProtocol.h"
 #include "QGCLoggingCategory.h"
 #include "DeviceInfo.h"
 
 #include <QtNetwork/QTcpSocket>
+
 #include <QtCore/QRegularExpression>
 #include <QtCore/QRegularExpressionMatch>
 
-QGC_LOGGING_CATEGORY(APMFirmwarePluginLog, "APMFirmwarePluginLog")
+QGC_LOGGING_CATEGORY(APMFirmwarePluginLog, "FirmwarePlugin.APMFirmwarePlugin")
 
 APMFirmwarePlugin::APMFirmwarePlugin(QObject *parent)
     : FirmwarePlugin(parent)
@@ -452,7 +454,6 @@ void APMFirmwarePlugin::initializeStreamRates(Vehicle *vehicle)
     instanceData->lastBatteryStatusTime = instanceData->lastHomePositionTime = QTime::currentTime();
 }
 
-
 void APMFirmwarePlugin::initializeVehicle(Vehicle *vehicle)
 {
     if (vehicle->isOfflineEditingVehicle()) {
@@ -495,24 +496,6 @@ void APMFirmwarePlugin::initializeVehicle(Vehicle *vehicle)
     }
 }
 
-FactMetaData* APMFirmwarePlugin::_getMetaDataForFact(QObject* parameterMetaData, const QString& name, FactMetaData::ValueType_t type, MAV_TYPE vehicleType) const
-{
-    APMParameterMetaData *const apmMetaData = qobject_cast<APMParameterMetaData*>(parameterMetaData);
-
-    if (apmMetaData) {
-        return apmMetaData->getMetaDataForFact(name, vehicleType, type);
-    } else {
-        qWarning() << "Internal error: pointer passed to APMFirmwarePlugin::addMetaDataToFact not APMParameterMetaData";
-    }
-
-    return nullptr;
-}
-
-void APMFirmwarePlugin::_getParameterMetaDataVersionInfo(const QString& metaDataFile, int& majorVersion, int& minorVersion) const
-{
-    APMParameterMetaData::getParameterMetaDataVersionInfo(metaDataFile, majorVersion, minorVersion);
-}
-
 QList<MAV_CMD> APMFirmwarePlugin::supportedMissionCommands(QGCMAVLink::VehicleClass_t vehicleClass) const
 {
     QList<MAV_CMD> supportedCommands = {
@@ -537,6 +520,7 @@ QList<MAV_CMD> APMFirmwarePlugin::supportedMissionCommands(QGCMAVLink::VehicleCl
         MAV_CMD_DO_MOUNT_CONTROL,
         MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW,
         MAV_CMD_DO_SET_CAM_TRIGG_DIST,
+        MAV_CMD_IMAGE_START_CAPTURE, MAV_CMD_IMAGE_STOP_CAPTURE, MAV_CMD_VIDEO_START_CAPTURE, MAV_CMD_VIDEO_STOP_CAPTURE,
         MAV_CMD_DO_FENCE_ENABLE,
         MAV_CMD_DO_PARACHUTE,
         MAV_CMD_DO_INVERTED_FLIGHT,
@@ -592,6 +576,24 @@ QString APMFirmwarePlugin::missionCommandOverrides(QGCMAVLink::VehicleClass_t ve
     }
 }
 
+FactMetaData* APMFirmwarePlugin::_getMetaDataForFact(QObject* parameterMetaData, const QString& name, FactMetaData::ValueType_t type, MAV_TYPE vehicleType) const
+{
+    APMParameterMetaData *const apmMetaData = qobject_cast<APMParameterMetaData*>(parameterMetaData);
+
+    if (apmMetaData) {
+        return apmMetaData->getMetaDataForFact(name, vehicleType, type);
+    } else {
+        qWarning() << "Internal error: pointer passed to APMFirmwarePlugin::addMetaDataToFact not APMParameterMetaData";
+    }
+
+    return nullptr;
+}
+
+void APMFirmwarePlugin::_getParameterMetaDataVersionInfo(const QString& metaDataFile, int& majorVersion, int& minorVersion) const
+{
+    APMParameterMetaData::getParameterMetaDataVersionInfo(metaDataFile, majorVersion, minorVersion);
+}
+
 QObject *APMFirmwarePlugin::_loadParameterMetaData(const QString &metaDataFile)
 {
     Q_UNUSED(metaDataFile);
@@ -615,9 +617,9 @@ QString APMFirmwarePlugin::getHobbsMeter(Vehicle* vehicle) const
     const int minutes = (hobbsTimeSeconds % 3600) / 60;
     const int seconds = hobbsTimeSeconds % 60;
     const QString timeStr = QString::asprintf("%04d:%02d:%02d", hours, minutes, seconds);
-    qCDebug(VehicleLog) << "Hobbs Meter string:" << timeStr;
+    qCDebug(APMFirmwarePluginLog) << "Hobbs Meter string:" << timeStr;
     return timeStr;
-} 
+}
 
 bool APMFirmwarePlugin::hasGripper(const Vehicle *vehicle) const
 {
@@ -814,6 +816,19 @@ void APMFirmwarePlugin::guidedModeGotoLocation(Vehicle *vehicle, const QGeoCoord
             handlerInfo.resultHandler = _MAV_CMD_DO_REPOSITION_ResultHandler;
             handlerInfo.resultHandlerData = result_handler_data;
 
+            // For copters, this parameter specifies a yaw heading (heading
+            // reference defined in Bitmask field). NaN to use the current
+            // system yaw heading mode (e.g. yaw towards next waypoint, yaw to
+            // home, etc.).
+            // For planes it indicates loiter direction (0: clockwise, 1:
+            // counter clockwise)
+            float yawParam = NAN;
+            if (forwardFlightLoiterRadius > 0) {
+                yawParam = 0.0f;
+            } else if (forwardFlightLoiterRadius < 0) {
+                yawParam = 1.0f;
+            }
+
             vehicle->sendMavCommandIntWithHandler(
                 &handlerInfo,
                 vehicle->defaultComponentId(),
@@ -821,8 +836,8 @@ void APMFirmwarePlugin::guidedModeGotoLocation(Vehicle *vehicle, const QGeoCoord
                 MAV_FRAME_GLOBAL,
                 -1.0f,
                 MAV_DO_REPOSITION_FLAGS_CHANGE_MODE,
-                static_cast<float>(forwardFlightLoiterRadius),
-                NAN,
+                static_cast<float>(abs(forwardFlightLoiterRadius)),
+                yawParam,
                 gotoCoord.latitude(),
                 gotoCoord.longitude(),
                 vehicle->altitudeAMSL()->rawValue().toFloat()
@@ -894,15 +909,25 @@ void APMFirmwarePlugin::guidedModeChangeAltitude(Vehicle *vehicle, double altitu
 
 bool APMFirmwarePlugin::mulirotorSpeedLimitsAvailable(Vehicle *vehicle) const
 {
-    return vehicle->parameterManager()->parameterExists(ParameterManager::defaultComponentId, "WPNAV_SPEED");
+    // Use noremap. to bypass remap and check for specific parameter names directly,
+    // since the old and new parameters have different units.
+    return vehicle->parameterManager()->parameterExists(ParameterManager::defaultComponentId, QStringLiteral("noremap.WP_SPD"))
+        || vehicle->parameterManager()->parameterExists(ParameterManager::defaultComponentId, QStringLiteral("noremap.WPNAV_SPEED"));
 }
 
 double APMFirmwarePlugin::maximumHorizontalSpeedMultirotor(Vehicle *vehicle) const
 {
-    const QString speedParam("WPNAV_SPEED");
+    // Use noremap. to bypass remap and check for specific parameter names directly,
+    // since the old and new parameters have different units.
 
-    if (vehicle->parameterManager()->parameterExists(ParameterManager::defaultComponentId, speedParam)) {
-        return vehicle->parameterManager()->getParameter(ParameterManager::defaultComponentId, speedParam)->rawValue().toDouble() * 0.01;  // note cm/s -> m/s
+    // 4.7+: WP_SPD is in m/s
+    if (vehicle->parameterManager()->parameterExists(ParameterManager::defaultComponentId, QStringLiteral("noremap.WP_SPD"))) {
+        return vehicle->parameterManager()->getParameter(ParameterManager::defaultComponentId, QStringLiteral("noremap.WP_SPD"))->rawValue().toDouble();
+    }
+
+    // pre-4.7: WPNAV_SPEED is in cm/s
+    if (vehicle->parameterManager()->parameterExists(ParameterManager::defaultComponentId, QStringLiteral("noremap.WPNAV_SPEED"))) {
+        return vehicle->parameterManager()->getParameter(ParameterManager::defaultComponentId, QStringLiteral("noremap.WPNAV_SPEED"))->rawValue().toDouble() * 0.01;
     }
 
     return FirmwarePlugin::maximumHorizontalSpeedMultirotor(vehicle);
@@ -967,11 +992,28 @@ void APMFirmwarePlugin::guidedModeChangeHeading(Vehicle *vehicle, const QGeoCoor
 double APMFirmwarePlugin::minimumTakeoffAltitudeMeters(Vehicle* vehicle) const
 {
     double minTakeoffAlt = 0;
-    const QString takeoffAltParam(vehicle->vtol() ? QStringLiteral("Q_RTL_ALT") : QStringLiteral("PILOT_TKOFF_ALT"));
-    const float paramDivisor = vehicle->vtol() ? 1.0 : 100.0; // PILOT_TAKEOFF_ALT is in centimeters
 
-    if (vehicle->parameterManager()->parameterExists(ParameterManager::defaultComponentId, takeoffAltParam)) {
-        minTakeoffAlt = vehicle->parameterManager()->getParameter(ParameterManager::defaultComponentId, takeoffAltParam)->rawValue().toDouble() / static_cast<double>(paramDivisor);
+    // Use noremap. to bypass remap and check for specific parameter names directly,
+    // since the old and new parameters have different units.
+
+    if (vehicle->vtol()) {
+        // 4.7+: Q_PILOT_TKO_ALT_M (meters)
+        if (vehicle->parameterManager()->parameterExists(ParameterManager::defaultComponentId, QStringLiteral("noremap.Q_PILOT_TKO_ALT_M"))) {
+            minTakeoffAlt = vehicle->parameterManager()->getParameter(ParameterManager::defaultComponentId, QStringLiteral("noremap.Q_PILOT_TKO_ALT_M"))->rawValue().toDouble();
+        } else if (vehicle->parameterManager()->parameterExists(ParameterManager::defaultComponentId, QStringLiteral("noremap.Q_PILOT_TKOFF_ALT"))) {
+            // pre-4.7: Q_PILOT_TKOFF_ALT (centimeters)
+            minTakeoffAlt = vehicle->parameterManager()->getParameter(ParameterManager::defaultComponentId, QStringLiteral("noremap.Q_PILOT_TKOFF_ALT"))->rawValue().toDouble() / 100.0;
+        } else if (vehicle->parameterManager()->parameterExists(ParameterManager::defaultComponentId, QStringLiteral("Q_RTL_ALT"))) {
+            minTakeoffAlt = vehicle->parameterManager()->getParameter(ParameterManager::defaultComponentId, QStringLiteral("Q_RTL_ALT"))->rawValue().toDouble();
+        }
+    } else {
+        // 4.7+: PILOT_TKO_ALT_M (meters)
+        if (vehicle->parameterManager()->parameterExists(ParameterManager::defaultComponentId, QStringLiteral("noremap.PILOT_TKO_ALT_M"))) {
+            minTakeoffAlt = vehicle->parameterManager()->getParameter(ParameterManager::defaultComponentId, QStringLiteral("noremap.PILOT_TKO_ALT_M"))->rawValue().toDouble();
+        } else if (vehicle->parameterManager()->parameterExists(ParameterManager::defaultComponentId, QStringLiteral("noremap.PILOT_TKOFF_ALT"))) {
+            // pre-4.7: PILOT_TKOFF_ALT (centimeters)
+            minTakeoffAlt = vehicle->parameterManager()->getParameter(ParameterManager::defaultComponentId, QStringLiteral("noremap.PILOT_TKOFF_ALT"))->rawValue().toDouble() / 100.0;
+        }
     }
 
     if (minTakeoffAlt == 0) {
@@ -1050,30 +1092,34 @@ void APMFirmwarePlugin::startMission(Vehicle *vehicle) const
         return;
     }
 
-    if (!vehicle->armed()) {
-        // First switch to flight mode we can arm from
-        // In Ardupilot for vtols and airplanes we need to set the mode to auto and then arm, otherwise if arming in guided
-        // If the vehicle has tilt rotors, it will arm them in forward flight position, being dangerous.
-        if (vehicle->fixedWing()) {
-            if (!_setFlightModeAndValidate(vehicle, missionFlightMode())) {
-                qgcApp()->showAppMessage(tr("Unable to start mission: Vehicle failed to change to Auto mode."));
-                return;
-            }
-        } else {
+    // If we get here vehicle is assumed to be on the ground (it may or may not be already armed)
+
+    if (vehicle->fixedWing() || vehicle->vtol()) {
+        // Plane/VTOL starts the mission from Auto mode. Set the mode before arming, since arming in Guided
+        // with tilt rotors would arm them in forward flight position, being dangerous.
+        if (!_setFlightModeAndValidate(vehicle, missionFlightMode())) {
+            qgcApp()->showAppMessage(tr("Unable to start mission: Vehicle failed to change to Auto mode."));
+            return;
+        }
+
+        if (!vehicle->armed() && !_armVehicleAndValidate(vehicle)) {
+            qgcApp()->showAppMessage(tr("Unable to start mission: Vehicle failed to arm."));
+            return;
+        }
+    } else {
+        // All other vehicle types arm in Guided and start the mission with MAV_CMD_MISSION_START
+        if (!vehicle->armed()) {
             if (!_setFlightModeAndValidate(vehicle, guidedFlightMode())) {
                 qgcApp()->showAppMessage(tr("Unable to start mission: Vehicle failed to change to Guided mode."));
                 return;
             }
+
+            if (!_armVehicleAndValidate(vehicle)) {
+                qgcApp()->showAppMessage(tr("Unable to start mission: Vehicle failed to arm."));
+                return;
+            }
         }
 
-        if (!_armVehicleAndValidate(vehicle)) {
-            qgcApp()->showAppMessage(tr("Unable to start mission: Vehicle failed to arm."));
-            return;
-        }
-    }
-
-    // For non aircraft vehicles, we would be in guided mode, so we need to send the mission start command
-    if (!vehicle->fixedWing()) {
         vehicle->sendMavCommand(vehicle->defaultComponentId(), MAV_CMD_MISSION_START, true /*show error */);
     }
 }
@@ -1214,7 +1260,7 @@ QMutex &APMFirmwarePlugin::_reencodeMavlinkChannelMutex()
 
 double APMFirmwarePlugin::maximumEquivalentAirspeed(Vehicle *vehicle) const
 {
-    const QString airspeedMax("r.AIRSPEED_MAX");
+    const QString airspeedMax("AIRSPEED_MAX");
 
     if (vehicle->parameterManager()->parameterExists(ParameterManager::defaultComponentId, airspeedMax)) {
         return vehicle->parameterManager()->getParameter(ParameterManager::defaultComponentId, airspeedMax)->rawValue().toDouble();
@@ -1225,7 +1271,7 @@ double APMFirmwarePlugin::maximumEquivalentAirspeed(Vehicle *vehicle) const
 
 double APMFirmwarePlugin::minimumEquivalentAirspeed(Vehicle *vehicle) const
 {
-    const QString airspeedMin("r.AIRSPEED_MIN");
+    const QString airspeedMin("AIRSPEED_MIN");
 
     if (vehicle->parameterManager()->parameterExists(ParameterManager::defaultComponentId, airspeedMin)) {
         return vehicle->parameterManager()->getParameter(ParameterManager::defaultComponentId, airspeedMin)->rawValue().toDouble();
@@ -1236,8 +1282,8 @@ double APMFirmwarePlugin::minimumEquivalentAirspeed(Vehicle *vehicle) const
 
 bool APMFirmwarePlugin::fixedWingAirSpeedLimitsAvailable(Vehicle *vehicle) const
 {
-    return vehicle->parameterManager()->parameterExists(ParameterManager::defaultComponentId, "r.AIRSPEED_MIN") &&
-           vehicle->parameterManager()->parameterExists(ParameterManager::defaultComponentId, "r.AIRSPEED_MAX");
+    return vehicle->parameterManager()->parameterExists(ParameterManager::defaultComponentId, "AIRSPEED_MIN") &&
+           vehicle->parameterManager()->parameterExists(ParameterManager::defaultComponentId, "AIRSPEED_MAX");
 }
 
 void APMFirmwarePlugin::guidedModeChangeEquivalentAirspeedMetersSecond(Vehicle *vehicle, double airspeed_equiv) const
@@ -1356,9 +1402,6 @@ QPair<QMetaObject::Connection,QMetaObject::Connection> APMFirmwarePlugin::startC
 bool APMFirmwarePlugin::stopCompensatingBaro(const Vehicle *vehicle, QPair<QMetaObject::Connection,QMetaObject::Connection> updaters)
 {
     Q_UNUSED(vehicle);
-    /*if (!vehicle) {
-        return false;
-    }*/
 
     bool result = false;
 
