@@ -366,12 +366,12 @@ RowLayout {
                     GridLayout {
                         rowSpacing:     _spacing
                         columnSpacing:  _spacing
-                        rows:           _activeVehicle.sysStatusSensorInfo.sensorNames.length
+                        rows:           _activeVehicle ? _activeVehicle.sysStatusSensorInfo.sensorNames.length : 0
                         flow:           GridLayout.TopToBottom
                         visible:        !_healthAndArmingChecksSupported
 
                         Repeater {
-                            model: _activeVehicle.sysStatusSensorInfo.sensorNames
+                            model: _activeVehicle ? _activeVehicle.sysStatusSensorInfo.sensorNames : []
 
                             QGCLabel {
                                 text: modelData
@@ -379,7 +379,7 @@ RowLayout {
                         }
 
                         Repeater {
-                            model: _activeVehicle.sysStatusSensorInfo.sensorStatus
+                            model: _activeVehicle ? _activeVehicle.sysStatusSensorInfo.sensorStatus : []
 
                             QGCLabel {
                                 text: modelData
@@ -390,11 +390,11 @@ RowLayout {
 
                     QGCLabel {
                         text:               qsTr("Arming Check Report:")
-                        visible:            _healthAndArmingChecksSupported && _activeVehicle.healthAndArmingCheckReport.problemsForCurrentMode.count > 0
+                        visible:            _healthAndArmingChecksSupported && _activeVehicle && _activeVehicle.healthAndArmingCheckReport.problemsForCurrentMode.count > 0
                     }
                     // List health and arming checks
                     QGCListView {
-                        visible:            _healthAndArmingChecksSupported
+                        visible:            _healthAndArmingChecksSupported && _activeVehicle
                         anchors.margins:    ScreenTools.defaultFontPixelHeight
                         spacing:            ScreenTools.defaultFontPixelWidth
                         width:              mainWindow.width * 0.66666
