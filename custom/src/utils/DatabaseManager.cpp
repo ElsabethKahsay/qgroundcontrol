@@ -1620,6 +1620,9 @@ bool DatabaseManager::upsertVehicle(const QString &deviceUid, const QString &fri
                                     const QString &autopilotType, const QString &airframeType)
 {
     if (!m_initialized) return false;
+    // A default-constructed QString is null; Qt binds it as SQL NULL and the
+    // vehicles.friendly_name column is NOT NULL. Normalize null to '' first.
+    const QString safeName = friendlyName.isNull() ? QStringLiteral("") : friendlyName;
     QSqlQuery q(m_db);
     q.prepare(R"(
         INSERT INTO vehicles (device_uid, friendly_name, autopilot_type, airframe_type,
@@ -1632,11 +1635,11 @@ bool DatabaseManager::upsertVehicle(const QString &deviceUid, const QString &fri
             last_seen = CURRENT_TIMESTAMP
     )");
     q.addBindValue(deviceUid);
-    q.addBindValue(friendlyName);
+    q.addBindValue(safeName);
     q.addBindValue(autopilotType);
     q.addBindValue(airframeType);
-    q.addBindValue(friendlyName);
-    q.addBindValue(friendlyName);
+    q.addBindValue(safeName);
+    q.addBindValue(safeName);
     q.addBindValue(autopilotType);
     q.addBindValue(airframeType);
     return execOrWarn(q, "upsertVehicle");
@@ -1649,6 +1652,9 @@ bool DatabaseManager::upsertVehicleEx(const QString &deviceUid, const QString &f
                                        double gpsLat, double gpsLon)
 {
     if (!m_initialized) return false;
+    // Null strings bind as SQL NULL and the vehicles columns are NOT NULL.
+    const QString safeName = friendlyName.isNull() ? QStringLiteral("") : friendlyName;
+    const QString safeLayout = motorLayout.isNull() ? QStringLiteral("") : motorLayout;
     QSqlQuery q(m_db);
     q.prepare(R"(
         INSERT INTO vehicles (device_uid, friendly_name, autopilot_type, airframe_type,
@@ -1670,18 +1676,18 @@ bool DatabaseManager::upsertVehicleEx(const QString &deviceUid, const QString &f
             last_seen = CURRENT_TIMESTAMP
     )");
     q.addBindValue(deviceUid);
-    q.addBindValue(friendlyName);
+    q.addBindValue(safeName);
     q.addBindValue(autopilotType);
     q.addBindValue(airframeType);
     q.addBindValue(frameClass);
     q.addBindValue(frameType);
     q.addBindValue(motorCount);
-    q.addBindValue(motorLayout);
+    q.addBindValue(safeLayout);
     q.addBindValue(gpsLat);
     q.addBindValue(gpsLon);
     // ON CONFLICT bind values
-    q.addBindValue(friendlyName);
-    q.addBindValue(friendlyName);
+    q.addBindValue(safeName);
+    q.addBindValue(safeName);
     q.addBindValue(autopilotType);
     q.addBindValue(airframeType);
     q.addBindValue(frameClass);
@@ -1690,8 +1696,8 @@ bool DatabaseManager::upsertVehicleEx(const QString &deviceUid, const QString &f
     q.addBindValue(frameType);
     q.addBindValue(motorCount);
     q.addBindValue(motorCount);
-    q.addBindValue(motorLayout);
-    q.addBindValue(motorLayout);
+    q.addBindValue(safeLayout);
+    q.addBindValue(safeLayout);
     q.addBindValue(gpsLat);
     q.addBindValue(gpsLon);
     q.addBindValue(gpsLat);
@@ -2706,6 +2712,8 @@ bool DatabaseManager::registerNewVehicle(const QString &fingerprint, int sysid, 
                                           const QString &fingerprintSource)
 {
     if (!m_initialized || fingerprint.isEmpty()) return false;
+    // friendly_name is NOT NULL; normalize a null display name (binds as SQL NULL) to ''.
+    const QString safeDisplayName = displayName.isNull() ? QStringLiteral("") : displayName;
     QSqlQuery q(m_db);
     // device_uid is the table PK; for hardware-resolved vehicles we key it to
     // the UID as before.  For sysid-fallback vehicles the UID is 0 and the raw
@@ -2733,7 +2741,7 @@ bool DatabaseManager::registerNewVehicle(const QString &fingerprint, int sysid, 
             last_seen = CURRENT_TIMESTAMP
     )");
     q.addBindValue(deviceUid);
-    q.addBindValue(displayName);
+    q.addBindValue(safeDisplayName);
     q.addBindValue(autopilotType);
     q.addBindValue(vehicleType);
     q.addBindValue(fingerprint);
@@ -2744,8 +2752,8 @@ bool DatabaseManager::registerNewVehicle(const QString &fingerprint, int sysid, 
     q.addBindValue(vehicleTypeName);
     q.addBindValue(hardwareUid);
     q.addBindValue(sysid);
-    q.addBindValue(displayName);
-    q.addBindValue(displayName);
+    q.addBindValue(safeDisplayName);
+    q.addBindValue(safeDisplayName);
     q.addBindValue(autopilotType);
     q.addBindValue(vehicleType);
     q.addBindValue(firmwareVersion);
