@@ -266,7 +266,8 @@ Rectangle {
                 onClicked: {
                     var v = QGroundControl.multiVehicleManager.activeVehicle
                     if (!v) return
-                    v.sendCommand(1, 400, true, 1.0, 21196.0, 0, 0, 0, 0, 0)
+                    // Stock QGC force-arm path so Vehicle.armed updates from the ACK/heartbeat.
+                    v.forceArm()
                 }
                 background: Rectangle { color: Colors.warning; radius: 6 }
                 contentItem: Label {
@@ -302,7 +303,8 @@ Rectangle {
                 onClicked: {
                     var v = QGroundControl.multiVehicleManager.activeVehicle
                     if (!v) return
-                    v.sendCommand(1, 400, true, 0.0, 0, 0, 0, 0, 0, 0)
+                    // Stock QGC disarm path (Vehicle.armed WRITE setter -> setArmed(false)).
+                    v.armed = false
                 }
                 background: Rectangle { color: Colors.stateFail; radius: 6 }
                 contentItem: Label {
