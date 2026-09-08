@@ -2,6 +2,7 @@
 #include "QGCCorePlugin.h"
 #include "QGCOptions.h"
 #include "QGCPalette.h"
+#include "Vehicle/Vehicle.h"
 #include <QTimer>
 
 /// @file PreflightPlugin.h

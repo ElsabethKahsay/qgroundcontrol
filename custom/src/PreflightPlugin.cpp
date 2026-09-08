@@ -15,6 +15,7 @@
 
 #include "MultiVehicleManager.h"
 #include "QGCApplication.h"
+#include "QmlObjectListModel.h"
 #include "QmlComponentInfo.h"
 #include "Vehicle/Vehicle.h"
 #include "AppSettings.h"

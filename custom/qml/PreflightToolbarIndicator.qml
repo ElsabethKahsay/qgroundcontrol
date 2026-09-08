@@ -43,12 +43,18 @@ Item {
 
     function _stateLabel() {
         var v = QGroundControl.multiVehicleManager.activeVehicle
-        if (!v) return qsTr("No Vehicle")
-        if (v.armed && v.flying) return qsTr("Flying")
-        if (v.armed) return qsTr("Armed")
-        var s = FlightSession.state
-        if (s >= FlightSession.ReadyToArm) return qsTr("Ready")
-        return qsTr("Not Ready")
+        var label = ""
+        if (!v) {
+            label = "No Vehicle"
+        } else if (v.armed && v.flying) {
+            label = "Flying"
+        } else if (v.armed) {
+            label = "Armed"
+        } else {
+            var s = FlightSession.state
+            label = s >= FlightSession.ReadyToArm ? "Ready" : "Not Ready"
+        }
+        return label
     }
 
     function _gateBlocked() {

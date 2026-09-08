@@ -14,7 +14,6 @@
     <qresource prefix="custom">
         <file alias="PreflightToolbarIndicator.qml">qml/PreflightToolbarIndicator.qml</file>
         <file alias="ArmedIndicator.qml">qml/ArmedIndicator.qml</file>
-        <file alias="MainStatusIndicator.qml">qml/MainStatusIndicator.qml</file>
         <file alias="MainToolBarIndicators.qml">qml/MainToolBarIndicators.qml</file>
     </qresource>
     <qresource prefix="/qml/QGroundControl/FlightDisplay">
@@ -24,11 +23,9 @@
         <file alias="FlyViewWidgetLayer.qml">qml/FlyViewWidgetLayer.qml</file>
         <file alias="FlyViewTelemetryStrip.qml">qml/cpts/FlyViewTelemetryStrip.qml</file>
     </qresource>
-    <qresource prefix="/qml/QGroundControl/Toolbar">
-        <file alias="MainStatusIndicator.qml">qml/MainStatusIndicator.qml</file>
-    </qresource>
     <qresource prefix="/qml/QGroundControl/Controls">
         <file alias="FlyViewToolBar.qml">qml/QGroundControl/Controls/FlyViewToolBar.qml</file>
+        <file alias="MainStatusIndicator.qml">qml/MainStatusIndicator.qml</file>
         <file alias="SubMenuButton.qml">qml/QGroundControl/Controls/SubMenuButton.qml</file>
     </qresource>
     <qresource prefix="/qml/QGroundControl/AnalyzeView">
