@@ -16,35 +16,77 @@
 #include "AccelConsistencyCheck.h"
 #include "AirspeedCheck.h"
 #include "AlertManager.h"
+#include "AmbientTemperatureCheck.h"
 #include "AttitudeCheck.h"
+#include "BaroHealthCheck.h"
+#include "BaroTemperatureCheck.h"
 #include "BatteryFailsafeCheck.h"
+#include "BatteryFailsafeParamCheck.h"
+#include "BatteryHealthCheck.h"
 #include "BatteryTemperatureCheck.h"
 #include "BatteryVoltageCheck.h"
 #include "CellConfigCheck.h"
+#include "CellVoltageBalanceCheck.h"
+#include "CompanionLinkCheck.h"
+#include "CompassCalCheck.h"
+#include "CompassYawConsistencyCheck.h"
 #include "DatabaseManager.h"
+#include "DualGpsConsistencyCheck.h"
 #include "EkfFailsafeCheck.h"
+#include "EkfStatusFlagsCheck.h"
+#include "EkfVarianceCheck.h"
+#include "EscCurrentSymmetryCheck.h"
+#include "EscFirmwareCheck.h"
+#include "EscResponsivenessCheck.h"
+#include "EscVoltageConsistencyCheck.h"
 #include "GcsFailsafeCheck.h"
+#include "GeofenceMaxAltCheck.h"
+#include "GeofenceMaxRadiusCheck.h"
+#include "GeofenceParamCheck.h"
 #include "GimbalLinkCheck.h"
 #include "GpsFixCheck.h"
+#include "GpsSpeedAccuracyCheck.h"
+#include "GyroBiasCheck.h"
 #include "HeartbeatCheck.h"
 #include "HomePositionCheck.h"
+#include "ImuCalCheck.h"
 #include "ImuTemperatureCheck.h"
+#include "LevelCalibrationCheck.h"
+#include "MagFieldStrengthCheck.h"
+#include "MagInterferenceCheck.h"
 #include "ManualConfirmCheck.h"
 #include "MavlinkProtocolCheck.h"
+#include "MetarTemperatureCheck.h"
+#include "MissionEnergyCheck.h"
+#include "MissionItemCheck.h"
 #include "MotorCountCheck.h"
 #include "MotorSpinCheck.h"
 #include "MotorTemperatureCheck.h"
+#include "OpticalFlowCheck.h"
 #include "ParameterWatchlist.h"
+#include "PowerModuleHealthCheck.h"
+#include "PreArmOkCheck.h"
+#include "RadioBufferCheck.h"
 #include "RadioFailsafeCheck.h"
 #include "RcArmingSwitchCheck.h"
 #include "RcCalibrationCheck.h"
+#include "RcChannelCountCheck.h"
 #include "RcFailsafeCheck.h"
 #include "RcModeSwitchCheck.h"
+#include "RcRssiCheck.h"
 #include "RcThrottleMinCheck.h"
+#include "RcTrimCheck.h"
+#include "RedundantPowerCheck.h"
 #include "RtlAltParamCheck.h"
+#include "RtlTerrainCheck.h"
+#include "TafDeteriorationCheck.h"
+#include "TakeoffCommandCheck.h"
 #include "TelemetryBridge.h"
 #include "TelemetryDropRateCheck.h"
+#include "TerrainClearanceCheck.h"
 #include "VideoFeedCheck.h"
+#include "VibrationCheck.h"
+#include "WeatherWindGustCheck.h"
 #include "ZoneComplianceCheck.h"
 
 #include <algorithm>
@@ -758,19 +800,29 @@ void PreflightManager::createPhase1Checks() {
   // Tier 1 — Navigation
   m_checks.append(new AccelConsistencyCheck(m_telemetry, 4.0, this));
   m_checks.append(new GpsFixCheck(m_telemetry, 8, 2.0, this));
+  m_checks.append(new DualGpsConsistencyCheck(m_telemetry, 2.0, this));
+  m_checks.append(new GpsSpeedAccuracyCheck(m_telemetry, 2.0, 2.0, this));
 
   // Tier 1 — Power
   m_checks.append(new BatteryTemperatureCheck(m_telemetry, 45.0, 0.0, this));
   m_checks.append(new CellConfigCheck(m_telemetry, 3.0, 1, this));
+  m_checks.append(new CellVoltageBalanceCheck(m_telemetry, 0.2, this));
+  m_checks.append(new PowerModuleHealthCheck(m_telemetry, 0.3, this));
+  m_checks.append(new RedundantPowerCheck(m_telemetry, 10.0, this));
+
+  // Note: BatteryHealthCheck is registered later by PreflightPlugin once the
+  // VehicleProfileManager singleton exists (it needs the profile manager).
 
   // Tier 1 — Communication
   m_checks.append(new TelemetryDropRateCheck(m_telemetry, 10, 5, this));
   m_checks.append(new RcThrottleMinCheck(m_telemetry, this));
+  m_checks.append(new CompanionLinkCheck(m_telemetry, this));
 
   // Tier 2 — rc communication
   m_checks.append(new RcModeSwitchCheck(m_telemetry, this));
   m_checks.append(new RcArmingSwitchCheck(m_telemetry, this));
   m_checks.append(new RcCalibrationCheck(m_telemetry, this));
+  m_checks.append(new RcFailsafeCheck(m_telemetry, 50, this));
 
   // Tier 3 — Warning / non-blocking auto-checks/ side bar info
   m_checks.append(new MotorCountCheck(m_telemetry, this));
@@ -782,8 +834,49 @@ void PreflightManager::createPhase1Checks() {
   m_checks.append(new GimbalLinkCheck(m_telemetry, this));
   m_checks.append(new ImuTemperatureCheck(m_telemetry, 85.0, -20.0, this));
   m_checks.append(new MotorTemperatureCheck(m_telemetry, 80.0, this));
+  m_checks.append(new VibrationCheck(m_telemetry, 30.0, this));
+  m_checks.append(new GyroBiasCheck(m_telemetry, 0.05, this));
+  m_checks.append(new BaroHealthCheck(m_telemetry, this));
+  m_checks.append(new BaroTemperatureCheck(m_telemetry, 65.0, -10.0, this));
+  m_checks.append(new OpticalFlowCheck(m_telemetry, 40, this));
+  m_checks.append(new RcRssiCheck(m_telemetry, 50, 50, this));
+  m_checks.append(new RcTrimCheck(m_telemetry, 50, this));
+  m_checks.append(new RcChannelCountCheck(m_telemetry, this));
+  m_checks.append(new RadioBufferCheck(m_telemetry, 20, this));
 
-  // ── Phase 3: Manual confirm checks ──
+  // Tier 5 — Failsafe / Safety checks
+  m_checks.append(new BatteryFailsafeCheck(m_telemetry, this));
+  m_checks.append(new BatteryFailsafeParamCheck(m_telemetry, this));
+  m_checks.append(new PreArmOkCheck(m_telemetry, this));
+  m_checks.append(new EkfFailsafeCheck(m_telemetry, this));
+  m_checks.append(new EkfStatusFlagsCheck(m_telemetry, 0x01, 1.0, this));
+  m_checks.append(new EkfVarianceCheck(m_telemetry, 0.5, 5.0, 5.0, this));
+  m_checks.append(new GcsFailsafeCheck(m_telemetry, this));
+  m_checks.append(new CompassCalCheck(m_telemetry, 150, this));
+  m_checks.append(new CompassYawConsistencyCheck(m_telemetry, 15.0, this));
+  m_checks.append(new MagFieldStrengthCheck(m_telemetry, 0.15, 0.65, this));
+  m_checks.append(new MagInterferenceCheck(m_telemetry, 0.20, 0.15, this));
+  m_checks.append(new ImuCalCheck(m_telemetry, this));
+  m_checks.append(new LevelCalibrationCheck(m_telemetry, 2.0, this));
+  m_checks.append(new RtlTerrainCheck(m_telemetry, this));
+  m_checks.append(new TerrainClearanceCheck(m_telemetry, 5.0, this));
+  m_checks.append(new GeofenceMaxAltCheck(m_telemetry, 10.0, this));
+  m_checks.append(new GeofenceMaxRadiusCheck(m_telemetry, 10.0, this));
+  m_checks.append(new GeofenceParamCheck(m_telemetry, this));
+  m_checks.append(new EscCurrentSymmetryCheck(m_telemetry, 0.20, this));
+  m_checks.append(new EscVoltageConsistencyCheck(m_telemetry, 0.5, this));
+  m_checks.append(new EscFirmwareCheck(m_telemetry, this));
+  m_checks.append(new EscResponsivenessCheck(m_telemetry, 800, 2200, this));
+  m_checks.append(new RadioFailsafeCheck(m_telemetry, this));
+  m_checks.append(new TakeoffCommandCheck(m_telemetry, this));
+  m_checks.append(new VideoFeedCheck(m_telemetry, this));
+  m_checks.append(new MissionItemCheck(m_telemetry, 10000.0, this));
+
+  // Tier 6 — Environmental / Weather
+  m_checks.append(new AmbientTemperatureCheck(m_telemetry, 50.0, -10.0, this));
+  m_checks.append(new MetarTemperatureCheck(m_telemetry, this));
+  m_checks.append(new WeatherWindGustCheck(m_telemetry, this));
+  m_checks.append(new TafDeteriorationCheck(m_telemetry, this));
 
   // Airframe (2 remaining; antenna placement folded into visual inspection)
   m_checks.append(new ManualConfirmCheck(
