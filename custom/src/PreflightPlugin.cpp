@@ -903,10 +903,12 @@ bool PreflightPlugin::mavlinkMessage(Vehicle *vehicle, LinkInterface *link, cons
         if (cmd.command == MAV_CMD_COMPONENT_ARM_DISARM) {
             _lastArmDisarmParam = static_cast<int>(cmd.param1);
             if (cmd.param1 == 1.0f) {
-                bool isForceArm = qFuzzyCompare(cmd.param2, 21196.0f) || qFuzzyCompare(cmd.param2, 2989.0f);
-                if (isForceArm && _armingGate) {
-                    _armingGate->forceArm();
-                }
+                // NOTE: an inbound force-arm (param2 == 21196 / 2989) must NOT
+                // auto-open the gate — that would let any link peer (e.g. an
+                // external GCS on the same UDP/telemetry link) self-authorize
+                // arming. Only a local operator action via ArmingGate::forceArm()
+                // opens the gate; inbound force-arms are gated like normal arm
+                // commands below.
                 if (_armingGate && !_armingGate->isArmingAllowed() && !_armingGate->isOverrideActive()) {
                     QString reason = _armingGate->denialReason();
                     qWarning().noquote() << QStringLiteral("ArmingGate: BLOCKED incoming COMMAND_LONG arm from compid %1 — %2")

@@ -32,12 +32,25 @@ ArmingGate::ArmingGate(QObject *parent)
         m_overrideActive = false;
         emit overrideActiveChanged(false);
         emit armingOverrideExpired();
+        // Re-evaluate checks now that the override window is closed; if checks
+        // are failing the gate re-closes immediately instead of waiting for the
+        // next periodic tick.
+        updateArmingState();
     });
 
     // Gate timer: periodically re-evaluates arming state at a fixed interval
     m_gateTimer = new QTimer(this);
     m_gateTimer->setInterval(EVAL_INTERVAL_MS);
     connect(m_gateTimer, &QTimer::timeout, this, &ArmingGate::updateArmingState);
+
+    // After any disarm, close the gate so the next arm request is re-checked.
+    // Without this, a prior force-arm/override would let arm commands through
+    // indefinitely regardless of current check results.
+    connect(this, &ArmingGate::vehicleDisarmed, this, [this]() {
+        if (m_overrideActive || m_ackReceived) {
+            resetGate();
+        }
+    });
 }
 
 // Wire up to PreflightManager so the gate reacts to check failures and passes.
@@ -243,21 +256,25 @@ void ArmingGate::resetGate()
     updateArmingState();
 }
 
-// Unconditionally allow arming with no timeout. Used for emergency overrides.
-// Logs the action for audit trail with no expiration.
+// Unconditionally allow arming for a bounded window. Used for emergency
+// overrides: the operator has a kForceArmOverrideSec window to arm, then the
+// gate re-closes and re-evaluates checks. Logs the action for audit trail.
 void ArmingGate::forceArm()
 {
     m_overrideActive = true;
     emit overrideActiveChanged(true);
-    emit armingOverrideActivated(QStringLiteral("Operator force arm"), 0);
+    emit armingOverrideActivated(QStringLiteral("Operator force arm"), kForceArmOverrideSec);
 
     m_denialReason.clear();
     m_armingAllowed = true;
     emit armingAllowedChanged(true);
     emit denialReasonChanged({});
 
-    emit gateOverrideLogged(QStringLiteral("Operator force arm"), 0);
-    qWarning() << "Arming overridden: Operator force arm (no timeout)";
+    emit gateOverrideLogged(QStringLiteral("Operator force arm"), kForceArmOverrideSec);
+    qWarning().noquote() << QStringLiteral("Arming overridden: Operator force arm (%1s window)").arg(kForceArmOverrideSec);
+
+    // Close the window automatically so the gate does not stay open forever.
+    m_overrideTimer->start(kForceArmOverrideSec * 1000);
 }
 
 // React to a check failure signal from PreflightManager.

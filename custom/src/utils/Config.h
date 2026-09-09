@@ -153,6 +153,10 @@ constexpr int kMaintCriticalPercent = 100;
 constexpr uint16_t kMavCmdArmDisarm    = 400;
 constexpr int kArmingGateEvalMs        = 500;
 constexpr int kTelemetryStalenessSec   = 10;
+// Window during which an operator force-arm stays open before the gate re-closes
+// and re-evaluates checks. Keeps force-arm an emergency bypass, not a permanent
+// mode change. Re-gated on expiry AND on disarm.
+constexpr int kForceArmOverrideSec     = 60;
 
 // ── Telemetry polling ────────────────────────────────────────────────────────
 // Interval for the telemetry update timer that polls vehicle state.
