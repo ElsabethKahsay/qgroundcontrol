@@ -29,7 +29,7 @@ void EkfFailsafeCheck::evaluate()
     double fsEkfAction = getTelemetryDouble(QStringLiteral("param_FS_EKF_ACTION"));
     double fsEkfThresh = getTelemetryDouble(QStringLiteral("param_FS_EKF_THRESH"));
 
-    if (qFuzzyCompare(fsEkfAction, 0.0)) {
+    if (qFuzzyIsNull(fsEkfAction)) {
         setStatus(CheckStatus::Warning, QStringLiteral("EKF failsafe disabled"));
         return;
     }

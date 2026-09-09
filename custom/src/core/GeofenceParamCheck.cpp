@@ -36,7 +36,7 @@ void GeofenceParamCheck::evaluate()
     double maxAlt = getTelemetryDouble(QStringLiteral("param_GF_MAX_ALT"));
 
     // If enabled is 0, geofence is genuinely disabled
-    if (qFuzzyCompare(gfEnabled, 0.0)) {
+    if (qFuzzyIsNull(gfEnabled)) {
         setStatus(CheckStatus::Passed,
                   QStringLiteral("Disabled"));
         return;
