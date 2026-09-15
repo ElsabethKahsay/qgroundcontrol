@@ -53,6 +53,7 @@ private slots:
     void testExportFlightDetailCsv();
     void testGetFlightStats();
     void testBackupBeforeMigration();
+    void testEmptyNameUpsertAndSession();
 };
 
 void DatabaseManagerTest::testInitialize()
@@ -560,8 +561,8 @@ void DatabaseManagerTest::testV12Migration()
     QVERIFY(db.initialize(dbPath));
     // v16 adds motor_thrust_table to vehicles; its accessor round-trip lives
     // in BatteryEstimatorTest::testMotorThrustTablePersistence. v17 adds the
-    // battery pack config columns to vehicles.
-    QCOMPARE(db.storedSchemaVersion(), 17);
+    // battery pack config columns to vehicles; v18 adds the battery type.
+    QCOMPARE(db.storedSchemaVersion(), 18);
 
     // v13: zone_id + intersection columns exist on zone_compliance_log.
     {
@@ -905,6 +906,41 @@ void DatabaseManagerTest::testBackupBeforeMigration()
 
     QFile::remove(path);
     QFile::remove(path + QStringLiteral(".bak"));
+}
+
+void DatabaseManagerTest::testEmptyNameUpsertAndSession()
+{
+    // D6/D7 regression: VehicleProfileManager upserts with an empty
+    // friendlyName ({}). friendly_name is NOT NULL, and startFlightSession has
+    // an FK on device_uid — the empty-name path must still succeed and never
+    // orphan the flight session.
+    DatabaseManager &db = DatabaseManager::instance();
+    QString tmpPath = QDir::tempPath() + QStringLiteral("/test_empty_name_XXXXXX.db");
+    QTemporaryFile tmpFile;
+    tmpFile.setFileTemplate(tmpPath);
+    tmpFile.open();
+    QVERIFY(db.initialize(tmpFile.fileName()));
+
+    // Empty friendly name + empty motor layout + zero GPS — the exact write
+    // signature VehicleProfileManager uses for a brand-new vehicle.
+    QVERIFY(db.upsertVehicleEx(QStringLiteral("UID-EMPTY-NAME"), QString(),
+                               QStringLiteral("ardupilotmega"), QStringLiteral("quad"),
+                               -1, -1, 0, QString(), 0.0, 0.0));
+
+    // Session insert must not hit the NOT NULL / FK failure and must return a
+    // usable session id.
+    int sessionId = db.startFlightSession(QStringLiteral("UID-EMPTY-NAME"), QString(), 0.0);
+    QVERIFY(sessionId > 0);
+
+    // The vehicle row is readable afterward.
+    QString vehicle = db.getVehicle(QStringLiteral("UID-EMPTY-NAME"));
+    QVERIFY(!vehicle.isEmpty());
+
+    // The flight session row exists (FK satisfied → device_uid present).
+    QString sessions = db.getFlightSessions(QStringLiteral("UID-EMPTY-NAME"), 5);
+    QVERIFY(!sessions.isEmpty());
+    QVERIFY(sessions != QStringLiteral("[]"));
+    QVERIFY(QJsonDocument::fromJson(sessions.toUtf8()).array().size() >= 1);
 }
 
 UT_REGISTER_TEST(DatabaseManagerTest)

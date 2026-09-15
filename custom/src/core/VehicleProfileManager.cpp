@@ -309,7 +309,8 @@ void VehicleProfileManager::onConnectionChanged()
                                                  gpsLat, gpsLon);
 
     // Load full history
-    m_currentVehicleHistoryJson = DatabaseManager::instance().getVehicleHistory(m_currentDeviceUid);    if (m_currentVehicleHistoryJson.isEmpty()) {
+    m_currentVehicleHistoryJson = DatabaseManager::instance().getVehicleHistory(m_currentDeviceUid);
+    if (m_currentVehicleHistoryJson.isEmpty()) {
         // Minimal JSON if no db record
         QJsonObject o;
         o["deviceUid"] = m_currentDeviceUid;
