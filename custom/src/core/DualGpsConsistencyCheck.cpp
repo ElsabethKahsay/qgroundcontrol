@@ -4,6 +4,7 @@
 
 #include "TelemetryBridge.h"
 #include "utils/Config.h"
+#include "utils/GeoUtil.h"
 
 DualGpsConsistencyCheck::DualGpsConsistencyCheck(TelemetryBridge *telemetry,
                                                  double maxDivergenceM,
@@ -19,13 +20,8 @@ DualGpsConsistencyCheck::DualGpsConsistencyCheck(TelemetryBridge *telemetry,
 double DualGpsConsistencyCheck::_haversineM(double lat1, double lon1,
                                              double lat2, double lon2)
 {
-    double dLat = qDegreesToRadians(lat2 - lat1);
-    double dLon = qDegreesToRadians(lon2 - lon1);
-    double a = qSin(dLat / 2) * qSin(dLat / 2)
-             + qCos(qDegreesToRadians(lat1))
-             * qCos(qDegreesToRadians(lat2))
-             * qSin(dLon / 2) * qSin(dLon / 2);
-    return kEarthRadiusM * 2.0 * qAtan2(qSqrt(a), qSqrt(1.0 - a));
+    // Shared implementation — must stay in sync with GeoUtil (R10).
+    return GeoUtil::haversineMeters(lat1, lon1, lat2, lon2);
 }
 
 // Compute haversine distance between GPS1 and GPS2 positions; fail if divergence > max.

@@ -4,22 +4,9 @@
 #include "ChecklistEngine.h"
 #include "FlightSession.h"
 #include "DatabaseManager.h"
+#include "utils/GeoUtil.h"
 
 #include <QtMath>
-
-namespace {
-// Haversine great-circle distance between two lat/lon points (degrees → meters).
-double haversineMeters(double lat1, double lon1, double lat2, double lon2)
-{
-    const double r = 6371000.0; // Earth radius in meters
-    const double dLat = qDegreesToRadians(lat2 - lat1);
-    const double dLon = qDegreesToRadians(lon2 - lon1);
-    const double a = qSin(dLat / 2.0) * qSin(dLat / 2.0)
-                   + qCos(qDegreesToRadians(lat1)) * qCos(qDegreesToRadians(lat2))
-                     * qSin(dLon / 2.0) * qSin(dLon / 2.0);
-    return r * 2.0 * qAtan2(qSqrt(a), qSqrt(1.0 - a));
-}
-}
 
 TelemetryEventLogger::TelemetryEventLogger(QObject *parent)
     : QObject(parent)
@@ -95,7 +82,7 @@ void TelemetryEventLogger::setDependencies(TelemetryBridge *bridge, ArmingGate *
             if (qAbs(lat) < 0.0001 && qAbs(lon) < 0.0001)
                 return; // no valid fix yet
             if (m_hasPrevPosition) {
-                m_distanceFlownM += haversineMeters(m_prevLat, m_prevLon, lat, lon);
+                m_distanceFlownM += GeoUtil::haversineMeters(m_prevLat, m_prevLon, lat, lon);
             }
             m_prevLat = lat;
             m_prevLon = lon;
