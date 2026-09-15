@@ -420,11 +420,9 @@ Item {
 
     function _attemptOpenPreflightAnalyzePage() {
         if (!mainWindow.toolDrawerLoader || !mainWindow.toolDrawerLoader.item || !mainWindow.toolDrawerLoader.item.panelLoader) {
-            console.log("FlyView: cannot open preflight analyze page yet")
             return false
         }
 
-        console.log("FlyView: setting preflight analyze page on toolDrawerLoader.item")
         mainWindow.toolDrawerLoader.item.panelLoader.source = _preflightAnalyzeSource
         mainWindow.toolDrawerLoader.item.panelLoader.title = _preflightAnalyzeTitle
         if (typeof mainWindow.toolDrawerLoader.item._selectAnalyzeButton === 'function') {

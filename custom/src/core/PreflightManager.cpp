@@ -277,8 +277,10 @@ PreflightManager::checksForCategory(const QVariantList &categories) const {
       }
     }
   }
-  qDebug().noquote() << "checksForCategory(" << categories << ") ->"
-                     << result.size() << "checks";
+  if (preflightLog().isDebugEnabled()) {
+    qDebug().noquote() << "checksForCategory(" << categories << ") ->"
+                       << result.size() << "checks";
+  }
   return result;
 }
 

@@ -93,7 +93,6 @@ Rectangle {
                 model:  QGroundControl.corePlugin ? QGroundControl.corePlugin.analyzePages : []
 
                 Component.onCompleted:  {
-                    console.log("AnalyzeView: buttonRepeater count=", buttonRepeater.count)
                     // Mark the first button as active and load its page on startup
                     if (buttonRepeater.count > 0) {
                         itemAt(0).checked = true
@@ -134,16 +133,13 @@ Rectangle {
                         _clearAnalyzeButtonSelection()
                         checked = true
                         var urlString = modelData.url ? modelData.url.toString() : ""
-                        console.log("MARKER-20260804 onClicked title=", modelData.title, "url=", urlString, "mode=", FlightSession.mode)
                         var isPreflight = urlString.indexOf("PreflightChecklistView.qml") !== -1
                         if (!isPreflight && modelData.title && modelData.title.indexOf("Preflight") !== -1) isPreflight = true
                         if (isPreflight && FlightSession.mode === FlightSession.None) {
-                            console.log("AnalyzeView: storing pendingSource=", urlString)
                             pendingSource = modelData.url
                             pendingTitle = modelData.title
                             sessionStartDialog.open()
                         } else {
-                            console.log("AnalyzeView: loading directly ->", urlString)
                             panelLoader.source  = urlString
                             panelLoader.title   = modelData.title
                         }
@@ -180,7 +176,8 @@ Rectangle {
         property string title:  qsTr("Log Download")
 
         onStatusChanged: {
-            console.log("AnalyzeView: panelLoader status=", status, "source=", source, "error=", errorString())
+            // Loader status transitions handled implicitly; error logging
+            // is reserved for console.warn on source loading failure.
         }
 
         Connections {
@@ -193,9 +190,7 @@ Rectangle {
     Connections {
         target: sessionStartDialog
         function onClosed() {
-            console.log("AnalyzeView: sessionStartDialog closed; pendingSource=", pendingSource, "mode=", FlightSession.mode)
             if (pendingSource.toString() !== "" && FlightSession.mode !== FlightSession.None) {
-                console.log("AnalyzeView: loading pendingSource ->", pendingSource)
                 panelLoader.source = pendingSource
                 panelLoader.title  = pendingTitle !== "" ? pendingTitle : qsTr("Preflight Checklist")
                 pendingSource = ""
