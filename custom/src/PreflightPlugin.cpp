@@ -184,6 +184,13 @@ void PreflightPlugin::init()
     connect(_armingGate, &ArmingGate::vehicleDisarmed,
             FlightSession::instance(), &FlightSession::onVehicleDisarmed);
 
+    // Drive the preflight FSM's Armed terminal from confirmed arm/disarm so the
+    // "Ready to Arm"/"Armed" QML state label matches the real vehicle (R8).
+    connect(_armingGate, &ArmingGate::vehicleArmed,
+            _preflightManager, &PreflightManager::markArmed);
+    connect(_armingGate, &ArmingGate::vehicleDisarmed,
+            _preflightManager, &PreflightManager::markDisarmed);
+
     connect(FlightSession::instance(), &FlightSession::postFlightChecklistRequired,
             _preflightManager, &PreflightManager::activatePostFlightChecks);
 

@@ -484,6 +484,13 @@ void PreflightManager::evaluateAll() {
 //   - All auto-mandatory passed (manual still pending) → PreflightPass → ManualConfirmPhase
 //   - Otherwise → ChecklistInProgress (or retreat from ArmingAllowed if checks degrade)
 void PreflightManager::attemptStateTransition() {
+  // Once the autopilot confirms the vehicle is armed, check-result transitions
+  // no longer drive the FSM — leaving Armed is owned by markDisarmed(). Without
+  // this guard the periodic tick's else-branch (state >= ArmingAllowed) would
+  // retreat an airborne vehicle back to ChecklistInProgress (R8).
+  if (m_stateMachine.state() == PreflightStateMachine::Armed)
+    return;
+
   bool allMandatoryPass = allMandatoryPassed();
   bool allAutoMandatoryPass = true;
   for (auto *c : m_checks) {
@@ -508,6 +515,18 @@ void PreflightManager::attemptStateTransition() {
     else if (m_stateMachine.state() >= PreflightStateMachine::ArmingAllowed)
       m_stateMachine.transitionTo(PreflightStateMachine::ChecklistInProgress);
   }
+}
+
+void PreflightManager::markArmed() {
+  m_stateMachine.transitionTo(PreflightStateMachine::Armed);
+}
+
+void PreflightManager::markDisarmed() {
+  // Leave the Armed terminal; the next tick re-drives the FSM from the
+  // current check results (ArmingAllowed if all still pass, otherwise
+  // ChecklistInProgress).
+  m_stateMachine.transitionTo(PreflightStateMachine::ArmingAllowed);
+  attemptStateTransition();
 }
 
 void PreflightManager::resetAll() {

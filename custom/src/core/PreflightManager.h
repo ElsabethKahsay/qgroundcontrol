@@ -165,6 +165,12 @@ public slots:
     void setActive(bool active);
     /// Timer tick — evaluates stale checks and drives state machine.
     void tick();
+    /// Advance the FSM to the Armed terminal (autopilot confirmed arming).
+    /// Check-result transitions never retreat from Armed once reached (R8).
+    Q_INVOKABLE void markArmed();
+    /// Retreat from the Armed terminal after a disarm; check results then
+    /// re-drive the FSM on the next tick.
+    Q_INVOKABLE void markDisarmed();
 
 signals:
     /// Emitted when the check list model changes (add/remove).

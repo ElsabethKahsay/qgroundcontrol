@@ -25,6 +25,8 @@ private slots:
     void testResetAll();
     void testApplyVehicleKindBlocking();
     void testParamWatchlistSeededOnConnect();
+    void testMarkArmedDisarmed();
+    void testArmedSurvivesTick();
 };
 
 void PreflightManagerTest::testInitialState()
@@ -232,6 +234,38 @@ void PreflightManagerTest::testApplyVehicleKindBlocking()
     // Unknown kind leaves the previous explicit decisions untouched.
     mgr.applyVehicleKind(QStringLiteral("UNKNOWN"));
     QVERIFY(airspeed->isBlocking());
+}
+
+void PreflightManagerTest::testMarkArmedDisarmed()
+{
+    PreflightManager mgr;
+    QCOMPARE(mgr.state(), PreflightStateMachine::Disconnected);
+
+    // Confirmed arm must drive the FSM to the Armed terminal (R8). Before the
+    // fix the Armed state was defined but no caller ever entered it.
+    mgr.markArmed();
+    QCOMPARE(mgr.state(), PreflightStateMachine::Armed);
+
+    // Disarm retreats: with no blocking checks all mandatory still pass, so the
+    // FSM lands back on ArmingAllowed.
+    mgr.markDisarmed();
+    QCOMPARE(mgr.state(), PreflightStateMachine::ArmingAllowed);
+}
+
+void PreflightManagerTest::testArmedSurvivesTick()
+{
+    PreflightManager mgr;
+    mgr.markArmed();
+    QCOMPARE(mgr.state(), PreflightStateMachine::Armed);
+
+    // A periodic tick must NOT retreat an armed vehicle back to
+    // ChecklistInProgress even if check results degrade — leaving Armed is
+    // exclusively owned by markDisarmed() (R8).
+    mgr.tick();
+    QCOMPARE(mgr.state(), PreflightStateMachine::Armed);
+
+    mgr.markDisarmed();
+    QCOMPARE(mgr.state(), PreflightStateMachine::ArmingAllowed);
 }
 
 UT_REGISTER_TEST(PreflightManagerTest)
