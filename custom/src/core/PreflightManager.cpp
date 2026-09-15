@@ -183,6 +183,10 @@ void PreflightManager::setTelemetryBridge(TelemetryBridge *bridge) {
     // When the vehicle connects, transition to ParamLoading and detect autopilot type
     connect(m_telemetry, &TelemetryBridge::isConnectedChanged, this, [this]() {
       if (m_telemetry->isConnected()) {
+        // Seed the param watchlist so notifyParamReceived/isReady have a target
+        // set to fill; without this the ParamLoading FSM leg is permanently
+        // dead and the parameter cache never populates via parameterUpdated.
+        m_paramManager.setWatchlist(ParameterWatchlist::names());
         m_stateMachine.transitionTo(PreflightStateMachine::ParamLoading);
         Vehicle *v = m_telemetry->vehicle();
         if (v) {
@@ -510,6 +514,9 @@ void PreflightManager::resetAll() {
   for (auto *check : m_checks) {
     check->reset();
   }
+  // Clear the parameter cache/received set; the watchlist itself is reseeded
+  // on the next vehicle connect (setWatchlist in isConnectedChanged).
+  m_paramManager.reset();
   emit modelChanged();
   emit progressChanged();
 }

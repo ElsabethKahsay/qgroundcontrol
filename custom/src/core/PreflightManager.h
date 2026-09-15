@@ -82,6 +82,10 @@ public:
     /// Set the database manager for persisting overrides.
     void setDatabaseManager(DatabaseManager *db);
 
+    /// Parameter manager behind the param-watchlist FSM leg. Null-safe accessor
+    /// for tests/QML; returns the internal loader.
+    UavParameterManager *paramManager() { return &m_paramManager; }
+
     uint8_t vehicleSysId() const { return m_sysId; }
 
     QVector<AbstractCheck *> checks() const { return m_checks; }

@@ -73,7 +73,8 @@ public:
         : TelemetryBridge(parent) {}
 
     // -- Setters that emit NOTIFY signals --
-    void setConnected(bool v) { m_connected = v; emit isConnectedChanged(); }
+    void setConnected(bool v) { m_connected = v; emit TelemetryBridge::isConnectedChanged(); }
+    void emitParameterUpdated(const QString &name, float value) { emit parameterUpdated(name, value); }
     void setConnectionQuality(int v) { m_connectionQuality = v; emit connectionQualityChanged(); }
     void setBatteryVoltage(double v) { m_batteryVoltage = v; emit batteryVoltageChanged(); }
     void setBatteryPercent(int v) { m_batteryPercent = v; emit batteryPercentChanged(); }

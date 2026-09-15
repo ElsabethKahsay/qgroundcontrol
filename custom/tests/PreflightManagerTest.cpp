@@ -3,6 +3,7 @@
 
 #include "UnitTest.h"
 #include "PreflightManager.h"
+#include "ParameterWatchlist.h"
 #include "AbstractCheck.h"
 #include "ManualConfirmCheck.h"
 #include "mocks/MockTelemetryBridge.h"
@@ -23,6 +24,7 @@ private slots:
     void testArmingBlocker();
     void testResetAll();
     void testApplyVehicleKindBlocking();
+    void testParamWatchlistSeededOnConnect();
 };
 
 void PreflightManagerTest::testInitialState()
@@ -169,6 +171,31 @@ void PreflightManagerTest::testResetAll()
 
     QCOMPARE(check->status(), CheckStatus::Pending);
     QVERIFY(progressSpy.count() > 0);
+}
+
+void PreflightManagerTest::testParamWatchlistSeededOnConnect()
+{
+    QVERIFY(ParameterWatchlist::names().size() > 0);
+
+    MockTelemetryBridge bridge;
+    PreflightManager mgr;
+    mgr.setTelemetryBridge(&bridge);
+
+    // Before any vehicle connects the watchlist is empty: notifyParamReceived
+    // has nothing to fill and the ParamLoading FSM leg stays dead (R3).
+    QCOMPARE(mgr.paramManager()->totalCount(), 0);
+
+    // Simulate vehicle connect. setWatchlist must seed the full parameter
+    // roster so parameter arrival can drive the watchlist to Ready.
+    bridge.setConnected(true);
+    QVERIFY(mgr.paramManager()->totalCount() == ParameterWatchlist::names().size());
+
+    // Deliver every watched parameter; manager should reach Ready, not hang
+    // in Loading forever (R3 regression guard).
+    for (const QString &name : ParameterWatchlist::names()) {
+        bridge.emitParameterUpdated(name, 1.0f);
+    }
+    QVERIFY(mgr.paramManager()->isReady());
 }
 
 void PreflightManagerTest::testApplyVehicleKindBlocking()
