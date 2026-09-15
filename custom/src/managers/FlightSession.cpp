@@ -22,6 +22,14 @@ FlightSession::FlightSession(QObject *parent)
     s_instance = this;
 }
 
+FlightSession::~FlightSession()
+{
+    // Avoid a dangling s_instance if the QML engine/plugin is torn down and
+    // re-created (otherwise instance() returns a stale pointer).
+    if (s_instance == this)
+        s_instance = nullptr;
+}
+
 void FlightSession::setInstructor(int operatorId)
 {
     if (operatorId <= 0) return;

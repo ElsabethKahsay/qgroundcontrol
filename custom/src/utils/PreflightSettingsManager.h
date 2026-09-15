@@ -43,6 +43,7 @@ public:
     static PreflightSettingsManager *instance();
 
     explicit PreflightSettingsManager(QObject *parent = nullptr);
+    ~PreflightSettingsManager() override;
 
     QString pilotName() const;
     void setPilotName(const QString &v);

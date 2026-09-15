@@ -64,6 +64,12 @@ VehicleProfileManager::VehicleProfileManager(QObject *parent)
     connect(&m_liveTimer, &QTimer::timeout, this, &VehicleProfileManager::_updateLiveEstimate);
 }
 
+VehicleProfileManager::~VehicleProfileManager()
+{
+    if (s_instance == this)
+        s_instance = nullptr;
+}
+
 /// Map a MAVLink MAV_TYPE to the canonical VehicleKind.
 VehicleKind VehicleProfileManager::kindFromMavType(int mavType)
 {

@@ -76,6 +76,7 @@ class VehicleProfileManager : public QObject {
 public:
     static VehicleProfileManager *instance();
     explicit VehicleProfileManager(QObject *parent = nullptr);
+    ~VehicleProfileManager() override;
 
     /// Map a MAV_TYPE integer to its canonical VehicleKind.
     static VehicleKind kindFromMavType(int mavType);

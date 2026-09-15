@@ -32,6 +32,7 @@ class OperatorManager : public QObject
 public:
     static OperatorManager *instance();
     explicit OperatorManager(QObject* parent = nullptr);
+    ~OperatorManager() override;
 
     QVariantList operators()          const { return m_operators; }
     int          currentOperatorId()  const { return m_currentId; }

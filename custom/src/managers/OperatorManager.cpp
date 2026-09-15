@@ -17,6 +17,12 @@ OperatorManager::OperatorManager(QObject* parent)
     _loadFromSettings();
 }
 
+OperatorManager::~OperatorManager()
+{
+    if (s_instance == this)
+        s_instance = nullptr;
+}
+
 void OperatorManager::loadOperators()
 {
     m_operators.clear();

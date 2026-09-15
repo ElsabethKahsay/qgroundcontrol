@@ -53,6 +53,7 @@ public:
 
     static FlightSession *instance();
     explicit FlightSession(QObject *parent = nullptr);
+    ~FlightSession() override;
 
     SessionMode  mode()            const { return m_mode; }
     SessionState state()           const { return m_state; }

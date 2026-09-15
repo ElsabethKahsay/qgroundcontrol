@@ -66,6 +66,7 @@ public:
     static WeatherProvider *instance();
 
     explicit WeatherProvider(QObject *parent = nullptr);
+    ~WeatherProvider() override;
 
     double temperature() const { return m_temperature; }
     double windSpeed() const { return m_windSpeed; }

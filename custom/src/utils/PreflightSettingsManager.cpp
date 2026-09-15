@@ -14,6 +14,12 @@ PreflightSettingsManager::PreflightSettingsManager(QObject *parent)
     s_instance = this;
 }
 
+PreflightSettingsManager::~PreflightSettingsManager()
+{
+    if (s_instance == this)
+        s_instance = nullptr;
+}
+
 // ── Pilot info ───────────────────────────────────────────────────────
 
 QString PreflightSettingsManager::pilotName() const

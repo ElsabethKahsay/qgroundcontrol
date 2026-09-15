@@ -261,7 +261,7 @@ private slots:
         // The successful UPDATE above proves the v16 column exists (an UPDATE
         // against a missing column fails in execOrWarn); assert the migration
         // version as well.
-        QCOMPARE(db.storedSchemaVersion(), 16);
+        QCOMPARE(db.storedSchemaVersion(), 18);
 
         QFile::remove(path);
         QFile::remove(path + QStringLiteral(".bak"));

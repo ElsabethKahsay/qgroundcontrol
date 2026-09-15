@@ -33,6 +33,12 @@ WeatherProvider::WeatherProvider(QObject *parent)
     s_instance = this;
 }
 
+WeatherProvider::~WeatherProvider()
+{
+    if (s_instance == this)
+        s_instance = nullptr;
+}
+
 /** @brief METAR data is considered fresh if observed within the last 60 minutes. */
 bool WeatherProvider::metarFresh() const
 {
