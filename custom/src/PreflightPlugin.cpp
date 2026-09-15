@@ -910,7 +910,8 @@ bool PreflightPlugin::mavlinkMessage(Vehicle *vehicle, LinkInterface *link, cons
         if (cmd.command == MAV_CMD_COMPONENT_ARM_DISARM) {
             _lastArmDisarmParam = static_cast<int>(cmd.param1);
             if (cmd.param1 == 1.0f) {
-                // NOTE: an inbound force-arm (param2 == 21196 / 2989) must NOT
+                // NOTE: an inbound force-arm (param2 == kForceArmParam2 /
+                // kLegacyForceArmParam2) must NOT
                 // auto-open the gate — that would let any link peer (e.g. an
                 // external GCS on the same UDP/telemetry link) self-authorize
                 // arming. Only a local operator action via ArmingGate::forceArm()

@@ -636,7 +636,7 @@ void VehicleProfileManager::disarmVehicle(bool force)
                                    MAV_CMD_COMPONENT_ARM_DISARM,
                                    true,    // showError
                                    0.0f,    // 0.0 = disarm
-                                   2989.0f); // 2989.0 = magic force arm/disarm number
+                                   kForceArmParam2); // force bypass (R11)
         } else {
             vehicle->setArmedShowError(true);
         }
@@ -1107,7 +1107,7 @@ void VehicleProfileManager::_onArmedChanged(bool armed)
                 double batteryVoltage = m_telemetry->property("batteryVoltage").toDouble();
                 // Use battery capacity parameter if available for accurate Wh calculation;
                 // fall back to a rough 0.45 Ah-per-percent estimate otherwise.
-                double energyWh = pctUsed * batteryVoltage * 0.45;
+                double energyWh = pctUsed * batteryVoltage * kEnergyWhPerPercentAh;
                 if (m_telemetry->hasParameter("BAT_CAPACITY")) {
                     float capMah = m_telemetry->parameterValue("BAT_CAPACITY", 0.0f);
                     if (capMah > 0)

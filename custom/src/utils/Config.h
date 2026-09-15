@@ -178,6 +178,22 @@ constexpr int kArmedTimerThresholdMs = 30000;
 // Nominal cell voltage and default capacity for energy prediction.
 constexpr double kNominalCellVoltage       = 3.7;
 constexpr double kDefaultBatteryCapacityMah = 5000.0;
+// Rough Wh fallback when no battery capacity parameter is available:
+// pctUsed × voltage × 0.45 Ah-per-percent (R11).
+constexpr double kEnergyWhPerPercentAh = 0.45;
+
+// ── Power-model estimation assumptions ─────────────────────────────────────────
+// Uncalibrated range/endurance prediction fallbacks (R11).
+constexpr double kPayloadWhSurchargePerKg = 0.05; // +5% Wh per kg payload above airframe default
+constexpr double kTakeoffLandingHoverMin  = 2.0;  // assumed hover min for takeoff/landing
+constexpr double kAssumedGroundSpeedKmph  = 30.0; // assumed cruise ground speed
+
+// ── ArduPilot force-arm magic ────────────────────────────────────────────────
+// MAV_CMD_COMPONENT_ARM_DISARM param2 values that bypass pre-arm checks:
+// 2989 is the current force code, 21196 the legacy value still accepted by
+// test controllers (R11).
+constexpr float kForceArmParam2       = 2989.0f;
+constexpr float kLegacyForceArmParam2 = 21196.0f;
 
 // ── Geodesic ─────────────────────────────────────────────────────────────────
 // Mean Earth radius in meters for Haversine distance calculations.

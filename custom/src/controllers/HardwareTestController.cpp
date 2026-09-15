@@ -20,6 +20,7 @@
 #include "Comms/MAVLinkProtocol.h"
 #include "utils/DatabaseManager.h"
 #include "utils/FlightModeUtil.h"
+#include "utils/Config.h"
 
 Q_LOGGING_CATEGORY(hardwareTestLog, "preflight.hardwaretest")
 
@@ -728,11 +729,11 @@ void HardwareTestController::_startFixedWingMotorTest(int idx)
     }
 
     // Force-ARM the vehicle (param1=1.0). Plane bench tests need the ESC to
-    // respond to the throttle channel; param2=21196 bypasses the pre-arm checks.
+    // respond to the throttle channel; param2=kLegacyForceArmParam2 bypasses the pre-arm checks.
     _vehicle->sendMavCommand(
         _vehicle->defaultComponentId(),
         MAV_CMD_COMPONENT_ARM_DISARM, false,
-        1.0f, 21196.0f, 0, 0, 0, 0, 0
+        1.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0
     );
 
     // Drive the ESC via RC_CHANNELS_OVERRIDE on the throttle channel at 10 Hz.
@@ -768,11 +769,11 @@ void HardwareTestController::_fwAdvancePhase()
         _fwOverrideTimer.stop();
         _fwSendOverride(1000);
         if (_vehicle) {
-            // Force-disarm vehicle after motor test completes using magic bypass code 21196
+            // Force-disarm vehicle after motor test completes using magic bypass code kLegacyForceArmParam2
             _vehicle->sendMavCommand(
                 _vehicle->defaultComponentId(),
                 MAV_CMD_COMPONENT_ARM_DISARM, false,
-                0.0f, 21196.0f, 0, 0, 0, 0, 0);
+                0.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
         }
         _fwPhase = 3;
         _fwPhaseTimer.start(kFwSpinDownMs);
@@ -877,7 +878,7 @@ void HardwareTestController::testMotor(int motorIndex)
         _vehicle->sendMavCommand(
             _vehicle->defaultComponentId(),
             MAV_CMD_COMPONENT_ARM_DISARM, false,
-            0.0f, 21196.0f, 0, 0, 0, 0, 0);
+            0.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
         return;
     }
 

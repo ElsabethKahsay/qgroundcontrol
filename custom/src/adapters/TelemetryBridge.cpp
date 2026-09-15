@@ -1121,8 +1121,8 @@ void TelemetryBridge::arm() {
 void TelemetryBridge::setArmingGate(QObject* gate) { _armingGate = gate; }
 
 /// Force-arms the vehicle without consulting the ArmingGate or pre-arm checks.
-/// Sends MAV_CMD_COMPONENT_ARM_DISARM with param1=1 (arm) and param2=21196 (ArduPilot
-/// force-arm magic number accepted by both ArduPilot and PX4).
+/// Sends MAV_CMD_COMPONENT_ARM_DISARM with param1=1 (arm) and the ArduPilot
+/// force-arm magic number (param2) accepted by both ArduPilot and PX4 (R11).
 void TelemetryBridge::forceArm() {
     if (!_vehicle) {
         qCWarning(telemetryBridgeLog) << "forceArm(): no vehicle connected";
@@ -1133,7 +1133,7 @@ void TelemetryBridge::forceArm() {
     _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
                              true,       // showError
                              1.0f,       // param1 = 1 (arm)
-                             2989.0f);   // param2 = force-arm magic 2989
+                             kForceArmParam2);
 }
 
 /// Set a parameter value in the local cache and expose it as a dynamic Qt property.

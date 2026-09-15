@@ -79,4 +79,11 @@ QtObject {
 
     // Footer
     readonly property int kFooterHeight: 48
+
+    // Battery estimation fallbacks (R11) — used when no live vehicle data is
+    // available for a rough range estimate
+    readonly property double batteryFallbackVoltage: 14.8          // 4S pack assumption
+    readonly property double batteryCellMaxVoltage: 4.2            // LiPo per-cell max
+    readonly property double batteryNominalCellVoltage: 3.7        // LiPo per-cell nominal
+    readonly property double batteryDefaultPackAh: 5.0             // ~5000 mAh typical
 }

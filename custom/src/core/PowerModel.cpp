@@ -15,6 +15,7 @@
 #include <QVariantMap>
 
 #include "DatabaseManager.h"
+#include "utils/Config.h"
 
 PowerModel::PowerModel(QObject *parent)
     : QObject(parent)
@@ -157,8 +158,8 @@ PowerEstimate PowerModel::estimate(const QString &deviceUid, double payloadKg,
 
     // If not calibrated, apply payload surcharge to default (rough: +5% per kg)
     if (!calibrated) {
-        whPerKm = whPerKm * (1.0 + 0.05 * qMax(0.0, payloadKg));
-        whPerMinHover = whPerMinHover * (1.0 + 0.05 * qMax(0.0, payloadKg));
+        whPerKm = whPerKm * (1.0 + kPayloadWhSurchargePerKg * qMax(0.0, payloadKg));
+        whPerMinHover = whPerMinHover * (1.0 + kPayloadWhSurchargePerKg * qMax(0.0, payloadKg));
     }
 
     // Full battery capacity — safety margin applied by caller (MissionEnergyCheck)
@@ -167,11 +168,11 @@ PowerEstimate PowerModel::estimate(const QString &deviceUid, double payloadKg,
     // Cruise consumption
     double cruiseWh = distance * whPerKm;
     // Assume 2 min hover for takeoff/landing
-    double hoverWh = 2.0 * whPerMinHover;
+    double hoverWh = kTakeoffLandingHoverMin * whPerMinHover;
     double totalWh = cruiseWh + hoverWh;
 
     double rangeKm = totalWh > 0 ? (usableWh / totalWh) * distance : 0;
-    double avgSpeedKmph = 30.0; // assumed average ground speed
+    double avgSpeedKmph = kAssumedGroundSpeedKmph; // assumed average ground speed
     double flightTimeMin = avgSpeedKmph > 0 ? (rangeKm / avgSpeedKmph) * 60.0 : 0;
 
     QString src;

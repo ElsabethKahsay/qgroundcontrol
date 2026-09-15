@@ -200,9 +200,9 @@ RowLayout {
             var payloadKg = typeof VehicleProfileManager !== 'undefined' && VehicleProfileManager
                 ? VehicleProfileManager.currentPayloadWeightKg : 0.0
             // Estimate capacity from battery voltage: rough Wh
-            var voltage = _activeVehicle ? _activeVehicle.battery.voltage.value : 14.8
-            var cellCount = Math.max(1, Math.round(voltage / 4.2))
-            var capacityWh = cellCount * 5.0 * 3.7  // ~5000 mAh typical
+            var voltage = _activeVehicle ? _activeVehicle.battery.voltage.value : Config.batteryFallbackVoltage
+            var cellCount = Math.max(1, Math.round(voltage / Config.batteryCellMaxVoltage))
+            var capacityWh = cellCount * Config.batteryDefaultPackAh * Config.batteryNominalCellVoltage  // ~5000 mAh typical
 
             var est = PowerModel.estimateToMap(deviceUid, payloadKg, capacityWh, -1)
             if (!est) {

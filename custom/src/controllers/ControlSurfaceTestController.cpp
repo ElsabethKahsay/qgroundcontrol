@@ -12,6 +12,7 @@
 #include "../utils/DatabaseManager.h"
 #include "../core/VehicleProfileManager.h"
 #include "../utils/FlightModeUtil.h"
+#include "../utils/Config.h"
 
 Q_DECLARE_LOGGING_CATEGORY(controlSurfaceTestLog)
 Q_LOGGING_CATEGORY(controlSurfaceTestLog, "preflight.surfacetest")
@@ -495,7 +496,7 @@ void ControlSurfaceTestController::_beginSurfaceTest(int idx)
         m_vehicle->sendMavCommand(
             m_vehicle->defaultComponentId(),
             MAV_CMD_COMPONENT_ARM_DISARM, false,
-            1.0f, 21196.0f, 0, 0, 0, 0, 0);
+            1.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
         return;
     }
 
@@ -947,7 +948,7 @@ void ControlSurfaceTestController::confirmSurfaceDirection(const QString &surfac
         m_vehicle->sendMavCommand(
             m_vehicle->defaultComponentId(),
             MAV_CMD_COMPONENT_ARM_DISARM, false,
-            0.0f, 21196.0f, 0, 0, 0, 0, 0);
+            0.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
         m_isArmed = false;
         emit isArmedChanged();
     }
@@ -983,7 +984,7 @@ void ControlSurfaceTestController::stopAllSurfaces()
         m_vehicle->sendMavCommand(
             m_vehicle->defaultComponentId(),
             MAV_CMD_COMPONENT_ARM_DISARM, false,
-            0.0f, 21196.0f, 0, 0, 0, 0, 0);
+            0.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
         m_isArmed = false;
         emit isArmedChanged();
     }

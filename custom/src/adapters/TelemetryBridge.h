@@ -712,7 +712,8 @@ public:
     Q_INVOKABLE void arm();
 
     /// Force-arm the vehicle, bypassing all pre-arm checks.
-    /// Sends MAV_CMD_COMPONENT_ARM_DISARM with param1=1 and param2=21196 (ArduPilot
+    /// Sends MAV_CMD_COMPONENT_ARM_DISARM with param1=1 and the ArduPilot
+    /// force-arm magic (Config.h kForceArmParam2).
     /// magic number). Does NOT consult the ArmingGate. Use with caution.
     Q_INVOKABLE void forceArm();
 
