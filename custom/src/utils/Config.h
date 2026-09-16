@@ -203,6 +203,13 @@ constexpr double kEarthRadiusM = 6371000.0;
 // Expected magnetic field strength in nT at the operating location.
 constexpr double kExpectedMagField = 1000.0;
 
+// ── Filesystem / paths ───────────────────────────────────────────────────────
+// On-disk layout under the standard QStandardPaths writable locations.
+// Single source of truth for the export and weather-cache subdirectories (R17).
+constexpr const char *kExportSubdirName      = "UAVPreflightReports";
+constexpr const char *kWeatherCacheSubdirName = "weather";
+constexpr int kWeatherCacheMaxBytes = 50 * 1024 * 1024; // 50 MB
+
 // ── Layout: Telemetry / Checklist Split (35% / 65%) ─────────────────────────
 // UI layout ratios and sizing for the main preflight checklist screen.
 constexpr float kTelemetryPanelRatio = 0.35f;  // Left panel width ratio

@@ -746,7 +746,7 @@ AnalyzePage {
                                     name: "QGroundControl"
                                 }
 
-                                center: QtPositioning.coordinate(9.03, 38.74)
+                                center: QtPositioning.coordinate(Config.defaultMapLatitude, Config.defaultMapLongitude)
                                 zoomLevel: 13
 
                                 Component.onCompleted: {

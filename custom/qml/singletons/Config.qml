@@ -87,6 +87,11 @@ QtObject {
     readonly property double batteryNominalCellVoltage: 3.7        // LiPo per-cell nominal
     readonly property double batteryDefaultPackAh: 5.0             // ~5000 mAh typical
 
+    // Airspace map defaults (R17) — fallback center used before the vehicle
+    // position is available.
+    readonly property double defaultMapLatitude: 9.03
+    readonly property double defaultMapLongitude: 38.74
+
     // ── Page navigation (R14) ──────────────────────────────────────────────
     // The main-window stack view can be absent (headless/offscreen runs,
     // pages loaded before the main window exists, or stacked loaders), so all

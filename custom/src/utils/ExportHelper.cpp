@@ -15,6 +15,7 @@
 #include <QStringList>
 
 #include "DatabaseManager.h"
+#include "utils/Config.h"
 
 ExportHelper::ExportHelper(QObject *parent)
     : QObject(parent)
@@ -26,7 +27,7 @@ static QString exportDir()
 {
     QString d = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
     if (d.isEmpty()) d = QDir::homePath();
-    QDir dir(d + QStringLiteral("/UAVPreflightReports"));
+    QDir dir(d + QLatin1Char('/') + QLatin1String(kExportSubdirName));
     dir.mkpath(".");
     return dir.absolutePath();
 }

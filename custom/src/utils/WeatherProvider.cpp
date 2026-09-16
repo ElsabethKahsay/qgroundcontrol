@@ -12,6 +12,8 @@
 #include <QtMath>
 #include <QUrlQuery>
 
+#include "utils/Config.h"
+
 WeatherProvider *WeatherProvider::s_instance = nullptr;
 
 WeatherProvider *WeatherProvider::instance()
@@ -25,10 +27,10 @@ WeatherProvider::WeatherProvider(QObject *parent)
     // Set up a disk cache for weather API responses to avoid redundant requests.
     m_cache = new QNetworkDiskCache(this);
     QString cacheDir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
-                       + QStringLiteral("/weather");
+                       + QLatin1Char('/') + QLatin1String(kWeatherCacheSubdirName);
     QDir().mkpath(cacheDir);
     m_cache->setCacheDirectory(cacheDir);
-    m_cache->setMaximumCacheSize(50 * 1024 * 1024); // 50 MB
+    m_cache->setMaximumCacheSize(kWeatherCacheMaxBytes); // 50 MB
     m_nam.setCache(m_cache);
     s_instance = this;
 }
