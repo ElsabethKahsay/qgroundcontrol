@@ -23,7 +23,7 @@ double MagInterferenceCheck::magMagnitude() const
     double mx = getTelemetryDouble(QStringLiteral("magFieldX"));
     double my = getTelemetryDouble(QStringLiteral("magFieldY"));
     double mz = getTelemetryDouble(QStringLiteral("magFieldZ"));
-    if (qIsNaN(mx)) return -1.0;
+    if (qIsNaN(mx) || qIsNaN(my) || qIsNaN(mz)) return -1.0;
     return qSqrt(mx * mx + my * my + mz * mz);
 }
 

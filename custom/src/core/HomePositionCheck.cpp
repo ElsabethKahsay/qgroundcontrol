@@ -30,6 +30,16 @@ void HomePositionCheck::evaluate()
 
     setCurrentValue(homeLat);
 
+    if (qIsNaN(homeLat) || qIsNaN(homeLon)) {
+        setStatus(CheckStatus::Pending, QStringLiteral("Home not set yet"));
+        return;
+    }
+
+    if (qIsNaN(curLat) || qIsNaN(curLon)) {
+        setStatus(CheckStatus::Pending, QStringLiteral("No current position yet"));
+        return;
+    }
+
     if (qFuzzyIsNull(homeLat) && qFuzzyIsNull(homeLon)) {
         setStatus(CheckStatus::Pending, QStringLiteral("Home not set yet"));
         return;

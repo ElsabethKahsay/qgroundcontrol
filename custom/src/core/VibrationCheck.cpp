@@ -25,9 +25,14 @@ void VibrationCheck::evaluate()
     double x = getTelemetryDouble(QStringLiteral("vibrationX"));
     double y = getTelemetryDouble(QStringLiteral("vibrationY"));
     double z = getTelemetryDouble(QStringLiteral("vibrationZ"));
-    uint clipping = static_cast<uint>(getTelemetryDouble(QStringLiteral("vibrationClipping")));
+    double clipping = getTelemetryDouble(QStringLiteral("vibrationClipping"));
 
-    if (clipping != 0) {
+    if (qIsNaN(clipping)) {
+        setStatus(CheckStatus::Pending, QStringLiteral("No vibration/clipping data"));
+        return;
+    }
+
+    if (clipping != 0.0) {
         setStatus(CheckStatus::Failed, QStringLiteral("Clipping detected"));
         return;
     }

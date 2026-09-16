@@ -33,6 +33,10 @@ void MotorTemperatureCheck::evaluate()
     int maxBad = qMin(temps.size(), 4);
     for (int i = 0; i < maxBad; ++i) {
         double t = temps[i].toDouble();
+        if (qIsNaN(t)) {
+            setStatus(CheckStatus::Pending, QStringLiteral("Incomplete ESC temperature data"));
+            return;
+        }
         if (t > m_maxTempC)
             hotMotors.append(QStringLiteral("M%1=%2°C").arg(i + 1).arg(t, 0, 'f', 0));
     }

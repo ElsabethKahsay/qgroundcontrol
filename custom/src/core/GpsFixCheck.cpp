@@ -69,8 +69,19 @@ void GpsFixCheck::evaluate()
         return;
     }
 
+    if (qIsNaN(lat) || qIsNaN(lon)) {
+        setStatus(CheckStatus::Pending, QStringLiteral("No GPS position data"));
+        return;
+    }
+
     if (qFuzzyIsNull(lat) && qFuzzyIsNull(lon)) {
         setStatus(CheckStatus::Warning, QStringLiteral("Fix acquired but position is origin"));
+        return;
+    }
+
+    if (qIsNaN(hdop)) {
+        setStatus(CheckStatus::Warning,
+                  QStringLiteral("3D fix, but HDOP not reported — fix quality unverified"));
         return;
     }
 

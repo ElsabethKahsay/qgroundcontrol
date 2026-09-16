@@ -30,7 +30,7 @@ void MissionItemCheck::evaluate()
         return;
     }
 
-    if (firstWpDist < 0.0) {
+    if (!(firstWpDist >= 0.0)) {
         setStatus(CheckStatus::Pending, QStringLiteral("Waiting for first waypoint distance"));
         return;
     }

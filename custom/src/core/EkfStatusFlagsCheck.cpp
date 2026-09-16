@@ -65,6 +65,12 @@ void EkfStatusFlagsCheck::evaluate()
     double posVertRatio = getTelemetryDouble(QStringLiteral("estimatorPosVertRatio"));
     double magRatio = getTelemetryDouble(QStringLiteral("estimatorMagRatio"));
 
+    if (qIsNaN(velRatio) || qIsNaN(posHorizRatio) ||
+        qIsNaN(posVertRatio) || qIsNaN(magRatio)) {
+        setStatus(CheckStatus::Pending, QStringLiteral("No EKF innovation ratio data"));
+        return;
+    }
+
     if (velRatio >= m_maxRatio) {
         issues << QStringLiteral("VelRatio=%1").arg(velRatio, 0, 'f', 2);
     }

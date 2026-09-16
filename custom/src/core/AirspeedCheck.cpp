@@ -21,6 +21,11 @@ void AirspeedCheck::evaluate()
 
     double airspeed = getTelemetryDouble(QStringLiteral("airspeed"));
 
+    if (qIsNaN(airspeed)) {
+        setStatus(CheckStatus::Pending, QStringLiteral("No airspeed data"));
+        return;
+    }
+
     setCurrentValue(airspeed);
 
     // Airspeed == 0 could mean sensor not present or not yet valid

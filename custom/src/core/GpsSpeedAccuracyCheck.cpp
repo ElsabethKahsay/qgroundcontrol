@@ -35,6 +35,11 @@ void GpsSpeedAccuracyCheck::evaluate()
         return;
     }
 
+    if (qIsNaN(speedAcc) && qIsNaN(hdop)) {
+        setStatus(CheckStatus::Pending, QStringLiteral("No GPS accuracy data"));
+        return;
+    }
+
     // Primary: use vel_acc field when available
     if (speedAcc >= 0.0) {
         if (speedAcc > m_maxSpeedErr) {

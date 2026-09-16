@@ -31,7 +31,7 @@ void EscVoltageConsistencyCheck::evaluate()
 
     QVariantList volts = voltsVar.toList();
 
-    if (batteryVoltage <= 0.0) {
+    if (qIsNaN(batteryVoltage) || batteryVoltage <= 0.0) {
         setStatus(CheckStatus::Pending, QStringLiteral("Waiting for battery voltage"));
         return;
     }

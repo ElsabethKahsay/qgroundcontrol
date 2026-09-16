@@ -30,8 +30,14 @@ void EscCurrentSymmetryCheck::evaluate()
     QVariantList currents = currentsVar.toList();
     double sum = 0.0;
     int n = qMin(currents.size(), 4);
-    for (int i = 0; i < n; ++i)
-        sum += currents[i].toDouble();
+    for (int i = 0; i < n; ++i) {
+        double c = currents[i].toDouble();
+        if (qIsNaN(c)) {
+            setStatus(CheckStatus::Pending, QStringLiteral("Incomplete ESC current data"));
+            return;
+        }
+        sum += c;
+    }
     double mean = sum / n;
 
     if (mean < 0.1) {

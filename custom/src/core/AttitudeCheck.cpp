@@ -24,6 +24,11 @@ void AttitudeCheck::evaluate()
     double pitch = getTelemetryDouble(QStringLiteral("pitch"));
     double yaw   = getTelemetryDouble(QStringLiteral("yaw"));
 
+    if (qIsNaN(roll) || qIsNaN(pitch) || qIsNaN(yaw)) {
+        setStatus(CheckStatus::Pending, QStringLiteral("No attitude data"));
+        return;
+    }
+
     double rollDeg  = roll * 180.0 / M_PI;
     double pitchDeg = pitch * 180.0 / M_PI;
     double yawDeg   = yaw * 180.0 / M_PI;

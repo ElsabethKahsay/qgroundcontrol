@@ -35,6 +35,12 @@ void GeofenceParamCheck::evaluate()
     double maxDist = getTelemetryDouble(QStringLiteral("param_GF_MAX_HORIZ_DIST"));
     double maxAlt = getTelemetryDouble(QStringLiteral("param_GF_MAX_ALT"));
 
+    if (qIsNaN(gfEnabled)) {
+        setStatus(CheckStatus::Pending,
+                  QStringLiteral("Geofence enable parameter missing — cannot verify"));
+        return;
+    }
+
     // If enabled is 0, geofence is genuinely disabled
     if (qFuzzyIsNull(gfEnabled)) {
         setStatus(CheckStatus::Passed,

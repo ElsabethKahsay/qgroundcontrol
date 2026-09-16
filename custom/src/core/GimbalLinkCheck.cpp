@@ -37,7 +37,7 @@ void GimbalLinkCheck::evaluate()
     }
 
     bool detected = detectedVar.toBool();
-    int mode = static_cast<int>(getTelemetryDouble(QStringLiteral("gimbalMode")));
+    double modeD = getTelemetryDouble(QStringLiteral("gimbalMode"));
     bool videoStreaming = _isVideoStreaming();
 
     if (detected) {
@@ -46,12 +46,13 @@ void GimbalLinkCheck::evaluate()
                       QStringLiteral("Gimbal detected but no video stream"));
             return;
         }
-        if (mode >= 0) {
-            setStatus(CheckStatus::Passed,
-                      QStringLiteral("Gimbal detected, mode: %1, video active").arg(mode));
-        } else {
+        if (qIsNaN(modeD) || modeD < 0.0) {
             setStatus(CheckStatus::Warning,
                       QStringLiteral("Gimbal detected, mode unknown"));
+        } else {
+            int mode = static_cast<int>(modeD);
+            setStatus(CheckStatus::Passed,
+                      QStringLiteral("Gimbal detected, mode: %1, video active").arg(mode));
         }
     } else {
         if (videoStreaming) {

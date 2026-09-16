@@ -29,6 +29,12 @@ void EscFirmwareCheck::evaluate()
         return;
     }
 
+    if (!failureVar.isValid() || !errorVar.isValid()) {
+        setStatus(CheckStatus::Pending,
+                  QStringLiteral("ESC_INFO present but failure details missing"));
+        return;
+    }
+
     // Check failure flags
     int totalFailures = 0;
     int totalErrors = 0;
