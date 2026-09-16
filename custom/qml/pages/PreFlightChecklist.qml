@@ -123,6 +123,12 @@ Page {
         }
     }
 
+    // Stop pending single-shot timers when the page is torn down (R13).
+    Component.onDestruction: {
+        flashTimer.stop()
+        _motorDialogTimer.stop()
+    }
+
     // ── Responsive breakpoint ────────────────────────────────────────────────
     readonly property bool isSingle: width < Config.breakpointSingle
 

@@ -283,6 +283,8 @@ Item {
         }
     }
 
+    Component.onDestruction: modeToastTimer.stop()
+
     Rectangle {
         id:      modeToast
         visible: root._modeToastSecsLeft > 0

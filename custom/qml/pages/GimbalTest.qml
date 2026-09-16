@@ -62,6 +62,9 @@ Page {
     Component.onDestruction: {
         if (typeof ControlSurfaceTestController !== "undefined")
             ControlSurfaceTestController.stopAllSurfaces()
+        ackTimer.stop()
+        tiltReturnTimer.stop()
+        targetStatusTimer.stop()
     }
 
     Connections {

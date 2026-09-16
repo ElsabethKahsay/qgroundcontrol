@@ -227,6 +227,10 @@ Item {
                         }
                     }
 
+                    // Stop the recording ticker if the wizard step is torn down
+                    // mid-recording (R13).
+                    Component.onDestruction: recordTimer.stop()
+
                     // Confirm checkbox
                     Rectangle {
                         Layout.fillWidth: true

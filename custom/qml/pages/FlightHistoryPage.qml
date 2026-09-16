@@ -166,6 +166,9 @@ AnalyzePage {
         onTriggered: statusToast.opacity = 0.0
     }
 
+    // Stop the status toast timer on teardown (R13).
+    Component.onDestruction: statusTimer.stop()
+
     pageComponent: Component {
         ColumnLayout {
             width: root.availableWidth

@@ -176,6 +176,7 @@ RowLayout {
         }
 
         Timer {
+            id: estimateTimer
             interval: 5000
             running: _activeVehicle && !_activeVehicle.armed && !_root._communicationLost
             repeat: true
@@ -185,6 +186,8 @@ RowLayout {
         }
 
         Component.onCompleted: updateEstimate()
+        // Stop the estimate ticker on teardown (R13).
+        Component.onDestruction: estimateTimer.stop()
 
         function updateEstimate() {
             if (!_activeVehicle || _activeVehicle.armed || _root._communicationLost) {

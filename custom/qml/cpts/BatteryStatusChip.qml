@@ -129,10 +129,17 @@ Rectangle {
     // Flash when SOC < 10 %.
     property bool _flashOn: false
     Timer {
+        id: lowSocFlashTimer
         interval: 500
         repeat: true
         running: root._socKnown && root._soc >= 0 && root._soc < 10
         onTriggered: root._flashOn = !root._flashOn
+    }
+
+    // Stop repeating timers on teardown (R13).
+    Component.onDestruction: {
+        freshnessTimer.stop()
+        lowSocFlashTimer.stop()
     }
 
     // Reusable label/value row used by the detail popover.

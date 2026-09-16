@@ -56,6 +56,9 @@ AnalyzePage {
         onTriggered: root._noticeText = ""
     }
 
+    // Stop the notice timer on teardown (R13).
+    Component.onDestruction: noticeTimer.stop()
+
     Connections {
         target: NoFlyZoneModel
         function onErrorOccurred(message) {

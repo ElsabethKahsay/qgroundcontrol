@@ -306,6 +306,7 @@ Item {
     // Post-force-arm confirmation banner
     property bool _forceArmLogged: false
     Timer { id: forceArmSuccessTimer; interval: 3000; onTriggered: root._forceArmLogged = false }
+    Component.onDestruction: forceArmSuccessTimer.stop()
 
     // ── Proceed with caution / abort dialog (weather) ─────────────────────────
     Dialog {

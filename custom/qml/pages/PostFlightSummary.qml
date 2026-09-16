@@ -31,6 +31,10 @@ Page {
         }
     }
 
+    // Stop the repeating ticker when the page is torn down so a hidden or
+    // recycled instance does not keep polling (R13).
+    Component.onDestruction: flightTimer.stop()
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: Config.spacingLarge
