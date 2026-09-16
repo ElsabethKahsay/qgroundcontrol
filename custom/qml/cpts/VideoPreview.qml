@@ -97,7 +97,7 @@ Rectangle {
             onClicked: {
                 VideoManager.startGimbalTest()
                 if (Window.window && Window.window.mainStackView) {
-                    Window.window.mainStackView.push(Qt.resolvedUrl("../pages/GimbalTest.qml"))
+                    Config.navigatePush(Qt.resolvedUrl("../pages/GimbalTest.qml"))
                 }
             }
             height: 30

@@ -19,7 +19,7 @@ Page {
             text: qsTr("Start Pre‑Flight")
             anchors.horizontalCenter: parent.horizontalCenter
             width: 250
-            onClicked: Window.window.mainStackView.push("VehicleSelect.qml")
+            onClicked: Config.navigatePush("VehicleSelect.qml")
         }
 
         CustomButton {
@@ -27,7 +27,7 @@ Page {
             anchors.horizontalCenter: parent.horizontalCenter
             width: 250
             baseColor: Colors.surface
-            onClicked: Window.window.mainStackView.push("TemplateManager.qml")
+            onClicked: Config.navigatePush("TemplateManager.qml")
         }
     }
 }

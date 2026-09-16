@@ -24,7 +24,7 @@ Page {
                 text: qsTr("← Back")
                 baseColor: Colors.surface
                 implicitHeight: 28
-                onClicked: Window.window.mainStackView.pop()
+                onClicked: Config.navigatePop()
             }
         }
 

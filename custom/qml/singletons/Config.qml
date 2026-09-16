@@ -86,4 +86,18 @@ QtObject {
     readonly property double batteryCellMaxVoltage: 4.2            // LiPo per-cell max
     readonly property double batteryNominalCellVoltage: 3.7        // LiPo per-cell nominal
     readonly property double batteryDefaultPackAh: 5.0             // ~5000 mAh typical
+
+    // ── Page navigation (R14) ──────────────────────────────────────────────
+    // The main-window stack view can be absent (headless/offscreen runs,
+    // pages loaded before the main window exists, or stacked loaders), so all
+    // custom-page navigation is routed through these guarded helpers instead
+    // of touching Window.window.mainStackView directly.
+    function navigatePush(page, props) {
+        if (typeof Window !== 'undefined' && Window.window && Window.window.mainStackView)
+            Window.window.mainStackView.push(page, props || {})
+    }
+    function navigatePop() {
+        if (typeof Window !== 'undefined' && Window.window && Window.window.mainStackView)
+            Window.window.mainStackView.pop()
+    }
 }

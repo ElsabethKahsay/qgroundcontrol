@@ -128,7 +128,7 @@ Page {
                     var tName = nameField.text !== "" ? nameField.text : "untitled_template"
                     var success = TemplateManager.saveTemplate(tName, "Quad", tName, templateItems)
                     if (success) {
-                        Window.window.mainStackView.pop()
+                        Config.navigatePop()
                     }
                 }
             }
@@ -137,7 +137,7 @@ Page {
                 text: qsTr("Cancel")
                 width: (parent.parent.width - Config.spacingMedium - Config.spacingLarge * 2) / 3
                 baseColor: Colors.surface
-                onClicked: Window.window.mainStackView.pop()
+                onClicked: Config.navigatePop()
             }
         }
     }

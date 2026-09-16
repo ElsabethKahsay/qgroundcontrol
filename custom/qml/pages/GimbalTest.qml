@@ -1174,7 +1174,7 @@ Page {
                     onClicked: {
                         root.backRequested();
                         if (Window.window && Window.window.mainStackView && Window.window.mainStackView.depth > 1) {
-                            Window.window.mainStackView.pop();
+                            Config.navigatePop();
                         }
                     }
                 }

@@ -70,7 +70,7 @@ Page {
                         width: 80
                         height: 36
                         anchors.verticalCenter: parent.verticalCenter
-                        onClicked: Window.window.mainStackView.push("TemplateEditor.qml", { templateId: modelData })
+                        onClicked: Config.navigatePush("TemplateEditor.qml", { templateId: modelData })
                     }
                 }
             }
@@ -84,12 +84,12 @@ Page {
                 text: qsTr("← Back")
                 width: (parent.parent.width - Config.spacingMedium - Config.spacingLarge * 2) / 2
                 baseColor: Colors.surface
-                onClicked: Window.window.mainStackView.pop()
+                onClicked: Config.navigatePop()
             }
             CustomButton {
                 text: qsTr("Create New")
                 width: (parent.parent.width - Config.spacingMedium - Config.spacingLarge * 2) / 2
-                onClicked: Window.window.mainStackView.push("TemplateEditor.qml", { templateId: "new_template" })
+                onClicked: Config.navigatePush("TemplateEditor.qml", { templateId: "new_template" })
             }
         }
     }

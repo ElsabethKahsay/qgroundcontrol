@@ -42,13 +42,13 @@ Page {
             CustomButton {
                 text: qsTr("← Back")
                 width: (parent.width - Config.spacingMedium - Config.spacingLarge * 2) / 2
-                onClicked: Window.window.mainStackView.pop()
+                onClicked: Config.navigatePop()
             }
             CustomButton {
                 text: qsTr("Next →")
                 width: (parent.width - Config.spacingMedium - Config.spacingLarge * 2) / 2
                 enabled: VehicleTelemetry.payloadSecured
-                onClicked: Window.window.mainStackView.push("FinalChecks.qml")
+                onClicked: Config.navigatePush("FinalChecks.qml")
             }
         }
     }

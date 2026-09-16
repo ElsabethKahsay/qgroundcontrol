@@ -259,19 +259,19 @@ Page {
             CustomButton {
                 text: qsTr("← Back")
                 width: (parent.width - Config.spacingMedium - Config.spacingLarge * 2) / 3
-                onClicked: Window.window.mainStackView.pop()
+                onClicked: Config.navigatePop()
             }
             CustomButton {
                 text: qsTr("Launch Ready →")
                 width: (parent.width - Config.spacingMedium - Config.spacingLarge * 2) / 3
                 enabled: VehicleTelemetry.readyToLaunch
-                onClicked: Window.window.mainStackView.push("LaunchReady.qml")
+                onClicked: Config.navigatePush("LaunchReady.qml")
             }
             CustomButton {
                 text: qsTr("Post-Flight")
                 width: (parent.width - Config.spacingMedium - Config.spacingLarge * 2) / 3
                 baseColor: Colors.surface
-                onClicked: Window.window.mainStackView.push("PostFlightSummary.qml")
+                onClicked: Config.navigatePush("PostFlightSummary.qml")
             }
         }
 

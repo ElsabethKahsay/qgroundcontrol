@@ -293,7 +293,7 @@ Page {
             CustomButton {
                 text: qsTr("← Back")
                 baseColor: Colors.surface
-                onClicked: Window.window.mainStackView.pop()
+                onClicked: Config.navigatePop()
             }
         }
     }

@@ -291,7 +291,7 @@ Page {
                 baseColor: Colors.surface
                 enabled: TelemetryProvider.isConnected
                 onClicked: {
-                    Window.window.mainStackView.push("PreFlightChecklist.qml")
+                    Config.navigatePush("PreFlightChecklist.qml")
                 }
             }
 
@@ -326,7 +326,7 @@ Page {
                 anchors.horizontalCenter: parent.horizontalCenter
                 width: parent.width - 2 * Config.spacingLarge
                 baseColor: Colors.surface
-                onClicked: Window.window.mainStackView.push("VehicleManagement.qml")
+                onClicked: Config.navigatePush("VehicleManagement.qml")
             }
 
             CustomButton {
@@ -334,7 +334,7 @@ Page {
                 anchors.horizontalCenter: parent.horizontalCenter
                 width: parent.width - 2 * Config.spacingLarge
                 baseColor: Colors.surface
-                onClicked: Window.window.mainStackView.pop()
+                onClicked: Config.navigatePop()
             }
         }
     }

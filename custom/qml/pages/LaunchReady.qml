@@ -161,7 +161,7 @@ Page {
             text: qsTr("Airspace / Compliance Check")
             anchors.horizontalCenter: parent.horizontalCenter
             baseColor: Colors.surface
-            onClicked: Window.window.mainStackView.push("AirspacePage.qml")
+            onClicked: Config.navigatePush("AirspacePage.qml")
         }
 
         CustomButton {
@@ -178,14 +178,14 @@ Page {
             text: qsTr("← Back")
             anchors.horizontalCenter: parent.horizontalCenter
             baseColor: Colors.surface
-            onClicked: Window.window.mainStackView.pop()
+            onClicked: Config.navigatePop()
         }
 
         CustomButton {
             text: qsTr("Post-Flight Summary →")
             anchors.horizontalCenter: parent.horizontalCenter
             baseColor: Colors.surface
-            onClicked: Window.window.mainStackView.push("PostFlightSummary.qml")
+            onClicked: Config.navigatePush("PostFlightSummary.qml")
         }
     }
 
