@@ -77,15 +77,15 @@ void ArmingFlowIntegrationTest::testHappyPathConnectToArm()
     bridge.setImuHealthy(true);
     bridge.setCompassHealthy(true);
 
-    // Confirm all manual checks
-    for (auto *c : mgr.checks()) {
-        if (c->checkType() == CheckType::Manual || c->checkType() == CheckType::Action) {
-            c->confirm();
-        }
-    }
+    // Resolve the airframe kind so the mandatory set is configured (R16);
+    // applyVehicleKind also runs the initial evaluation cycle.
+    mgr.applyVehicleKind(QStringLiteral("MULTIROTOR"));
 
-    // Evaluate all checks
-    mgr.evaluateAll();
+    // Confirm every check — all mandatory auto+manual checks must be green
+    // for the gate to open.
+    for (auto *c : mgr.checks()) {
+        c->confirm();
+    }
 
     // Gate should open
     QVERIFY(mgr.allMandatoryPassed());
@@ -115,11 +115,13 @@ void ArmingFlowIntegrationTest::testCheckFailClosesGate()
     batteryLike->forceStatus(CheckStatus::Passed, QStringLiteral("Healthy"));
     mgr.addCheck(batteryLike);
 
+    // Resolve kind so the built-in mandatory set is configured (R16).
+    mgr.applyVehicleKind(QStringLiteral("MULTIROTOR"));
+
     // First: all checks pass
     for (auto *c : mgr.checks()) {
         c->confirm();
     }
-    mgr.evaluateAll();
     QVERIFY(mgr.allMandatoryPassed());
 
     // Now: simulate a critical failure by failing the mandatory check.
@@ -196,13 +198,16 @@ void ArmingFlowIntegrationTest::testMultipleConnectDisconnectCycles()
         failCheck->forceStatus(CheckStatus::Failed, QStringLiteral("Simulated failure"));
         mgr.addCheck(failCheck);
 
+        // Resolve kind so the built-in auto checks become part of the mandatory
+        // set, matching real operation (R16).
+        mgr.applyVehicleKind(QStringLiteral("MULTIROTOR"));
+
         // Confirm all non-failing checks; the forced-fail check keeps the gate closed.
         for (auto *c : mgr.checks()) {
             if (c != failCheck) {
                 c->confirm();
             }
         }
-        mgr.evaluateAll();
 
         // The mandatory failing check keeps the gate closed
         QVERIFY(!mgr.allMandatoryPassed());
@@ -270,21 +275,22 @@ void ArmingFlowIntegrationTest::testCheckRecoveryReopensGate()
     recover->forceStatus(CheckStatus::Passed, QStringLiteral("Healthy"));
     mgr.addCheck(recover);
 
-    // Confirm all checks initially
+    // Resolve a kind so the built-in mandatory set is configured, then pass
+    // every check so the gate is genuinely open (R16). No further evaluateAll
+    // here: it would re-evaluate the confirmed built-ins against incomplete
+    // mock telemetry and regress them away from Passed.
+    mgr.applyVehicleKind(QStringLiteral("MULTIROTOR"));
     for (auto *c : mgr.checks()) {
         c->confirm();
     }
-    mgr.evaluateAll();
     QVERIFY(mgr.allMandatoryPassed());
 
     // Fail the check
     recover->forceStatus(CheckStatus::Failed, QStringLiteral("Battery low"));
-    mgr.evaluateAll();
     QVERIFY(!mgr.allMandatoryPassed());
 
     // Recover: restore the check to a passed state
     recover->forceStatus(CheckStatus::Passed, QStringLiteral("Restored"));
-    mgr.evaluateAll();
     QVERIFY(mgr.allMandatoryPassed());
 
     QMap<int, float> armParams;

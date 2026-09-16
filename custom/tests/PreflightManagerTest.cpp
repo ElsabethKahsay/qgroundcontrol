@@ -37,8 +37,9 @@ void PreflightManagerTest::testInitialState()
     QCOMPARE(mgr.passedChecks(), 0);
     QCOMPARE(mgr.failedChecks(), 0);
     QCOMPARE(mgr.pendingChecks(), mgr.totalChecks());
-    // No vehicle connected -> no vehicle-specific critical check is mandatory yet.
-    QVERIFY(mgr.allMandatoryPassed());
+    // No vehicle connected, so no kind is resolved and the mandatory set is
+    // not configured — the gate must stay closed, never trivially pass (R16).
+    QVERIFY(!mgr.allMandatoryPassed());
     QCOMPARE(mgr.completionPercent(), 0);
 }
 
@@ -95,6 +96,10 @@ void PreflightManagerTest::testProgressCounters()
 void PreflightManagerTest::testAllMandatoryPassed()
 {
     PreflightManager mgr;
+    // Resolve a kind so the enforcement set is configured; without it the gate
+    // is fail-closed by policy and the exercise below would be meaningless (R16).
+    mgr.applyVehicleKind(QStringLiteral("MULTIROTOR"));
+
     auto *check = new ManualConfirmCheck(
         QStringLiteral("test.mand"), QStringLiteral("Mand"), CheckCategory::Safety,
         QStringLiteral("Desc"), QStringList(), QStringList(), &mgr);
@@ -241,13 +246,20 @@ void PreflightManagerTest::testMarkArmedDisarmed()
     PreflightManager mgr;
     QCOMPARE(mgr.state(), PreflightStateMachine::Disconnected);
 
+    // Resolve a kind and pass every check so the post-disarm FSM is driven by
+    // real (green) check results rather than an unconfigured gate (R16).
+    mgr.applyVehicleKind(QStringLiteral("MULTIROTOR"));
+    for (auto *c : mgr.checks()) {
+        c->confirm();
+    }
+
     // Confirmed arm must drive the FSM to the Armed terminal (R8). Before the
     // fix the Armed state was defined but no caller ever entered it.
     mgr.markArmed();
     QCOMPARE(mgr.state(), PreflightStateMachine::Armed);
 
-    // Disarm retreats: with no blocking checks all mandatory still pass, so the
-    // FSM lands back on ArmingAllowed.
+    // Disarm retreats: all mandatory checks pass, so the FSM lands back on
+    // ArmingAllowed.
     mgr.markDisarmed();
     QCOMPARE(mgr.state(), PreflightStateMachine::ArmingAllowed);
 }
@@ -255,6 +267,13 @@ void PreflightManagerTest::testMarkArmedDisarmed()
 void PreflightManagerTest::testArmedSurvivesTick()
 {
     PreflightManager mgr;
+    // Resolve + confirm so the post-disarm expectation is driven by check
+    // results (R16); the Armed-retention assertions are the R8 regressions.
+    mgr.applyVehicleKind(QStringLiteral("MULTIROTOR"));
+    for (auto *c : mgr.checks()) {
+        c->confirm();
+    }
+
     mgr.markArmed();
     QCOMPARE(mgr.state(), PreflightStateMachine::Armed);
 

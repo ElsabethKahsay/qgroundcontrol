@@ -196,7 +196,7 @@ private:
     /// Create and register all ~40 built-in preflight checks.
     void createPhase1Checks();
     /// Apply vehicle-type-aware critical (mandatory) check set for the given kind.
-    void updateCriticalChecks(const QString &kindString);
+    bool updateCriticalChecks(const QString &kindString);
     /// Wire up statusChanged/checkFailed/checkPassed signals for a check.
     void connectCheckSignals(AbstractCheck *check);
     /// Pull initial parameter values from QGC's ParameterManager into UavParameterManager.
@@ -215,4 +215,8 @@ private:
     UavParameterManager m_paramManager;
     AutopilotInfoDetector m_autopilotDetector;
     int m_stalenessThresholdMs = 10000;
+    /// True once a vehicle kind has been applied (MULTIROTOR / FIXED_WING /
+    /// VTOL_CONVENTIONAL). Until then the applicable mandatory set is undefined
+    /// and the arming gate stays closed (R16).
+    bool m_kindResolved = false;
 };

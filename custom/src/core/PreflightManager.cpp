@@ -391,6 +391,12 @@ int PreflightManager::staleCount() const {
 }
 
 bool PreflightManager::allMandatoryPassed() const {
+  // R16: until the vehicle kind resolves, the applicable mandatory set is
+  // undefined. Allowing arming here (trivially true while every check is
+  // non-mandatory) would open the gate with zero enforcement. Fail closed.
+  if (!m_kindResolved)
+    return false;
+
   for (auto *c : m_checks) {
     auto s = c->status();
     if (c->mandatory() && s != CheckStatus::Passed)
@@ -492,6 +498,16 @@ void PreflightManager::attemptStateTransition() {
   // retreat an airborne vehicle back to ChecklistInProgress (R8).
   if (m_stateMachine.state() == PreflightStateMachine::Armed)
     return;
+
+  // R16: until the vehicle kind resolves the mandatory set is undefined; never
+  // present the gate as ready before enforcement is configured.
+  if (!m_kindResolved) {
+    if (m_stateMachine.state() <= PreflightStateMachine::ParamLoading)
+      m_stateMachine.transitionTo(PreflightStateMachine::ChecklistInProgress);
+    else if (m_stateMachine.state() >= PreflightStateMachine::ArmingAllowed)
+      m_stateMachine.transitionTo(PreflightStateMachine::ChecklistInProgress);
+    return;
+  }
 
   bool allMandatoryPass = allMandatoryPassed();
   bool allAutoMandatoryPass = true;
@@ -765,13 +781,17 @@ void PreflightManager::addCheck(AbstractCheck *check) {
 // VTOL conv.:  same as fixed wing.
 // Unknown:     leave defaults untouched.
 void PreflightManager::applyVehicleKind(const QString &kindString) {
-  updateCriticalChecks(kindString);
+  m_kindResolved = updateCriticalChecks(kindString);
   evaluateAll();
   emit modelChanged();
   emit progressChanged();
 }
 
-void PreflightManager::updateCriticalChecks(const QString &kindString) {
+// Returns true when a resolvable airframe kind was applied (so enforcement is
+// configured). Returns false for UNKNOWN/unresolved kinds, leaving any
+// previously-applied mandatory decisions untouched rather than silently
+// resetting them before the airframe is identified (R16).
+bool PreflightManager::updateCriticalChecks(const QString &kindString) {
   const QString kind = kindString.toUpper();
 
   const bool multirotor = (kind == QStringLiteral("MULTIROTOR"));
@@ -781,7 +801,7 @@ void PreflightManager::updateCriticalChecks(const QString &kindString) {
   // Unknown / unresolved kind: leave any previously-applied decisions untouched
   // so they are not silently reset before the airframe is identified.
   if (!multirotor && !flightVehicle)
-    return;
+    return false;
 
   for (AbstractCheck *check : m_checks) {
     if (!check) continue;
@@ -803,6 +823,7 @@ void PreflightManager::updateCriticalChecks(const QString &kindString) {
       check->setMandatory(true);
     }
   }
+  return true;
 }
 
 // Create and register all built-in preflight checks.
