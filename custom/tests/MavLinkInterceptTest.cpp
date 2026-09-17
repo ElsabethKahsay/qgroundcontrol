@@ -109,6 +109,10 @@ void MavLinkInterceptTest::testActiveModeAllowsWhenPassed()
     PreflightManager *mgr = new PreflightManager(1, &gate);
     gate.setPreflightManager(mgr);
 
+    // Resolve the airframe kind so the mandatory set is configured (R16);
+    // the gate is fail-closed until the kind is known.
+    mgr->applyVehicleKind(QStringLiteral("MULTIROTOR"));
+
     // Confirm all mandatory checks
     for (auto *c : mgr->checks()) {
         c->confirm();
