@@ -155,6 +155,9 @@ Item {
             onTriggered:    newVehicleBanner.visible = false
         }
 
+        // Stop the banner timer if the banner is torn down mid-timeout (R13).
+        Component.onDestruction: bannerTimer.stop()
+
         // ── Inline rename dialog for new vehicles ──────────────────────
         Dialog {
             id:                renameDialog
@@ -264,6 +267,9 @@ Item {
             interval:       5000
             onTriggered:    fcRejectionToast.visible = false
         }
+
+        // Stop the toast timer if the toast is torn down mid-timeout (R13).
+        Component.onDestruction: fcToastTimer.stop()
     }
 
     Connections {
@@ -445,6 +451,9 @@ Item {
             _attemptOpenPreflightAnalyzePage()
         }
     }
+
+    // Stop the pending open-dialog timer if the fly layer is torn down (R13).
+    Component.onDestruction: _openAnalyzeTimer.stop()
 
     function openPreflightDialog() {
         _preflightAnalyzePending = true

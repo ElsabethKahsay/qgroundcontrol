@@ -110,6 +110,9 @@ AnalyzePage {
                     interval: 6000
                     onTriggered: exportStatus.visible = false
                 }
+
+                // Stop the pending export-status timer on teardown (R13).
+                Component.onDestruction: exportTimer.stop()
             }
 
             Rectangle {
