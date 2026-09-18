@@ -39,6 +39,11 @@ namespace {
 constexpr double kBattCurrentEmaAlpha = 0.095;
 // BATTERY_STATUS stale threshold in milliseconds.
 constexpr qint64 kBatteryStaleMs = 5000;
+
+// Battery SOC is a 0-100 percentage; anything outside that range (255 when the
+// flight controller has no battery configured, QNaN before first telemetry)
+// means "we don't know" and must be surfaced as -1, never as a bogus number.
+int normalizeBatterySoc(int raw) { return (raw >= 0 && raw <= 100) ? raw : -1; }
 }  // namespace
 
 TelemetryBridge::TelemetryBridge(QObject* parent) : QObject(parent) {
@@ -59,10 +64,12 @@ void TelemetryBridge::setVehicle(Vehicle* vehicle) {
 
     // Battery data is per-vehicle; reset SOC / EMA / freshness when switching.
     _batterySocPct = -1;
+    _batteryPercent = -1;
     _batteryCurrentSmoothAmps = 0.0;
     _batteryDataValid = false;
     _lastBatteryStatusTime = QDateTime();
     emit batterySocPctChanged();
+    emit batteryPercentChanged();
     emit batteryCurrentSmoothAmpsChanged();
     emit batteryDataValidChanged();
 
@@ -324,9 +331,11 @@ void TelemetryBridge::_connectBatteryFacts(QObject* batteryModel) {
                     emit battery2CurrentChanged();
                 }
             });
-            // Remaining percentage (0-100).
+            // Remaining percentage (0-100). The stock QGC fact maps "battery not
+            // configured" (battery_remaining 255) inconsistently, so re-normalize
+            // here to the same -1 = unknown convention used by _batterySocPct.
             connect(batt->percentRemaining(), &Fact::valueChanged, this, [this, id](QVariant val) {
-                int pct = val.toInt();
+                int pct = normalizeBatterySoc(val.toInt());
                 if (id == 0) {
                     _batteryPercent = pct;
                     emit batteryPercentChanged();
@@ -368,7 +377,7 @@ void TelemetryBridge::_connectBatteryFacts(QObject* batteryModel) {
                 _batteryVoltage = batt->voltage()->rawValue().toDouble();
                 _batteryCurrent = batt->current()->rawValue().toDouble();
                 _batteryCurrentAmps = _batteryCurrent;
-                _batteryPercent = batt->percentRemaining()->rawValue().toInt();
+                _batteryPercent = normalizeBatterySoc(batt->percentRemaining()->rawValue().toInt());
                 _batteryTemperature = batt->temperature()->rawValue().toDouble();
                 _batteryChargeState =
                     parseBatteryChargeState(static_cast<uint8_t>(batt->chargeState()->rawValue().toUInt()));
@@ -376,7 +385,7 @@ void TelemetryBridge::_connectBatteryFacts(QObject* batteryModel) {
             } else {
                 _battery2Voltage = batt->voltage()->rawValue().toDouble();
                 _battery2Current = batt->current()->rawValue().toDouble();
-                _battery2Percent = batt->percentRemaining()->rawValue().toInt();
+                _battery2Percent = normalizeBatterySoc(batt->percentRemaining()->rawValue().toInt());
                 _battery2Present = true;
             }
         }
@@ -976,12 +985,19 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message) {
 
                 // SOC: raw battery_remaining 0-100, UINT8_MAX (255) = not configured.
                 // Never derived from voltage — the FC value (or absence) is authoritative.
+                // This is the single source of truth for the SOC percentage: the SAME
+                // value is mirrored into _batteryPercent (below) so every consumer —
+                // power model, cycle recording, checks, chip — sees identical numbers.
                 {
                     const int socRaw = static_cast<int>(batt.battery_remaining);
-                    const int soc = (batt.battery_remaining == UINT8_MAX) ? -1 : socRaw;
+                    const int soc = normalizeBatterySoc(socRaw);
                     if (soc != _batterySocPct) {
                         _batterySocPct = soc;
                         emit batterySocPctChanged();
+                    }
+                    if (soc != _batteryPercent) {
+                        _batteryPercent = soc;
+                        emit batteryPercentChanged();
                     }
                 }
 

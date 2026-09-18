@@ -1,3 +1,25 @@
+/// @file FlightSession.cpp
+///
+/// Tracks one "session" (Training / Testing / Flight) from creation through
+/// disarm and finalization.
+///
+/// Threading: everything runs on the main thread — all methods are driven by
+/// signals from the plugin / ArmingGate / TelemetryBridge, so no locking is
+/// needed. Ownership: the FlightSession is created once in PreflightPlugin::init()
+/// and lives for the whole app; Vehicle handles are borrowed (never owned) and
+/// swapped via setVehicle().
+///
+/// Data flow: an armed/disarmed event can arrive by two paths that must agree —
+///   1. Vehicle::armedChanged  (heartbeat, FC-driven disarm, failsafe)
+///   2. ArmingGate::vehicleArmed/vehicleDisarmed (GCS command ACK path)
+/// Both funnel into _onVehicleArmedChanged() / onVehicleArmed() /
+/// onVehicleDisarmed(), which are made idempotent so one physical arm never
+/// writes two ARM/DISARM rows. Only audited Flight sessions write to the DB;
+/// Training/Testing keep purely in-memory state.
+///
+/// The DB row is finalized by closeSession() — one transaction, so partial
+/// writes (closed flight but stale operator stats) cannot happen.
+
 #include "FlightSession.h"
 #include "OperatorManager.h"
 #include "DatabaseManager.h"
@@ -114,9 +136,12 @@ void FlightSession::_onVehicleArmedChanged(bool armed)
     } else {
         if (m_state == SessionState::Armed) {
             m_disarmedAt = QDateTime::currentDateTimeUtc();
-            _setState(SessionState::PostFlight);
-            emit postFlightChecklistRequired();
-            qInfo() << "Vehicle disarmed — state → POST_FLIGHT";
+            // Route through onVehicleDisarmed() so an autopilot-driven disarm
+            // (failsafe, RC disarm, external GCS) records the same DISARM
+            // snapshot + stats as a GCS disarm. Previously only the GCS ACK
+            // path wrote the DISARM row, so failsafe disarms left no event.
+            onVehicleDisarmed();
+            qInfo() << "Vehicle disarmed — state → POST_FLIGHT (source: armedChanged)";
         }
     }
 }
@@ -289,7 +314,11 @@ void FlightSession::closeSession()
         QVariantMap counts = db.getCheckCountsForFlight(m_flightId);
         int anomalies = db.getAnomalyCountForFlight(m_flightId);
 
-        db.closeFlight(
+        // closeFlight + operator stats + vehicle flight time are one logical
+        // "finalize session" — wrap them in a single transaction so a failure
+        // mid-way can't leave the flight closed but the stats stale.
+        db.beginTransaction();
+        bool ok = db.closeFlight(
             m_flightId, durationSec,
             m_maxAltitude, m_minBatteryV, m_maxBatteryV, m_modeChanges,
             m_maxGroundSpeedMs, m_maxVerticalSpeedMs, m_distanceFlownM, m_avgBatteryV,
@@ -297,14 +326,20 @@ void FlightSession::closeSession()
             counts.value(QStringLiteral("fail")).toInt(),
             counts.value(QStringLiteral("warn")).toInt(),
             anomalies);
-        db.updateOperatorStats(
+        ok &= db.updateOperatorStats(
             OperatorManager::instance()->currentOperatorId(), true);
 
         // Accumulate flight time onto the connected vehicle's record so the
         // Vehicles page shows real total flight time per airframe.
         const QString fingerprint = VehicleRegistry::instance()->currentFingerprint();
         if (!fingerprint.isEmpty()) {
-            db.incrementVehicleFlightTime(fingerprint, durationSec);
+            ok &= db.incrementVehicleFlightTime(fingerprint, durationSec);
+        }
+        if (ok) {
+            db.commitTransaction();
+        } else {
+            qWarning() << "closeSession: finalize failed — rolling back";
+            db.rollbackTransaction();
         }
     }
 
@@ -341,6 +376,12 @@ void FlightSession::onVehicleArmed()
     }
     if (m_mode == SessionMode::None) return;
 
+    // Idempotency: the same physical arm also arrives via Vehicle::armedChanged
+    // (_onVehicleArmedChanged). Whichever path runs first records the ARM
+    // snapshot and sets state → Armed; the second sees Armed and skips, so a
+    // GCS arm never produces two ARM rows.
+    if (m_state == SessionState::Armed) return;
+
     m_armedAt = QDateTime::currentDateTimeUtc();
     _setState(SessionState::Armed);
 
@@ -363,11 +404,18 @@ void FlightSession::onVehicleArmed()
 
 void FlightSession::onVehicleDisarmed()
 {
+    // Idempotency: disarm arrives via BOTH the vehicleArmed/vehicleDisarmed
+    // signal AND Vehicle::armedChanged (for failsafe/FC-driven disarms only
+    // armedChanged fires, so it must also record the row — see
+    // _onVehicleArmedChanged). Only the FIRST transition out of Armed writes
+    // the DISARM snapshot; whichever path fires second sees PostFlight and
+    // skips. A vehicle that never armed never gets a DISARM row.
+    bool wasArmed = (m_state == SessionState::Armed);
     _setState(SessionState::PostFlight);
     QDateTime now = QDateTime::currentDateTimeUtc();
 
-    // Only persist to DB for audited Flight sessions
-    if (m_mode == SessionMode::Flight && m_flightId > 0) {
+    // Only persist to DB for audited Flight sessions.
+    if (m_mode == SessionMode::Flight && m_flightId > 0 && wasArmed) {
         // Disarm write = flights update + telemetry event → single atomic unit.
         DatabaseManager &db = DatabaseManager::instance();
         db.beginTransaction();

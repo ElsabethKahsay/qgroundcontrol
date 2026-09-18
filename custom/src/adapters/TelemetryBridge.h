@@ -865,7 +865,7 @@ private:
 
     // -- Primary battery --
     double _batteryVoltage = 0.0;
-    int _batteryPercent = 0;
+    int _batteryPercent = -1;  ///< SOC (0-100), -1 = unknown. Mirrors _batterySocPct.
     double _batteryCurrent = 0.0;
     double _batteryCurrentAmps = 0.0;
     int _batterySocPct = -1;                    ///< battery_remaining (0-100), -1 = FC not configured.

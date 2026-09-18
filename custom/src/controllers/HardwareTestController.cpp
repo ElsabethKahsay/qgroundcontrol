@@ -70,14 +70,22 @@ HardwareTestController::HardwareTestController(QObject *parent)
 /// and kicks off parameter loading / motor-count resolution.
 void HardwareTestController::setVehicle(Vehicle *vehicle)
 {
-    // Never carry an RC override hold across a vehicle change/disconnect.
-    if (_rcOverrideActive)
-        setRcOverrideActive(false);
+    // Safety: if we are swapping to a DIFFERENT vehicle (or the old one was
+    // removed), stop any active motor/servo test first. This must run while the
+    // old vehicle is still set, because stopAll() needs _vehicle to send the
+    // stop commands / disarm.
+    if (_vehicle && _vehicle != vehicle) {
+        qCDebug(hardwareTestLog) << "setVehicle: stopping active tests before vehicle change";
+        stopAll();
+    }
 
     if (_vehicle) {
         disconnect(_vehicle, &Vehicle::mavCommandResult, this, &HardwareTestController::_onCommandResult);
         disconnect(_vehicle, &Vehicle::mavlinkMessageReceived, this, &HardwareTestController::_onMavlinkMessage);
         disconnect(_vehicle, &Vehicle::armedChanged, this, &HardwareTestController::_onArmedChanged);
+        if (_vehicle->vehicleLinkManager()) {
+            disconnect(_vehicle->vehicleLinkManager(), &VehicleLinkManager::communicationLostChanged, this, nullptr);
+        }
         if (_vehicle->parameterManager()) {
             disconnect(_vehicle->parameterManager(), &ParameterManager::parametersReadyChanged,
                        this, &HardwareTestController::_onParametersReady);
@@ -90,6 +98,19 @@ void HardwareTestController::setVehicle(Vehicle *vehicle)
         connect(_vehicle, &Vehicle::mavCommandResult, this, &HardwareTestController::_onCommandResult);
         connect(_vehicle, &Vehicle::mavlinkMessageReceived, this, &HardwareTestController::_onMavlinkMessage);
         connect(_vehicle, &Vehicle::armedChanged, this, &HardwareTestController::_onArmedChanged);
+
+        // Safety: if the radio/link drops mid-test, the flight controller would
+        // otherwise keep holding the last DO_MOTOR_TEST / RC-override output.
+        // Stop everything the moment the link is reported lost.
+        if (_vehicle->vehicleLinkManager()) {
+            connect(_vehicle->vehicleLinkManager(), &VehicleLinkManager::communicationLostChanged, this,
+                    [this](bool lost) {
+                        if (lost) {
+                            qCWarning(hardwareTestLog) << "Link lost — stopping motor/servo tests";
+                            stopAll();
+                        }
+                    });
+        }
 
         qCDebug(hardwareTestLog) << "setVehicle:" << _vehicle->id()
                                  << "apm:" << _vehicle->apmFirmware()
@@ -1535,7 +1556,17 @@ void HardwareTestController::_advanceStep()
 void HardwareTestController::_sendMotorStep(int motorInstance, int throttlePct, int durationSec)
 {
     if (!_vehicle) return;
-    _vehicle->motorTest(motorInstance, throttlePct, durationSec, false);
+    if (motorInstance < 1 || motorInstance > _motorCount) return;
+
+    // Profile JSON may contain any throttle value, but a bench step is only ever
+    // allowed the same hard ceiling as the manual slider (kMaxThrottlePct).
+    // This keeps the profile path and the UI path on one single throttle limit.
+    int clampedPct = qBound(0, throttlePct, static_cast<int>(kMaxThrottlePct));
+    if (clampedPct != throttlePct) {
+        qCWarning(hardwareTestLog) << "Motor step" << motorInstance
+                                   << "throttle" << throttlePct << "clamped to" << clampedPct;
+    }
+    _vehicle->motorTest(motorInstance, clampedPct, durationSec, false);
 }
 
 void HardwareTestController::_sendServoStep(int servoInstance, int pwmValue, int durationSec)
