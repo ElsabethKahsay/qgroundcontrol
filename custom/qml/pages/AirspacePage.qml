@@ -36,7 +36,9 @@ AnalyzePage {
 
     readonly property int _currentFlightId: FlightSession.currentFlightId > 0 ? FlightSession.currentFlightId : -1
 
-    // Automatic no-fly-zone route check (registered by PreflightManager)
+    // Automatic no-fly-zone route check. Single source of truth: the check is
+    // owned/registered by PreflightManager (airspace.zone_compliance) and runs
+    // the shared ZoneComplianceTool — never a per-page duplicate path (R10/R17).
     readonly property var _zoneCheck: PreflightManager ? PreflightManager.checkById("airspace.zone_compliance") : null
 
     // Compliance-log flight filter (-1 = all flights)

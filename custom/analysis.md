@@ -259,7 +259,7 @@ Sign-off: ready for real quad? Y/N
 ## C.1 Module map (custom tree = ~127 files, ~31.5k lines)
 
 | Area | Modules | Job |
-|---|---|---|
+| --- | --- | --- |
 | Plugin glue | `PreflightPlugin.cpp` (`src/`) | Owns all managers, QML context, MAVLink arm gating/interception, sessions |
 | Preflight FSM | `PreflightStateMachine`, `PreflightManager` (`core/`) | Linear lifecycle Disconnected→…→ArmingAllowed; owns ~26 runtime checks; time-driven evaluation |
 | Arming gate | `ArmingGate` (`core/`) | Enforces arm policy, operator overrides, force-arm; DB preflight status |
@@ -289,7 +289,7 @@ Sign-off: ready for real quad? Y/N
 ## C.3 Observed failures this session (root causes, SITL)
 
 | Symptom | Root cause | Evidence / fix done |
-|---|---|---|
+| --- | --- | --- |
 | "5 planes" phantom icons + ADSB targets | Saved MockLink "stil" (type 4, `IncrementVehicleId=true`) auto-started with sysid 128; MockLink itself streams ADSB ids 3039-3042+. **Not real vehicles, no TCP socket.** | `Skywin GCS.ini` `[LinkConfigurations] Link0`; set `auto=false`, `IncrementVehicleId=false` (backup `/tmp/opencode/Skywin_GCS.ini.bak-*`) |
 | Takeoff greyed / `NAV_TAKEOFF: FAILED` | Vector was **already airborne at ~5 m**, GUIDED+armed ⇒ ArduCopter `do_user_takeoff` refuses (`!land_complete` "can't takeoff again"), stock `GuidedActionsController.qml:151` hides Take Off while `vehicleFlying`. | Not a bug; `GUIDED→ARM→NAV_TAKEOFF 5→NAV_LAND` verified clean from landed/disarmed |
 | Battery always 0% | SITL-side: `BATT_MONITOR=4`, `BATT_VOLT_PIN=13/12`, `SIM_BATT_VOLTAGE=25.2` (6S) vs 12.6 V measured (3S), `BATT_LOW/CRT_MAH=0`. stil reports rem=0, QGC faithful. | No change (user directive) |
@@ -297,16 +297,16 @@ Sign-off: ready for real quad? Y/N
 ## C.4 Risk register (severity-ordered, cross-ref to Part B)
 
 | # | Sev | Finding | Evidence | Catches |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | R1 | HIGH | **PreflightPlugin construction-order bug:** `connect(_armingGate,…)` at :166-169 runs while `_armingGate` is still `nullptr` (created `:211`); `telemetryLogger->setDependencies(_, _armingGate, _checklistEngine)` `:163` passes nulls (`_checklistEngine` created `:233`). FlightSession↔gate signals and logger gate/engine hooks are **permanently dead**. | `PreflightPlugin.cpp:163-169, 211, 233` | B/P/S, F2 |
 | R2 | HIGH | **~51 of 74 check classes never instantiated** — only 22 types constructed in `PreflightManager.cpp:743-813` (26 rows incl. 4× ManualConfirm). EkfFailsafe/BatteryHealth/Geofence/PreArm/ESC checks etc. never run ⇒ gate not exercising intended coverage. | `PreflightManager.cpp:743-813` + grep `new *Check` vs `class *Check` (74 files) | P2, S1 |
 | R3 | HIGH | **Param watchlist never enabled:** `UavParameterManager::setWatchlist` never called (`m_watchlist` empty) ⇒ `notifyParamReceived` early-returns (`:69-70`), `isReady()` never true, `ParamLoading` FSM leg dead (only `parametersReadyChanged` conn saves it). | `UavParameterManager.cpp:47-174`, `PreflightManager.cpp:530-532, 160-168` | P1, P2 |
-| R4 | HIGH | **Force-arm bypasses gate:** `VehicleProfileManager.cpp:613-626` `forceArm()`/`disarmVehicle` sends magic `2989`; `TelemetryBridge.cpp:1126-1136` same; `ArmingGate.cpp:248-261` `forceArm()` unconditionally opens; and **external** COMMAND_LONG `param2==21196||2989` auto-calls `_armingGate->forceArm()` (`PreflightPlugin.cpp:903-906`) — an unauthenticated external GCS can self-open the gate. | ArmingGate.cpp, TelemetryBridge.cpp, PreflightPlugin.cpp:903, VehicleProfileManager.cpp:613 | A2, S3, B1, item 12 |
+| R4 | HIGH | **Force-arm bypasses gate:** `VehicleProfileManager.cpp:613-626` `forceArm()`/`disarmVehicle` sends magic `2989`; `TelemetryBridge.cpp:1126-1136` same; `ArmingGate.cpp:248-261` `forceArm()` unconditionally opens; and **external** COMMAND_LONG `param2==21196 | | 2989` auto-calls `_armingGate->forceArm()`(`PreflightPlugin.cpp:903-906`) — an unauthenticated external GCS can self-open the gate. | ArmingGate.cpp, TelemetryBridge.cpp, PreflightPlugin.cpp:903, VehicleProfileManager.cpp:613 | A2, S3, B1, item 12 |
 | R5 | HIGH | **Unguarded `_activeVehicle` QML derefs** → TypeError on disconnect: `MainStatusIndicator.qml:103-104, 122-123, 142, 369, 374, 382, 393, 402`; `FlyViewWidgetLayer.qml:369-374`. | QML above | S7, C5, T1 |
 | R6 | HIGH | **DB upsert passes `{}` empty strings** (`VehicleProfileManager.cpp:307-309` → `upsertVehicleEx` INSERT binds empty `friendly_name`/`motor_layout`). Vehicles table is `friendly_name TEXT NOT NULL DEFAULT ''` (`DatabaseManager.cpp:378`); observed runtime NOT NULL/FK failures block `startFlightSession` (`:431` FK on `device_uid`). Self-heal v14 exists but tests never cover empty-name insert. | `VehicleProfileManager.cpp:307`, `DatabaseManager.cpp:378, 431, 1619-1701` (+ self-heal `:1332-1350`) | D1-D5 |
 | R7 | MED | **5 unresettable singletons** — `s_instance` set in ctor, never cleared ⇒ stale pointer if QML engine recreated / tests don't reset. `VehicleRegistry` (Q_APPLICATION_STATIC) is safe. | `FlightSession.cpp:12,22`, `OperatorManager.cpp:6,16`, `VehicleProfileManager.cpp:29,57`, `WeatherProvider.cpp:15,33`, `PreflightSettingsManager.cpp:3,14` | T1, T5 |
 | R8 | MED | **Dead/ghost state-machine terminal:** `Armed` state defined but unreachable; `TransitionTo(Armed)` never called. Toolbar Armed comes only from `_updateArmed` mutation. | `PreflightStateMachine.cpp:35-89`, `PreflightPlugin.cpp:925-933` | S3-S6 |
-| R9 | MED | **NAV/geofence-failsafe "disabled" detection uses exact-zero compare.** `qFuzzyCompare(param, 0.0)` is *not* always-false (Qt special-cases zero → true iff |param|<1e-12), but tolerance is ultra-tight: any non-zero residue fails the "disabled" path. Prefer `qFuzzyIsNull` clarity. | `EkfFailsafeCheck.cpp:32`, `GeofenceParamCheck.cpp:39`, `BatteryFailsafeCheck.cpp:45` | P2 |
+| R9 | MED | **NAV/geofence-failsafe "disabled" detection uses exact-zero compare.** `qFuzzyCompare(param, 0.0)` is *not* always-false (Qt special-cases zero → true iff | param | <1e-12), but tolerance is ultra-tight: any non-zero residue fails the "disabled" path. Prefer `qFuzzyIsNull` clarity. | `EkfFailsafeCheck.cpp:32`, `GeofenceParamCheck.cpp:39`, `BatteryFailsafeCheck.cpp:45` | P2 |
 | R10 | MED | **Duplicate logic (will drift):** identical 28-entry flight-mode QHash `HardwareTestController.cpp:28-56` vs `ControlSurfaceTestController.cpp:21-49`; haversine `TelemetryEventLogger.cpp:12-21` vs `DualGpsConsistencyCheck.cpp:19-29`; battery cell-count estimation ×3 sites; battery-capacity Wh ×2 sites. | files above | H1-H4, T1 |
 | R11 | MED | **Magic numbers:** fallback 14.8 V (4S assumption) `MainStatusIndicator.qml:203`; `kMinGateA: 3.0` `BatteryStatusChip.qml:28`; airframe defaults/`avgSpeed 30`, `+5%/kg`, `2 min hover` `PowerModel.cpp:122,160-174`; force-arm magic `21196/2989` `TelemetryBridge.cpp:1136`; energy `pctUsed×voltage×0.45` `VehicleProfileManager.cpp:1103`. `Config.h` centralizes ~15 PWM/thresholds but they're compile-time only. | files above | B11, item 1 |
 | R12 | MED | **Debug/log noise:** `console.log`×8 (debug `MARKER-20260804` left in `AnalyzeView.qml:137`); preflight debug dump every 5 s `PreflightManager.cpp:590-607`; `armingBlocked` emitted each tick `:652-654`; `checksForCategory` always qDebug `:234-235`. | QML/C++ above | item 1 |
@@ -325,7 +325,7 @@ Sign-off: ready for real quad? Y/N
 ## C.6 Implementation-completeness table
 
 | Feature | Status | Evidence | Missing / gaps |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Preflight state machine | Partial | `PreflightStateMachine.cpp:35-89` | `Armed` terminal unreachable (R8); `ParamLoading` leg dead (R3) |
 | Arming gate | Partial | `ArmingGate.cpp:25-359` | Gate↔FlightSession wiring dead (R1); 3 force-arm bypasses + external magic force-arm (R4); no unit tests |
 | Check coverage | **Partial (~30%)** | 22/74 classes constructed (`PreflightManager.cpp:743-813`) | ~51 checks dead (R2); NaN pass-through (R15); mandatory=false window (R16) |
@@ -352,6 +352,7 @@ Sign-off: ready for real quad? Y/N
 (Append to the matching tables; IDs continue from Part B.)
 
 **Section 1 (evidence-driven cleanliness):**
+
 - [ ] Re-run `grep -c "class .*Check" custom/src/core/*Check.h` vs `new .*Check` in `PreflightManager.cpp` — dead-check count must be 0 or each gap justified
 - [ ] `PreflightPlugin::init` order: after refactor, assert no `connect`/`setDependencies` arg is null (add `Q_ASSERT` at construction sites)
 - [ ] No unguarded `_activeVehicle.` access in any custom QML handler/binding
@@ -397,3 +398,31 @@ Sign-off: ready for real quad? Y/N
 | T5 | 30 min soak with check dump enabled | No per-tick log blow-up; `armingBlocked` not spammed |
 
 **Section 14 (order note):** insert an item 3b — "Dead-check audit: confirm registered checks == intended roster (P7/P8) before arming gate soak."
+
+## C.8 SITL validation runbook (handover — close the gaps unit tests cannot)
+
+Authoritative launcher: `build/Debug/PreflightQGroundControl` (relinked R17, all 22 suites green).
+Run base under `--unittest:AirspacePageToolTests` etc. as needed; for JIT/SITL use the flags below — they go through `Main.cc`'s command-line parser, so they work with the QML page too:
+
+### Prereqs (per session)
+- QGC SITL: `sim_vehicle.py -v ArduPlane` (or `-v ArduCopter`), TCP on 5760, UDP on 14550 → QGC connects on the `UDP` link (Skywin `[LinkConfigurations]`), NOT the sim's serial.
+- Do NOT run two QGC instances against the same SITL UDP port — sysid collision floods `FlightSession` (R6/R16 log).
+- Keep `custom/` un-mounted? No — keep `custom/` mounted, it's the feature tree. Only unmount `custom/` when testing stock-QGC regression contrast.
+
+### Close list (unit tests proved logic; SITL proves *integration*)
+| R item | Unit proof | SITL step to close |
+| --- | --- | --- |
+| R1 (gate↔session wiring) | `ArmingGate*` suites | Arm via toolbar; verify `Vehicle.armed()` flips + `FlightSession.status==Armed` profile row; force-arm path still blocked |
+| R3 (param watch on all chips) | roster composition | With check dump on, confirm every chip's watchlist fires on param change (no silent `null` watchlist) |
+| R6 (battery SOC single source) | `BatteryEstimatorTest` | Soak 5 min armed; `batterySocPct` monotone↓, `batteryPercent` equal within 1%; minutes-dead NOT reported |
+| R8/R10/R17 (flight-mode naming + single path) | `StateMachineTest`, all controllers | Modes LOITER→AUTO→RTL→GUIDED→CIRCLE→FBWB; verify surface-test and hardware-test both report correct plane-mode number (no drift) |
+| R11 (magic 0.45 confirm) | — | Flight-test mission: compare py predictions vs `_flightTimeMinutes` at arm; document residual |
+| R13 (timer teardown) | — | Full page navigation incl. open dialog → teardown; attach `--gdb` for stray timer crash |
+| R16 (arn toggle dead-btn) | — | In-air toggle ArmingGate while armed; verify no `Armed` false-positive |
+| D6/D7 (DB upsert edge) | `DatabaseMigrationTest` | Empty `friendlyName` upsert; expect INSERT success + session row, no FK/NOT NULL |
+
+### Derailed failure escapes
+If SITL hangs on connect: verify `BATT_MONITOR`/`BATT_VOLT_PIN` + `SIM_BATT_VOLTAGE` (R6/R11 known 3S-vs-6S shim). If arming gates spuriously block: run with `--unittest:PreflightManagerTest` first; if that passes, set `PREFLIGHT_DEBUG=1` env var for check-by-check dump. Never silence a Blocked with `--allow-multiple` (that's for test re-entry, not production re-entry).
+
+### Evidence rule
+Every SITL close MUST attach the log + a screenshot of the chip + the git hash (`git rev-parse HEAD`) to the handover pack. A green unit suite alone is NOT proof of SITL closure.
