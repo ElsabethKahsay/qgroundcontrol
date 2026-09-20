@@ -245,6 +245,42 @@ Item {
             enabled:   root.hasVehicle && root._isArmed
         }
 
+        // 7b. Takeoff — enabled when armed AND GPS 3D-fix (same gates QGC's
+        //     stock ToolStrip takeoff uses). Why-disabled tooltip:
+        //     hasVehicle → armed → GPS 3D-fix, first failure reported.
+        QuickButton {
+            id:        takeoffBtn
+            action:    "takeoff"
+            glyph:     "\u2191\uFE0F"
+            label:     qsTr("Takeoff")
+            tooltip:   root.hasVehicle
+                       ? (root._isArmed
+                          ? (TelemetryProvider.gpsFixType >= 3
+                             ? qsTr("Command automatic takeoff to 10 m")
+                             : qsTr("Disabled \u2014 no GPS 3D-fix yet"))
+                          : qsTr("Disabled \u2014 arm the vehicle first"))
+                       : qsTr("Disabled \u2014 connect a vehicle first")
+            isDanger:  false
+            isChecked: false
+            enabled:   root.hasVehicle && root._isArmed && (TelemetryProvider.gpsFixType >= 3)
+        }
+
+        // 7c. Return To Launch — enabled when armed (home + GPS required by controller).
+        QuickButton {
+            id:        rtlBtn
+            action:    "rtl"
+            glyph:     "\u21BA"
+            label:     qsTr("Return")
+            tooltip:   root.hasVehicle
+                       ? (root._isArmed
+                          ? qsTr("Return To Launch (home)")
+                          : qsTr("Disabled \u2014 arm the vehicle first"))
+                       : qsTr("Disabled \u2014 connect a vehicle first")
+            isDanger:  false
+            isChecked: false
+            enabled:   root.hasVehicle && root._isArmed
+        }
+
         // 8. Mode toggle — MANUAL ↔ AUTO, label shows live FC mode.
         QuickButton {
             id:        modeBtn
@@ -548,6 +584,10 @@ Item {
         function onActionTriggered(action) {
             if (action === "forceArm") {
                 forceArmDialog.open()
+            } else if (action === "takeoff") {
+                TelemetryProvider.takeoff()
+            } else if (action === "rtl") {
+                TelemetryProvider.rtl()
             } else if (action === "disarm") {
                 disarmDialog.open()
             } else if (action === "batConfig") {

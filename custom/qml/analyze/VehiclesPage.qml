@@ -17,6 +17,8 @@ AnalyzePage {
 
     function fs(base) { return Math.round(base * fontScale) }
 
+    // Compact "Xh Ym / m / s" string from cumulative flight-time seconds.
+    // Total flight seconds → "Xh Ym" (falls back to seconds below a minute)
     function fmtFlightTime(sec) {
         var s = Number(sec || 0)
         var h = Math.floor(s / 3600)
@@ -26,6 +28,8 @@ AnalyzePage {
         return s + "s"
     }
 
+    // ISO-8601 "2026-09-20T12:34:56Z" → "2026-09-20 12:34" (drops seconds/tz).
+    // DB stores ISO timestamps — swap the "T" and cut to minute precision
     function fmtLastSeen(value) {
         if (!value) return "never"
         var d = value.replace("T", " ").slice(0, 16)
@@ -38,6 +42,8 @@ AnalyzePage {
             height: root.availableHeight
             spacing: 8
 
+            // VehicleListModel is the DB-backed single source; reload applies the date filter.
+            // Reloads the C++ list model; empty date strings mean "no bound" in the SQL filter
             function refresh() {
                 VehicleListModel.reload(_fromDateField.text.trim(), _toDateField.text.trim())
             }
@@ -87,6 +93,7 @@ AnalyzePage {
                 Button {
                     text: qsTr("Export CSV")
                     onClicked: {
+                        // C++ Database writes the CSV and returns the saved path (empty on failure)
                         var path = Database.exportVehiclesCsv(_fromDateField.text.trim(),
                                                               _toDateField.text.trim())
                         _statusText = path.length > 0 ? qsTr("Saved: %1").arg(path) : qsTr("Export failed")
@@ -107,6 +114,7 @@ AnalyzePage {
 
                 Timer {
                     id: exportTimer
+                    // Auto-hide the CSV save confirmation after 6 s.
                     interval: 6000
                     onTriggered: exportStatus.visible = false
                 }
@@ -197,6 +205,8 @@ AnalyzePage {
                                         }
 
                                         Text {
+                                            // SYSID_TYPE_FALLBACK = fingerprint without a hardware UID.
+                                            // SYSID_TYPE_FALLBACK = no hardware UID reported (weaker identity)
                                             text: fingerprintSource === "SYSID_TYPE_FALLBACK" ? "⚠ weak ID" : "✓ hardware ID"
                                             font.pixelSize: fs(10)
                                             color: fingerprintSource === "SYSID_TYPE_FALLBACK" ? Colors.warning : Colors.success
@@ -263,6 +273,7 @@ AnalyzePage {
                             color: Colors.divider
                         }
 
+                        // Detail block loads on demand once a row is selected
                         Loader {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
@@ -279,6 +290,7 @@ AnalyzePage {
         id: detailBlock
 
         Item {
+            // vehicleData() (C++) is the snapshotted record for the selected row
             property var v: VehicleListModel.vehicleData(root._selectedIndex)
 
             ColumnLayout {
@@ -301,8 +313,10 @@ AnalyzePage {
 
                     Button {
                         text: qsTr("Save")
+                        // Display names persist via Database (owner); reload refreshes the rows.
                         onClicked: {
                             if (v.fingerprint && nameField.text.length > 0) {
+                                // Rename keyed on fingerprint (stable ID) and persisted via Database (C++)
                                 Database.updateVehicleName(v.fingerprint, nameField.text)
                                 VehicleListModel.reload()
                             }
@@ -364,6 +378,7 @@ AnalyzePage {
         }
     }
 
+    // Field/label rows for the detail grid — a flat map of the persisted vehicle record
     function _detailRows(v) {
         if (!v) return []
         var rows = []

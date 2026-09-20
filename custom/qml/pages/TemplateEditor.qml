@@ -14,6 +14,7 @@ Page {
     property var templateItems: []
 
     function loadData() {
+        // "new_template" sentinel = create mode; otherwise templateId is the DB key.
         if (templateId !== "new_template") {
             var items = TemplateManager.loadTemplate(templateId)
             if (items.length > 0) {
@@ -84,6 +85,7 @@ Page {
                             color: Colors.textPrimary
                             background: Rectangle { color: "transparent" }
                             onTextChanged: {
+                                // slice() gives a fresh array so reassigning re-evaluates list bindings.
                                 var temp = templateItems.slice()
                                 temp[index].text = text
                                 templateItems = temp
@@ -116,6 +118,7 @@ Page {
                 width: (parent.parent.width - Config.spacingMedium - Config.spacingLarge * 2) / 3
                 onClicked: {
                     var temp = templateItems.slice()
+                    // New items get t.itemN ids; length+1 keeps them unique in the working set.
                     temp.push({ "id": "t.item" + (temp.length+1), "text": "New Item", "type": "manual", "isMandatory": true })
                     templateItems = temp
                 }
@@ -125,7 +128,9 @@ Page {
                 text: qsTr("Save")
                 width: (parent.parent.width - Config.spacingMedium - Config.spacingLarge * 2) / 3
                 onClicked: {
+                    // Blank name degrades to a fixed id so saveTemplate never stores an empty key.
                     var tName = nameField.text !== "" ? nameField.text : "untitled_template"
+                    // Demo hardcodes the Quad airframe; name doubles as template id and label.
                     var success = TemplateManager.saveTemplate(tName, "Quad", tName, templateItems)
                     if (success) {
                         Config.navigatePop()

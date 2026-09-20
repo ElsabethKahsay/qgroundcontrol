@@ -33,6 +33,7 @@ Item {
     property real videoHalfWidth:   width * 0.5   // fallback if not bound
     property bool videoOnLeft:      true           // true = video on left
 
+    // Active vehicle comes from the QGC MultiVehicleManager singleton; null when disconnected.
     property var _activeVehicle: QGroundControl.multiVehicleManager.activeVehicle
 
     // Derived geometry — the "video panel" left edge and the "map panel" left edge
@@ -151,6 +152,7 @@ Item {
 
         Timer {
             id:             bannerTimer
+            // Auto-dismiss the banner after one minute of no interaction.
             interval:       60000
             onTriggered:    newVehicleBanner.visible = false
         }
@@ -264,6 +266,7 @@ Item {
 
         Timer {
             id:             fcToastTimer
+            // 5 s auto-hide for the rejection toast, reset on each new rejection.
             interval:       5000
             onTriggered:    fcRejectionToast.visible = false
         }
@@ -272,6 +275,7 @@ Item {
         Component.onDestruction: fcToastTimer.stop()
     }
 
+    // ArmingGate (C++) is the source of truth for arming rejections; it is optional in plain QGC.
     Connections {
         target: typeof ArmingGate !== 'undefined' ? ArmingGate : null
         function onCommandRejected(reason) {
@@ -306,6 +310,7 @@ Item {
                 width:                  ScreenTools.defaultFontPixelHeight * 0.6
                 height:                 width
                 radius:                 width / 2
+                // Badge priority: blocking failures > pending checks > all clear.
                 anchors.verticalCenter: parent.verticalCenter
                 color: {
                     if (typeof PreflightChecklistModel === 'undefined') return Colors.textDisabled
@@ -420,6 +425,7 @@ Item {
 
 
 
+    // The checklist page loads from cpts/ inside the Analyze drawer's panelLoader.
     property bool _preflightAnalyzePending: false
     property url  _preflightAnalyzeSource: "qrc:/qml/cpts/PreflightChecklistView.qml"
     property string _preflightAnalyzeTitle: qsTr("Preflight Checklist")
@@ -429,6 +435,7 @@ Item {
             return false
         }
 
+        // Reuse the drawer's panelLoader: swap its source, then have Analyze select the tab.
         mainWindow.toolDrawerLoader.item.panelLoader.source = _preflightAnalyzeSource
         mainWindow.toolDrawerLoader.item.panelLoader.title = _preflightAnalyzeTitle
         if (typeof mainWindow.toolDrawerLoader.item._selectAnalyzeButton === 'function') {
@@ -444,6 +451,7 @@ Item {
     // checklist page once the loader is ready.
     Timer {
         id: _openAnalyzeTimer
+        // Short retry window: the drawer loader may still be resolving when tapped.
         interval: 300
         repeat: false
         running: false
@@ -456,12 +464,14 @@ Item {
     Component.onDestruction: _openAnalyzeTimer.stop()
 
     function openPreflightDialog() {
+        // Pending flag lets the status handler finish the handoff once the loader is Ready.
         _preflightAnalyzePending = true
         mainWindow.showAnalyzeTool()
         _attemptOpenPreflightAnalyzePage()
         _openAnalyzeTimer.restart()
     }
 
+    // If the drawer finished loading after the click, retry while the open intent stays pending (R13).
     Connections {
         target: mainWindow.toolDrawerLoader
         ignoreUnknownSignals: true
@@ -485,6 +495,7 @@ Item {
     // ═══════════════════════════════════════════════════════════════════
     Rectangle {
         id: trainingBanner
+        // Safety: training mode (C++ FlightSession) forbids arming, hence the banner.
         visible: FlightSession.isTraining
         anchors { top: parent.top; topMargin: _toolInsets.topEdgeCenterInset; left: parent.left; right: parent.right }
         height: 40
@@ -516,6 +527,7 @@ Item {
     // ═══════════════════════════════════════════════════════════════════
     Rectangle {
         id: testingBanner
+        // Testing mode disables audit logging, so its banner stays highly visible.
         visible: FlightSession.isTesting
         anchors { top: parent.top; topMargin: _toolInsets.topEdgeCenterInset; left: parent.left; right: parent.right }
         height: 40

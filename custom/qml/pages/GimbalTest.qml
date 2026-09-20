@@ -14,6 +14,8 @@ Page {
     // Transparent background so the 3% margin around pink outer box shows the parent background
     background: Item {}
 
+    // MAV_RESULT enum labels for gimbal command acks.
+    // MAVLink MAV_RESULT codes reported in gimbal command acks (0=Accepted … 7=Only)
     readonly property var _ackLabels: ({
             0: "Accepted",
             1: "Temp Rejected",
@@ -43,6 +45,7 @@ Page {
         return vt === "QUAD" || vt === "HEX" || vt === "OCTA" || vt === "TRI"
     }
 
+    // Loads the fixed-wing/VTOL servo map for the current airframe from ControlSurfaceTestController (C++)
     function _loadSurfaces() {
         if (typeof ControlSurfaceTestController !== "undefined"
                 && typeof VehicleProfileManager !== "undefined") {
@@ -53,12 +56,15 @@ Page {
 
     Component.onCompleted: {
         _loadSurfaces()
+        // Seed the target fields from the active flight's saved map target, if one exists
         if (!isNaN(FlightSession.targetLat) && !isNaN(FlightSession.targetLon)) {
             targetLat.text = FlightSession.targetLat.toFixed(6)
             targetLon.text = FlightSession.targetLon.toFixed(6)
+            // FlightSession persists the source string; "map center" round-trips back here.
             root._targetFromMap = (FlightSession.targetSource === qsTr("map center"))
         }
     }
+    // Teardown: halt surface sweeps and stop every timer so nothing fires once the page closes
     Component.onDestruction: {
         if (typeof ControlSurfaceTestController !== "undefined")
             ControlSurfaceTestController.stopAllSurfaces()
@@ -110,6 +116,8 @@ Page {
             }
         }
         function onGimbalCommandResult(command, result) {
+            // Only gimbal commands: 205 = MAV_CMD_DO_MOUNT_CONTROL, 200 = MAV_CMD_DO_SET_ROI.
+            // Only surface camera/gimbal command acks: 205=DO_MOUNT_CONTROL, 200=DO_CONTROL_VIDEO
             if (command !== 205 && command !== 200)
                 return;
             var label = root._ackLabels[result] || ("Unknown(" + result + ")");
@@ -195,6 +203,7 @@ Page {
                                     border.width: 1
                                 }
                                 onTextChanged: {
+                                    // Manual entry demotes the source tag away from "map center"
                                     root._targetFromMap = false
                                     DistanceTracker.setTarget(
                                         parseFloat(targetLat.text), parseFloat(targetLon.text))
@@ -233,6 +242,7 @@ Page {
                                 id: targetSubmitBtn
                                 text: qsTr("Submit Target")
                                 font.pixelSize: Config.fontSizeSmall
+                                // Only save a target while a flight is active (FlightSession owns the flight id)
                                 enabled: FlightSession.currentFlightId > 0
                                 onClicked: {
                                     var lat = parseFloat(targetLat.text)
@@ -241,6 +251,7 @@ Page {
                                         targetStatus.show(qsTr("Enter latitude and longitude before saving"), false)
                                         return
                                     }
+                                    // Tag must match the literal compared in Component.onCompleted (map center)
                                     var src = root._targetFromMap ? qsTr("map center") : qsTr("manual")
                                     if (FlightSession.saveTargetLocation(lat, lon, src)) {
                                         var detail = src
@@ -303,6 +314,7 @@ Page {
                     border.width: 1
                     implicitHeight: gimbalLinkRow.implicitHeight + Config.spacingMedium * 2
 
+                    // Live view of the gimbal-link preflight check owned by PreflightManager (C++)
                     readonly property var _check: (typeof PreflightManager !== "undefined")
                         ? PreflightManager.checkById("com.gimbal.link") : null
                     readonly property int  _status: _check ? _check.status : -1
@@ -469,6 +481,7 @@ Page {
                                 width: 14
                                 height: 14
                                 radius: 7
+                                // Dot: amber=calibrating, green=connected, red=none; pulses while not ready
                                 color: (typeof TelemetryProvider !== "undefined" && TelemetryProvider && TelemetryProvider.gimbalCalibrating) ? Colors.warning : ((typeof TelemetryProvider !== "undefined" && TelemetryProvider && TelemetryProvider.gimbalDetected) ? Colors.success : Colors.error)
                                 border.color: Colors.textPrimary
                                 border.width: 1.5
@@ -831,6 +844,7 @@ Page {
                                 font.bold: true
                                 highlighted: true
                                 onClicked: {
+                                    // mode 2 = MAVLINK_TARGETING; zero angles center the gimbal
                                     TelemetryProvider.sendMountControl(0, 0, 0, 2);
                                     root._send("Center Gimbal (p=0, r=0, y=0, mode=2)");
                                 }
@@ -920,6 +934,7 @@ Page {
                             border.color: Colors.borderLight
 
                             property string _mode: (typeof ControlSurfaceTestController !== "undefined") ? ControlSurfaceTestController.flightMode : ""
+                            // Manual-class modes = no autopilot authority over the swept outputs.
                             property bool _manual: _mode.length === 0
                                     || _mode.toLowerCase().indexOf("manual") >= 0
                                     || _mode.toLowerCase().indexOf("stabilize") >= 0
@@ -1102,9 +1117,12 @@ Page {
                                             font.bold: true
                                             Layout.preferredHeight: 30
                                             Layout.preferredWidth: 96
+                                            // Never sweep while armed; only one surface sweeps at a time.
+                                            // Sweep only runs when DISARMED and no other surface is sweeping
                                             enabled: !root._armed && ControlSurfaceTestController.activeSurface === -1
                                             onClicked: {
                                                 if (typeof ControlSurfaceTestController === "undefined") return
+                                                // Dispatch to the per-surface test method (C++ controller)
                                                 switch (scard.modelData.id) {
                                                 case "aileron":    ControlSurfaceTestController.testAileron();    break
                                                 case "elevator":   ControlSurfaceTestController.testElevator();   break
@@ -1172,7 +1190,9 @@ Page {
                     font.pixelSize: Config.fontSizeBody
                     font.bold: true
                     onClicked: {
+                        // Notify the harness we are done, then pop the nav stack unless at root
                         root.backRequested();
+                        // Pop only when this page sits on the nav stack (guard the analyze root).
                         if (Window.window && Window.window.mainStackView && Window.window.mainStackView.depth > 1) {
                             Config.navigatePop();
                         }

@@ -1,3 +1,4 @@
+// PreflightSettings: persistent pilot, vehicle, video, and weather thresholds used by the checks.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -33,6 +34,7 @@ Rectangle {
                 color: qgcPal.buttonBorder
             }
 
+            // All fields write through to PreflightSettingsManager, which persists them (single source of truth).
             GridLayout {
                 columns: 2
                 columnSpacing: ScreenTools.defaultFontPixelWidth * 2
@@ -146,6 +148,7 @@ Rectangle {
                 color: qgcPal.text
             }
 
+            // These thresholds form the weather gate that decides wind/visibility/ceiling pass-fail.
             GridLayout {
                 columns: 2
                 columnSpacing: ScreenTools.defaultFontPixelWidth * 2
@@ -161,6 +164,7 @@ Rectangle {
                 QGCTextField {
                     Layout.fillWidth: true
                     placeholderText: qsTr("e.g. KLAX")
+                    // ICAO airport identifiers are exactly 4 letters.
                     maximumLength: 4
                     text: PreflightSettingsManager.defaultIcao
                     onTextChanged: PreflightSettingsManager.defaultIcao = text

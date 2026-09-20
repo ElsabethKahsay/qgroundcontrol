@@ -1,3 +1,5 @@
+// Home: entry page of the UAV Pre-Flight workflow.
+// From here the pilot starts the checklist flow or manages saved templates.
 import QtQuick
 import QtQuick.Controls
 import com.uav.preflight 1.0

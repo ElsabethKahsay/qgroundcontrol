@@ -717,6 +717,14 @@ public:
     /// magic number). Does NOT consult the ArmingGate. Use with caution.
     Q_INVOKABLE void forceArm();
 
+    /// Take off from the current position. Sends MAV_CMD_NAV_TAKEOFF. Mirrors
+    /// the forceArm() guard: safe for feedback-bypass use in the custom layer.
+    Q_INVOKABLE void takeoff();
+
+    /// Return to launch. Sends MAV_CMD_NAV_RETURN_TO_LAUNCH. Mirrors the
+    /// forceArm() guard: safe for feedback-bypass use in the custom layer.
+    Q_INVOKABLE void rtl();
+
     /// Set the arming gate reference so arm() can check gate state before sending.
     void setArmingGate(QObject* gate);
 

@@ -1,3 +1,4 @@
+// PostFlightSummary: logs in-flight time, peak telemetry, notes, and exports the report.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -15,6 +16,7 @@ Page {
     property string notes: ""
     property string incidents: ""
 
+    // 1 s ticker: while a flight is active it tracks elapsed time and altitude/ground-speed peaks.
     Timer {
         id: flightTimer
         interval: 1000
@@ -69,6 +71,7 @@ Page {
                     } else {
                         flightStartTime = Date.now()
                         flightDuration = 0
+                        // Seed peak trackers from current telemetry so a low initial value can't skew the peaks.
                         maxAltitude = VehicleTelemetry.altitude
                         maxGroundSpeed = VehicleTelemetry.groundSpeed
                         flightActive = true
@@ -115,6 +118,7 @@ Page {
                 Text { text: maxGroundSpeed.toFixed(1) + " m/s"; font.pixelSize: Config.fontSizeBody; color: Colors.textPrimary; font.bold: true }
 
                 Text { text: "Battery Used:"; font.pixelSize: Config.fontSizeBody; color: Colors.textSecondary }
+                // Current pack voltage is reported as the battery-used proxy; no capacity history is kept.
                 Text { text: VehicleTelemetry.batteryVoltage.toFixed(1) + "V"; font.pixelSize: Config.fontSizeBody; color: Colors.textPrimary; font.bold: true }
             }
         }
@@ -309,6 +313,7 @@ Page {
         var token = Qt.formatDateTime(now, "yyyyMMdd_HHmmss")
         var baseName = "uav_postflight_" + token
 
+        // Full post-flight record assembled here is the source for both HTML and JSON exports.
         var record = {
             type: "post-flight",
             timestamp: Qt.formatDateTime(now, "yyyy-MM-ddTHH:mm:ssZ"),
@@ -331,6 +336,7 @@ Page {
 
         var html = buildPostFlightHtml(record)
         var hp = ExportHelper.savePostFlightHtml(baseName, html)
+        // JSON reuses the compliance exporter so post-flight logs land in the same store.
         var jp = ExportHelper.saveComplianceJson(baseName, json)
 
         var paths = []
@@ -342,6 +348,7 @@ Page {
             : "Export failed"
     }
 
+    // Self-contained inline HTML so the report opens anywhere with no external assets.
     function buildPostFlightHtml(rec) {
         var dur = formatDuration(rec.flightDurationSec)
         return "<!DOCTYPE html><html><head><meta charset='utf-8'>"

@@ -10,6 +10,7 @@ AnalyzePage {
     pageName: qsTr("Flight History")
     pageDescription: qsTr("Completed flight records with full audit detail")
 
+    // C++ FlightHistoryModel is the single source for list rows and flight detail
     property var historyModel: FlightHistoryModel {}
     property int _selectedFlightId: -1
     property var detail: ({})
@@ -23,6 +24,7 @@ AnalyzePage {
     property var _compliance: []
     property var _handovers: []
 
+    // Unpack one flight's full detail record into per-section arrays for the panels
     onDetailChanged: {
         _flight      = detail && detail.flight       ? detail.flight       : ({})
         _preChecks   = detail && detail.checks_pre   ? detail.checks_pre   : []
@@ -35,6 +37,7 @@ AnalyzePage {
     }
 
     // ── Helpers ──────────────────────────────────────────────────────
+    // DB timestamps are "YYYY-MM-DD HH:MM:SS" — the time half for event rows
     function fmtTime(ts) {
         return ts && ts.indexOf(" ") >= 0 ? ts.split(" ")[1] : (ts || "")
     }
@@ -48,6 +51,7 @@ AnalyzePage {
         }
         return parts.join("   ")
     }
+    // Seconds → compact "1h 2m" / "3m 4s" / "5s" duration string
     function fmtDuration(sec) {
         sec = Math.max(0, sec || 0)
         var h = Math.floor(sec / 3600)
@@ -87,6 +91,7 @@ AnalyzePage {
         if (up.indexOf("WARN") === 0) return Colors.checkWarn
         return Colors.textSecondary
     }
+    // Color contract for known event types (ARM green, DISARM blue, battery warnings amber/red)
     function eventColor(evt) {
         if (evt === "ARM") return Colors.statePass
         if (evt === "DISARM") return Colors.info
@@ -95,6 +100,7 @@ AnalyzePage {
         if (evt === "BATTERY_CRIT" || evt === "CHECK_DEGRADED") return Colors.stateFail
         return Colors.textSecondary
     }
+    // Flight-mode badge tint for the mode column (FLIGHT / TRAINING / other)
     function modeBadgeColor(m) {
         if (m === "FLIGHT") return "#1A3A2A"
         if (m === "TRAINING") return "#1A2A4A"
@@ -109,6 +115,7 @@ AnalyzePage {
     function rebuildVehicleFilter() {
         vehicleFilterModel.clear()
         vehicleFilterModel.append({ id: -1, name: qsTr("All Vehicles") })
+        // Known-vehicle list comes from the C++ Database module (JSON schema it defines)
         var arr = JSON.parse(Database.getAllVehiclesJson())
         for (var i = 0; i < arr.length; ++i) {
             vehicleFilterModel.append({ id: arr[i].sysid,
@@ -129,6 +136,7 @@ AnalyzePage {
 
     function loadDetail(flightId) {
         _selectedFlightId = flightId
+        // Full audit detail comes from historyModel.getFlightDetail() (C++) as raw JSON
         detail = historyModel.getFlightDetail(flightId)
     }
 
@@ -149,6 +157,7 @@ AnalyzePage {
 
     Component.onCompleted: {
         rebuildVehicleFilter()
+        // Start pre-filtered to the currently registered vehicle, else show all flights
         var vid = VehicleRegistry.currentVehicleId
         if (vid > 0)
             historyModel.setFilterVehicleId(vid)
@@ -194,6 +203,7 @@ AnalyzePage {
                     StatBox {
                         label: qsTr("Anomaly Rate")
                         value: root.historyModel.stats.anomalyRate + "%"
+                        // Anomaly rate above 10% turns the stat amber
                         valueColor: root.historyModel.stats.anomalyRate > 10
                                     ? Colors.checkWarn : Colors.statePass
                     }
@@ -267,6 +277,7 @@ AnalyzePage {
                             if (currentIndex >= 0) {
                                 var item = vehicleFilterModel.get(currentIndex)
                                 var targetId = (item && item.id !== undefined) ? item.id : -1
+                                // Avoid redundant reloads: push to the model only when the filter changed
                                 if (root.historyModel.filterVehicleId !== targetId) {
                                     root.historyModel.setFilterVehicleId(targetId)
                                 }
@@ -351,6 +362,7 @@ AnalyzePage {
                         MenuItem {
                             text: qsTr("Export current view (with filters)")
                             onTriggered: {
+                                // Export is parameterized by the current filter bar (dates, vehicle, mode)
                                 var path = Database.exportFlightsCsv(
                                     fromField.text.trim(), toField.text.trim(),
                                     vehiclePicker.currentIndex >= 0
@@ -494,6 +506,7 @@ AnalyzePage {
 
                                     // Index number
                                     Text {
+                                        // Row number continues across pages: page offset + row + 1
                                         text: (root.historyModel.currentPage * root.historyModel.pageSize + index + 1) + "."
                                         color: Colors.textSecondary
                                         font.pixelSize: Config.fontSizeSmall
@@ -548,6 +561,7 @@ AnalyzePage {
                                         }
                                         Text {
                                             text: prePassRate + "% pre"
+                                            // 90% pre-flight pass rate is the fleet target line
                                             color: prePassRate >= 90 ? Colors.statePass : Colors.checkWarn
                                             font.pixelSize: Config.fontSizeSmall
                                             anchors.right: parent.right
@@ -1078,6 +1092,7 @@ AnalyzePage {
                                 }
 
                                 // ── Handovers (training only) ─────────
+                                // Handovers render only for flights that recorded them (training mode)
                                 CollapsibleSection {
                                     headerText: qsTr("TRAINER HANDOVERS")
                                     summaryText: root._handovers.length + " " + qsTr("handover(s)")

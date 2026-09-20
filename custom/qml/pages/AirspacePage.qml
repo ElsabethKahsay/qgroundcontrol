@@ -173,6 +173,7 @@ AnalyzePage {
         var bestId = -1, bestDist = -1;
         for (var i = 0; i < NoFlyZoneModel.count; ++i) {
             var m = NoFlyZoneModel.index(i, 0);
+            // Only active zones are selectable; inactive zones never satisfy the hit test.
             if (!NoFlyZoneModel.data(m, NoFlyZoneModelRoles.ActiveRole))
                 continue;
             var lat = NoFlyZoneModel.data(m, NoFlyZoneModelRoles.LatitudeRole);
@@ -206,10 +207,12 @@ AnalyzePage {
         }
         var centerLat = (latMin + latMax) / 2;
         var centerLon = (lonMin + lonMax) / 2;
+        // Meters-per-degree of latitude at equator; lon span scales by cos(lat).
         var cosLat = Math.max(Math.cos(centerLat * Math.PI / 180), 0.15);
         var meters = Math.max((latMax - latMin) * 111320,
                               (lonMax - lonMin) * 111320 * cosLat,
                               maxRadius * 2);
+        // Web Mercator: 156543.03392 m/px at zoom 0, so zoom = log2(that / px-per-meter).
         var mpp = meters / Math.max(mapControl.width * 0.6, 1);
         var zoom = Math.log2(156543.03392 * cosLat / Math.max(mpp, 1));
         mapControl.center = QtPositioning.coordinate(centerLat, centerLon);
@@ -258,6 +261,7 @@ AnalyzePage {
             TabBar {
                 id: tabBar
                 Layout.fillWidth: true
+                // Refit the map whenever the Map tab is (re)shown.
                 onCurrentIndexChanged: {
                     if (currentIndex === 1 && typeof map !== "undefined") {
                         root._fitMapToZones(map);
@@ -850,6 +854,7 @@ AnalyzePage {
                                         var dy = pos.y - lastPos.y
                                         lastPos = pos
                                         if (dx === 0 && dy === 0) return
+                                        // Pan: convert pixel drag to degrees via current viewport span.
                                         var tl = map.toCoordinate(Qt.point(0, 0))
                                         var br = map.toCoordinate(Qt.point(map.width, map.height))
                                         var nlat = cur.latitude + (dy / map.height) * (tl.latitude - br.latitude)

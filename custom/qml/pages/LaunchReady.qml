@@ -1,3 +1,5 @@
+// LaunchReady: final authorization screen before the aircraft is cleared to fly.
+// Launching is only possible when every gate in the workflow has passed.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -47,6 +49,7 @@ Page {
                 anchors.margins: Config.spacingMedium
                 spacing: Config.spacingSmall
 
+                // Status lines mirror live C++ singleton state (single source of truth).
                 Text { text: "MAVLink: " + (VehicleTelemetry.mavlinkConnected ? TelemetryProvider.autopilotType : "Not connected"); font.pixelSize: Config.fontSizeSmall; color: VehicleTelemetry.mavlinkConnected ? Colors.success : Colors.error }
                 Text { text: "Checklist Result: " + (ChecklistEngine.allMandatoryPassed ? "PASS" : "FAIL"); font.pixelSize: Config.fontSizeBody; color: ChecklistEngine.allMandatoryPassed ? Colors.success : Colors.error }
                 Text { text: "Hardware Test: " + (VehicleTelemetry.hardwareTestPassed ? "PASS" : "INCOMPLETE"); font.pixelSize: Config.fontSizeSmall; color: VehicleTelemetry.hardwareTestPassed ? Colors.success : Colors.error }
@@ -132,6 +135,7 @@ Page {
 
         // ── Launch block ──
         Rectangle {
+            // Blocking banner: visible whenever any launch gate is still open.
             width: parent.width
             visible: !VehicleTelemetry.readyToLaunch || !NoFlyZoneModel.complianceChecked
             color: Colors.error
@@ -145,6 +149,7 @@ Page {
                 width: parent.width - Config.spacingMedium * 2
                 wrapMode: Text.Wrap
                 horizontalAlignment: Text.AlignHCenter
+                // Block reasons are shown in priority order: link, airspace, hardware, then checklist.
                 text: !VehicleTelemetry.mavlinkConnected
                       ? "Launch blocked: connect to autopilot first"
                       : (!NoFlyZoneModel.complianceChecked
@@ -164,6 +169,7 @@ Page {
             onClicked: Config.navigatePush("AirspacePage.qml")
         }
 
+        // Launch authorization is the final safety gate: all checks and airspace must pass.
         CustomButton {
             text: qsTr("Authorize Launch")
             anchors.horizontalCenter: parent.horizontalCenter
@@ -191,8 +197,10 @@ Page {
 
     // ── Export helper ──
     function doExport(fmt) {
+        // buildComplianceRecord() is the single JSON source of truth for every export format.
         var record = VehicleTelemetry.buildComplianceRecord()
         var now = new Date()
+        // Timestamp token keeps each export filename unique per run.
         var token = Qt.formatDateTime(now, "yyyyMMdd_HHmmss")
         var baseName = "uav_preflight_" + token
 
@@ -216,6 +224,7 @@ Page {
         var operatorId = VehicleTelemetry.pilotName.length > 0
             ? VehicleTelemetry.pilotName
             : "Unknown Operator"
+        // V1 always uses the single SYSID_1 device; revisit when multi-vehicle fleet support lands.
         var vehicleId = "SYSID_1"
         var snapshot = JSON.stringify(record.telemetry)
         var dbOk = Database.saveComplianceLog(token, vehicleId, record.vehicleType, operatorId, json, snapshot)

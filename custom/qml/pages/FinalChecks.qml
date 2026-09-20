@@ -1,3 +1,5 @@
+// FinalChecks: operator info, Part 107 compliance, and the last checklist gates
+// that must all pass before the vehicle may be launched.
 import QtQuick
 import QtQuick.Controls
 import com.uav.preflight 1.0
@@ -17,6 +19,7 @@ Page {
         }
 
         // ── Weather card ──
+        // Live weather is fetched for the current GPS position and feeds the wind gate below.
         Rectangle {
             width: parent.width
             color: Colors.surfaceLight
@@ -61,6 +64,7 @@ Page {
             }
         }
 
+        // Mandatory gates: all three must pass or readyToLaunch stays false.
         ChecklistItem {
             text: qsTr("Airspace Clear")
             checked: VehicleTelemetry.airspaceClear
@@ -117,6 +121,7 @@ Page {
                         font.pixelSize: Config.fontSizeSmall
                         implicitWidth: 200
                         background: Rectangle { color: Colors.background; radius: Config.radiusSmall; border.color: Colors.border }
+                        // Live value lives in VehicleTelemetry; the settings manager provides persistence.
                         onTextChanged: {
                             VehicleTelemetry.pilotName = text
                             PreflightSettingsManager.pilotName = text
@@ -166,7 +171,9 @@ Page {
                             VehicleTelemetry.aircraftReg = text
                             PreflightSettingsManager.aircraftReg = text
                         }
+                        // Generate a random N-number ("N" + 5 digits + 1 letter) as a placeholder tail number.
                         function generateNNumber() {
+                            // Letter pool omits I and O to avoid confusion with 1 and 0.
                             var letters = "ABCDEFGHJKLMNPQRSTUVWXYZ"
                             var digits = "0123456789"
                             var n = "N"
@@ -175,6 +182,7 @@ Page {
                             n += letters.charAt(Math.floor(Math.random() * letters.length))
                             return n
                         }
+                        // Auto-prefill a generated N-number the first time the field is empty.
                         Component.onCompleted: {
                             if (text === "")
                                 text = generateNNumber()
@@ -197,6 +205,7 @@ Page {
             color: Colors.surfaceLight
             radius: Config.radiusMedium
             border.color: Colors.border
+            // Signature block only appears while Part 107 compliance mode is enabled.
             visible: VehicleTelemetry.faaPart107Mode
 
             Column {

@@ -10,6 +10,7 @@ Page {
     id: root
     background: Rectangle { color: Colors.background }
 
+    // vehiclesModel mirrors the C++ Database singleton; refreshVehicles re-parses the full JSON.
     property var vehiclesModel: []
 
     function refreshVehicles() {
@@ -71,6 +72,7 @@ Page {
                     radius: 4
                     border.color: Colors.border
                     border.width: 1
+                    // Local QML copy of payload weight; authoritative source is VehicleProfileManager.
                     property double _pay: VehicleProfileManager ? VehicleProfileManager.currentPayloadWeightKg : 0
 
                     RowLayout {
@@ -93,10 +95,12 @@ Page {
                                 text: profileBox._pay !== undefined ? profileBox._pay.toFixed(1) : "0.0"
                                 onEditingFinished: {
                                     var v = parseFloat(text)
+                                    // Gate: only a finite, non-negative payload weight is accepted.
                                     if (!isNaN(v) && v >= 0) {
                                         VehicleProfileManager.setPayloadWeightKg(v)
                                         profileBox._pay = v
                                     } else if (profileBox) {
+                                        // Invalid input: revert the field to the authoritative C++ value.
                                         profileBox._pay = VehicleProfileManager ? VehicleProfileManager.currentPayloadWeightKg : 0
                                     }
                                 }
@@ -182,6 +186,7 @@ Page {
                                     onClicked: {
                                         if (editing) {
                                             if (editName.length > 0 && editName !== modelData.friendlyName) {
+                                                // Use fingerprint: stable DB key, display names can collide.
                                                 Database.updateVehicleName(modelData.fingerprint, editName)
                                                 refreshVehicles()
                                             }
@@ -205,6 +210,7 @@ Page {
                                         for (var i = 0; i < sessions.length; i++) {
                                             var s = sessions[i]
                                             msg += "  #" + s.id + " — " + (s.endedAt ? "completed" : "in progress")
+                                            // durationSeconds is in whole seconds; /60 renders minutes.
                                             if (s.durationSeconds > 0)
                                                 msg += " (" + (s.durationSeconds / 60).toFixed(1) + " min)"
                                             msg += "\n"

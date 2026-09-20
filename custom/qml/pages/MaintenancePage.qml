@@ -34,6 +34,7 @@ Page {
             color: Colors.surfaceLight
             radius: Config.radiusMedium
             border.color: Colors.border
+            // Vehicle profile renders only after a hardware UID is registered (VehicleProfileManager, C++)
             visible: VehicleProfileManager.currentDeviceUid !== ""
 
             Column {
@@ -50,6 +51,7 @@ Page {
 
                 Text {
                     text: {
+                        // Single source of per-vehicle history JSON is the C++ VehicleProfileManager
                         var h = VehicleProfileManager.currentVehicleHistoryJson
                         if (!h) return "No history"
                         try {
@@ -104,6 +106,7 @@ Page {
                         Text {
                             text: {
                                 try {
+                                    // identitySource: hardware-UID vs connection-fallback records
                                     var src = JSON.parse(VehicleProfileManager.currentVehicleHistoryJson).identitySource || ""
                                     if (src === "hardware_uid") return "Hardware UID"
                                     return src
@@ -150,6 +153,7 @@ Page {
                             color: {
                                 try {
                                     var pct = JSON.parse(VehicleProfileManager.currentVehicleHistoryJson).batteryHealthTrend.capacityRetainedPct
+                                    // 80% retained = end-of-life (red); below 90% = watch (amber)
                                     if (pct < 80) return Colors.danger
                                     if (pct < 90) return "#e6a817"
                                     return Colors.success
@@ -197,6 +201,7 @@ Page {
                         implicitHeight: 28
                         font.pixelSize: Config.fontSizeSmall
                         onClicked: {
+                            // Timestamp token keeps exports unique; ExportHelper (C++) writes the file
                             var token = Qt.formatDateTime(new Date(), "yyyyMMdd_HHmmss")
                             var uid = VehicleProfileManager.currentDeviceUid
                             var p = ExportHelper.saveVehicleHistoryCsv(uid, "maintenance_export_" + token)
@@ -290,6 +295,7 @@ Page {
                         MaintenanceTracker.addComponent(
                             newName.text,
                             newType.currentText,
+                            // Empty limit fields coerce to 0 = no limit tracked (MaintenanceTracker, C++)
                             parseFloat(newMaxHours.text) || 0,
                             parseInt(newMaxCycles.text) || 0
                         )
@@ -315,6 +321,7 @@ Page {
             clip: true
             spacing: Config.spacingMedium
 
+            // Live component list owned by MaintenanceTracker (C++), persisted per vehicle
             model: MaintenanceTracker.components
 
             delegate: Rectangle {
@@ -370,6 +377,7 @@ Page {
                                 }
                                 font.pixelSize: Config.fontSizeSmall
                                 font.bold: true
+                                // Severity via Config.kMaint* thresholds, shared by Hours & Cycles bars
                                 color: {
                                     var pct = modelData.maxHours > 0
                                         ? modelData.currentHours / modelData.maxHours * 100
@@ -387,6 +395,7 @@ Page {
                             radius: 4
                             color: Colors.border
                             Rectangle {
+                                // Bar fill clamps at 100% even when usage exceeds the limit
                                 width: parent.width * Math.min(
                                     modelData.maxHours > 0 ? modelData.currentHours / modelData.maxHours : 0, 1)
                                 height: parent.height
@@ -466,6 +475,7 @@ Page {
                         font.pixelSize: Config.fontSizeSmall
                         baseColor: Colors.surface
                         anchors.verticalCenter: parent.verticalCenter
+                        // Reset zeroes tracked hours/cycles for this component via MaintenanceTracker (C++)
                         onClicked: MaintenanceTracker.resetComponent(modelData.id, "")
                     }
 
@@ -476,6 +486,7 @@ Page {
                         font.pixelSize: Config.fontSizeSmall
                         baseColor: Colors.surface
                         anchors.verticalCenter: parent.verticalCenter
+                        // Deletes the persisted maintenance record right away — no confirmation/undo
                         onClicked: MaintenanceTracker.removeComponent(modelData.id)
                     }
                 }

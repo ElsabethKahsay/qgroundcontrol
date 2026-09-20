@@ -18,6 +18,7 @@ Page {
         for (var i = 0; i < dbTemplates.length; i++) {
             arr.push(dbTemplates[i])
         }
+        // No saved templates yet: surface the built-in name so the list is never empty.
         if (arr.length === 0) {
             arr.push("quad_standard (Built-in)")
         }
@@ -70,6 +71,7 @@ Page {
                         width: 80
                         height: 36
                         anchors.verticalCenter: parent.verticalCenter
+                        // Handoff: the editor uses templateId as DB key ("new_template" = create).
                         onClicked: Config.navigatePush("TemplateEditor.qml", { templateId: modelData })
                     }
                 }
@@ -89,6 +91,7 @@ Page {
             CustomButton {
                 text: qsTr("Create New")
                 width: (parent.parent.width - Config.spacingMedium - Config.spacingLarge * 2) / 2
+                // "new_template" sentinel tells the editor to start a fresh template.
                 onClicked: Config.navigatePush("TemplateEditor.qml", { templateId: "new_template" })
             }
         }

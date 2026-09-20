@@ -1,3 +1,4 @@
+// PayloadCheck: confirms the payload is secured before the flow may continue.
 import QtQuick
 import QtQuick.Controls
 import com.uav.preflight 1.0
@@ -29,6 +30,7 @@ Page {
             anchors.horizontalCenter: parent.horizontalCenter
         }
 
+        // Safety gate: advancing stays blocked until the payload is confirmed secured.
         ChecklistItem {
             text: qsTr("Payload Secured")
             checked: VehicleTelemetry.payloadSecured
@@ -47,6 +49,7 @@ Page {
             CustomButton {
                 text: qsTr("Next →")
                 width: (parent.width - Config.spacingMedium - Config.spacingLarge * 2) / 2
+                // Progression to FinalChecks is gated on the payload-secured confirmation.
                 enabled: VehicleTelemetry.payloadSecured
                 onClicked: Config.navigatePush("FinalChecks.qml")
             }

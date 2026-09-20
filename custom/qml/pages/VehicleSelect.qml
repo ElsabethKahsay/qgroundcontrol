@@ -11,6 +11,7 @@ Page {
     id: root
     background: Rectangle { color: Colors.background }
 
+    // Index into TelemetryProvider.connectionPresetUrls; synced to the connection combo.
     property int selectedPresetIndex: 0
 
     ScrollView {
@@ -141,6 +142,7 @@ Page {
                                     baseColor: Colors.surface
                                     height: 28
                                     onClicked: {
+                                        // Persist the chosen URL before dialing (survives page reloads).
                                         urlField.text = modelData.connectionUrl
                                         TelemetryProvider.saveConnectionUrl(modelData.connectionUrl)
                                         TelemetryProvider.connectToVehicle(modelData.connectionUrl)
@@ -206,6 +208,7 @@ Page {
                     text: TelemetryProvider.isConnected ? "Reconnect" : "Connect"
                     width: (parent.width - Config.spacingMedium) / 2
                     onClicked: {
+                        // Empty field falls back to the selected preset URL (C++ owns presets).
                         const url = urlField.text.trim().length > 0
                                 ? urlField.text.trim()
                                 : TelemetryProvider.connectionPresetUrls[presetCombo.currentIndex]
@@ -289,6 +292,7 @@ Page {
                 anchors.horizontalCenter: parent.horizontalCenter
                 width: parent.width - 2 * Config.spacingLarge
                 baseColor: Colors.surface
+                // Checklist may only be entered on a live link (blockers need telemetry).
                 enabled: TelemetryProvider.isConnected
                 onClicked: {
                     Config.navigatePush("PreFlightChecklist.qml")
@@ -300,9 +304,11 @@ Page {
                 target: TelemetryProvider
                 function onVehicleTypeChanged() {
                     var vt = TelemetryProvider.vehicleType
+                    // Auto-select only recognized airframe types; unknown types stay manual.
                     if (vt === "Quad" || vt === "FixedWing" || vt === "VTOL") {
                         VehicleTelemetry.selectedVehicleType = vt
                         VehicleTelemetry.selectedVehicle = TelemetryProvider.vehicleType
+                        // Template swap must be followed by full re-evaluation to refresh gates.
                         ChecklistModel.loadTemplateForType(vt)
                         ChecklistEngine.reevaluateAll()
                     }
@@ -341,6 +347,7 @@ Page {
 
     Component.onCompleted: {
         const urls = TelemetryProvider.connectionPresetUrls
+        // On entry, sync the combo to the persisted default connection URL.
         const current = TelemetryProvider.defaultConnectionUrl
         for (let i = 0; i < urls.length; ++i) {
             if (urls[i] === current) {

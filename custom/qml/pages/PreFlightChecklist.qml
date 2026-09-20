@@ -24,20 +24,24 @@ Page {
     // ── Engine for system checks (Step 1) ───────────────────────────────────
     CE.ChecklistEngine {
         id: _engine
+        // Standalone engine instance drives the checklist UI for Step 1's system view.
         viewMode: "standalone"
     }
 
     // ── Weather fetch on load ────────────────────────────────────────────────
+    // Cached GPS fix + timestamp so refetches are throttled and de-duplicated.
     property real _lastFetchLat: 0
     property real _lastFetchLon: 0
     property real _lastFetchTime: 0
 
     Component.onCompleted: {
         _motorDialogTimer.start()
+        // Weather is only fetched once a real GPS fix exists (0/0 lat/lon = no fix).
         if (typeof WeatherProvider !== "undefined" && TelemetryProvider) {
             var lat = TelemetryProvider.gpsLatitude
             var lon = TelemetryProvider.gpsLongitude
             if (lat !== 0 || lon !== 0)
+                // Deferred to avoid stalling first frame with network I/O.
                 Qt.callLater(function() { WeatherProvider.fetchWeather(lat, lon) })
         }
     }
@@ -48,6 +52,7 @@ Page {
             var lat = TelemetryProvider.gpsLatitude
             var lon = TelemetryProvider.gpsLongitude
             if (lat === 0 && lon === 0) return
+            // Refetch weather only when GPS moved ~>0.0001 deg² (~11 m) and ≥30 s since last fetch.
             var now = Date.now()
             if (now - _lastFetchTime < 30000) return
             var dLat = lat - _lastFetchLat
@@ -63,6 +68,7 @@ Page {
         target: TelemetryProvider
         function onIsConnectedChanged() {
             if (!TelemetryProvider.isConnected) {
+                // Safety: lost link mid-wizard forces a restart at Step 0 so checks re-run fresh.
                 stackView.pop(null)  // pop to step 0
                 _currentStep = 0
             }
@@ -78,6 +84,7 @@ Page {
 
     // Checklist collapsible groups (used by Step 1 system view)
     property var _collapsed: ({})
+    // _clone forces a fresh object identity so Repeater bindings re-evaluate toggle state.
     function _clone(obj) { var c = {}; for (var k in obj) c[k] = obj[k]; return c }
     function toggleGroup(idx) { _collapsed[idx] = !_collapsed[idx]; _collapsed = _clone(_collapsed) }
     property int _highlightIndex: -1
@@ -86,6 +93,7 @@ Page {
     // ── Flash timer for blocker highlight ────────────────────────────────────
     Timer {
         id: flashTimer
+        // 1.5 s flash marks the offending check after a blocked arming attempt.
         interval: 1500; repeat: false
         onTriggered: { _highlightIndex = -1; _highlightCheckId = "" }
     }
@@ -101,6 +109,7 @@ Page {
         background: Rectangle { color: Colors.surface; border.color: Colors.border; border.width: 1; radius: Config.radiusMedium }
         padding: Config.spacingMedium
         header: Label { text: motorConfigDialog.title; font.bold: true; color: Colors.accent; padding: Config.spacingMedium }
+        // ArduPilot X-quad defaults: FRAME_CLASS=1 (Quad), FRAME_TYPE=1 (X), SERVO1-4=33-36.
         Text {
             wrapMode: Text.Wrap; color: Colors.textPrimary; font.pixelSize: Config.fontSizeBody
             text: (typeof TelemetryProvider !== "undefined" && TelemetryProvider.motorConfigWarning
@@ -112,6 +121,7 @@ Page {
         }
     }
 
+    // One-shot probe a tick after load so telemetry values exist before checking.
     Timer {
         id: _motorDialogTimer
         interval: 100; running: false
@@ -277,6 +287,7 @@ Page {
                                         Rectangle {
                                             Layout.fillWidth: true
                                             Layout.preferredHeight: visible ? 40 : 0
+                                            // Testing mode bypasses arming blockers (no motor risk).
                                             visible: _engine.criticalChecks > 0 && !FlightSession.isTesting
                                             color: Colors.errorDim
                                             radius: Config.radiusSmall
@@ -346,6 +357,7 @@ Page {
                                                                     delegate: Rectangle {
                                                                         required property var modelData
                                                                         readonly property var chk: modelData
+                                                                        // 0 idle / 1 pass / 2 fail / 3 warn.
                                                                         readonly property int  cStatus:     chk ? chk.status : 0
                                                                         readonly property bool matchCat:     chk && _engine.catGroups[index] && _engine.catGroups[index].cats.indexOf(chk.checkCategory) >= 0
                                                                         readonly property bool isPassed:     cStatus === 1
@@ -354,6 +366,7 @@ Page {
                                                                         readonly property bool isManual:     (chk ? chk.type : 0) === 1
                                                                         readonly property bool isAction:     (chk ? chk.type : 0) === 2
                                                                         readonly property bool isHighlighted: chk && chk.checkId === root._highlightCheckId
+                                                                        // Spin check -> dedicated C++ panel.
                                                                         readonly property bool isMotorCheck: chk && chk.checkId === "propulsion.motors.spin"
 
                                                                         visible: matchCat
@@ -385,6 +398,7 @@ Page {
                                                                                 anchors.fill: parent; anchors.margins: Config.spacingSmall; spacing: Config.spacingSmall
                                                                                 Text { text: isPassed ? "✓" : isFailed ? "✗" : isWarning ? "\u26a0" : "\u25cf"; font.pixelSize: Config.fontSizeBody; color: isPassed ? Colors.success : isFailed ? Colors.error : isWarning ? Colors.checkWarn : Colors.textDisabled }
                                                                                 ColumnLayout { Layout.fillWidth: true; spacing: 1; Text { text: chk.label; font.pixelSize: Config.fontSizeSmall; font.bold: true; color: Colors.textPrimary; elide: Text.ElideRight } Text { visible: chk.message.length > 0; text: chk.message; font.pixelSize: Config.fontSizeSmall; color: Colors.textSecondary; elide: Text.ElideRight } }
+                                                                                // Confirm when still failing.
                                                                                 Button { visible: (isManual || isAction) && !isPassed; text: isManual ? "Confirm" : "Run"; highlighted: true; font.pixelSize: Config.fontSizeSmall; Layout.preferredHeight: 26; Layout.preferredWidth: 54; onClicked: { if (isAction) { var c = PreflightManager.checkById(chk.checkId); if (c) { c.evaluate(); if (c.status === 1) return; c.confirm("Action completed") } } else { chk.confirm("Operator confirmed") } } }
                                                                                 Rectangle { visible: isPassed; color: Colors.success; radius: Config.radiusSmall; Layout.preferredHeight: 22; Layout.preferredWidth: 44; Text { anchors.centerIn: parent; text: "PASS"; color: Colors.background; font.pixelSize: 9; font.bold: true } }
                                                                             }
@@ -479,6 +493,7 @@ Page {
                                 Rectangle {
                                     Layout.preferredHeight: 26; Layout.preferredWidth: modeLbl.implicitWidth + Config.spacingMedium * 2
                                     radius: 13; color: Colors.accentDim; border.color: Colors.accent; border.width: 1
+                                    // ArmingGate enum: 0 PASSIVE, 1 ACTIVE, 2 HYBRID — enforcement level.
                                     Text { id: modeLbl; anchors.centerIn: parent; text: ArmingGate.mode === 0 ? "PASSIVE" : ArmingGate.mode === 1 ? "ACTIVE" : "HYBRID"; font.pixelSize: Config.fontSizeSmall; font.bold: true; color: Colors.accent }
                                 }
 
@@ -504,6 +519,7 @@ Page {
                                 // Next → Gimbal Test button
                                 Rectangle {
                                     id: _nextBtn
+                                    // Next gate: zero critical checks, or unconditional in Testing mode.
                                     readonly property bool _allowed: FlightSession.isTesting || _engine.criticalChecks === 0
                                     Layout.preferredWidth: 190; height: 32; radius: Config.radiusMedium
                                     color: _allowed ? Colors.accent : Colors.surfaceLight
