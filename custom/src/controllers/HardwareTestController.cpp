@@ -24,14 +24,6 @@
 
 Q_LOGGING_CATEGORY(hardwareTestLog, "preflight.hardwaretest")
 
-/// Parses a Vehicle::flightMode() string into the ArduPilot Plane mode number.
-/// Shared implementation used by both surface-test and hardware-test so the
-/// mode table cannot drift (R10).
-static int _fwFlightModeNumber(const QString &modeName)
-{
-    return FlightModeUtil::planeModeNumber(modeName);
-}
-
 /// Constructs the controller and wires up all internal timers.
 /// Each timer has a single-shot or interval mode and a specific role:
 ///   _stepTimer   — delays between profile-sequence steps
@@ -923,7 +915,7 @@ void HardwareTestController::_startMotorTestInternal(int motorIndex)
         // mode write).  Gate on the reported mode so the operator moves CH8 first.
         // Mock Link / SITL don't implement the mode switch, so warn but proceed.
         const QString mode = _vehicle->flightMode();
-        if (_fwFlightModeNumber(mode) != 0 && !_fwAllowNonManualTest) {
+        if (FlightModeUtil::planeModeNumber(mode) != 0 && !_fwAllowNonManualTest) {
             _vehicle->setFlightMode(QStringLiteral("MANUAL"));
             _lastError = QStringLiteral(
                 "Requesting MANUAL mode for motor test. If this is real hardware, "

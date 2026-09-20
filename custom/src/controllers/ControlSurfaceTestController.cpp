@@ -17,14 +17,6 @@
 Q_DECLARE_LOGGING_CATEGORY(controlSurfaceTestLog)
 Q_LOGGING_CATEGORY(controlSurfaceTestLog, "preflight.surfacetest")
 
-/// Parses a Vehicle::flightMode() string into the ArduPilot Plane mode number.
-/// Shared implementation used by both surface-test and hardware-test so the
-/// mode table cannot drift (R10).
-static int surfaceFlightModeNumber(const QString &modeName)
-{
-    return FlightModeUtil::planeModeNumber(modeName);
-}
-
 /// True for modes where the autopilot commands the surfaces itself, so stick
 /// override has little or no authority (LOITER/AUTO/RTL/GUIDED/CIRCLE/FBWB/
 /// TAKEOFF/LAND and the quadplane variants). Unknown modes are allowed through.
@@ -522,7 +514,7 @@ void ControlSurfaceTestController::_startSurfaceSweep(int idx)
     // surfaces themselves and ignore or heavily suppress the sticks, so the
     // sweep would show little or no motion. Instead of blocking, force MANUAL
     // continuously for the duration of the test so it overrides the mode.
-    const int modeNum = surfaceFlightModeNumber(m_flightMode);
+    const int modeNum = FlightModeUtil::planeModeNumber(m_flightMode);
     if (surfaceAutopilotCommanded(modeNum)) {
         qCWarning(controlSurfaceTestLog) << "Surface test forcing MANUAL over autopilot-commanded mode" << m_flightMode;
     }

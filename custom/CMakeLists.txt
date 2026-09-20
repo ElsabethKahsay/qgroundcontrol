@@ -55,10 +55,6 @@ set(CUSTOM_SOURCE_REL
     src/PreflightPlugin.cpp
     src/PreflightPlugin.h
     src/QmlModuleInit.cpp
-    src/adapters/QgcParameterAdapter.cpp
-    src/adapters/QgcParameterAdapter.h
-    src/adapters/QgcVehicleAdapter.cpp
-    src/adapters/QgcVehicleAdapter.h
     src/adapters/TelemetryBridge.cpp
     src/adapters/TelemetryBridge.h
     src/controllers/HardwareTestController.cpp

@@ -1153,7 +1153,7 @@ void TelemetryBridge::forceArm() {
 }
 
 /// Set a parameter value in the local cache and expose it as a dynamic Qt property.
-/// This does NOT send the value to the vehicle — use QgcParameterAdapter::setParam()
+/// This does NOT send the value to the vehicle — use Vehicle::writeParameter
 /// or Vehicle::sendMavCommand for that.
 void TelemetryBridge::setParameterValue(const QString& name, float value) {
     _parameterCache[name] = value;
