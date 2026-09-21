@@ -1174,19 +1174,25 @@ void TelemetryBridge::takeoff() {
                              10.0f);     // param7 = takeoff altitude (m)
 }
 
-/// Command the vehicle to Return To Launch. Sends MAV_CMD_NAV_RETURN_TO_LAUNCH,
-/// the same MAV_CMD the stock ToolStrip RTL button issues (custom-column clone).
-/// Requires: vehicle connected, armed, GPS 3D-fix. Mirrors forceArm().
+/// Command the vehicle to Return To Launch. Mirrors stock QGC's own Return
+/// button contract EXACTLY: Vehicle::guidedModeRTL(false) — the SAME accessor
+/// stock GuidedActionsController.rtl() uses. That accessor internally does the
+/// correctly mode-gated path per stack:
+///   - ArduPilot: sends MAV_CMD_NAV_RETURN_TO_LAUNCH via guided-mode RTL
+///   - PX4:       switches flight mode to RTL (via the mode_allow gate)
+/// We do NOT send a raw MAV_CMD_NAV_RETURN_TO_LAUNCH here: PX4 rejects it
+/// unless the vehicle is already in AUTO (that rejection = "command failed").
+/// Requires: vehicle connected, armed, GPS 3D-fix (all QML-gated).
 void TelemetryBridge::rtl() {
     if (!_vehicle) {
         qCWarning(telemetryBridgeLog) << "rtl(): no vehicle connected";
         return;
     }
 
-    qCWarning(telemetryBridgeLog) << "rtl(): sending MAV_CMD_NAV_RETURN_TO_LAUNCH";
-    _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_NAV_RETURN_TO_LAUNCH,
-                             true);      // showError
+    qCWarning(telemetryBridgeLog) << "rtl(): routing via Vehicle::guidedModeRTL(false)";
+    _vehicle->guidedModeRTL(false);         // smartRTL = false (plain RTL, like stock)
 }
+
 
 /// Set a parameter value in the local cache and expose it as a dynamic Qt property.
 /// This does NOT send the value to the vehicle — use Vehicle::writeParameter
