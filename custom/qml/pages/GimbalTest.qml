@@ -1178,22 +1178,6 @@ Page {
                     }
                 }
 
-                // ── Bottom Nav: Back to Checklist ──
-                Item {
-                    Layout.fillHeight: true
-                }
-
-                Button {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 44
-                    text: "\u2190 Back to Checklist"
-                    font.pixelSize: Config.fontSizeBody
-                    font.bold: true
-                    onClicked: {
-                        // Notify the harness we are done, then pop the nav stack unless at root
-                        root.backRequested();
-                        // Pop only when this page sits on the nav stack (guard the analyze root).
-                        if (Window.window && Window.window.mainStackView && Window.window.mainStackView.depth > 1) {
                             Config.navigatePop();
                         }
                     }
