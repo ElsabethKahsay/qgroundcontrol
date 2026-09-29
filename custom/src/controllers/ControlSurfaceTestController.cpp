@@ -13,6 +13,7 @@
 #include "../core/VehicleProfileManager.h"
 #include "../utils/FlightModeUtil.h"
 #include "../utils/Config.h"
+#include "../utils/RcOverrideInterlock.h"
 
 Q_DECLARE_LOGGING_CATEGORY(controlSurfaceTestLog)
 Q_LOGGING_CATEGORY(controlSurfaceTestLog, "preflight.surfacetest")
@@ -88,14 +89,29 @@ void ControlSurfaceTestController::setVehicle(Vehicle *vehicle)
         connect(m_vehicle, &Vehicle::mavCommandResult, this, &ControlSurfaceTestController::_onCommandResult);
         connect(m_vehicle, &Vehicle::mavlinkMessageReceived, this, &ControlSurfaceTestController::_onMavlinkMessage);
         connect(m_vehicle, &Vehicle::armedChanged, this, [this](bool armed) {
+            const bool sweeping = m_activeSurface >= 0 && m_activeSurface < m_surfaceList.size()
+                                  && m_states[m_activeSurface] == Sweeping;
             if (m_isArmed != armed) {
                 m_isArmed = armed;
                 emit isArmedChanged();
             }
+            // Auto-stop on an unexpected disarm mid-sweep: the operator lost
+            // control of the output, so stop driving the surfaces immediately.
+            if (!armed && sweeping) {
+                _autoStopSweep(QStringLiteral("Vehicle disarmed during the sweep — control surface test stopped"));
+            }
         });
         connect(m_vehicle, &Vehicle::flightModeChanged, this, [this](const QString &mode) {
+            const bool sweeping = m_activeSurface >= 0 && m_activeSurface < m_surfaceList.size()
+                                  && m_states[m_activeSurface] == Sweeping;
             m_flightMode = mode;
             emit flightModeChanged();
+            // Auto-stop when the autopilot takes over the surfaces (LOITER /
+            // AUTO / RTL / GUIDED / ...): stick overrides would be suppressed
+            // and the test can no longer demonstrate reliable deflection.
+            if (sweeping && surfaceAutopilotCommanded(FlightModeUtil::planeModeNumber(mode))) {
+                _autoStopSweep(QStringLiteral("Vehicle left MANUAL during the sweep — control surface test stopped"));
+            }
         });
         m_flightMode = m_vehicle->flightMode();
         emit flightModeChanged();
@@ -471,8 +487,15 @@ void ControlSurfaceTestController::_beginSurfaceTest(int idx)
     }
     if (m_states[idx] == Cooldown) return;
 
-    // Re-resolve the RC channels from live parameters.
-    m_surfaceList[idx].rcChannel = _rcMapForSurface(m_surfaceList[idx].id);
+    // Re-resolve the RC channels from live parameters.  Only overwrite the
+    // channel when the surface actually has an RCMAP axis — flaps carry their
+    // RC channel from FLAP_IN_CHANNEL (resolved when the surface list was
+    // loaded) and _rcMapForSurface() returns -1 for them; clobbering here would
+    // silently downgrade a working flap test to the DO_SET_SERVO fallback.
+    const int liveRc = _rcMapForSurface(m_surfaceList[idx].id);
+    if (liveRc > 0) {
+        m_surfaceList[idx].rcChannel = liveRc;
+    }
     if (m_surfaceList[idx].elevonMode != 0) {
         m_surfaceList[idx].rcChannel2 = _rcMapChannel(QStringLiteral("RCMAP_PITCH"), QStringLiteral("RC_MAP_PITCH"), 2);
     }
@@ -498,6 +521,18 @@ void ControlSurfaceTestController::_beginSurfaceTest(int idx)
 void ControlSurfaceTestController::_startSurfaceSweep(int idx)
 {
     if (!m_vehicle || idx < 0 || idx >= m_surfaceList.size()) return;
+
+    // Interlock: only one bench-test controller may drive RC_CHANNELS_OVERRIDE
+    // at a time.  If the HardwareTestController already holds it (e.g. a
+    // fixed-wing motor spin), refuse this sweep so the two never fight over the
+    // same servos/throttle link.
+    if (!RcOverrideInterlock::acquire(QStringLiteral("ControlSurfaceTest"))) {
+        const QString otherOwner = RcOverrideInterlock::owner();
+        m_lastErrorMessage = QStringLiteral("Cannot start control-surface sweep: %1 already holds the RC override")
+                                 .arg(otherOwner.isEmpty() ? QStringLiteral("another test") : otherOwner);
+        emit lastErrorMessageChanged();
+        return;
+    }
 
     if (m_vehicle && m_vehicle->flightMode() != QStringLiteral("MANUAL")) {
         m_vehicle->setFlightMode(QStringLiteral("MANUAL"));
@@ -528,6 +563,7 @@ void ControlSurfaceTestController::_startSurfaceSweep(int idx)
     m_activeSurface = idx;
     m_states[idx] = Sweeping;
     m_sweepStep = 0;
+    m_feedbackObserved = false;
     m_sweepMinPwmActual = 1500;
     m_sweepMaxPwmActual = 1500;
     m_sweepMinPwmActual2 = 1500;
@@ -659,6 +695,24 @@ void ControlSurfaceTestController::_advanceSweepStep()
         m_forceManualTimer.stop();
         _sendActivePwm(_sweepCenter(surf));
         _setElevonGain(false);
+
+        // Documented TIMEOUT verdict: the whole sweep ran with no SERVO_OUTPUT_RAW
+        // feedback on the surface's output channel.  There is nothing for the
+        // operator to confirm, so auto-finalise as FAIL instead of showing a
+        // meaningless direction prompt, and disarm to leave the rig safe.
+        if (!m_feedbackObserved) {
+            qCWarning(controlSurfaceTestLog) << "Surface sweep completed with no servo feedback — TIMEOUT";
+            m_states[m_activeSurface] = Timeout;
+            m_lastErrorMessage = QStringLiteral("TIMEOUT — no servo feedback was received during the sweep. "
+                                                "Check the servo/wiring and the SERVO_OUTPUT_RAW stream.");
+            emit surfaceStatesChanged();
+            emit lastErrorMessageChanged();
+            RcOverrideInterlock::release(QStringLiteral("ControlSurfaceTest"));
+            m_activeSurface = -1;
+            emit activeSurfaceChanged();
+            _setServoStreaming(false);
+            _requestDisarm();
+        }
         return;
     }
 
@@ -831,24 +885,28 @@ void ControlSurfaceTestController::_sendRcOverrideMulti(const QVector<QPair<int,
                                    << log.join(QStringLiteral(", "));
 }
 
-/// Cancels all active RC overrides (all 18 channels = 0 → release control
-/// back to the RC receiver / autopilot).  Sent unconditionally before every
-/// new step so no override from a previous test can keep dragging surfaces.
+/// Cancels all active RC overrides so control returns to the RC receiver /
+/// autopilot.  Sent unconditionally before every new step so no override from a
+/// previous test can keep dragging surfaces.  Uses the same release encoding as
+/// HardwareTestController: all 18 channels = 65535 (ignore / pass-through),
+/// which ArduPilot treats as "no override active" and releases the channels.
 void ControlSurfaceTestController::_clearRcOverrides()
 {
     if (!m_vehicle) return;
     MAVLinkProtocol *proto = MAVLinkProtocol::instance();
     mavlink_message_t msg;
-    const uint16_t zero[18] = {0};
+    const uint16_t release[18] = {65535, 65535, 65535, 65535, 65535, 65535,
+                                  65535, 65535, 65535, 65535, 65535, 65535,
+                                  65535, 65535, 65535, 65535, 65535, 65535};
     mavlink_msg_rc_channels_override_pack(
         proto ? proto->getSystemId() : 255,
         MAVLinkProtocol::getComponentId(),
         &msg,
         static_cast<uint8_t>(m_vehicle->id()),
         0,
-        zero[0], zero[1], zero[2], zero[3], zero[4], zero[5], zero[6], zero[7],
-        zero[8], zero[9], zero[10], zero[11], zero[12], zero[13], zero[14], zero[15],
-        zero[16], zero[17]);
+        release[0], release[1], release[2], release[3], release[4], release[5],
+        release[6], release[7], release[8], release[9], release[10], release[11],
+        release[12], release[13], release[14], release[15], release[16], release[17]);
 
     SharedLinkInterfacePtr sharedLink = m_vehicle->vehicleLinkManager()->primaryLink().lock();
     if (sharedLink) {
@@ -934,16 +992,13 @@ void ControlSurfaceTestController::confirmSurfaceDirection(const QString &surfac
 
     _setElevonGain(false);
 
-    // The vehicle was armed purely for the bench sweep — disarm it now so the
-    // rig is left safe and the EDF cannot be driven by a stray override.
-    if (m_vehicle && m_vehicle->armed()) {
-        m_vehicle->sendMavCommand(
-            m_vehicle->defaultComponentId(),
-            MAV_CMD_COMPONENT_ARM_DISARM, false,
-            0.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
-        m_isArmed = false;
-        emit isArmedChanged();
-    }
+    RcOverrideInterlock::release(QStringLiteral("ControlSurfaceTest"));
+
+    // The vehicle was armed purely for the bench sweep — request a disarm now so
+    // the rig is left safe and the EDF cannot be driven by a stray override.
+    // Unlike the previous optimistic forced state flip, the controller waits for
+    // the disarm ACK (see _onCommandResult) before reporting disarmed.
+    _requestDisarm();
 }
 
 void ControlSurfaceTestController::stopAllSurfaces()
@@ -971,15 +1026,11 @@ void ControlSurfaceTestController::stopAllSurfaces()
 
     _setElevonGain(false);
 
-    // The vehicle was armed purely for the bench sweep — disarm it now.
-    if (m_vehicle && m_vehicle->armed()) {
-        m_vehicle->sendMavCommand(
-            m_vehicle->defaultComponentId(),
-            MAV_CMD_COMPONENT_ARM_DISARM, false,
-            0.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
-        m_isArmed = false;
-        emit isArmedChanged();
-    }
+    RcOverrideInterlock::release(QStringLiteral("ControlSurfaceTest"));
+
+    // The vehicle was armed purely for the bench sweep — request a disarm and
+    // wait for its ACK before reporting the rig disarmed.
+    _requestDisarm();
 }
 
 void ControlSurfaceTestController::switchToManual()
@@ -988,6 +1039,55 @@ void ControlSurfaceTestController::switchToManual()
         m_vehicle->setFlightMode(QStringLiteral("MANUAL"));
         qCWarning(controlSurfaceTestLog) << "Manually switching flight mode to MANUAL";
     }
+}
+
+/// Requests a disarm for the bench sweep and waits for the autopilot's ACK
+/// instead of optimistically forcing the armed state to false.  The vehicle is
+/// only reported disarmed once the disarm command is ACCEPTED (see
+/// _onCommandResult) or the armed heartbeat confirms it.
+void ControlSurfaceTestController::_requestDisarm()
+{
+    if (!m_vehicle || !m_vehicle->armed() || m_pendingDisarmAck) return;
+    m_pendingDisarmAck = true;
+    m_vehicle->sendMavCommand(
+        m_vehicle->defaultComponentId(),
+        MAV_CMD_COMPONENT_ARM_DISARM, false,
+        0.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
+}
+
+/// Safety stop triggered by an unexpected vehicle state change during a sweep
+/// (disarm, or the autopilot taking over the mode): stops every timer, releases
+/// all RC overrides, re-centers driven surfaces, records the failure and
+/// disarms.  Prevents the bench from driving surfaces the operator no longer
+/// controls.
+void ControlSurfaceTestController::_autoStopSweep(const QString &reason)
+{
+    if (m_activeSurface == -1) return;
+    qCWarning(controlSurfaceTestLog) << "Sweep auto-stopped:" << reason;
+
+    m_stepTimer.stop();
+    m_streamTimer.stop();
+    m_forceManualTimer.stop();
+    _setServoStreaming(false);
+    m_sweptPwm = 0;
+    m_sweptPwm2 = 0;
+    emit sweptPwmChanged();
+    _clearRcOverrides();
+    if (m_activeSurface >= 0 && m_activeSurface < m_surfaceList.size()) {
+        _sendActivePwm(_sweepCenter(m_surfaceList[m_activeSurface]));
+    }
+    _setElevonGain(false);
+    RcOverrideInterlock::release(QStringLiteral("ControlSurfaceTest"));
+
+    m_states[m_activeSurface] = Fail;
+    emit surfaceStatesChanged();
+    m_lastErrorMessage = reason;
+    emit lastErrorMessageChanged();
+
+    m_activeSurface = -1;
+    emit activeSurfaceChanged();
+
+    _requestDisarm();
 }
 
 void ControlSurfaceTestController::_onCommandResult(int vehicleId, int targetComponent, int command, int ackResult, int failureCode)
@@ -1013,6 +1113,24 @@ void ControlSurfaceTestController::_onCommandResult(int vehicleId, int targetCom
             m_lastErrorMessage = QStringLiteral("Arm command rejected — cannot move control surfaces while disarmed");
             emit lastErrorMessageChanged();
             m_pendingSurfaceIndex = -1;
+        }
+        return;
+    }
+
+    // Disarm ACK for the bench sweep: report disarmed only once the autopilot
+    // confirms, not on an optimistic local state flip.
+    if (command == MAV_CMD_COMPONENT_ARM_DISARM && m_pendingDisarmAck) {
+        m_pendingDisarmAck = false;
+        if (ackResult == MAV_RESULT_ACCEPTED) {
+            qCWarning(controlSurfaceTestLog) << "Disarm ACKed by autopilot";
+            if (m_isArmed) {
+                m_isArmed = false;
+                emit isArmedChanged();
+            }
+        } else {
+            qCWarning(controlSurfaceTestLog) << "Disarm for surface test rejected:" << ackResult;
+            m_lastErrorMessage = QStringLiteral("Disarm command rejected by the autopilot — rig may remain armed");
+            emit lastErrorMessageChanged();
         }
         return;
     }
@@ -1065,6 +1183,7 @@ void ControlSurfaceTestController::_onMavlinkMessage(const mavlink_message_t &me
             const uint16_t pwm2 = (surf.channel2 > 0) ? pwmOnChannel(surf.channel2) : 0;
 
             if (pwm > 800 && pwm < 2200) {
+                m_feedbackObserved = true;
                 if (pwm < m_sweepMinPwmActual) m_sweepMinPwmActual = pwm;
                 if (pwm > m_sweepMaxPwmActual) m_sweepMaxPwmActual = pwm;
             }

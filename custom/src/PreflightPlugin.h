@@ -110,6 +110,7 @@ private:
 
     // --- Flight session tracking ---
     int _currentSessionId = -1;       // Active DB flight session ID, -1 when no session is active
+    QString _currentSessionDeviceUid; // Canonical key (device_uid) of the active session
     QDateTime _sessionStartTime;      // Timestamp when gateOpened started the session
     QTimer _weatherRefreshTimer;      // Periodic timer that triggers weather data refresh
     int _lastArmDisarmParam = -1;     // 1=arm, 0=disarm, -1=unknown from last COMMAND_LONG

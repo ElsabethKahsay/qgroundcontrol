@@ -48,7 +48,8 @@ public:
         Sweeping = 1,
         Pass = 2,
         Fail = 3,
-        Cooldown = 4
+        Cooldown = 4,
+        Timeout = 5
     };
     Q_ENUM(SurfaceState)
 
@@ -134,6 +135,8 @@ private:
     void _startSurfaceSweep(int idx);
     void _beginSurfaceTest(int idx);
     void _setElevonGain(bool boost);
+    void _autoStopSweep(const QString &reason);
+    void _requestDisarm();
 
     // Sweep-value helpers. RC-driven surfaces always sweep RC neutral (1500 µs)
     // to RC extremes; flaps (DO_SET_SERVO) sweep their SERVOn limits.
@@ -169,6 +172,8 @@ private:
     QVector<SurfaceState> m_states;
     int m_activeSurface = -1;
     int m_pendingSurfaceIndex = -1;   /// Surface waiting on an arm ACK before its sweep starts
+    bool m_pendingDisarmAck = false;  /// A disarm command is in flight — wait for its ACK
+    bool m_feedbackObserved = false;  /// Valid SERVO_OUTPUT_RAW seen during the current sweep
     bool m_isArmed = false;
     QString m_lastErrorMessage;
     QString m_lastVehicleType;   /// Last loadSurfacesForVehicle() type, used to re-load on parameters-ready

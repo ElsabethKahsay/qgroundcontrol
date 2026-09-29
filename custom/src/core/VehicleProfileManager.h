@@ -102,6 +102,10 @@ public:
     QString currentVehicleHistoryJson() const { return m_currentVehicleHistoryJson; }
     QString currentBatterySerial() const { return m_batterySerial; }
     int currentFlightSessionId() const { return m_flightSessionId; }
+    /// Adopt / release the flight_sessions row opened by the arming-gate flow.
+    /// PreflightPlugin owns the session lifecycle; this controller only writes
+    /// live battery energy into the single active row.
+    void setFlightSessionId(int id) { m_flightSessionId = id; }
 
     double currentPayloadWeightKg() const { return m_payloadWeightKg; }
     void setPayloadWeightKg(double kg);
@@ -133,7 +137,7 @@ public:
 
     /// Force arm vehicle, bypassing pre-arm checks.
     Q_INVOKABLE void forceArm();
-    /// Disarm vehicle via MAVLink (set force=true to bypass in-flight/pre-disarm checks via magic 2989.0f).
+    /// Disarm vehicle via MAVLink (set force=true to bypass in-flight/pre-disarm checks, sends kForceArmParam2).
     Q_INVOKABLE void disarmVehicle(bool force = false);
     /// Set vehicle flight mode (e.g. "MANUAL", "AUTO", "STABILIZE", "GUIDED").
     Q_INVOKABLE void setVehicleFlightMode(const QString &mode);

@@ -1,6 +1,8 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+
+import QGroundControl
 import com.uav.preflight 1.0
 
 // ── Motor Test Launcher ──────────────────────────────────────────────────────
@@ -448,14 +450,14 @@ Rectangle {
                             implicitHeight: mc.implicitHeight + 16
                             radius: Config.radiusSmall
                             border.width: 2
-                            border.color: st === HardwareTestController.Testing  ? Colors.testing
-                                        : st === HardwareTestController.Pass     ? Colors.success
-                                        : st === HardwareTestController.Fail     ? Colors.error
-                                        : st === HardwareTestController.Cooldown ? Colors.borderLight
+                            border.color: st === HardwareTestControllerRoles.Testing  ? Colors.testing
+                                        : st === HardwareTestControllerRoles.Pass     ? Colors.success
+                                        : st === HardwareTestControllerRoles.Fail     ? Colors.error
+                                        : st === HardwareTestControllerRoles.Cooldown ? Colors.borderLight
                                         : Colors.border
-                            color: st === HardwareTestController.Pass     ? Colors.successDim
-                                 : st === HardwareTestController.Fail     ? Colors.errorDim
-                                 : st === HardwareTestController.Cooldown ? Colors.surfaceLight
+                            color: st === HardwareTestControllerRoles.Pass     ? Colors.successDim
+                                 : st === HardwareTestControllerRoles.Fail     ? Colors.errorDim
+                                 : st === HardwareTestControllerRoles.Cooldown ? Colors.surfaceLight
                                  : Colors.surfaceLight
                             Behavior on border.color { ColorAnimation { duration: 200 } }
                             Behavior on color       { ColorAnimation { duration: 200 } }
@@ -485,23 +487,23 @@ Rectangle {
 
                                     // Status chip
                                     Rectangle {
-                                        visible: mcard.st !== HardwareTestController.Idle
+                                        visible: mcard.st !== HardwareTestControllerRoles.Idle
                                         Layout.preferredHeight: 18
                                         Layout.preferredWidth: chipTxt.implicitWidth + 10
                                         radius: 9
-                                        color: mcard.st === HardwareTestController.Testing  ? Colors.testing
-                                             : mcard.st === HardwareTestController.Pass     ? Colors.success
-                                             : mcard.st === HardwareTestController.Fail     ? Colors.error
-                                             : mcard.st === HardwareTestController.Cooldown ? Colors.border
+                                        color: mcard.st === HardwareTestControllerRoles.Testing  ? Colors.testing
+                                             : mcard.st === HardwareTestControllerRoles.Pass     ? Colors.success
+                                             : mcard.st === HardwareTestControllerRoles.Fail     ? Colors.error
+                                             : mcard.st === HardwareTestControllerRoles.Cooldown ? Colors.border
                                              : "transparent"
                                         Text {
                                             id: chipTxt
                                             anchors.centerIn: parent
                                             font.pixelSize: 9; font.bold: true; color: Colors.background
-                                            text: mcard.st === HardwareTestController.Testing  ? "Testing\u2026"
-                                                : mcard.st === HardwareTestController.Pass     ? "Pass " + mcard.fb + "\u00b5s"
-                                                : mcard.st === HardwareTestController.Fail     ? (mcard.fb === 0 ? "No signal" : "Mismatch")
-                                                : mcard.st === HardwareTestController.Cooldown ? "Cooldown\u2026"
+                                            text: mcard.st === HardwareTestControllerRoles.Testing  ? "Testing\u2026"
+                                                : mcard.st === HardwareTestControllerRoles.Pass     ? "Pass " + mcard.fb + "\u00b5s"
+                                                : mcard.st === HardwareTestControllerRoles.Fail     ? (mcard.fb === 0 ? "No signal" : "Mismatch")
+                                                : mcard.st === HardwareTestControllerRoles.Cooldown ? "Cooldown\u2026"
                                                 : ""
                                         }
                                     }
@@ -555,19 +557,19 @@ Rectangle {
                                     id: testBtn
                                     Layout.fillWidth: true; Layout.preferredHeight: 30
                                     radius: Config.radiusSmall
-                                    property bool canTest: mcard.st !== HardwareTestController.Testing
-                                                        && mcard.st !== HardwareTestController.Cooldown
+                                    property bool canTest: mcard.st !== HardwareTestControllerRoles.Testing
+                                                        && mcard.st !== HardwareTestControllerRoles.Cooldown
                                                         && HardwareTestController.activeMotor < 0
 
 
                                     color: !canTest                                     ? Colors.borderLight
-                                         : mcard.st === HardwareTestController.Pass    ? Colors.success
-                                         : mcard.st === HardwareTestController.Fail    ? Colors.error
+                                         : mcard.st === HardwareTestControllerRoles.Pass    ? Colors.success
+                                         : mcard.st === HardwareTestControllerRoles.Fail    ? Colors.error
                                          : Colors.accent
                                     Behavior on color { ColorAnimation { duration: 150 } }
 
                                     SequentialAnimation on opacity {
-                                        loops: Animation.Infinite; running: mcard.st === HardwareTestController.Testing
+                                        loops: Animation.Infinite; running: mcard.st === HardwareTestControllerRoles.Testing
                                         NumberAnimation { from: 1.0; to: 0.35; duration: 380 }
                                         NumberAnimation { from: 0.35; to: 1.0; duration: 380 }
                                     }
@@ -575,10 +577,10 @@ Rectangle {
 
                                     Text {
                                         anchors.centerIn: parent
-                                        text: mcard.st === HardwareTestController.Testing  ? "TESTING\u2026"
-                                            : mcard.st === HardwareTestController.Pass     ? "\u2713 PASS"
-                                            : mcard.st === HardwareTestController.Fail     ? "\u2717 FAIL"
-                                            : mcard.st === HardwareTestController.Cooldown ? "WAIT\u2026"
+                                        text: mcard.st === HardwareTestControllerRoles.Testing  ? "TESTING\u2026"
+                                            : mcard.st === HardwareTestControllerRoles.Pass     ? "\u2713 PASS"
+                                            : mcard.st === HardwareTestControllerRoles.Fail     ? "\u2717 FAIL"
+                                            : mcard.st === HardwareTestControllerRoles.Cooldown ? "WAIT\u2026"
                                             : "TEST " + root.testLabel(mcard.midx)
                                         font.pixelSize: Config.fontSizeSmall; font.bold: true
                                         color: testBtn.canTest ? Colors.background : Colors.textDisabled
@@ -586,7 +588,7 @@ Rectangle {
 
                                     MouseArea {
                                         anchors.fill: parent
-                                        enabled: testBtn._canTest
+                                        enabled: testBtn.canTest
                                         cursorShape: enabled ? Qt.PointingHandCursor : Qt.ForbiddenCursor
                                         onClicked: {
                                             if (!HardwareTestController.firstTestDone) {
@@ -626,8 +628,8 @@ Rectangle {
                             var pass = 0, fail = 0
                             for (var i = 1; i <= root._mc; ++i) {
                                 var s = HardwareTestController.motorStatus(i)
-                                if (s === HardwareTestController.Pass) pass++
-                                else if (s === HardwareTestController.Fail) fail++
+                                if (s === HardwareTestControllerRoles.Pass) pass++
+                                else if (s === HardwareTestControllerRoles.Fail) fail++
                             }
                             if (pass + fail === 0) return ""
                             return pass + "/" + root._mc + qsTr(" passed") + (fail > 0 ? "  (" + fail + qsTr(" failed)") : "")
@@ -648,7 +650,7 @@ Rectangle {
                         Layout.preferredHeight: 30; Layout.preferredWidth: 100
                         enabled: {
                             for (var i = 1; i <= root._mc; ++i)
-                                if (HardwareTestController.motorStatus(i) === HardwareTestController.Pass) return true
+                                if (HardwareTestController.motorStatus(i) === HardwareTestControllerRoles.Pass) return true
                             return false
                         }
                         onClicked: { root.checklistCheck.confirm(qsTr("Motor test completed")); motorDialog.close() }

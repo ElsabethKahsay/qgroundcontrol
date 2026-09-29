@@ -21,6 +21,7 @@
 #include "Vehicle.h"
 
 #include "utils/Config.h"
+#include "detection/VehicleRegistry.h"
 #include "DatabaseManager.h"
 #include "TelemetryBridge.h"
 #include "MultiVehicleManager.h"
@@ -247,15 +248,10 @@ void VehicleProfileManager::onConnectionChanged()
             m_liveSmoothAmps = 0.0;
             emit liveDataChanged();
         }
-        // End flight session — auto-save expanded profile
-        if (m_flightSessionId > 0) {
-            double sec = m_sessionTimer.elapsed() / 1000.0;
-            DatabaseManager::instance().endFlightSession(m_flightSessionId, sec);
-            if (!m_currentDeviceUid.isEmpty()) {
-                DatabaseManager::instance().updateFlightHours(m_currentDeviceUid, sec / 3600.0);
-                DatabaseManager::instance().incrementFlightCount(m_currentDeviceUid);
-            }
-        }
+        // The arming-gate flow owns flight sessions end-to-end (opens on gate
+        // up, closes on disarm / check failure) and owns the per-flight
+        // counters; the session id is reset here for the next connect.
+        m_flightSessionId = -1;
         // Auto-save the vehicle's last known GPS position on disconnect.
         if (!m_currentDeviceUid.isEmpty()) {
             double lat = m_telemetry ? m_telemetry->gpsLatitude() : 0.0;
@@ -263,7 +259,6 @@ void VehicleProfileManager::onConnectionChanged()
             if (qAbs(lat) > 0.1 || qAbs(lon) > 0.1)
                 DatabaseManager::instance().updateVehicleGps(m_currentDeviceUid, lat, lon);
         }
-        m_flightSessionId = -1;
         m_currentDeviceUid.clear();
         m_currentVehicleHistoryJson.clear();
         if (m_uavWeightKg != 0.0) {
@@ -338,9 +333,13 @@ void VehicleProfileManager::onConnectionChanged()
     // Restore the persisted thrust→current datasheet (or the default table)
     _loadPersistedThrustTable(m_currentDeviceUid);
 
-    // Start flight session with current payload weight
-    m_flightSessionId = DatabaseManager::instance().startFlightSession(m_currentDeviceUid, m_batterySerial, m_payloadWeightKg);
-    m_sessionTimer.start();
+    // The flight session itself is opened by the arming-gate flow
+    // (PreflightPlugin::_onGateOpened) — the single session owner — which
+    // hands this controller the session id so live battery energy can be
+    // attached to the one and only row per flight.  Previously every telemetry
+    // connect also opened a flight_sessions row here, producing two sessions
+    // per flight and splitting history across deviceUid and fingerprint keys.
+    m_flightSessionId = -1;
 
     // Kick off the live battery estimate immediately, then every 2 s.
     _updateLiveEstimate();
@@ -349,25 +348,29 @@ void VehicleProfileManager::onConnectionChanged()
     emit currentVehicleChanged();
 }
 
-/// Resolve a persistent device identifier for the connected vehicle.
-/// Priority: hardware UID (stable across sessions) > composite key > system ID (ephemeral).
+/// Resolve the persistent device identifier for the connected vehicle.
+/// Must match the key VehicleRegistry/registerNewVehicle uses, so battery
+/// history, flight sessions and the vehicle registry all land on ONE row:
+///   hardware UID (decimal, matching QString::number(AUTOPILOT_VERSION.uid))
+///   > connection fingerprint (VehicleRegistry) > MAV_SYS_ID.
 QString VehicleProfileManager::resolveDeviceUid()
 {
     if (!m_telemetry) return {};
     Vehicle *v = m_telemetry->vehicle();
     if (!v) return {};
 
-    // Primary: hardware UID from AUTOPILOT_VERSION.uid
+    // Primary: hardware UID from AUTOPILOT_VERSION.uid — the same decimal
+    // string VehicleRegistry::registerNewVehicle keys the registry row by.
     quint64 uid = v->vehicleUID();
     if (uid != 0) {
-        return v->vehicleUIDStr();
+        return QString::number(uid);
     }
 
-    // Fallback: composite of autopilot type + airframe type — not unique per board but stable.
-    QString composite = QStringLiteral("composite:%1:%2")
-        .arg(autopilotTypeString(), airframeTypeString());
-    if (!composite.isEmpty() && composite != "composite::") {
-        return composite;
+    // Fallback: the connection-derived fingerprint — identical to the key the
+    // vehicle registry row uses for UID-less (e.g. SITL) vehicles.
+    QString fp = VehicleRegistry::instance()->currentFingerprint();
+    if (!fp.isEmpty()) {
+        return fp;
     }
 
     // Last resort: MAV_SYS_ID (session-only, clearly non-ideal)

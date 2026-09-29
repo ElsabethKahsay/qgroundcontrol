@@ -380,19 +380,22 @@ void MockLink::_sendHighLatency2()
 
 void MockLink::_sendSysStatus()
 {
+    // With ARMING_REQUIRE=0 ArduPilot reports motor outputs enabled only while armed;
+    // QGroundControl derives the true armed state from this SYS_STATUS bit in that case.
+    const uint32_t motorOutputs = (MAV_MODE_FLAG_SAFETY_ARMED & _mavBaseMode) ? MAV_SYS_STATUS_SENSOR_MOTOR_OUTPUTS : 0;
     mavlink_message_t msg{};
     (void) mavlink_msg_sys_status_pack_chan(
         _vehicleSystemId,
         _vehicleComponentId,
         static_cast<uint8_t>(mavlinkChannel()),
         &msg,
-        MAV_SYS_STATUS_SENSOR_GPS,  // onboard_control_sensors_present
-        0,                          // onboard_control_sensors_enabled
-        0,                          // onboard_control_sensors_health
-        250,                        // load
-        4200 * 4,                   // voltage_battery
-        8000,                       // current_battery
-        _battery1PctRemaining,      // battery_remaining
+        MAV_SYS_STATUS_SENSOR_GPS | motorOutputs,    // onboard_control_sensors_present
+        motorOutputs,                                // onboard_control_sensors_enabled
+        0,                                           // onboard_control_sensors_health
+        250,                                         // load
+        4200 * 4,                                    // voltage_battery
+        8000,                                        // current_battery
+        _battery1PctRemaining,                       // battery_remaining
         0,0,0,0,0,0,0,0,0
     );
     respondWithMavlinkMessage(msg);
@@ -511,6 +514,66 @@ void MockLink::respondWithMavlinkMessage(const mavlink_message_t &msg)
         const QByteArray bytes(reinterpret_cast<char*>(buffer), cBuffer);
         emit bytesReceived(this, bytes);
     }
+}
+
+bool MockLink::setFlightMode(const QString &modeName)
+{
+    // Map mode names to PX4CustomMode values (ArduPilot/Plane compatible)
+    uint32_t newCustomMode = 0;
+    bool found = false;
+
+    if (modeName.compare(QStringLiteral("MANUAL"), Qt::CaseInsensitive) == 0) {
+        newCustomMode = PX4CustomMode::MANUAL;
+        found = true;
+    } else if (modeName.compare(QStringLiteral("STABILIZE"), Qt::CaseInsensitive) == 0 ||
+               modeName.compare(QStringLiteral("STABILIZED"), Qt::CaseInsensitive) == 0) {
+        newCustomMode = PX4CustomMode::STABILIZED;
+        found = true;
+    } else if (modeName.compare(QStringLiteral("LOITER"), Qt::CaseInsensitive) == 0 ||
+               modeName.compare(QStringLiteral("HOLD"), Qt::CaseInsensitive) == 0) {
+        newCustomMode = PX4CustomMode::AUTO_LOITER;
+        found = true;
+    } else if (modeName.compare(QStringLiteral("RTL"), Qt::CaseInsensitive) == 0 ||
+               modeName.compare(QStringLiteral("RETURN"), Qt::CaseInsensitive) == 0) {
+        newCustomMode = PX4CustomMode::AUTO_RTL;
+        found = true;
+    } else if (modeName.compare(QStringLiteral("AUTO"), Qt::CaseInsensitive) == 0 ||
+               modeName.compare(QStringLiteral("MISSION"), Qt::CaseInsensitive) == 0) {
+        newCustomMode = PX4CustomMode::AUTO_MISSION;
+        found = true;
+    } else if (modeName.compare(QStringLiteral("LAND"), Qt::CaseInsensitive) == 0) {
+        newCustomMode = PX4CustomMode::AUTO_LAND;
+        found = true;
+    } else if (modeName.compare(QStringLiteral("TAKEOFF"), Qt::CaseInsensitive) == 0) {
+        newCustomMode = PX4CustomMode::AUTO_TAKEOFF;
+        found = true;
+    } else if (modeName.compare(QStringLiteral("ACRO"), Qt::CaseInsensitive) == 0) {
+        newCustomMode = PX4CustomMode::ACRO;
+        found = true;
+    } else if (modeName.compare(QStringLiteral("ALTCTL"), Qt::CaseInsensitive) == 0 ||
+               modeName.compare(QStringLiteral("ALTITUDE"), Qt::CaseInsensitive) == 0) {
+        newCustomMode = PX4CustomMode::ALTCTL;
+        found = true;
+    } else if (modeName.compare(QStringLiteral("POSCTL"), Qt::CaseInsensitive) == 0 ||
+               modeName.compare(QStringLiteral("POSITION"), Qt::CaseInsensitive) == 0) {
+        newCustomMode = PX4CustomMode::POSCTL_POSCTL;
+        found = true;
+    } else if (modeName.compare(QStringLiteral("OFFBOARD"), Qt::CaseInsensitive) == 0) {
+        newCustomMode = PX4CustomMode::OFFBOARD;
+        found = true;
+    }
+
+    if (!found) {
+        qCWarning(MockLinkLog) << "setFlightMode: unknown mode" << modeName;
+        return false;
+    }
+
+    // Update the custom mode and send a HEARTBEAT with the new mode
+    _mavCustomMode = newCustomMode;
+    _sendHeartBeat();
+
+    qCInfo(MockLinkLog) << "setFlightMode:" << modeName << "-> custom_mode=0x" << QString::number(newCustomMode, 16);
+    return true;
 }
 
 void MockLink::_writeBytes(const QByteArray &bytes)
@@ -647,7 +710,17 @@ void MockLink::_handleSetMode(const mavlink_message_t &msg)
 
     Q_ASSERT(request.target_system == _vehicleSystemId);
 
+    // A mode change must not disarm the vehicle — real autopilots keep the
+    // armed state across MAV_CMD/SET_MODE requests, so preserve the
+    // SAFETY_ARMED bit here too.  (Without this a controller that forces
+    // MANUAL while armed would look "disarmed" on the next heartbeat and
+    // safety systems, e.g. the control-surface sweep auto-stop, would fire.)
+    const bool wasArmed = _mavBaseMode & MAV_MODE_FLAG_SAFETY_ARMED;
+    const bool reqArmed = request.base_mode & MAV_MODE_FLAG_SAFETY_ARMED;
     _mavBaseMode = request.base_mode;
+    if (wasArmed || reqArmed) {
+        _mavBaseMode |= MAV_MODE_FLAG_SAFETY_ARMED;
+    }
     _mavCustomMode = request.custom_mode;
 }
 

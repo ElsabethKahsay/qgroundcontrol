@@ -166,7 +166,7 @@ public:
 
 ### Arming Gate
 
-`ArmingGate` attaches to `LinkInterface::incomingMessage` and intercepts `MAV_CMD_COMPONENT_ARM_DISARM`. Depending on mode:
+`PreflightPlugin::mavlinkMessage` intercepts INBOUND `MAV_CMD_COMPONENT_ARM_DISARM` COMMAND_LONG from link peers (companion/external GCS) and routes the decision through `ArmingGate::interceptCommandLong`. Its scope is inbound-only: outbound arm commands sent via `Vehicle::sendMavCommand -> sendMessageOnLinkThreadSafe` never pass through `mavlinkMessage()`, so the outbound arm path is gated solely by `TelemetryBridge::arm()`. Depending on mode:
 - **PASSIVE** — logs attempt, passes through
 - **ACTIVE** — blocks arming unless checklist state permits
 - **HYBRID** — blocks arming for guided arm, passes for RC arm

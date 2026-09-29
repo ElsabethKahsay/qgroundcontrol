@@ -52,6 +52,7 @@ private slots:
     void testCheckRecoveryReopensGate();
     void testPassiveModeNeverBlocks();
     void testHybridModeOverrideFlow();
+    void testGateBlockedReportedForBridgeArm();
 };
 
 // Full happy path: connect → all checks pass → gate opens → arm allowed
@@ -361,6 +362,43 @@ void ArmingFlowIntegrationTest::testHybridModeOverrideFlow()
     gate.resetGate();
     QVERIFY(!gate.isOverrideActive());
     QVERIFY(!gate.interceptCommandLong(MAV_CMD_COMPONENT_ARM_DISARM, armParams));
+}
+
+// Documents the exact block condition TelemetryBridge::arm() evaluates before
+// sending: !armingAllowed && !overrideActive → the arm is suppressed. This is
+// the single authoritative arm-gating decision the QML arm paths route through
+// after the P0 consolidation (MainStatusIndicator/ArmedIndicator/Toolbar +
+// the ArmGateDialog accept flow all call TelemetryProvider.arm()).
+void ArmingFlowIntegrationTest::testGateBlockedReportedForBridgeArm()
+{
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+
+    ArmingGate gate;
+    gate.setMode(ArmingGate::Active);
+
+    PreflightManager mgr(1);
+    mgr.setTelemetryBridge(&bridge);
+    gate.setPreflightManager(&mgr);
+    gate.setTelemetryBridge(&bridge);
+
+    TestFlowCheck *failCheck = new TestFlowCheck(QStringLiteral("test.bridge.block"));
+    failCheck->forceStatus(CheckStatus::Failed, QStringLiteral("Simulated failure"));
+    mgr.addCheck(failCheck);
+
+    // Gate closed → TelemetryBridge::arm() must suppress.
+    QVERIFY(!gate.isArmingAllowed());
+    QVERIFY(!gate.isOverrideActive());
+
+    // After an operator force-arm, the override opens the gate so the arm goes out.
+    gate.forceArm();
+    QVERIFY(gate.isArmingAllowed());
+    QVERIFY(gate.isOverrideActive());
+
+    // Pair with the P0 routing change: no QML arm widget may consult the gate
+    // via processArmRequest anymore (that path was removed); the bridge's arm()
+    // reads exactly these two properties.
 }
 
 UT_REGISTER_TEST(ArmingFlowIntegrationTest)

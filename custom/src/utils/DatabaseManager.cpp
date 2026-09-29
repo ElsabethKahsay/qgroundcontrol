@@ -19,8 +19,10 @@ Q_LOGGING_CATEGORY(dbLog, "database.manager")
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QStandardPaths>
+#include <QThread>
 #include <QTimer>
 #include <QFileInfo>
+#include <QCoreApplication>
 #include <cmath>
 
 /**
@@ -90,6 +92,14 @@ void DatabaseManager::backupBeforeMigration()
         qCWarning(dbLog) << "DB backup failed for" << dbFile;
 }
 
+void DatabaseManager::assertMainThread() const
+{
+    const QThread *const main = QCoreApplication::instance() ? QCoreApplication::instance()->thread() : nullptr;
+    Q_ASSERT_X(!main || QThread::currentThread() == main,
+               "DatabaseManager",
+               "DatabaseManager must only be accessed from the main (GUI) thread");
+}
+
 void DatabaseManager::walCheckpoint()
 {
     if (!m_initialized || !m_db.isOpen())
@@ -154,6 +164,7 @@ QString DatabaseManager::expandPath(const QString &path)
 bool DatabaseManager::initialize(const QString &dbPath)
 {
     if (m_initialized) return true;  // Already initialized
+    assertMainThread();
 
     QString finalPath = expandPath(dbPath);
     qDebug() << "DatabaseManager: Initializing SQLite at" << finalPath;
@@ -170,10 +181,13 @@ bool DatabaseManager::initialize(const QString &dbPath)
     // Write-ahead logging — prevents DB corruption on Jetson power loss.
     // synchronous = NORMAL balances durability vs write speed.  foreign_keys
     // is enabled only AFTER migrations so DDL / table rebuilds in
-    // migrateSchema() never run into FK enforcement.
+    // migrateSchema() never run into FK enforcement.  busy_timeout makes the
+    // SQLite driver wait up to 5 s for a lock instead of failing immediately
+    // when another handle (e.g. an external viewer) holds the database.
     QSqlQuery pragmaConn(m_db);
     pragmaConn.exec("PRAGMA journal_mode = WAL");
     pragmaConn.exec("PRAGMA synchronous = NORMAL");
+    pragmaConn.exec("PRAGMA busy_timeout = 5000");
 
     // Create required tables
     if (!createTables()) {
@@ -898,6 +912,7 @@ QString DatabaseManager::getHardwareTestEvents(int flightId)
  */
 bool DatabaseManager::execOrWarn(QSqlQuery &query, const char *tableName)
 {
+    assertMainThread();
     if (!query.exec()) {
         qWarning() << "DatabaseManager:" << tableName << "error:" << query.lastError().text();
         return false;
@@ -912,6 +927,7 @@ bool DatabaseManager::execOrWarn(QSqlQuery &query, const char *tableName)
 
 bool DatabaseManager::beginTransaction()
 {
+    assertMainThread();
     if (!m_initialized || !m_db.isOpen()) return false;
     if (!m_db.transaction()) {
         qWarning() << "DatabaseManager: beginTransaction failed:" << m_db.lastError().text();
@@ -922,6 +938,7 @@ bool DatabaseManager::beginTransaction()
 
 bool DatabaseManager::commitTransaction()
 {
+    assertMainThread();
     if (!m_initialized || !m_db.isOpen()) return false;
     if (!m_db.commit()) {
         qWarning() << "DatabaseManager: commitTransaction failed:" << m_db.lastError().text();
@@ -932,6 +949,7 @@ bool DatabaseManager::commitTransaction()
 
 bool DatabaseManager::rollbackTransaction()
 {
+    assertMainThread();
     if (!m_initialized || !m_db.isOpen()) return false;
     if (!m_db.rollback()) {
         qWarning() << "DatabaseManager: rollbackTransaction failed:" << m_db.lastError().text();
@@ -1447,6 +1465,39 @@ bool DatabaseManager::migrateSchema()
             }
             break;
         }
+        case 19: {
+            // v19: reconcile the dual flight-session bookkeeping onto the one
+            // authoritative vehicle key (vehicles.device_uid).
+            //   * flights gains a device_uid link to the owning vehicle row
+            //     (audit rows previously linked only via a sysid join).
+            //   * target location moves onto the flight row itself instead of
+            //     flight_sessions, which was keyed by its own AUTOINCREMENT id
+            //     while callers passed flights.id — a cross-table id collision.
+            QSqlQuery pragma19(m_db);
+            pragma19.exec("PRAGMA table_info(flights)");
+            QStringList flightCols;
+            while (pragma19.next()) flightCols << pragma19.value(1).toString();
+            auto addFlightCol = [this, &q](const char *sql) {
+                if (!q.exec(QLatin1String(sql)))
+                    qWarning() << "DatabaseManager: v19 add column failed:" << q.lastError().text();
+            };
+            if (!flightCols.contains("device_uid"))
+                addFlightCol("ALTER TABLE flights ADD COLUMN device_uid TEXT");
+            if (!flightCols.contains("target_lat"))
+                addFlightCol("ALTER TABLE flights ADD COLUMN target_lat REAL");
+            if (!flightCols.contains("target_lon"))
+                addFlightCol("ALTER TABLE flights ADD COLUMN target_lon REAL");
+            if (!flightCols.contains("target_source"))
+                addFlightCol("ALTER TABLE flights ADD COLUMN target_source TEXT");
+            q.prepare("UPDATE flights SET device_uid = "
+                      "(SELECT v.device_uid FROM vehicles v WHERE v.sysid = flights.vehicle_id) "
+                      "WHERE device_uid IS NULL "
+                      "AND EXISTS(SELECT 1 FROM vehicles v WHERE v.sysid = flights.vehicle_id)");
+            execOrWarn(q, "v19 backfill flights.device_uid");
+            q.prepare("CREATE INDEX IF NOT EXISTS idx_flights_device_uid ON flights(device_uid)");
+            execOrWarn(q, "v19 flights index");
+            break;
+        }
         default:
             qWarning() << "DatabaseManager: unknown migration version" << v;
             return false;
@@ -1623,6 +1674,13 @@ bool DatabaseManager::upsertVehicle(const QString &deviceUid, const QString &fri
     // A default-constructed QString is null; Qt binds it as SQL NULL and the
     // vehicles.friendly_name column is NOT NULL. Normalize null to '' first.
     const QString safeName = friendlyName.isNull() ? QStringLiteral("") : friendlyName;
+    // On a brand-new insert there is no display name yet, so synthesize one
+    // from the UID tail rather than leaving the list row blank.  The
+    // ON CONFLICT branch discards this VALUES row, so reconnects never
+    // overwrite a name the operator has since edited.
+    const QString defaultName = safeName.isEmpty()
+            ? QStringLiteral("Vehicle %1").arg(deviceUid.right(4).toUpper()).trimmed()
+            : safeName;
     QSqlQuery q(m_db);
     q.prepare(R"(
         INSERT INTO vehicles (device_uid, friendly_name, autopilot_type, airframe_type,
@@ -1635,7 +1693,7 @@ bool DatabaseManager::upsertVehicle(const QString &deviceUid, const QString &fri
             last_seen = CURRENT_TIMESTAMP
     )");
     q.addBindValue(deviceUid);
-    q.addBindValue(safeName);
+    q.addBindValue(defaultName);
     q.addBindValue(autopilotType);
     q.addBindValue(airframeType);
     q.addBindValue(safeName);
@@ -1654,6 +1712,9 @@ bool DatabaseManager::upsertVehicleEx(const QString &deviceUid, const QString &f
     if (!m_initialized) return false;
     // Null strings bind as SQL NULL and the vehicles columns are NOT NULL.
     const QString safeName = friendlyName.isNull() ? QStringLiteral("") : friendlyName;
+    const QString defaultName = safeName.isEmpty()
+            ? QStringLiteral("Vehicle %1").arg(deviceUid.right(4).toUpper()).trimmed()
+            : safeName;
     const QString safeLayout = motorLayout.isNull() ? QStringLiteral("") : motorLayout;
     QSqlQuery q(m_db);
     q.prepare(R"(
@@ -1676,7 +1737,7 @@ bool DatabaseManager::upsertVehicleEx(const QString &deviceUid, const QString &f
             last_seen = CURRENT_TIMESTAMP
     )");
     q.addBindValue(deviceUid);
-    q.addBindValue(safeName);
+    q.addBindValue(defaultName);
     q.addBindValue(autopilotType);
     q.addBindValue(airframeType);
     q.addBindValue(frameClass);
@@ -2714,6 +2775,13 @@ bool DatabaseManager::registerNewVehicle(const QString &fingerprint, int sysid, 
     if (!m_initialized || fingerprint.isEmpty()) return false;
     // friendly_name is NOT NULL; normalize a null display name (binds as SQL NULL) to ''.
     const QString safeDisplayName = displayName.isNull() ? QStringLiteral("") : displayName;
+    // Synthesize a default display name on first registration instead of
+    // storing an empty row; the ON CONFLICT branch ignores this VALUES value.
+    const QString defaultName = safeDisplayName.isEmpty()
+            ? QStringLiteral("Vehicle %1")
+                      .arg((uid != 0 ? QString::number(uid) : fingerprint).right(4).toUpper())
+                      .trimmed()
+            : safeDisplayName;
     QSqlQuery q(m_db);
     // device_uid is the table PK; for hardware-resolved vehicles we key it to
     // the UID as before.  For sysid-fallback vehicles the UID is 0 and the raw
@@ -2741,7 +2809,7 @@ bool DatabaseManager::registerNewVehicle(const QString &fingerprint, int sysid, 
             last_seen = CURRENT_TIMESTAMP
     )");
     q.addBindValue(deviceUid);
-    q.addBindValue(safeDisplayName);
+    q.addBindValue(defaultName);
     q.addBindValue(autopilotType);
     q.addBindValue(vehicleType);
     q.addBindValue(fingerprint);
@@ -2888,7 +2956,10 @@ QString DatabaseManager::getAllVehiclesJson()
     QJsonArray arr;
     while (q.next()) {
         QJsonObject o;
-        o["deviceUid"] = QString::number(q.value(0).toULongLong());
+// Serialize the key verbatim: device_uid is the canonical identity
+        // (decimal hardware UID, or the fingerprint for UID-less vehicles).
+        // Numeric-stringifying it turns fingerprint/legacy keys into "0".
+        o["deviceUid"] = q.value(0).toString();
         o["friendlyName"] = q.value(1).toString();
         o["autopilotType"] = q.value(2).toString();
         o["airframeType"] = q.value(3).toString();
@@ -3611,38 +3682,41 @@ bool DatabaseManager::updateFlightSessionPlanLocation(int sessionId, double lat,
     return execOrWarn(q, "updateFlightSessionPlanLocation");
 }
 
-bool DatabaseManager::saveTargetLocation(int sessionId, double lat, double lon,
+bool DatabaseManager::saveTargetLocation(int flightId, double lat, double lon,
                                          const QString &source)
 {
     if (!m_initialized) return false;
-    if (sessionId <= 0) return false;
+    if (flightId <= 0) return false;
     if (!std::isfinite(lat) || !std::isfinite(lon)) return false;
     if (lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0) return false;
 
+    // Target location is owned by the flight's own audit row.  (Previously it
+    // was written to flight_sessions.id using a flights.id — two unrelated
+    // AUTOINCREMENT sequences — so the target landed on a random row.)
     QSqlQuery q(m_db);
-    q.prepare("UPDATE flight_sessions "
+    q.prepare("UPDATE flights "
               "SET target_lat = ?, target_lon = ?, target_source = ? WHERE id = ?");
     q.addBindValue(lat);
     q.addBindValue(lon);
     q.addBindValue(source);
-    q.addBindValue(sessionId);
+    q.addBindValue(flightId);
     return execOrWarn(q, "saveTargetLocation");
 }
 
-QVariantMap DatabaseManager::getTargetLocation(int sessionId)
+QVariantMap DatabaseManager::getTargetLocation(int flightId)
 {
     QVariantMap out;
-    if (!m_initialized || sessionId <= 0) return out;
+    if (!m_initialized || flightId <= 0) return out;
     QSqlQuery q(m_db);
     q.prepare("SELECT target_lat, target_lon, target_source "
-              "FROM flight_sessions WHERE id = ?");
-    q.addBindValue(sessionId);
+              "FROM flights WHERE id = ?");
+    q.addBindValue(flightId);
     if (!execOrWarn(q, "getTargetLocation")) return out;
     if (!q.next()) return out;
     const double lat = q.value(0).toDouble();
     const double lon = q.value(1).toDouble();
     const QString source = q.value(2).toString();
-    // A never-saved session row carries the column defaults (0/0/"") —
+    // A flight row that never had a location carries NULLs —
     // report that as "no location" instead of a fake coordinate.
     if (source.isEmpty() && lat == 0.0 && lon == 0.0) return out;
     out.insert(QStringLiteral("lat"), lat);
@@ -3704,37 +3778,77 @@ QString DatabaseManager::getFlightSessions(const QString &deviceUid, int limit)
  * data points are available.
  */
 DatabaseManager::CalibratedPowerModel DatabaseManager::getCalibratedPowerModel(
-    const QString &deviceUid, int minSessions)
+    const QString &deviceUid, double payloadKg, int minSessions)
 {
     CalibratedPowerModel result;
     if (!m_initialized || deviceUid.isEmpty()) return result;
 
     QSqlQuery q(m_db);
-    q.prepare("SELECT energy_consumed_wh, distance_m FROM flight_sessions "
+    q.prepare("SELECT energy_consumed_wh, distance_m, payload_weight_kg, duration_seconds "
+              "FROM flight_sessions "
               "WHERE device_uid = ? AND ended_at IS NOT NULL AND distance_m > 0 "
               "ORDER BY id DESC LIMIT ?");
     q.addBindValue(deviceUid);
-    q.addBindValue(qMax(minSessions, 1));
+    q.addBindValue(qMax(minSessions, 50));
 
     QVector<double> whPerKmValues;
-    int hoverCount = 0;
-    double hoverEnergySum = 0.0;
+    QVector<QPair<double, double>> payloadPoints; // payloadKg → whPerKm
 
     if (!q.exec()) return result;
 
     while (q.next()) {
         double energyWh = q.value(0).toDouble();
         double distM = q.value(1).toDouble();
+        double payload = q.value(2).toDouble();
+        double durationSec = q.value(3).toDouble();
         if (energyWh > 0.0 && distM > 0.0) {
-            whPerKmValues.append(energyWh / (distM / 1000.0));
+            double whPerKm = energyWh / (distM / 1000.0);
+            whPerKmValues.append(whPerKm);
+            payloadPoints.append({payload, whPerKm});
             result.dataPointCount++;
+            // Hover energy rate (Wh/min) from the whole flight duration — the
+            // only per-session time we persist.  Flight time approximates the
+            // hover+loiter burn closely enough to "populate hoverWhPerMin".
+            if (durationSec > 0.0) {
+                const double hoverRate = energyWh / (durationSec / 60.0);
+                if (result.hoverWhPerMin > 0.0)
+                    result.hoverWhPerMin = (result.hoverWhPerMin * (result.dataPointCount - 1) + hoverRate)
+                                           / result.dataPointCount;
+                else
+                    result.hoverWhPerMin = hoverRate;
+            }
         }
     }
 
     if (result.dataPointCount >= minSessions) {
-        double sum = 0.0;
-        for (double v : whPerKmValues) sum += v;
-        result.whPerKm = sum / whPerKmValues.size();
+        // Prefer the payload linear regression when at least two sessions
+        // recorded a payload; otherwise fall back to the flat average.
+        int payloadTagged = 0;
+        for (const auto &pp : payloadPoints) {
+            if (pp.first > 0.0) payloadTagged++;
+        }
+        if (payloadTagged >= 2) {
+            double sumX = 0, sumY = 0, sumX2 = 0, sumXY = 0;
+            for (const auto &pp : payloadPoints) {
+                sumX += pp.first;
+                sumY += pp.second;
+                sumX2 += pp.first * pp.first;
+                sumXY += pp.first * pp.second;
+            }
+            const double n = payloadPoints.size();
+            const double denom = n * sumX2 - sumX * sumX;
+            if (qAbs(denom) > 1e-9) {
+                result.payloadSlope = (n * sumXY - sumX * sumY) / denom;
+                result.payloadIntercept = (sumY - result.payloadSlope * sumX) / n;
+                result.hasPayloadModel = true;
+                result.whPerKm = result.payloadIntercept + result.payloadSlope * qMax(0.0, payloadKg);
+            }
+        }
+        if (!result.hasPayloadModel) {
+            double sum = 0.0;
+            for (double v : whPerKmValues) sum += v;
+            result.whPerKm = sum / whPerKmValues.size();
+        }
         result.isCalibrated = true;
         qDebug() << "DatabaseManager: calibrated power model for" << deviceUid
                  << "whPerKm:" << result.whPerKm
@@ -3742,6 +3856,30 @@ DatabaseManager::CalibratedPowerModel DatabaseManager::getCalibratedPowerModel(
     }
 
     return result;
+}
+
+/// Harvest (payloadKg, whPerKm) pairs from the most recent completed sessions
+/// so a caller can feed PowerModel::setCalibrationPoints (the in-memory linear
+/// payload model, used as the estimate() fallback until the DB model qualifies).
+QVector<QPair<double, double>> DatabaseManager::getPowerCalibrationHistory(
+    const QString &deviceUid, int limit)
+{
+    QVector<QPair<double, double>> out;
+    if (!m_initialized || deviceUid.isEmpty()) return out;
+    QSqlQuery q(m_db);
+    q.prepare("SELECT payload_weight_kg, energy_consumed_wh, distance_m "
+              "FROM flight_sessions "
+              "WHERE device_uid = ? AND ended_at IS NOT NULL "
+              "AND energy_consumed_wh > 0 AND distance_m > 0 "
+              "ORDER BY id DESC LIMIT ?");
+    q.addBindValue(deviceUid);
+    q.addBindValue(limit);
+    if (!execOrWarn(q, "getPowerCalibrationHistory")) return out;
+    while (q.next()) {
+        const double whPerKm = q.value(1).toDouble() / (q.value(2).toDouble() / 1000.0);
+        out.append({q.value(0).toDouble(), whPerKm});
+    }
+    return out;
 }
 
 QString DatabaseManager::getCheckConfig(const QString &checkId, const QString &key, int vehicleId)

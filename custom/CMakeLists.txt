@@ -320,6 +320,8 @@ if(QGC_BUILD_TESTING)
     file(GLOB_RECURSE _custom_test_src
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/*.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mocks/*.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mocks/*.h
     )
     if(_custom_test_src)
         list(APPEND CUSTOM_SOURCES ${_custom_test_src})

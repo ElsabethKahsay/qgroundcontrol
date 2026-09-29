@@ -76,6 +76,8 @@ public:
     Q_INVOKABLE bool acknowledgeOverride(const QString &pilotName, const QString &reason);
     /// Temporarily override the gate for a given duration.
     Q_INVOKABLE void overrideGate(const QString &reason, int timeoutSec = 30);
+    /// Test-only: set a custom override duration in milliseconds for testing override expiration.
+    void setOverrideDuration(int timeoutMs);
     /// Reset the gate to normal evaluation mode.
     Q_INVOKABLE void resetGate();
     /// Force arming regardless of gate state.

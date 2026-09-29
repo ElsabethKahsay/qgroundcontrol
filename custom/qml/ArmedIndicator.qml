@@ -23,16 +23,18 @@ QGCComboBox {
 
     onActivated: {
         if (index == 0) {
-            if (typeof ArmingGate !== 'undefined' && ArmingGate !== null) {
-                var criticalFails = typeof PreflightManager !== 'undefined' && PreflightManager !== null
-                    ? PreflightManager.failedChecks : 0
-                var result = ArmingGate.processArmRequest(criticalFails, 0)
-                if (result === ArmingGate.GATE_CLOSED) {
-                    currentIndex = -1
-                    return
-                }
+            // Route every arm request through the single gate-checked path
+            // (TelemetryBridge::arm). The gate decision is centralized there,
+            // not duplicated per widget.
+            if (typeof TelemetryProvider !== 'undefined' && TelemetryProvider !== null) {
+                TelemetryProvider.arm()
+            } else {
+                // No TelemetryProvider available — cannot arm through gate.
+                // Do NOT fall back to mainWindow.armVehicleRequest() as that
+                // bypasses the ArmingGate entirely. The gate is the single
+                // source of truth; if the provider is unavailable, arm is denied.
+                qCWarning("armedindicator") << "Arm requested but TelemetryProvider unavailable — arm denied by gate"
             }
-            mainWindow.armVehicleRequest()
         } else {
             mainWindow.disarmVehicleRequest()
         }

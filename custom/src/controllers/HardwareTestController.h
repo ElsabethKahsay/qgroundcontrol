@@ -134,6 +134,10 @@ public:
     /// Returns the fixed-wing motor label (e.g. "M3") based on the auto-detected
     /// servo output channel, or "M1" for multirotors.
     Q_INVOKABLE QString fixedWingTestLabel() const;
+    /// Bench gimbal test: command the gimbal to pan/tilt.  Issues
+    /// MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW to the gimbal component; the
+    /// operator's rig must be set up for bench gimbal control.
+    Q_INVOKABLE void sendGimbalCommand(double yawDeg, double pitchDeg);
 
     /// Returns the actual servo output channel that will be driven for a given
     /// motor card (1-based).  For multirotors this equals the motor index; for
@@ -254,6 +258,10 @@ private slots:
 
     /// Fixed-wing state machine: advances arm → spin → spin-down → disarm → evaluate.
     void _fwAdvancePhase();
+
+    /// Fixed-wing state machine: starts the spin phase (RC override + duration
+    /// timer). Only valid from the phase-1 arm-wait; a no-op otherwise.
+    void _fwBeginSpin();
 
 private:
     void _setMotorState(int index, MotorState state);
@@ -461,6 +469,7 @@ private:
     /// Number of arm attempts so far (each followed by a 500 ms wait).
     int _fwArmTries = 0;
 
-    static constexpr int kFwArmRetries = 6;    /// ~3 s total arm wait before giving up
-    static constexpr int kFwSpinDownMs = 800;  /// Time to let the motor stop before disarming
+    static constexpr int kFwArmRetries = 6;           /// ~3 s total arm wait before giving up
+    static constexpr int kFwArmRetryIntervalMs = 500; /// Poll interval while waiting for arm confirmation
+    static constexpr int kFwSpinDownMs = 800;         /// Time to let the motor stop before disarming
 };

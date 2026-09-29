@@ -768,6 +768,10 @@ void PreflightManager::_initialParamRefresh()
 void PreflightManager::addCheck(AbstractCheck *check) {
   if (!check) return;
   m_checks.append(check);
+  // Push the current telemetry bridge so checks registered after
+  // setTelemetryBridge() (e.g. by the plugin once its singletons exist) can
+  // read live telemetry instead of keeping a null bridge forever.
+  check->m_telemetry = m_telemetry;
   connectCheckSignals(check);
   emit modelChanged();
 }

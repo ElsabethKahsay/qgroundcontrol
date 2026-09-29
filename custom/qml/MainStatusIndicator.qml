@@ -17,6 +17,7 @@
 //   _estRangeText (string) — estimated flight range text from PowerModel
 //   _estLabelColor (string) — color of the estimated range label
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 
 import QGroundControl
@@ -49,6 +50,7 @@ RowLayout {
     // Phase 7: Estimated flight time/range from power model
     property string _estRangeText: ""
     property string _estLabelColor: Colors.textDisabled
+    property color  _mainStatusBGColor: Colors.dialogAccent
 
     // Status label is a pure binding (no manual text assignments) so it can never
     // be orphaned. All dependencies (_armed/_flying/_landing/_communicationLost/
@@ -59,7 +61,18 @@ RowLayout {
         criticalFailCount: _root._gateCriticalFails
         manualFailCount: _root._gateManualFails
         onAccepted: {
-            mainWindow.armVehicleRequest()
+            // Route every arm request through the single gate-checked path
+            // (TelemetryBridge::arm) — the dialog only runs after the operator
+            // acknowledged the override, so the gate is open here.
+if (typeof TelemetryProvider !== 'undefined' && TelemetryProvider) {
+                                    TelemetryProvider.arm()
+                                } else {
+                                    // No TelemetryProvider available — cannot arm through gate.
+                                    // Do NOT fall back to mainWindow.armVehicleRequest() as that
+                                    // bypasses the ArmingGate entirely. The gate is the single
+                                    // source of truth; if the provider is unavailable, arm is denied.
+                                    qCWarning("surfacetest") << "Arm requested but TelemetryProvider unavailable — arm denied by gate"
+                                }
             mainWindow.hideIndicatorPopup()
         }
     }
@@ -93,19 +106,19 @@ RowLayout {
                 var baseText = ""
                 if (_activeVehicle) {
                     if (_root._communicationLost) {
-                        _mainStatusBGColor = "red"
+                        _root._mainStatusBGColor = "red"
                         baseText = mainStatusLabel._commLostText
                     } else if (_root._armed) {
                         // Armed branch ALWAYS overrides pre-arm health checks
-                        _mainStatusBGColor = "green"
+                        _root._mainStatusBGColor = "green"
 
                         if (_healthAndArmingChecksSupported) {
                             if (_activeVehicle.healthAndArmingCheckReport.canArm) {
                                 if (_activeVehicle.healthAndArmingCheckReport.hasWarningsOrErrors) {
-                                    _mainStatusBGColor = "yellow"
+                                    _root._mainStatusBGColor = "yellow"
                                 }
                             } else {
-                                _mainStatusBGColor = "red"
+                                _root._mainStatusBGColor = "red"
                             }
                         }
 
@@ -121,35 +134,36 @@ RowLayout {
                         if (_healthAndArmingChecksSupported) {
                             if (_activeVehicle.healthAndArmingCheckReport.canArm) {
                                 if (_activeVehicle.healthAndArmingCheckReport.hasWarningsOrErrors) {
-                                    _mainStatusBGColor = "yellow"
+                                    _root._mainStatusBGColor = "yellow"
                                 } else {
-                                    _mainStatusBGColor = "green"
+                                    _root._mainStatusBGColor = "green"
                                 }
                                 baseText = mainStatusLabel._readyToFlyText
                             } else {
-                                _mainStatusBGColor = "red"
+                                _root._mainStatusBGColor = "red"
                                 baseText = mainStatusLabel._notReadyToFlyText
                             }
                         } else if (_activeVehicle.readyToFlyAvailable) {
                             if (_root._readyToFly) {
-                                _mainStatusBGColor = "green"
+                                _root._mainStatusBGColor = "green"
                                 baseText = mainStatusLabel._readyToFlyText
                             } else {
-                                _mainStatusBGColor = "yellow"
+                                _root._mainStatusBGColor = "yellow"
                                 baseText = mainStatusLabel._notReadyToFlyText
                             }
                         } else {
-                            if (_activeVehicle.allSensorsHealthy && _activeVehicle.autopilot.setupComplete) {
-                                _mainStatusBGColor = "green"
+                            if (_activeVehicle.allSensorsHealthy && _activeVehicle.autopilot
+                                    && _activeVehicle.autopilot.setupComplete) {
+                                _root._mainStatusBGColor = "green"
                                 baseText = mainStatusLabel._readyToFlyText
                             } else {
-                                _mainStatusBGColor = "yellow"
+                                _root._mainStatusBGColor = "yellow"
                                 baseText = mainStatusLabel._notReadyToFlyText
                             }
                         }
                     }
                 } else {
-                    _mainStatusBGColor = Colors.dialogAccent
+                    _root._mainStatusBGColor = Colors.dialogAccent
                     baseText = mainStatusLabel._disconnectedText
                 }
 
@@ -340,20 +354,39 @@ RowLayout {
                                 if (typeof ArmingGate !== 'undefined' && ArmingGate) {
                                     ArmingGate.forceArm()
                                 }
-                                mainWindow.forceArmVehicleRequest()
+                                // Gate-skipping force-arm path (mirrors FlyQuickActions):
+                                // TelemetryBridge::forceArm bypasses the gate by design.
+                                if (typeof TelemetryProvider !== 'undefined' && TelemetryProvider) {
+                                    TelemetryProvider.forceArm()
+                                } else {
+                                    mainWindow.forceArmVehicleRequest()
+                                }
                                 forceArm = false
                                 mainWindow.hideIndicatorPopup()
                                 return
                             }
                             var criticalFails = typeof PreflightManager !== 'undefined' && PreflightManager ? PreflightManager.failedChecks : 0
                             var manualFails = typeof PreflightManager !== 'undefined' && PreflightManager ? PreflightManager.pendingChecks : 0
-                            var decision = typeof ArmingGate !== 'undefined' && ArmingGate ? ArmingGate.processArmRequest(criticalFails, manualFails) : 0
-                            if (decision === 1) {
+                            // If the gate is genuinely closed (critical fails present and no
+                            // override), offer the acknowledge-override flow. Every arm that
+                            // proceeds routes through the single gate-checked TelemetryProvider.arm().
+                            var gateBlocked = typeof ArmingGate !== 'undefined' && ArmingGate
+                                ? !ArmingGate.armingAllowed && !ArmingGate.overrideActive
+                                : false
+                            if (criticalFails > 0 && gateBlocked) {
                                 _root._gateCriticalFails = criticalFails
                                 _root._gateManualFails = manualFails
                                 armGateDialogLoader.active = true
                             } else {
-                                mainWindow.armVehicleRequest()
+                                if (typeof TelemetryProvider !== 'undefined' && TelemetryProvider) {
+                                    TelemetryProvider.arm()
+                                } else {
+                                    // No TelemetryProvider available — cannot arm through gate.
+                                    // Do NOT fall back to mainWindow.armVehicleRequest() as that
+                                    // bypasses the ArmingGate entirely. The gate is the single
+                                    // source of truth; if the provider is unavailable, arm is denied.
+                                    qCWarning("surfacetest") << "Arm requested but TelemetryProvider unavailable — arm denied by gate"
+                                }
                                 mainWindow.hideIndicatorPopup()
                             }
                             forceArm = false
@@ -542,5 +575,6 @@ RowLayout {
             }
         }
     }
-}
+
+    }
 

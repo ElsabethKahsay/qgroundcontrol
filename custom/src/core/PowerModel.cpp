@@ -124,18 +124,26 @@ PowerEstimate PowerModel::estimate(const QString &deviceUid, double payloadKg,
 
     // Default model
     double whPerKm = defaultWhPerKm(airframe);
-    double whPerMinHover = defaultHoverWhPerMin(airframe);
     int dataPts = 0;
     bool calibrated = false;
 
-    // Query DB for calibrated data (only if deviceUid is non-empty)
+    // Query DB for calibrated data (only if deviceUid is non-empty).
+    // The DB model already blends in the per-session payload regression when
+    // enough flights recorded a payload weight, and reports a measured
+    // hover Wh/min so takeoff/landing energy is real, not just defaults.
+    double hoverWhPerMin = defaultHoverWhPerMin(airframe);
     if (!deviceUid.isEmpty()) {
-        auto dbModel = DatabaseManager::instance().getCalibratedPowerModel(deviceUid, minCalibrationPoints());
+        auto dbModel = DatabaseManager::instance().getCalibratedPowerModel(deviceUid, payloadKg,
+                                                                           minCalibrationPoints());
         if (dbModel.isCalibrated) {
             whPerKm = dbModel.whPerKm;
             dataPts = dbModel.dataPointCount;
             calibrated = true;
-            qDebug() << "PowerModel: using calibrated values from DB (" << dataPts << "sessions)";
+            if (dbModel.hoverWhPerMin > 0.0)
+                hoverWhPerMin = dbModel.hoverWhPerMin;
+            qDebug() << "PowerModel: using calibrated values from DB ("
+                     << dataPts << "sessions, payload model:" << dbModel.hasPayloadModel
+                     << ", hoverWhPerMin:" << hoverWhPerMin << ")";
         } else {
             dataPts = dbModel.dataPointCount;
         }
@@ -159,7 +167,7 @@ PowerEstimate PowerModel::estimate(const QString &deviceUid, double payloadKg,
     // If not calibrated, apply payload surcharge to default (rough: +5% per kg)
     if (!calibrated) {
         whPerKm = whPerKm * (1.0 + kPayloadWhSurchargePerKg * qMax(0.0, payloadKg));
-        whPerMinHover = whPerMinHover * (1.0 + kPayloadWhSurchargePerKg * qMax(0.0, payloadKg));
+        hoverWhPerMin = hoverWhPerMin * (1.0 + kPayloadWhSurchargePerKg * qMax(0.0, payloadKg));
     }
 
     // Full battery capacity — safety margin applied by caller (MissionEnergyCheck)
@@ -167,8 +175,8 @@ PowerEstimate PowerModel::estimate(const QString &deviceUid, double payloadKg,
 
     // Cruise consumption
     double cruiseWh = distance * whPerKm;
-    // Assume 2 min hover for takeoff/landing
-    double hoverWh = kTakeoffLandingHoverMin * whPerMinHover;
+    // Assume 2 min hover for takeoff/landing (measured rate when calibrated)
+    double hoverWh = kTakeoffLandingHoverMin * hoverWhPerMin;
     double totalWh = cruiseWh + hoverWh;
 
     double rangeKm = totalWh > 0 ? (usableWh / totalWh) * distance : 0;
@@ -187,7 +195,7 @@ PowerEstimate PowerModel::estimate(const QString &deviceUid, double payloadKg,
                   .arg(minCalibrationPoints());
     }
 
-    return {whPerKm, rangeKm, flightTimeMin, src, dataPts, calibrated};
+    return {whPerKm, hoverWhPerMin, rangeKm, flightTimeMin, src, dataPts, calibrated};
 }
 
 // Convenience wrapper: returns estimate() as a QVariantMap for direct QML consumption.
@@ -199,6 +207,7 @@ QVariantMap PowerModel::estimateToMap(const QString &deviceUid, double payloadKg
     PowerEstimate est = estimate(deviceUid, payloadKg, batteryCapacityWh, missionDistanceKm, airframeHint);
     QVariantMap m;
     m[QStringLiteral("whPerKm")] = est.whPerKm;
+    m[QStringLiteral("hoverWhPerMin")] = est.hoverWhPerMin;
     m[QStringLiteral("rangeKm")] = est.rangeKm;
     m[QStringLiteral("flightTimeMin")] = est.flightTimeMin;
     m[QStringLiteral("sourceLabel")] = est.sourceLabel;

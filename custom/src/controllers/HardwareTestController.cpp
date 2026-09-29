@@ -8,6 +8,7 @@
 #include "HardwareTestController.h"
 
 #include <algorithm>
+#include <cmath>
 #include <QDebug>
 #include <QHash>
 #include <QLoggingCategory>
@@ -21,6 +22,7 @@
 #include "utils/DatabaseManager.h"
 #include "utils/FlightModeUtil.h"
 #include "utils/Config.h"
+#include "utils/RcOverrideInterlock.h"
 
 Q_LOGGING_CATEGORY(hardwareTestLog, "preflight.hardwaretest")
 
@@ -749,9 +751,33 @@ void HardwareTestController::_startFixedWingMotorTest(int idx)
         1.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0
     );
 
-    // Drive the ESC via RC_CHANNELS_OVERRIDE on the throttle channel at 10 Hz.
+    // Phase 1 — wait for arm confirmation BEFORE driving the ESC. The phase
+    // timer polls the armed state every kFwArmRetryIntervalMs up to kFwArmRetries
+    // (~3 s); an ACCEPTED arm-ACK also advances it via _onCommandResult(). The
+    // throttle override is only issued once armed, so the ESC can never spin
+    // with zero confirmation that the autopilot actually armed.
+    _fwPhase = 1;
+    _fwArmTries = 0;
+    _fwPhaseTimer.start(kFwArmRetryIntervalMs);
+}
+
+void HardwareTestController::_fwBeginSpin()
+{
+    if (_fwTestIndex < 0 || _fwPhase != 1) return;
+
+    // Interlock with the control-surface test controller: never let both bench
+    // tests drive RC_CHANNELS_OVERRIDE on the same link at the same time.
+    if (!RcOverrideInterlock::acquire(QStringLiteral("HardwareTest"))) {
+        const QString otherOwner = RcOverrideInterlock::owner();
+        _fwFinishTest(false,
+            QStringLiteral("Cannot start motor spin: %1 already holds the RC override")
+                .arg(otherOwner.isEmpty() ? QStringLiteral("another test") : otherOwner));
+        return;
+    }
+
+    qCDebug(hardwareTestLog) << "FW motor test: arm confirmed — starting spin phase";
     _fwPhase = 2;
-    _fwSendOverride(pwmUs);
+    _fwSendOverride(_fwTargetPwm);
     _fwOverrideTimer.start(100);
     _fwPhaseTimer.start(_durationSec * 1000);
 }
@@ -778,6 +804,34 @@ void HardwareTestController::_fwAdvancePhase()
     if (_fwTestIndex < 0) return;
 
     switch (_fwPhase) {
+    case 1: { // waiting for arm confirmation — poll armed state, retry up to kFwArmRetries
+        const bool armed = _vehicle && _vehicle->armed();
+        if (armed) {
+            _fwBeginSpin();
+        } else if (_fwArmTries >= kFwArmRetries) {
+            qCWarning(hardwareTestLog) << "FW motor test: no arm confirmation within"
+                                       << (kFwArmRetries * kFwArmRetryIntervalMs) << "ms — aborting";
+            // Safety net: if the autopilot armed despite the polls (delayed ACK),
+            // leave nothing armed behind.
+            if (_vehicle && _vehicle->armed()) {
+                _vehicle->sendMavCommand(
+                    _vehicle->defaultComponentId(),
+                    MAV_CMD_COMPONENT_ARM_DISARM, false,
+                    0.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
+            }
+            _fwPhaseTimer.stop();
+            _fwFinishTest(false,
+                QStringLiteral("No arm confirmation — ESC was never powered on. "
+                               "Check that force-arming is permitted on the autopilot."));
+        } else {
+            ++_fwArmTries;
+            qCDebug(hardwareTestLog) << "FW motor test: awaiting arm confirmation (try"
+                                     << (_fwArmTries + 1) << "of" << kFwArmRetries + 1 << ")";
+            _fwPhaseTimer.start(kFwArmRetryIntervalMs);
+        }
+        break;
+    }
+
     case 2: { // spin duration elapsed — idle the override, disarm, and wait for spin-down
         _fwOverrideTimer.stop();
         _fwSendOverride(1000);
@@ -858,6 +912,7 @@ void HardwareTestController::_fwFinishTest(bool passed, const QString &result)
     _fwArmTries = 0;
 
     _setServoStreaming(false);
+    RcOverrideInterlock::release(QStringLiteral("HardwareTest"));
 }
 
 void HardwareTestController::testMotor(int motorIndex)
@@ -1092,19 +1147,28 @@ void HardwareTestController::_onCommandResult(int vehicleId, int targetComponent
         return;
     }
 
-    // ── Fixed-wing arm denied ────────────────────────────────────────────
-    // If the force-arm command is outright denied (not just temporarily
-    // rejected) while the FW motor is meant to be spinning (phase 2), abort
-    // immediately so the user gets a clear error instead of a silent no-spin.
+    // ── Fixed-wing arm result ────────────────────────────────────────────
+    // If the force-arm command during the FW motor test (phase 1 = waiting for
+    // arm, phase 2 = spinning) is ACKed, skip straight to the spin phase
+    // instead of waiting for the next phase-1 poll.  If it is outright denied,
+    // abort immediately so the user gets a clear error instead of a silent
+    // no-spin (or a 3 s wait for the arm-wait timeout).
     if (command == MAV_CMD_COMPONENT_ARM_DISARM
-            && ackResult == MAV_RESULT_DENIED
-            && _fwTestIndex >= 0 && _fwPhase == 2) {
-        qCWarning(hardwareTestLog) << "FW motor test: arm denied — aborting";
-        _fwPhaseTimer.stop();
-        _fwOverrideTimer.stop();
-        _fwFinishTest(false,
-            QStringLiteral("Arm command denied by autopilot — check pre-arm messages in your GCS"));
-        return;
+            && _fwTestIndex >= 0 && (_fwPhase == 1 || _fwPhase == 2)) {
+        if (ackResult == MAV_RESULT_ACCEPTED) {
+            if (_fwPhase == 1) {
+                _fwBeginSpin();
+            }
+            return;
+        }
+        if (ackResult == MAV_RESULT_DENIED) {
+            qCWarning(hardwareTestLog) << "FW motor test: arm denied — aborting";
+            _fwPhaseTimer.stop();
+            _fwOverrideTimer.stop();
+            _fwFinishTest(false,
+                QStringLiteral("Arm command denied by autopilot — check pre-arm messages in your GCS"));
+            return;
+        }
     }
 
     // Track ACK for feedback-less environments (Mock Link, SITL).  If the
@@ -1198,6 +1262,14 @@ void HardwareTestController::setRcOverrideActive(bool active)
 {
     if (_rcOverrideActive == active)
         return;
+
+    // Interlock with the control-surface test controller when starting the
+    // neutral-hold bench mode, just like the fixed-wing spin path.
+    if (active && !RcOverrideInterlock::acquire(QStringLiteral("HardwareTest"))) {
+        qCWarning(hardwareTestLog) << "Cannot enable RC override hold:"
+                                   << RcOverrideInterlock::owner() << "already holds the RC override";
+        return;
+    }
     _rcOverrideActive = active;
 
     qCDebug(hardwareTestLog) << "RC override" << (active ? "ON — control channels held neutral"
@@ -1211,8 +1283,29 @@ void HardwareTestController::setRcOverrideActive(bool active)
         for (int i = 0; i < 18; ++i)
             release[i] = 65535;
         _sendRawRcOverride(release);
+        RcOverrideInterlock::release(QStringLiteral("HardwareTest"));
     }
     emit rcOverrideActiveChanged();
+}
+
+void HardwareTestController::sendGimbalCommand(double yawDeg, double pitchDeg)
+{
+    if (!_vehicle) {
+        qCWarning(hardwareTestLog) << "sendGimbalCommand: no vehicle connected";
+        return;
+    }
+    // Sanitise the commanded angles: pitch is physically bounded, yaw wraps.
+    const double pitch = qBound(-90.0, pitchDeg, 90.0);
+    const double yaw = qBound(-180.0, std::fmod(std::fmod(yawDeg + 540.0, 360.0) - 180.0, 360.0), 180.0);
+
+    qCDebug(hardwareTestLog) << "Gimbal command: yaw" << yaw << "deg, pitch" << pitch << "deg";
+    _vehicle->sendMavCommand(
+        MAV_COMP_ID_GIMBAL, MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW, true,
+        static_cast<float>(pitch), static_cast<float>(yaw),
+        0.0f, 0.0f,          // zero pitch/yaw rates — jump to angle
+        0.0f,                // flags: absolute angles in vehicle frame
+        0.0f,                // timeout — keep holding the angle
+        0.0f);               // camera id — default
 }
 
 void HardwareTestController::stopAll()
@@ -1246,6 +1339,7 @@ void HardwareTestController::stopAll()
         _activeMotor = -1;
         emit activeMotorChanged();
         _setServoStreaming(false);
+        RcOverrideInterlock::release(QStringLiteral("HardwareTest"));
         return;
     }
 
@@ -1276,6 +1370,18 @@ void HardwareTestController::stopAll()
     }
     _activeMotor = -1;
     emit activeMotorChanged();
+
+    // Bench safety: a stop must leave the vehicle disarmed.  The multirotor
+    // path previously zero-throttled every motor but never disarmed, which left
+    // the motors idling while the vehicle stayed ARMED after a test.  Request a
+    // forced disarm (kLegacyForceArmParam2) so it goes through even if pre-arm
+    // checks would reject a plain disarm.
+    if (_isArmed) {
+        qCDebug(hardwareTestLog) << "STOP ALL — disarming vehicle after motor stop";
+        _vehicle->sendMavCommand(_vehicle->defaultComponentId(),
+                                 MAV_CMD_COMPONENT_ARM_DISARM, false,
+                                 0.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
+    }
 
     _setServoStreaming(false);
 

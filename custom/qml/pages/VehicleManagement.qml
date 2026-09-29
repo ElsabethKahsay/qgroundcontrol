@@ -204,8 +204,8 @@ Page {
                                     height: 34
                                     baseColor: Colors.surface
                                     onClicked: {
-                                        // Show flight sessions for this vehicle
-                                        var sessions = JSON.parse(Database.getFlightSessions(modelData.fingerprint, 10))
+                                        // Show flight sessions for this vehicle (single canonical key: deviceUid)
+                                        var sessions = JSON.parse(Database.getFlightSessions(modelData.deviceUid || modelData.fingerprint, 10))
                                         var msg = "Flight Sessions:\n"
                                         for (var i = 0; i < sessions.length; i++) {
                                             var s = sessions[i]

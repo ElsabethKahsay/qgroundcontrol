@@ -245,12 +245,19 @@ public:
     /// exist (controlled by minSessions parameter).
     struct CalibratedPowerModel {
         double whPerKm = 0.0;
-        double hoverWhPerMin = 0.0;  // estimated from average hover duration
+        double hoverWhPerMin = 0.0;  // measured average energy rate during flight (Wh/min)
+        double payloadIntercept = 0.0; // linear regression whPerKm = intercept + slope * payload
+        double payloadSlope = 0.0;
+        bool hasPayloadModel = false; // true when ≥2 payload-tagged sessions gave a regression
         int dataPointCount = 0;
         bool isCalibrated = false;
     };
     /// Query average energy consumption from the last N completed sessions for a vehicle.
-    CalibratedPowerModel getCalibratedPowerModel(const QString &deviceUid, int minSessions = 5);
+    /// payloadKg lets the model use the per-session payload regression when available.
+    CalibratedPowerModel getCalibratedPowerModel(const QString &deviceUid, double payloadKg,
+                                                 int minSessions = 5);
+    /// Harvest (payloadKg, whPerKm) pairs from recent completed sessions.
+    QVector<QPair<double, double>> getPowerCalibrationHistory(const QString &deviceUid, int limit);
 
     // ── Check config (check-level overrides) ──────────────────────────
     Q_INVOKABLE QString getCheckConfig(const QString &checkId, const QString &key,
@@ -437,6 +444,10 @@ private:
     void walCheckpoint();
     /// Schedules the periodic WAL checkpoint (every 5 minutes).
     void startMaintenanceTimer();
+    /// Debug-asserts that the caller is the main (GUI) thread.  The shared
+    /// QSqlDatabase connection is not thread-safe; crossing threads from a
+    /// background worker corrupts the WAL cache.  No-op in release builds.
+    void assertMainThread() const;
 
     QSqlDatabase m_db;
     bool m_initialized = false;

@@ -862,22 +862,26 @@ Page {
                     radius: Config.radiusMedium
                     border.color: Colors.border
                     border.width: 1
-                    height: surfaceCol.implicitHeight + Config.spacingMedium * 2
+                    implicitHeight: surfaceCol.implicitHeight + Config.spacingMedium * 2
+                    Layout.preferredHeight: Math.min(implicitHeight, 420)
 
-                    ColumnLayout {
-                        id: surfaceCol
-                        anchors {
-                            left: parent.left
-                            right: parent.right
-                            top: parent.top
-                            margins: Config.spacingMedium
-                        }
-                        spacing: Config.spacingSmall
+                    ScrollView {
+                        id: surfaceScroll
+                        anchors.fill: parent
+                        anchors.margins: Config.spacingMedium
+                        clip: true
+                        contentWidth: availableWidth
+                        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
-                        // Header row
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: Config.spacingMedium
+                        ColumnLayout {
+                            id: surfaceCol
+                            width: surfaceScroll.availableWidth
+                            spacing: Config.spacingSmall
+
+                            // Header row
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: Config.spacingMedium
 
                             Text {
                                 text: "\uD83D\uDC49 Control Surface Test"
@@ -904,17 +908,17 @@ Page {
                                         ControlSurfaceTestController.stopAllSurfaces()
                                 }
                             }
-                        }
+                            }
 
-                        // Flight-mode + live feedback status strip
-                        Rectangle {
-                            Layout.fillWidth: true
-                            visible: root._surfaces.length > 0
-                            implicitHeight: 28
-                            radius: Config.radiusSmall
-                            color: Colors.background
-                            border.width: 1
-                            border.color: Colors.borderLight
+                            // Flight-mode + live feedback status strip
+                            Rectangle {
+                                Layout.fillWidth: true
+                                visible: root._surfaces.length > 0
+                                implicitHeight: 28
+                                radius: Config.radiusSmall
+                                color: Colors.background
+                                border.width: 1
+                                border.color: Colors.borderLight
 
                             property string _mode: (typeof ControlSurfaceTestController !== "undefined") ? ControlSurfaceTestController.flightMode : ""
                             property bool _manual: _mode.length === 0
@@ -989,37 +993,37 @@ Page {
                                     color: Colors.textSecondary
                                 }
                             }
-                        }
-
-                        // Armed warning
-                        Rectangle {
-                            Layout.fillWidth: true
-                            visible: root._armed
-                            height: 30
-                            radius: Config.radiusSmall
-                            color: Colors.warning
-                            Text {
-                                anchors.centerIn: parent
-                                text: "Vehicle is ARMED \u2014 disarm before surface sweep"
-                                color: Colors.background
-                                font.pixelSize: Config.fontSizeSmall
-                                font.bold: true
                             }
-                        }
 
-                        // Empty / warning state
-                        Text {
-                            Layout.fillWidth: true
-                            visible: root._surfaces.length === 0
-                            text: "No control surfaces mapped for this airframe."
-                            font.pixelSize: Config.fontSizeBody
-                            color: Colors.textSecondary
-                            horizontalAlignment: Text.AlignHCenter
-                        }
+                            // Armed warning
+                            Rectangle {
+                                Layout.fillWidth: true
+                                visible: root._armed
+                                height: 30
+                                radius: Config.radiusSmall
+                                color: Colors.warning
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "Vehicle is ARMED \u2014 disarm before surface sweep"
+                                    color: Colors.background
+                                    font.pixelSize: Config.fontSizeSmall
+                                    font.bold: true
+                                }
+                            }
 
-                        // Per-surface test rows
-                        Repeater {
-                            model: root._surfaces
+                            // Empty / warning state
+                            Text {
+                                Layout.fillWidth: true
+                                visible: root._surfaces.length === 0
+                                text: "No control surfaces mapped for this airframe."
+                                font.pixelSize: Config.fontSizeBody
+                                color: Colors.textSecondary
+                                horizontalAlignment: Text.AlignHCenter
+                            }
+
+                            // Per-surface test rows
+                            Repeater {
+                                model: root._surfaces
 
                             Rectangle {
                                 id: scard
@@ -1153,6 +1157,7 @@ Page {
                                     }
                                 }
                             }
+                            }
                         }
                     }
                 }
@@ -1175,6 +1180,7 @@ Page {
                         }
                     }
                 }
+
             }
         }
     }

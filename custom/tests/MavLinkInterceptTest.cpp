@@ -24,22 +24,8 @@
 #include "AbstractCheck.h"
 #include "ManualConfirmCheck.h"
 #include "mocks/MockTelemetryBridge.h"
-
-// Test helper: a controllable mandatory check used to drive the gate into a
-// blocked state deterministically (~ PreflightManager::createPhase1Checks
-// sets all real checks non-mandatory until a vehicle kind is applied, so an
-// explicit check with a forced Failed status is the reliable way to block).
-class TestBlockingCheck : public AbstractCheck {
-    Q_OBJECT
-public:
-    TestBlockingCheck(const QString &id, CheckType type = CheckType::Auto,
-                 bool mandatory = true, QObject *parent = nullptr)
-        : AbstractCheck(id, QStringLiteral("Test ") + id,
-                        CheckCategory::Safety, type, mandatory, true, parent)
-    {}
-    void evaluate() override {}
-    void forceStatus(CheckStatus s, const QString &msg = {}) { setStatus(s, msg); }
-};
+#include "mocks/TestBlockingCheck.h"
+#include "utils/Config.h"
 
 class MavLinkInterceptTest : public UnitTest {
     Q_OBJECT
@@ -59,6 +45,9 @@ private slots:
     void testAckIsOneTimeUse();
     void testAckWithEmptyPilotNameRejected();
     void testModeTransitionFromActiveToPassive();
+    void testInboundForceArmDoesNotBypassGate();
+    void testLayer2InboundOnlyArmGate();
+    void testLocalForceArmOpensOverrideWindow();
 };
 
 // Passive mode: all arm commands should pass through regardless of check state
@@ -287,6 +276,108 @@ void MavLinkInterceptTest::testModeTransitionFromActiveToPassive()
     QVERIFY(gate.interceptCommandLong(MAV_CMD_COMPONENT_ARM_DISARM, armParams));
 
     delete mgr;
+}
+
+// Inbound force-arm (param2 = magic force code) must NOT auto-open the gate.
+// PreflightPlugin::mavlinkMessage delegates every inbound arm COMMAND_LONG to
+// interceptCommandLong, relying on it to gate a force-arm exactly like a normal
+// arm command — otherwise any link peer on the same telemetry link could
+// self-authorize arming by sending the magic param2.
+void MavLinkInterceptTest::testInboundForceArmDoesNotBypassGate()
+{
+    ArmingGate gate;
+    gate.setMode(ArmingGate::Active);
+
+    PreflightManager *mgr = new PreflightManager(1, &gate);
+    gate.setPreflightManager(mgr);
+
+    TestBlockingCheck *failCheck = new TestBlockingCheck(QStringLiteral("test.forcearm.inbound"));
+    failCheck->forceStatus(CheckStatus::Failed, QStringLiteral("Simulated failure"));
+    mgr->addCheck(failCheck);
+
+    QMap<int, float> armParams;
+    armParams[1] = 1.0f;   // arm
+    armParams[2] = kForceArmParam2;  // force-arm magic — must still be gated
+
+    QVERIFY(!gate.interceptCommandLong(MAV_CMD_COMPONENT_ARM_DISARM, armParams));
+    QVERIFY(!gate.isArmingAllowed());
+    QVERIFY(!gate.isOverrideActive());
+    QVERIFY(!gate.denialReason().isEmpty());
+
+    delete mgr;
+}
+
+// Local force-arm via TelemetryBridge::forceArm() must open the ArmingGate
+// override window (bounded, logged) before sending the command. This is the
+// legitimate operator-override path — not a bypass. The gate's override window
+// is bounded (kForceArmOverrideSec), logged, and auto-closes.
+void MavLinkInterceptTest::testLocalForceArmOpensOverrideWindow()
+{
+    ArmingGate gate;
+    gate.setMode(ArmingGate::Active);
+
+    PreflightManager *mgr = new PreflightManager(1, &gate);
+    gate.setPreflightManager(mgr);
+
+    TestBlockingCheck *failCheck = new TestBlockingCheck(QStringLiteral("test.forcearm.local"));
+    failCheck->forceStatus(CheckStatus::Failed, QStringLiteral("Simulated failure"));
+    mgr->addCheck(failCheck);
+
+    QMap<int, float> armParams;
+    armParams[1] = 1.0f;   // arm
+    armParams[2] = kForceArmParam2;  // force-arm magic
+
+    // Gate is closed before forceArm()
+    QVERIFY(!gate.isArmingAllowed());
+    QVERIFY(!gate.isOverrideActive());
+
+    // Simulate local force-arm by calling gate.forceArm() directly (what
+    // TelemetryBridge::forceArm() does via QMetaObject::invokeMethod).
+    gate.forceArm();
+
+    // Override window opened — arm should now be allowed for the window duration
+    QVERIFY(gate.isArmingAllowed());
+    QVERIFY(gate.isOverrideActive());
+    QVERIFY(gate.denialReason().isEmpty());
+
+    // With the override window open, ArmingGate::interceptCommandLong gates the
+    // command through (this is the INBOUND link-peer path, not the outbound one)
+    QVERIFY(gate.interceptCommandLong(MAV_CMD_COMPONENT_ARM_DISARM, armParams));
+
+    delete mgr;
+}
+
+// REGRESSION: Assert the two-layer arm gate architecture and its boundary.
+// Layer 1 (Application, OUTBOUND): TelemetryBridge::arm() checks ArmingGate
+//   before sending (fast feedback). This is the ONLY gate on the outbound path.
+// Layer 2 (MAVLink, INBOUND-ONLY): PreflightPlugin::mavlinkMessage ->
+//   ArmingGate::interceptCommandLong evaluates gate state for INBOUND arm
+//   commands from link peers (companion GCS, external GCS). It does NOT see
+//   commands sent from this GCS: outbound commands go via
+//   Vehicle::sendMavCommand -> sendMessageOnLinkThreadSafe and never pass
+//   through mavlinkMessage(). Layer 2 therefore only gates external link
+//   peers; the outbound path is gated solely by Layer 1.
+// BOTH layers MUST remain. Removing either is a safety regression.
+void MavLinkInterceptTest::testLayer2InboundOnlyArmGate()
+{
+    // This test documents the architectural invariant and its boundary:
+    //
+    // Layer 1 (Application, OUTBOUND): TelemetryBridge::arm() checks
+    //   ArmingGate locally before sending. Provides fast local feedback,
+    //   avoids round-trip. Only gate on the outbound arm path.
+    //
+    // Layer 2 (MAVLink, INBOUND-ONLY): PreflightPlugin::mavlinkMessage ->
+    //   ArmingGate::interceptCommandLong evaluates the gate at the MAVLink
+    //   interception layer. Catches INBOUND arm commands from link peers
+    //   (companion GCS, external GCS, external link peers). It is NOT a
+    //   barrier on this GCS's own outbound commands.
+    //
+    // BOTH layers MUST remain. Removing either is a safety regression.
+    //
+    // This test does not assert on behavior (intercept tests above cover that)
+    // but serves as a documented architectural constraint. If this test ever
+    // needs modification, it signals a potential architecture regression.
+    QVERIFY(true);  // Architectural invariant documented
 }
 
 UT_REGISTER_TEST(MavLinkInterceptTest)

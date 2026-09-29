@@ -6,6 +6,14 @@
 
 ---
 
+## 0. Session tracker (append-only)
+
+- **Ship-blocker #2 reopened (2026-09-28).** The stock arm path bypasses the ArmingGate: `GuidedActionsController.qml:636` `_activeVehicle.armed = true` → `Vehicle::setArmedShowError` → `Vehicle::setArmed` → `sendMavCommand(MAV_CMD_COMPONENT_ARM_DISARM)` never consults the gate. Proven live at the wire with the battery check FAILED (gate closed) — vehicle still armed, `cmd 400 result 0` ACKed. Evidence: `build/evidence-live-bypass.txt` (full run), `build/evidence-attribution.txt` (`executeAction(actionArm)` only). Regression test `custom/tests/ArmSendTest.cpp::testStockSetArmedBypassesGate` with `QEXPECT_FAIL(..., Continue)` reproduces as XFAIL (raw output: `build/evidence-armtest-xfail.txt`).
+- **Retracted:** the earlier QML rows marking the FlyView arm path "fixed" are retracted — the UI arm path is ungated.
+- **Relabeled:** `MainStatusIndicatorSmokeTest` (`custom/tests/QmlSmokeTest.cpp`) exercises `custom/qml/MainStatusIndicator.qml`, a custom non-shipping component; it does not prove the stock toolbar/arm path.
+
+---
+
 ## 1. Module Map
 
 ### 1.1 Core Modules (`custom/src/core/`)
@@ -126,12 +134,18 @@ ArmingGate
 
 ### 2.4 Arm/Disarm Command Interception
 
+INBOUND ONLY — this path handles MAVLink messages arriving from link peers
+(companion/external GCS). Outbound commands this GCS sends go through
+`Vehicle::sendMavCommand -> sendMessageOnLinkThreadSafe` and never reach
+`mavlinkMessage()`. The outbound arm path is gated solely by `TelemetryBridge::arm()`.
+
 ```
-MAVLink COMMAND_LONG (MAV_CMD_COMPONENT_ARM_DISARM)
+MAVLink COMMAND_LONG (MAV_CMD_COMPONENT_ARM_DISARM) [INBOUND]
   └─ PreflightPlugin::mavlinkMessage()
        ├─ Check param1=1 (arm request)
        ├─ Check param2=21196 or 2989 (force arm magic values)
-       │   └─ If force arm → ArmingGate::forceArm()
+       │   └─ ArmingGate::interceptCommandLong — an inbound force-arm does NOT
+       │       auto-open the gate (only a local operator override does)
        ├─ If gate closed AND no override → BLOCK message, emit armingDenied()
        └─ If gate open → let message through
 
@@ -164,10 +178,10 @@ ArmingGate::gateClosed
 
 | ID | Risk | Module | Impact | Mitigation Status |
 |----|------|--------|--------|-------------------|
-| **R-01** | **Arming gate bypass via MAVLink force-arm magic values** | `PreflightPlugin.cpp:902` | Motors can spin without preflight checks if magic param2 values (21196, 2989) are sent | Partial: `forceArm()` exists but gate state is not re-checked after force-arm |
-| **R-02** | **ArmingGate override is one-shot but not re-gated** | `ArmingGate.cpp` | `acknowledgeOverride()` allows one arm, then gate re-closes — but if vehicle stays armed, subsequent arm commands pass through without re-evaluation | Gate re-closes after arm, but `isOverrideActive()` check in `mavlinkMessage()` may allow stale override |
-| **R-03** | **No telemetry timeout → stale check data** | `AbstractCheck.cpp:69` | `requiresReevaluation()` only triggers for Auto checks; if telemetry stream stops mid-flight, checks remain in their last status indefinitely | `stale_timeout_ms` config exists but is only checked on re-evaluation cycle, not proactively |
-| **R-04** | **BatteryVoltageCheck cell count estimation** | `BatteryVoltageCheck.cpp:123` | `qRound(voltage / 3.7)` can undercount cells on discharged packs or misidentify voltage (e.g., 14.8V → 4S but could be 3S at high charge) | Mitigated by preferring param_BAT_CELL_COUNT/BATT_CELL_COUNT; fallback is conservative |
+| **R-01** | **Arming gate bypass via MAVLink force-arm magic values** | `PreflightPlugin.cpp:955-970` | Motors can spin without preflight checks if magic param2 values (21196, 2989) are sent | Mitigated: inbound force-arm is routed via `_armingGate->interceptCommandLong()` (PreflightPlugin.cpp:955-970) which never auto-opens the override — only operator override/one-time ACK. `ArmingGate::forceArm()` (ArmingGate.cpp:272-288) opens a bounded 60s window, not a permanent bypass. Covered by `testInboundForceArmDoesNotBypassGate` in `tests/MavLinkInterceptTest.cpp` and wire-level `tests/ArmSendTest.cpp` |
+| **R-02** | **ArmingGate override is one-shot but not re-gated** | `ArmingGate.cpp:106-155` | `acknowledgeOverride()` allows one arm, then gate re-closes — but if vehicle stays armed, subsequent arm commands pass through without re-evaluation | Partially mitigated: `interceptCommandLong` (ArmingGate.cpp:106-155) re-checks `allMandatoryPassed()` on every inbound arm command, and `isOverrideActive()` only passes while the bounded 60s override window is open (`forceArm()`, ArmingGate.cpp:272-288). One-time ACK is consumed once (`m_ackReceived=false`, ArmingGate.cpp:129). Wire-level `tests/ArmSendTest.cpp::testForceArmExpiresThenArmBlocked` verifies the window expires and blocks again |
+| **R-03** | **No telemetry timeout → stale check data** | `AbstractCheck.cpp:59-71` | `requiresReevaluation()` only triggers for Auto checks and returns false for Passed checks; if telemetry stream stops mid-flight a Passed check keeps its last status | Reid at `PreflightManager.cpp:700-724`: `tick()` now PROACTIVELY sweeps mandatory checks each 1000ms eval cycle (`PreflightPlugin.cpp:679`) and sets `CheckStatus::Stale` when last eval > `m_stalenessThresholdMs` (default 10000ms, `PreflightManager.h:217`); stale counts as failed for arming. Remaining gap: sweep covers only MANDATORY checks; non-mandatory Passed checks are not swept |
+| **R-04** | **BatteryVoltageCheck cell count estimation** | `BatteryVoltageCheck.cpp:119-126` | `estimateCellCount()` uses `qRound(voltage / 3.7)` (line 123) and can misidentify cells on discharged/full packs when no battery param is present | Mitigated in `effectiveCellCount()` (`BatteryVoltageCheck.cpp:100-108`): prefers `param_BAT_CELL_COUNT` then `param_BATT_CELL_COUNT`, bounded to 1..16; `estimateCellCount()` fallback is only reached when neither param exists and is itself bounded 1..16 (conservative) |
 | **R-05** | **MotorSpinCheck relies on QML confirm() — no auto-safety** | `MotorSpinCheck.cpp:31-49` | If QML panel crashes or is never opened, check stays Pending forever; no automatic failure after timeout | Manual check by design, but no timeout/fallback path |
 
 ### 3.2 High Risks
@@ -200,14 +214,14 @@ ArmingGate::gateClosed
 - **Testable design**: MockTelemetryBridge (410 lines) provides comprehensive property mocking; existing tests (CheckSmokeTest, ArmingGateTest) demonstrate the pattern
 - **Signal-driven evaluation**: ChecklistEngine uses Qt signals for re-evaluation rather than polling, which is efficient
 - **Configurable thresholds**: `configDouble()`/`configInt()` in AbstractCheck read from DatabaseManager, allowing per-vehicle customization
-- **MAVLink interception**: PreflightPlugin correctly intercepts and blocks arm commands at the message level, not just at the UI level
+- **MAVLink interception (inbound-only)**: PreflightPlugin::mavlinkMessage correctly intercepts and blocks INBOUND arm commands (from companion/external GCS on the link) at the message level. Its scope is strictly inbound: outbound arm commands sent via Vehicle::sendMavCommand -> sendMessageOnLinkThreadSafe never pass through mavlinkMessage(), so the outbound arm path is gated solely by the application-level check in TelemetryBridge::arm() (Layer 1).
 
 ### 4.2 Code Smells / Technical Debt
 
 | Issue | Location | Severity |
 |-------|----------|----------|
 | **Duplicated property names** | `BatteryVoltageCheck.cpp:60-63` reads both `batteryCurrentAmps` and `batteryCurrent` with fallback | Low — defensive but suggests naming inconsistency |
-| **Magic numbers in force-arm** | `PreflightPlugin.cpp:902` — `21196.0f` and `2989.0f` are MAVLink force-arm magic values, hardcoded | Medium — should be named constants |
+| **Magic numbers in force-arm** | `Config.h:195-196` — `kForceArmParam2` (2989) and `kLegacyForceArmParam2` (21196) ARE now named constants; used at PreflightPlugin.cpp:966, TelemetryBridge.cpp, VehicleProfileManager.cpp | Resolved — constants exist; verify all call sites use them (no raw literals) |
 | **QML type checking via string comparison** | `MotorCheckPanel.qml:251` — `typeof ControlSurfaceTestController !== "undefined"` | Low — fragile; should use QML singletons properly |
 | **Config cache is mutable** | `AbstractCheck.cpp:260-291` — `m_configCache` is `mutable` and modified in const methods | Low — works but unconventional |
 | **No enum for check status in QML** | `ArmGateDialog.qml:102-103` — `s === 2 || s === 4` uses magic ints | Medium — should use named enum values |

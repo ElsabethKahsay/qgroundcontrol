@@ -123,8 +123,18 @@ Item {
         id: armGateDialogLoader
         criticalFailCount: _pfm ? _pfm.failedChecks : 0
         manualFailCount: _pfm ? _pfm.pendingChecks : 0
-        onAccepted: {
-            mainWindow.armVehicleRequest()
-        }
+onAccepted: {
+                // Route through the single gate-checked arm path; the dialog only
+                // completes after the operator acknowledged the override (gate open).
+                if (typeof TelemetryProvider !== 'undefined' && TelemetryProvider) {
+                    TelemetryProvider.arm()
+                } else {
+                    // No TelemetryProvider available — cannot arm through gate.
+                    // Do NOT fall back to mainWindow.armVehicleRequest() as that
+                    // bypasses the ArmingGate entirely. The gate is the single
+                    // source of truth; if the provider is unavailable, arm is denied.
+                    qCWarning("preflighttoolbar") << "Arm requested but TelemetryProvider unavailable — arm denied by gate"
+                }
+            }
     }
 }

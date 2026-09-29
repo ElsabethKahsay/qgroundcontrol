@@ -57,6 +57,11 @@ public:
     /// Sends the specified mavlink message to QGC
     void respondWithMavlinkMessage(const mavlink_message_t &msg);
 
+    /// Sets the flight mode by updating the custom mode and sending a HEARTBEAT.
+    /// @param modeName Flight mode name (e.g., "MANUAL", "LOITER", "STABILIZE", "RTL", "AUTO")
+    /// @return true if mode was recognized and set, false otherwise
+    bool setFlightMode(const QString &modeName);
+
     MockLinkFTP *mockLinkFTP() const;
 
     /// Sets a failure mode for unit testingqgcm

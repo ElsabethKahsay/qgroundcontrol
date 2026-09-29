@@ -28,12 +28,13 @@ struct PowerCalibrationPoint {
 
 /// Result of an energy estimate calculation.
 struct PowerEstimate {
-    double whPerKm;          ///< Energy consumption rate (Wh/km) — calibrated or default
-    double rangeKm;          ///< Estimated max range on full battery (km)
-    double flightTimeMin;    ///< Estimated max flight time (minutes)
-    QString sourceLabel;     ///< Human-readable description of the model source
-    int dataPointCount;      ///< Number of flight sessions used for calibration (0 = defaults only)
-    bool isCalibrated;       ///< True if a per-vehicle calibrated model was used
+    double whPerKm = 0.0;        ///< Energy consumption rate (Wh/km) — calibrated or default
+    double hoverWhPerMin = 0.0;  ///< Hover/loiter energy rate (Wh/min) — measured or default
+    double rangeKm = 0.0;        ///< Estimated max range on full battery (km)
+    double flightTimeMin = 0.0;  ///< Estimated max flight time (minutes)
+    QString sourceLabel;         ///< Human-readable description of the model source
+    int dataPointCount = 0;      ///< Number of flight sessions used for calibration (0 = defaults only)
+    bool isCalibrated = false;   ///< True if a per-vehicle calibrated model was used
 };
 
 /**

@@ -1105,50 +1105,63 @@ float TelemetryBridge::parameterValue(const QString& name, float defaultValue) c
     return defaultValue;
 }
 
-/// Send an arm command to the vehicle if the arming gate allows it.
-/// Queries ArmingGate.isArmingAllowed() before sending. If no gate is set,
-/// the command is sent unconditionally. If the gate is closed and no override
-/// is active, the command is silently blocked and a warning is logged.
-void TelemetryBridge::arm() {
-    if (!_vehicle) {
-        qCWarning(telemetryBridgeLog) << "arm(): no vehicle connected";
-        return;
-    }
-
-    // Check arming gate if one is registered.
-    if (_armingGate) {
-        bool allowed = _armingGate->property("armingAllowed").toBool();
-        bool overrideActive = _armingGate->property("overrideActive").toBool();
-        if (!allowed && !overrideActive) {
-            QString reason = _armingGate->property("denialReason").toString();
-            qCWarning(telemetryBridgeLog) << "arm(): BLOCKED by ArmingGate —" << reason;
+/// Send an arm command to the vehicle via MAV_CMD_COMPONENT_ARM_DISARM.
+    /// Checks the ArmingGate locally before sending (fast feedback, no round-trip).
+    /// NOTE: this is the ONLY gate on the outbound arm path; PreflightPlugin's
+    /// mavlinkMessage() intercept handles only INBOUND gateway—it never sees
+    /// commands sent from this GCS.
+    void TelemetryBridge::arm() {
+        if (!_vehicle) {
+            qCWarning(telemetryBridgeLog) << "arm(): no vehicle connected";
             return;
         }
-    }
 
-    qCWarning(telemetryBridgeLog) << "arm(): sending MAV_CMD_COMPONENT_ARM_DISARM";
-    _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
-                             true,   // showError
-                             1.0f);  // param1 = 1 (arm)
-}
+        // Application-level gate check: fast local feedback before round-trip.
+        if (_armingGate) {
+            bool allowed = _armingGate->property("armingAllowed").toBool();
+            bool overrideActive = _armingGate->property("overrideActive").toBool();
+            if (!allowed && !overrideActive) {
+                QString reason = _armingGate->property("denialReason").toString();
+                qCWarning(telemetryBridgeLog) << "arm(): BLOCKED by ArmingGate —" << reason;
+                return;
+            }
+        }
+
+        qCWarning(telemetryBridgeLog) << "arm(): sending MAV_CMD_COMPONENT_ARM_DISARM";
+        _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
+                                 true,   // showError
+                                 1.0f);  // param1 = 1 (arm)
+    }
 
 /// Store a reference to the ArmingGate so arm() can query gate state before sending.
 /// Uses QObject* to avoid circular header dependency; accesses properties dynamically.
 void TelemetryBridge::setArmingGate(QObject* gate) { _armingGate = gate; }
 
-/// Force-arms the vehicle without consulting the ArmingGate or pre-arm checks.
-/// Sends MAV_CMD_COMPONENT_ARM_DISARM with param1=1 (arm) and the ArduPilot
-/// force-arm magic number (param2) accepted by both ArduPilot and PX4 (R11).
+/// Force-arms the vehicle by opening the ArmingGate override window,
+/// then sending MAV_CMD_COMPONENT_ARM_DISARM with param1=1 (arm) and the
+/// ArduPilot force-arm magic number (param2) accepted by both ArduPilot and PX4.
+/// The override window is bounded (kForceArmOverrideSec) and logged.
 void TelemetryBridge::forceArm() {
     if (!_vehicle) {
         qCWarning(telemetryBridgeLog) << "forceArm(): no vehicle connected";
         return;
     }
 
+    // Open the ArmingGate override window (bounded, logged). This is the
+    // only gate relevant to the outbound force-arm path. PreflightPlugin's
+    // mavlinkMessage() intercepts only INBOUND commands from link peers and
+    // does not see this locally-sent command. If no gate is registered, the
+    // command is sent unconditionally (legacy behavior for mock testing).
+    if (_armingGate) {
+        QMetaObject::invokeMethod(_armingGate, "forceArm");
+    } else {
+        qCWarning(telemetryBridgeLog) << "forceArm(): no ArmingGate registered — sending unconditionally";
+    }
+
     qCWarning(telemetryBridgeLog) << "forceArm(): sending MAV_CMD_COMPONENT_ARM_DISARM with force flag";
     _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
-                             true,       // showError
-                             1.0f,       // param1 = 1 (arm)
+                             true,  // showError
+                             1.0f,  // param1 = 1 (arm)
                              kForceArmParam2);
 }
 
@@ -1164,14 +1177,14 @@ void TelemetryBridge::takeoff() {
 
     qCWarning(telemetryBridgeLog) << "takeoff(): sending MAV_CMD_NAV_TAKEOFF";
     _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_NAV_TAKEOFF,
-                             true,       // showError
-                             0.0f,       // param1 = empty
-                             0.0f,       // param2 = empty
-                             0.0f,       // param3 = empty
-                             0.0f,       // param4 = empty
-                             0.0f,       // param5 = empty
-                             0.0f,       // param6 = empty
-                             10.0f);     // param7 = takeoff altitude (m)
+                             true,    // showError
+                             0.0f,    // param1 = empty
+                             0.0f,    // param2 = empty
+                             0.0f,    // param3 = empty
+                             0.0f,    // param4 = empty
+                             0.0f,    // param5 = empty
+                             0.0f,    // param6 = empty
+                             10.0f);  // param7 = takeoff altitude (m)
 }
 
 /// Command the vehicle to Return To Launch. Mirrors stock QGC's own Return
@@ -1190,9 +1203,8 @@ void TelemetryBridge::rtl() {
     }
 
     qCWarning(telemetryBridgeLog) << "rtl(): routing via Vehicle::guidedModeRTL(false)";
-    _vehicle->guidedModeRTL(false);         // smartRTL = false (plain RTL, like stock)
+    _vehicle->guidedModeRTL(false);  // smartRTL = false (plain RTL, like stock)
 }
-
 
 /// Set a parameter value in the local cache and expose it as a dynamic Qt property.
 /// This does NOT send the value to the vehicle — use Vehicle::writeParameter

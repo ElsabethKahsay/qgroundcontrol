@@ -20,6 +20,31 @@ Rectangle {
     readonly property bool _connected: _tel ? _tel.isConnected : false
 
     // ── Status helpers ──
+    // `SOC% · V · A · ~N min` — minutes is a REAL estimate gated by the
+    // same rules the spec table pins: unknown SOC → "?"; no meaningful
+    // draw (< 3 A) or disarmed → "· —" for minutes (never a fake number);
+    // capacity comes from the profile (parallel × cell mAh), never hardcoded.
+    function _capacityAh() {
+        if (typeof VehicleProfileManager === "undefined" || !VehicleProfileManager) return 0
+        var p = VehicleProfileManager.batteryParallelCells
+        var c = VehicleProfileManager.batteryCellMah
+        return (p > 0 && c > 0) ? (p * c / 1000.0) : 0
+    }
+
+    function _minutesString() {
+        if (!_connected) return ""                 // no telemetry → no minutes at all
+        if (!root._isArmed) return ""              // B1: disarmed → "· —"
+        var i = _tel.batteryCurrentSmoothAmps
+        if (i < 3.0) return ""                     // B2: no meaningful draw (< 3 A)
+        var capAh = _capacityAh()
+        if (capAh <= 0) return ""                  // no capacity → no honest minutes
+        var remAh  = capAh * (_tel.batterySocPct / 100.0)
+        if (remAh <= 0) return ""
+        var usableAh = remAh * 0.8                 // B3: 20% reserve
+        var tMin     = (usableAh / i) * 60.0
+        return qsTr(" \u00B7 ~%1 min").arg(Math.max(1, Math.round(tMin)))
+    }
+
     function _batteryValue() {
         if (!_connected) return "—"
         var soc = _tel.batterySocPct
@@ -28,7 +53,9 @@ Rectangle {
         var vStr = v > 0.1 ? v.toFixed(1) + " V" : "—"
         var aStr = _tel.batteryCurrentSmoothAmps > 0 ? _tel.batteryCurrentSmoothAmps.toFixed(1) + " A"
                                                       : (_tel.batteryCurrentAmps > 0 ? _tel.batteryCurrentAmps.toFixed(1) + " A" : "—")
-        return socStr + " \u00B7 " + vStr + " \u00B7 " + aStr
+        var minStr = _minutesString()
+        var untouched = socStr + " \u00B7 " + vStr + " \u00B7 " + aStr
+        return minStr.length > 0 ? untouched + minStr : untouched
     }
 
     function _batteryColor() {

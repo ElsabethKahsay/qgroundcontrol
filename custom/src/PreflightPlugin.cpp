@@ -52,6 +52,7 @@ int qInitResources_qmlcache_VehicleSetupModule();
 #include "adapters/TelemetryBridge.h"
 #include "core/ArmingGate.h"
 #include "core/BatteryHealthCheck.h"
+#include "core/MissionEnergyCheck.h"
 #include "core/ChecklistEngine.h"
 #include "core/ChecklistItemModel.h"
 #include "core/PowerModel.h"
@@ -235,6 +236,13 @@ void PreflightPlugin::init()
     // Register it so it is evaluated like the other checks.
     _preflightManager->addCheck(new BatteryHealthCheck(_vehicleProfileManager, 80.0, 0.5, this));
 
+    // MissionEnergyCheck was compiled but never registered in the roster.  It
+    // needs the PowerModel (line 224) and VehicleProfileManager singletons,
+    // both of which exist now, so register it as a real evaluated check.
+    MissionEnergyCheck *energyCheck = new MissionEnergyCheck(_powerModel, 0.60, this);
+    energyCheck->setVehicleProfileManager(_vehicleProfileManager);
+    _preflightManager->addCheck(energyCheck);
+
     // Keep blocking rules in sync with the resolved vehicle kind (quad vs
     // fixed wing). Fires on connect and whenever the type re-resolves.
     connect(_vehicleProfileManager, &VehicleProfileManager::vehicleTypeResolved,
@@ -361,6 +369,12 @@ QQmlApplicationEngine *PreflightPlugin::createQmlApplicationEngine(QObject *pare
     // NoFlyZoneModelRoles.<Role> for role IDs (see AirspacePage.qml).
     qmlRegisterUncreatableType<NoFlyZoneModel>("com.uav.preflight", 1, 0, "NoFlyZoneModelRoles",
                                                QStringLiteral("NoFlyZoneModelRoles provides NoFlyZoneModel role constants only"));
+    // Register motor-test state enums for QML. QML cannot resolve Q_ENUM
+    // constants through the HardwareTestController context-property instance,
+    // so MotorCheckPanel.qml references HardwareTestControllerRoles.<State>
+    // (Idle/Testing/Pass/Fail/Cooldown), mirroring the NoFlyZoneModelRoles pattern.
+    qmlRegisterUncreatableType<HardwareTestController>("com.uav.preflight", 1, 0, "HardwareTestControllerRoles",
+                                                       QStringLiteral("HardwareTestControllerRoles provides HardwareTestController motor-state constants only"));
     if (_noFlyZoneModel) {
         qmlEngine->rootContext()->setContextProperty(QStringLiteral("NoFlyZoneModel"), _noFlyZoneModel);
     }
@@ -572,9 +586,20 @@ void PreflightPlugin::_onNewVehicleRegistered(int vehicleId)
 void PreflightPlugin::_onGateOpened()
 {
     if (_currentSessionId >= 0) return;
-    QString fp = VehicleRegistry::instance()->currentFingerprint();
-    if (fp.isEmpty()) return;
-    _currentSessionId = DatabaseManager::instance().startFlightSession(fp, QString());
+    // One authoritative session per flight.  The canonical key is the
+    // hardware UID (decimal) resolved exactly as the vehicle registry keys
+    // its rows; fall back to the connection fingerprint for UID-less links.
+    QString key = _vehicleProfileManager->currentDeviceUid();
+    if (key.isEmpty())
+        key = VehicleRegistry::instance()->currentFingerprint();
+    if (key.isEmpty()) return;
+    _currentSessionId = DatabaseManager::instance().startFlightSession(
+        key, _vehicleProfileManager->currentBatterySerial(),
+        _vehicleProfileManager->currentPayloadWeightKg());
+    if (_currentSessionId > 0) {
+        _vehicleProfileManager->setFlightSessionId(_currentSessionId);
+        _currentSessionDeviceUid = key;
+    }
     _sessionStartTime = QDateTime::currentDateTime();
     qCDebug(preflightPluginLog) << "Flight session started:" << _currentSessionId;
 }
@@ -610,7 +635,27 @@ void PreflightPlugin::_onGateClosed(const QString &reason)
 
     DatabaseManager::instance().endFlightSession(_currentSessionId, duration);
     DatabaseManager::instance().incrementBatteryCycle(_currentSessionId);
+
+    // Auto-calibrate the energy model from this flight's measured data: the
+    // session row for _currentSessionDeviceUid now holds energy_consumed_wh,
+    // distance_m and payload_weight_kg, so harvest workable (payload, Wh/km)
+    // points and feed the PowerModel's linear payload model (also revives the
+    // setCalibrationPoints API, which previously had no caller at all).
+    if (!_currentSessionDeviceUid.isEmpty()) {
+        const QVector<QPair<double, double>> history =
+            DatabaseManager::instance().getPowerCalibrationHistory(_currentSessionDeviceUid, 50);
+        if (!history.isEmpty()) {
+            QVector<PowerCalibrationPoint> points;
+            points.reserve(history.size());
+            for (const auto &h : history)
+                points.append(PowerCalibrationPoint{h.first, h.second});
+            _powerModel->setCalibrationPoints(_currentSessionDeviceUid, points);
+        }
+    }
+
     qCDebug(preflightPluginLog) << "Flight session ended:" << _currentSessionId << "duration:" << duration << "s";
+    _vehicleProfileManager->setFlightSessionId(-1);
+    _currentSessionDeviceUid.clear();
     _currentSessionId = -1;
 }
 
@@ -909,19 +954,17 @@ bool PreflightPlugin::mavlinkMessage(Vehicle *vehicle, LinkInterface *link, cons
 
         if (cmd.command == MAV_CMD_COMPONENT_ARM_DISARM) {
             _lastArmDisarmParam = static_cast<int>(cmd.param1);
-            if (cmd.param1 == 1.0f) {
-                // NOTE: an inbound force-arm (param2 == kForceArmParam2 /
-                // kLegacyForceArmParam2) must NOT
-                // auto-open the gate — that would let any link peer (e.g. an
-                // external GCS on the same UDP/telemetry link) self-authorize
-                // arming. Only a local operator action via ArmingGate::forceArm()
-                // opens the gate; inbound force-arms are gated like normal arm
-                // commands below.
-                if (_armingGate && !_armingGate->isArmingAllowed() && !_armingGate->isOverrideActive()) {
-                    QString reason = _armingGate->denialReason();
-                    qWarning().noquote() << QStringLiteral("ArmingGate: BLOCKED incoming COMMAND_LONG arm from compid %1 — %2")
-                        .arg(message.compid).arg(reason);
-                    emit _armingGate->armingDenied(cmd.command, reason);
+            // Single source of truth for arm gating: ArmingGate::interceptCommandLong.
+            // All inbound arm commands (force-arm included) are evaluated there; an
+            // inbound force-arm (param2 == kForceArmParam2/kLegacyForceArmParam2) must
+            // NOT auto-open the gate — ArmingGate only honors a local operator override
+            // or one-time ACK, so any link peer keeps being gated exactly like a normal
+            // arm command (see the force-arm note on ArmingGate::forceArm()).
+            if (_armingGate) {
+                QMap<int, float> params;
+                params.insert(1, cmd.param1);
+                params.insert(2, cmd.param2);
+                if (!_armingGate->interceptCommandLong(cmd.command, params)) {
                     return false;  // Consume the message — vehicle won't see it
                 }
             }
