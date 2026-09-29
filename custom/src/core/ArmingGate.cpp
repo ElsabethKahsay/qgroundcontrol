@@ -259,6 +259,27 @@ void ArmingGate::resetGate()
 // Unconditionally allow arming for a bounded window. Used for emergency
 // overrides: the operator has a kForceArmOverrideSec window to arm, then the
 // gate re-closes and re-evaluates checks. Logs the action for audit trail.
+// Test-only: set a custom override duration in milliseconds for testing
+// override expiration. Keeps the override open for the given window, then the
+// gate re-closes exactly as the timed force-arm path does.
+void ArmingGate::setOverrideDuration(int timeoutMs)
+{
+    m_overrideActive = true;
+    emit overrideActiveChanged(true);
+    emit armingOverrideActivated(QStringLiteral("Test override"), timeoutMs);
+
+    m_denialReason.clear();
+    m_armingAllowed = true;
+    emit armingAllowedChanged(true);
+    emit denialReasonChanged({});
+
+    // Close the window automatically so the gate does not stay open forever.
+    m_overrideTimer->start(timeoutMs);
+}
+
+// Unconditionally allow arming for a bounded window. Used for emergency
+// overrides: the operator has a kForceArmOverrideSec window to arm, then the
+// gate re-closes and re-evaluates checks. Logs the action for audit trail.
 void ArmingGate::forceArm()
 {
     m_overrideActive = true;
