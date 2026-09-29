@@ -1,7 +1,10 @@
 #pragma once
 #include <QObject>
+#include <QPointer>
 #include <QTimer>
 #include <QDateTime>
+
+#include <functional>
 
 #include "utils/Config.h"
 
@@ -82,6 +85,12 @@ public:
     Q_INVOKABLE void resetGate();
     /// Force arming regardless of gate state.
     Q_INVOKABLE void forceArm();
+
+    /// Build a vehicle-level arm interceptor consulting this gate. The returned
+    /// callable takes a QString& denial-reason slot and returns true when arming
+    /// is allowed or an override is active; false otherwise (fail-closed when the
+    /// gate is gone). Installed via Vehicle::setArmCommandInterceptor.
+    std::function<bool(QString&)> makeArmInterceptor() const;
 
     /// Most recent pilot acknowledgment record.
     Acknowledgment lastAcknowledgment() const { return m_lastAck; }

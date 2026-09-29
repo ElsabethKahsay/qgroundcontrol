@@ -88,6 +88,11 @@ public:
     /// Connect to a TelemetryBridge to receive connection/arm state and vehicle parameters.
     void setTelemetryBridge(TelemetryBridge *bridge);
 
+    /// Register the ArmingGate used to open a bounded, logged override window
+    /// before force-arming (the Vehicle-level interceptor vetoes arm sends
+    /// unless the gate allows it or an override is active).
+    void setArmingGate(QObject *gate);
+
     /// Resolve motor count from vehicle parameters (CA_AIRFRAME on PX4,
     /// FRAME_CLASS/FRAME_TYPE on ArduPilot). Falls back to defaultCount.
     static int resolveMotorCount(TelemetryBridge *telemetry, int defaultCount = 4);
@@ -232,6 +237,7 @@ private:
 
 
     TelemetryBridge *m_telemetry = nullptr;
+    QObject *m_armingGate = nullptr;    ///< ArmingGate for force-arm override (set by PreflightPlugin).
     QString m_currentDeviceUid;
     QString m_currentVehicleHistoryJson;
     QString m_batterySerial;

@@ -68,6 +68,11 @@ void ControlSurfaceTestController::setSwapElevonLR(bool swap)
     emit swapElevonLRChanged();
 }
 
+void ControlSurfaceTestController::setArmingGate(QObject *gate)
+{
+    m_armingGate = gate;
+}
+
 void ControlSurfaceTestController::setVehicle(Vehicle *vehicle)
 {
     if (m_vehicle == vehicle) return;
@@ -507,6 +512,13 @@ void ControlSurfaceTestController::_beginSurfaceTest(int idx)
     // reaches the servos.  Already armed → sweep immediately.
     if (m_vehicle && !m_vehicle->armed()) {
         qCWarning(controlSurfaceTestLog) << "Surface test requesting arm before sweep (mode:" << m_flightMode << ")";
+        // Open a bounded, logged gate override first: the Vehicle-level arm
+        // interceptor vetoes any arm send (param1==1) unless the gate allows it.
+        if (m_armingGate) {
+            QMetaObject::invokeMethod(m_armingGate, "forceArm");
+        } else {
+            qCWarning(controlSurfaceTestLog) << "Surface test arm: no ArmingGate registered";
+        }
         m_pendingSurfaceIndex = idx;
         m_vehicle->sendMavCommand(
             m_vehicle->defaultComponentId(),

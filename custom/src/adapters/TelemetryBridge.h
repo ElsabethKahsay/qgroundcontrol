@@ -855,6 +855,11 @@ private:
     /// Wires up all Vehicle signals (armed, flight mode, GPS, FactGroups, etc.).
     void _connectVehicleSignals();
 
+    /// Rebuilds the Vehicle's ARM_DISARM arm interceptor from _armingGate.
+    /// Install is skipped under the unit-test harness so existing direct-arm
+    /// tests are unaffected (they install their own interceptor explicitly).
+    void _installArmInterceptor();
+
     /// Iterates the battery list model and connects Fact signals for primary/secondary batteries.
     void _connectBatteryFacts(QObject* batteryModel);
 

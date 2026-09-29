@@ -18,6 +18,8 @@
 #include <QtPositioning/QGeoCoordinate>
 #include <QtCore/QFile>
 
+#include <functional>
+
 #include "HealthAndArmingCheckReport.h"
 #include "MAVLinkStreamConfig.h"
 #include "QGCMapCircle.h"
@@ -472,6 +474,13 @@ public:
     bool armed              () const{ return _armed; }
     void setArmed           (bool armed, bool showError);
     void setArmedShowError  (bool armed) { setArmed(armed, true); }
+
+    /// Install a callable that is consulted before any MAV_CMD_COMPONENT_ARM_DISARM
+    /// with param1 == 1 is actually sent to the wire. The callable receives a
+    /// QString& denial reason slot and must return true to allow the command or
+    /// false to veto it locally (MAV_RESULT_DENIED is reported, nothing is sent).
+    /// An empty callable restores the stock behavior (no veto).
+    void setArmCommandInterceptor(const std::function<bool(QString&)>& interceptor) { _armCommandInterceptor = interceptor; }
 
     bool flightModeSetAvailable             ();
     QStringList flightModes                 ();
@@ -1078,6 +1087,7 @@ private:
 #endif
 
     bool    _armed = false;         ///< true: vehicle is armed
+    std::function<bool(QString&)> _armCommandInterceptor; ///< optional veto for MAV_CMD_COMPONENT_ARM_DISARM (param1==1)
     uint8_t _base_mode = 0;     ///< base_mode from HEARTBEAT
     uint32_t _custom_mode = 0;  ///< custom_mode from HEARTBEAT
     uint32_t _custom_mode_user_intention = 0;  ///< custom_mode_user_intention from CURRENT_MODE

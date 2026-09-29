@@ -4,10 +4,16 @@
  *        actually send (or suppress) MAV_CMD_COMPONENT_ARM_DISARM over a real
  *        MockLink, using MockLink's received-command counter as the oracle.
  *
- * Three scenarios:
+ * The gate enforcement now lives on the Vehicle (Vehicle::_sendMavCommandWorker
+ * consults the arm interceptor), so each scenario installs the gate's
+ * interceptor on the vehicle explicitly — under the unit-test harness the
+ * PreflightPlugin skips auto-install so direct-arm tests are unaffected.
+ *
+ * Four scenarios:
  *   (a) failing critical check (gate closed) -> arm() sends nothing, vehicle stays disarmed
  *   (b) forceArm() then arm()               -> exactly one arm command, vehicle arms
  *   (c) override expires (setOverrideDuration) -> arm() blocked again, no new command
+ *   (d) stock setArmed path with gate closed -> vetoed: nothing on the wire, not armed
  */
 
 #include <QTest>
@@ -85,6 +91,8 @@ Vehicle* ArmSendTest::_connectPlane()
 // harness used by ArmingFlowIntegrationTest: a mandatory check forced to Failed.
 // The PreflightManager must outlive the gate (the gate's periodic timer queries
 // it), so it is heap-allocated and parented to the gate.
+// Installs the gate's arm interceptor on the connected vehicle so the stock arm
+// path exercises the same veto as live (where PreflightPlugin installs it).
 void ArmSendTest::_makeBlockedGate(ArmingGate &gate, MockTelemetryBridge &bridge)
 {
     gate.setMode(ArmingGate::Active);
@@ -100,6 +108,8 @@ void ArmSendTest::_makeBlockedGate(ArmingGate &gate, MockTelemetryBridge &bridge
 
     QVERIFY(!gate.isArmingAllowed());
     QVERIFY(!gate.isOverrideActive());
+
+    _vehicle->setArmCommandInterceptor(gate.makeArmInterceptor());
 }
 
 // (a) Gate closed -> TelemetryBridge::arm() sends nothing, vehicle stays disarmed.
@@ -211,11 +221,10 @@ void ArmSendTest::testForceArmExpiresThenArmBlocked()
 }
 
 // (d) STOCK arm path (Vehicle::setArmed) with a failing critical check.
-//     The stock path does NOT consult the ArmingGate: it sends the arm command
-//     to the wire and arms the vehicle regardless of the blocked gate. This is
-//     the live bypass captured in build/evidence-live-bypass.txt, so this test
-//     is marked QEXPECT_FAIL(...Continue): it asserts the desired gated
-//     behavior (zero arm commands, disarmed vehicle) and currently fails.
+//     The stock path sends the arm command through Vehicle::_sendMavCommandWorker,
+//     which now consults the installed arm interceptor: with the gate closed the
+//     command is vetoed locally (MAV_RESULT_DENIED), nothing reaches the wire,
+//     and the vehicle stays disarmed. This is the gated behavior.
 void ArmSendTest::testStockSetArmedBypassesGate()
 {
     QVERIFY(_connectPlane());
@@ -239,7 +248,6 @@ void ArmSendTest::testStockSetArmedBypassesGate()
     _vehicle->setArmed(true, false);
     QTest::qWait(500);
 
-    QEXPECT_FAIL("", "live bypass: stock arm path ungated, see evidence-live-bypass.txt", Continue);
     QVERIFY2(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM) == 0 &&
              !_vehicle->armed(),
              qPrintable(QStringLiteral("armCount=%1 armed=%2 usedByUnexpectedGate")

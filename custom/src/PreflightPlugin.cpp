@@ -209,6 +209,10 @@ void PreflightPlugin::init()
 
     _hardwareTestController = new HardwareTestController(this);
     _controlSurfaceTestController = new ControlSurfaceTestController(this);
+    // Bench-test controllers open a bounded, logged gate override before their
+    // sanctioned arm commands; hand them the same gate as the telemetry bridge.
+    _hardwareTestController->setArmingGate(_armingGate);
+    _controlSurfaceTestController->setArmingGate(_armingGate);
 
     // The NoFlyZoneModel constructor reloads zones from the database, so the
     // DB must be initialized before the model is created or the dropdown will
@@ -230,6 +234,7 @@ void PreflightPlugin::init()
 
     _vehicleProfileManager = new VehicleProfileManager(this);
     _vehicleProfileManager->setTelemetryBridge(_telemetryBridge);
+    _vehicleProfileManager->setArmingGate(_armingGate);
 
     // BatteryHealthCheck needs the VehicleProfileManager singleton (capacity
     // retention / voltage sag tracking from DB history), which only exists now.

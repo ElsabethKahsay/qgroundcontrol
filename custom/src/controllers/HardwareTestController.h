@@ -147,6 +147,11 @@ public:
     /// Bind this controller to a vehicle and resolve motor count from parameters.
     void setVehicle(Vehicle *vehicle);
 
+    /// Register the ArmingGate so bench-test arm commands can open a bounded,
+    /// logged override window first (the Vehicle-level arm interceptor vetoes
+    /// arm sends unless the gate allows it or an override is active).
+    void setArmingGate(QObject *gate);
+
     /// Determine motor count from vehicle parameters (PX4 CA_AIRFRAME / ArduPilot FRAME_CLASS)
     /// or fall back to HEARTBEAT type.  Also detects VTOL mode.
     void resolveMotorCount();
@@ -372,6 +377,7 @@ private:
     void _startMotorTestInternal(int motorIndex);
 
     Vehicle *_vehicle = nullptr;
+    QObject *_armingGate = nullptr;   /// ArmingGate for arm-command override (set by PreflightPlugin)
 
     int _motorCount = 0;            /// Total number of motor/servo outputs detected from parameters
     QVector<MotorState> _state;     /// Per-motor state array (indexed 0-based; QML uses 1-based)

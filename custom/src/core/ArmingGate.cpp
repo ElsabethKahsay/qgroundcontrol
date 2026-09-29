@@ -298,6 +298,31 @@ void ArmingGate::forceArm()
     m_overrideTimer->start(kForceArmOverrideSec * 1000);
 }
 
+// Build a vehicle-level arm interceptor that consults this gate. The returned
+// callable allows arming only when the gate allows it or an override window is
+// open; it fills the denial reason otherwise and fails closed if the gate has
+// been destroyed. The Vehicle stores no reference to the gate itself, only to
+// this callable, so no extra coupling is introduced.
+std::function<bool(QString&)> ArmingGate::makeArmInterceptor() const
+{
+    QPointer<const ArmingGate> guard(this);
+    return [guard](QString &denialReason) -> bool {
+        if (!guard) {
+            denialReason = QStringLiteral("Arming gate unavailable (fail-closed)");
+            return false;
+        }
+        if (guard->isArmingAllowed() || guard->isOverrideActive()) {
+            denialReason.clear();
+            return true;
+        }
+        denialReason = guard->denialReason();
+        if (denialReason.isEmpty()) {
+            denialReason = QStringLiteral("Arming denied by preflight gate");
+        }
+        return false;
+    };
+}
+
 // React to a check failure signal from PreflightManager.
 // In Passive mode, failures are logged but do not block arming.
 void ArmingGate::onCheckFailed(const QString &checkId, const QString &reason)

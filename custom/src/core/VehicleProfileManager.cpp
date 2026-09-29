@@ -115,6 +115,11 @@ QString VehicleProfileManager::kindString(VehicleKind kind)
 }
 
 /// Swap the telemetry bridge, reconnecting signals for connection and arm state.
+void VehicleProfileManager::setArmingGate(QObject *gate)
+{
+    m_armingGate = gate;
+}
+
 void VehicleProfileManager::setTelemetryBridge(TelemetryBridge *bridge)
 {
     if (m_telemetry == bridge) return;
@@ -625,6 +630,14 @@ void VehicleProfileManager::forceArm()
     Vehicle *vehicle = MultiVehicleManager::instance() ? MultiVehicleManager::instance()->activeVehicle() : nullptr;
     if (vehicle) {
         qInfo() << "VehicleProfileManager: Force arming vehicle";
+        // Open a bounded, logged override window on the ArmingGate first: the
+        // Vehicle-level interceptor vetoes MAV_CMD_COMPONENT_ARM_DISARM (param1==1)
+        // outbound consumes the gate, so a sanctioned force-arm must open the gate.
+        if (m_armingGate) {
+            QMetaObject::invokeMethod(m_armingGate, "forceArm");
+        } else {
+            qWarning().noquote() << "VehicleProfileManager::forceArm: no ArmingGate registered";
+        }
         vehicle->forceArm();
     }
 }
@@ -641,7 +654,11 @@ void VehicleProfileManager::disarmVehicle(bool force)
                                    0.0f,    // 0.0 = disarm
                                    kForceArmParam2); // force bypass (R11)
         } else {
-            vehicle->setArmedShowError(true);
+            // Disarm, not arm. Prior code erroneously passed `true` which
+            // requested arming from a "disarm" entry point and, with the new
+            // Vehicle-level arm interceptor in place, would additionally be
+            // vetoed by the gate.
+            vehicle->setArmedShowError(false);
         }
     }
 }

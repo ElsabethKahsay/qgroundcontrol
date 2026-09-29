@@ -58,6 +58,11 @@ public:
 
     void setVehicle(Vehicle *vehicle);
 
+    /// Register the ArmingGate so the pre-sweep arm can open a bounded, logged
+    /// override window first (the Vehicle-level arm interceptor vetoes arm
+    /// sends unless the gate allows it or an override is active).
+    void setArmingGate(QObject *gate);
+
     QVariantList surfaces() const;
     int activeSurface() const { return m_activeSurface; }
     QVariantList surfaceStates() const;
@@ -168,6 +173,7 @@ private:
     int _readServoParam(const QString &prefix, const QString &suffix, int fallback) const;
 
     Vehicle *m_vehicle = nullptr;
+    QObject *m_armingGate = nullptr;    /// ArmingGate for arm-command override (set by PreflightPlugin)
     QVector<ControlSurface> m_surfaceList;
     QVector<SurfaceState> m_states;
     int m_activeSurface = -1;

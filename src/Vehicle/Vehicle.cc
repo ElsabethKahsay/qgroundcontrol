@@ -2637,6 +2637,28 @@ void Vehicle::_sendMavCommandWorker(
     MAV_FRAME   frame, 
     float param1, float param2, float param3, float param4, double param5, double param6, float param7)
 {
+    // Preflight arming gate: veto ARM_DISARM (param1==1) locally before it can
+    // reach the wire. Sanctioned arm paths (forceArm, dispatch override) open a
+    // bounded, logged gate override first so the interceptor allows them.
+    if (command == MAV_CMD_COMPONENT_ARM_DISARM && qFuzzyCompare(param1, 1.0f) && _armCommandInterceptor) {
+        QString denialReason;
+        if (!_armCommandInterceptor(denialReason)) {
+            qCDebug(VehicleLog) << "Arm command vetoed by arming gate:" << denialReason;
+
+            if (ackHandlerInfo && ackHandlerInfo->resultHandler) {
+                mavlink_command_ack_t ack = {};
+                ack.result = MAV_RESULT_DENIED;
+                (*ackHandlerInfo->resultHandler)(ackHandlerInfo->resultHandlerData, targetCompId, ack, MavCmdResultCommandResultOnly);
+            } else {
+                emit mavCommandResult(_id, targetCompId, command, MAV_RESULT_DENIED, MavCmdResultCommandResultOnly);
+            }
+            if (showError) {
+                qgcApp()->showAppMessage(tr("Unable to arm: %1.").arg(denialReason));
+            }
+            return;
+        }
+    }
+
     // We can't send commands to compIdAll using this method. The reason being that we would get responses back possibly from multiple components
     // which this code can't handle.
     // We also can't send the majority of commands again if we are already waiting for a response from that same command. If we did that we would not be able to discern

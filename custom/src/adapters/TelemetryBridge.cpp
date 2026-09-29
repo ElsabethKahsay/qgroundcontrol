@@ -28,6 +28,7 @@
 #include "Vehicle/FactGroups/VehicleWindFactGroup.h"
 #include "Vehicle/Vehicle.h"
 #include "core/ParameterWatchlist.h"
+#include "core/ArmingGate.h"
 #include "utils/Config.h"
 
 /// Logging category for TelemetryBridge debug/warning output.
@@ -61,6 +62,10 @@ void TelemetryBridge::setVehicle(Vehicle* vehicle) {
     }
 
     _vehicle = vehicle;
+
+    // Reinstall the arm interceptor for the new vehicle (last-writer-wins).
+    // Skipped in unit tests; ArmSendTest installs its own interceptor directly.
+    _installArmInterceptor();
 
     // Battery data is per-vehicle; reset SOC / EMA / freshness when switching.
     _batterySocPct = -1;
@@ -1106,36 +1111,54 @@ float TelemetryBridge::parameterValue(const QString& name, float defaultValue) c
 }
 
 /// Send an arm command to the vehicle via MAV_CMD_COMPONENT_ARM_DISARM.
-    /// Checks the ArmingGate locally before sending (fast feedback, no round-trip).
-    /// NOTE: this is the ONLY gate on the outbound arm path; PreflightPlugin's
-    /// mavlinkMessage() intercept handles only INBOUND gateway—it never sees
-    /// commands sent from this GCS.
-    void TelemetryBridge::arm() {
-        if (!_vehicle) {
-            qCWarning(telemetryBridgeLog) << "arm(): no vehicle connected";
-            return;
-        }
-
-        // Application-level gate check: fast local feedback before round-trip.
-        if (_armingGate) {
-            bool allowed = _armingGate->property("armingAllowed").toBool();
-            bool overrideActive = _armingGate->property("overrideActive").toBool();
-            if (!allowed && !overrideActive) {
-                QString reason = _armingGate->property("denialReason").toString();
-                qCWarning(telemetryBridgeLog) << "arm(): BLOCKED by ArmingGate —" << reason;
-                return;
-            }
-        }
-
-        qCWarning(telemetryBridgeLog) << "arm(): sending MAV_CMD_COMPONENT_ARM_DISARM";
-        _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
-                                 true,   // showError
-                                 1.0f);  // param1 = 1 (arm)
+/// The application-level gate lives on the Vehicle itself: Vehicle::_sendMavCommandWorker
+/// consults the arm interceptor installed from this bridge's ArmingGate, so any
+/// outbound ARM_DISARM (param1==1) is vetoed locally when the gate is closed.
+/// This call is therefore gate-agnostic: gate state is enforced downstream.
+void TelemetryBridge::arm()
+{
+    if (!_vehicle) {
+        qCWarning(telemetryBridgeLog) << "arm(): no vehicle connected";
+        return;
     }
 
-/// Store a reference to the ArmingGate so arm() can query gate state before sending.
-/// Uses QObject* to avoid circular header dependency; accesses properties dynamically.
-void TelemetryBridge::setArmingGate(QObject* gate) { _armingGate = gate; }
+    qCWarning(telemetryBridgeLog) << "arm(): sending MAV_CMD_COMPONENT_ARM_DISARM";
+    _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
+                             true,   // showError
+                             1.0f);  // param1 = 1 (arm)
+}
+
+/// Store a reference to the ArmingGate so arm vetoes consult the right gate,
+/// and reinstall the vehicle's arm interceptor (last-writer-wins). Uses QObject*
+/// to avoid circular header dependency; accesses properties dynamically.
+void TelemetryBridge::setArmingGate(QObject* gate) {
+    _armingGate = gate;
+    _installArmInterceptor();
+}
+
+/// Rebuilds the Vehicle's MAV_CMD_COMPONENT_ARM_DISARM arm interceptor from the
+/// current _armingGate. No gate => no interceptor => stock behavior. Under the
+/// unit-test harness this is skipped entirely: the PreflightPlugin still runs
+/// there and would otherwise stick a gate predicate onto every mock vehicle and
+/// veto the direct arm() calls used by HardwareTestControllerTest /
+/// ControlSurfaceTestControllerTest / QmlSmokeTest. Those tests therefore see no
+/// interceptor unless they install one themselves (as ArmSendTest does).
+void TelemetryBridge::_installArmInterceptor() {
+    if (!_vehicle) {
+        return;
+    }
+    if (qgcApp()->runningUnitTests()) {
+        return;
+    }
+    if (_armingGate) {
+        auto* gate = qobject_cast<ArmingGate*>(_armingGate);
+        if (gate) {
+            _vehicle->setArmCommandInterceptor(gate->makeArmInterceptor());
+            return;
+        }
+    }
+    _vehicle->setArmCommandInterceptor({});
+}
 
 /// Force-arms the vehicle by opening the ArmingGate override window,
 /// then sending MAV_CMD_COMPONENT_ARM_DISARM with param1=1 (arm) and the

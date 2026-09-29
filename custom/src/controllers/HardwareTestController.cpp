@@ -62,6 +62,11 @@ HardwareTestController::HardwareTestController(QObject *parent)
 /// Binds this controller to a vehicle.  Disconnects from any previous vehicle,
 /// connects signals (mavCommandResult, mavlinkMessageReceived, armedChanged),
 /// and kicks off parameter loading / motor-count resolution.
+void HardwareTestController::setArmingGate(QObject *gate)
+{
+    _armingGate = gate;
+}
+
 void HardwareTestController::setVehicle(Vehicle *vehicle)
 {
     // Safety: if we are swapping to a DIFFERENT vehicle (or the old one was
@@ -745,6 +750,13 @@ void HardwareTestController::_startFixedWingMotorTest(int idx)
 
     // Force-ARM the vehicle (param1=1.0). Plane bench tests need the ESC to
     // respond to the throttle channel; param2=kLegacyForceArmParam2 bypasses the pre-arm checks.
+    // Open a bounded, logged gate override first: the Vehicle-level arm
+    // interceptor vetoes any arm send (param1==1) unless the gate allows it.
+    if (_armingGate) {
+        QMetaObject::invokeMethod(_armingGate, "forceArm");
+    } else {
+        qCWarning(hardwareTestLog) << "FW motor test arm: no ArmingGate registered";
+    }
     _vehicle->sendMavCommand(
         _vehicle->defaultComponentId(),
         MAV_CMD_COMPONENT_ARM_DISARM, false,
