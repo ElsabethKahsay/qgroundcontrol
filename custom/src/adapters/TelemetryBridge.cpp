@@ -1278,28 +1278,6 @@ void TelemetryBridge::forceArm() {
                              kForceArmParam2);
 }
 
-/// Command an automatic takeoff to the stock-equivalent altitude. Sends
-/// MAV_CMD_NAV_TAKEOFF, the same MAV_CMD the stock ToolStrip takeoff button
-/// issues (custom-column clone, mirroring the proven forceArm contract).
-/// Requires: vehicle connected, armed, GPS 3D-fix, on-ground, mode allows it.
-void TelemetryBridge::takeoff() {
-    if (!_vehicle) {
-        qCWarning(telemetryBridgeLog) << "takeoff(): no vehicle connected";
-        return;
-    }
-
-    qCWarning(telemetryBridgeLog) << "takeoff(): sending MAV_CMD_NAV_TAKEOFF";
-    _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_NAV_TAKEOFF,
-                             true,    // showError
-                             0.0f,    // param1 = empty
-                             0.0f,    // param2 = empty
-                             0.0f,    // param3 = empty
-                             0.0f,    // param4 = empty
-                             0.0f,    // param5 = empty
-                             0.0f,    // param6 = empty
-                             10.0f);  // param7 = takeoff altitude (m)
-}
-
 /// Command the vehicle to Return To Launch. THE single RTL code path for the
 /// custom layer (RC-primary quad/FW spec): monitoring/backstop authority, never
 /// a duplicate of RC RTL. Mirrors stock QGC's own Return button contract

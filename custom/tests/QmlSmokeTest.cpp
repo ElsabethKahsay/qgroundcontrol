@@ -663,6 +663,7 @@ private slots:
     void testLoadsCustomComponent();
     void testReturnWiredToSingleFunction();
     void testOldRtlEntryRemoved();
+    void testTakeoffRemoved();
 
 private:
     QSharedPointer<QQmlApplicationEngine> _engine;
@@ -765,6 +766,31 @@ void FlyQuickActionsSmokeTest::testOldRtlEntryRemoved()
     QVERIFY2(hasInvokable(tp, "returnToLaunch"), "TelemetryProvider.returnToLaunch missing");
     QVERIFY2(hasInvokable(tp, "distanceToHome"), "TelemetryProvider.distanceToHome missing");
     QVERIFY2(!hasInvokable(tp, "rtl"), "legacy TelemetryProvider.rtl still exposed");
+}
+
+void FlyQuickActionsSmokeTest::testTakeoffRemoved()
+{
+    _loadComponent();
+
+    // Phase 2: pure deletion of GCS-commanded takeoff from the default Fly view.
+    // TelemetryProvider must not expose takeoff() anymore (stock ToolStrip keeps
+    // its own takeoff; the custom column is RC-primary).
+    const QVariant tpVar = _engine->rootContext()->contextProperty(QStringLiteral("TelemetryProvider"));
+    QObject *tp = tpVar.value<QObject *>();
+    QVERIFY2(tp, "TelemetryProvider context property missing");
+    QVERIFY2(!hasInvokable(tp, "takeoff"), "TelemetryProvider.takeoff still exposed");
+
+    QVERIFY2(!findItemByText(_root.data(), QStringLiteral("Takeoff")),
+             "Takeoff QuickButton must be absent from the default Fly view");
+
+    QFile f(_filePath);
+    QVERIFY2(f.open(QIODevice::ReadOnly), "cannot read FlyQuickActions.qml");
+    const QString qml = QString::fromUtf8(f.readAll());
+    f.close();
+    QVERIFY2(!qml.contains(QStringLiteral("TelemetryProvider.takeoff(")),
+             "no takeoff call may remain in the QML");
+    QVERIFY2(!qml.contains(QStringLiteral("action:    \"takeoff\"")),
+             "no takeoff action wiring may remain in the QML");
 }
 
 UT_REGISTER_TEST(MotorCheckPanelSmokeTest)

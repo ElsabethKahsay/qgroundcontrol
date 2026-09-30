@@ -23,8 +23,6 @@ Item {
     property string checkedAction: ""
     /// True while a vehicle is connected; disables non-force-arm buttons.
     property bool hasVehicle: false
-    /// True while the vehicle supports takeoff and is on the ground (kept for compat).
-    property bool takeoffEnabled: false
 
     signal actionTriggered(string action)
 
@@ -251,27 +249,7 @@ Item {
             enabled:   root.hasVehicle && root._isArmed
         }
 
-        // 7b. Takeoff — enabled when armed AND GPS 3D-fix (same gates QGC's
-        //     stock ToolStrip takeoff uses). Why-disabled tooltip:
-        //     hasVehicle → armed → GPS 3D-fix, first failure reported.
-        QuickButton {
-            id:        takeoffBtn
-            action:    "takeoff"
-            glyph:     "\u2191\uFE0F"
-            label:     qsTr("Takeoff")
-            tooltip:   root.hasVehicle
-                       ? (root._isArmed
-                          ? (TelemetryProvider.gpsFixType >= 3
-                             ? qsTr("Command automatic takeoff to 10 m")
-                             : qsTr("Disabled \u2014 no GPS 3D-fix yet"))
-                          : qsTr("Disabled \u2014 arm the vehicle first"))
-                       : qsTr("Disabled \u2014 connect a vehicle first")
-            isDanger:  false
-            isChecked: false
-            enabled:   root.hasVehicle && root._isArmed && (TelemetryProvider.gpsFixType >= 3)
-        }
-
-        // 7c. Return To Launch — MONITORING backstop (RC-primary spec). Available
+        // 7b. Return To Launch — MONITORING backstop (RC-primary spec). Available
         // on connection state alone: no arming/preflight gating, so it works in
         // exactly the situations where something else is already going wrong.
         QuickButton {
@@ -734,8 +712,6 @@ Item {
         function onActionTriggered(action) {
             if (action === "forceArm") {
                 forceArmDialog.open()
-            } else if (action === "takeoff") {
-                TelemetryProvider.takeoff()
             } else if (action === "rtl") {
                 // Two-step: confirm in flight context before commanding.
                 rtlConfirmDialog.open()

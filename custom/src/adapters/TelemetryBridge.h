@@ -719,10 +719,6 @@ public:
     /// check results are bypassed. Use with caution.
     Q_INVOKABLE void forceArm();
 
-    /// Take off from the current position. Sends MAV_CMD_NAV_TAKEOFF. Mirrors
-    /// the forceArm() guard: safe for feedback-bypass use in the custom layer.
-    Q_INVOKABLE void takeoff();
-
     /// Return to launch. THE single RTL entry point for the custom layer
     /// (RC-primary quad/FW spec: monitoring/backstop authority, never a duplicate
     /// of RC RTL). Fork-native ArduPilot path (Track B): the stock plugins are

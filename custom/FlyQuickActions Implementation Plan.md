@@ -138,7 +138,7 @@ sandbox (`unshare -rn … ip link set lo up … --live-arm`).
   FlyQuickActionsSmokeTest Totals: 5 passed, 0 failed (tests the same productMark sentinel)
   ```
 
-### Phase 2 — Remove Takeoff from default FlyView (pure deletion)
+### Phase 2 — Remove Takeoff from default FlyView (pure deletion) — DONE
 
 5. Delete the Takeoff QuickButton block and the `takeoff` branch in
    `onActionTriggered` (FlyQuickActions.qml:251-266, 587-588). Remove
@@ -146,6 +146,21 @@ sandbox (`unshare -rn … ip link set lo up … --live-arm`).
    .cpp:1195-1211). Do NOT build a gated autonomous version (Open Question).
 6. Sentinel check as above (verify no `takeoff` reference remains reachable and
    the app builds + QML smoke green).
+
+**Landed (Oct 1 2026):** Takeoff QuickButton (`takeoffBtn`), the `action ===
+"takeoff"` branch, the dead `takeoffEnabled` compat property, and
+`TelemetryBridge::takeoff()` (decl + impl) all removed. Stock ToolStrip takeoff
+is untouched (RC-primary spec). New `testTakeoffRemoved()` asserts
+`TelemetryProvider.takeoff` is no longer exposed, no "Takeoff" item exists in the
+loaded root, and no `TelemetryProvider.takeoff(`/`action: "takeoff"` wiring
+remains.
+```
+FlyQuickActionsSmokeTest Totals: 6 passed, 0 failed   (new testTakeoffRemoved PASS)
+TelemetryBridgeTest       Totals: 7 passed, 0 failed
+ReturnToLaunchTest        Totals: 9 passed, 0 failed
+ArmSendTest               Totals: 9 passed, 0 failed
+ArmingFlowIntegrationTest Totals: 11 passed, 0 failed
+```
 
 ### Phase 3 — Converge force-arm callers on the funnel (prereq for bench panel)
 
