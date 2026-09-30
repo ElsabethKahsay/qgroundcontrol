@@ -14,6 +14,10 @@
  *   (b) forceArm() then arm()               -> exactly one arm command, vehicle arms
  *   (c) override expires (setOverrideDuration) -> arm() blocked again, no new command
  *   (d) stock setArmed path with gate closed -> vetoed: nothing on the wire, not armed
+ *   (e) no interceptor installed (no-op)    -> stock setArmed arm is untouched: exactly one
+ *                                              command with param1=1, vehicle arms
+ *   (f) disarm(false) path does not arm     -> VehicleProfileManager::disarmVehicle(false)
+ *                                              sends param1=0 (disarm), never an arm payload
  */
 
 #include <QTest>
@@ -28,6 +32,7 @@
 #include "TelemetryBridge.h"
 #include "mocks/MockTelemetryBridge.h"
 #include "MultiVehicleManager.h"
+#include "VehicleProfileManager.h"
 #include "Vehicle/Vehicle.h"
 #include "Comms/MAVLinkProtocol.h"
 #include "Comms/MockLink/MockLink.h"
@@ -56,6 +61,8 @@ private slots:
     void testForceArmThenArmSendsOne();
     void testForceArmExpiresThenArmBlocked();
     void testStockSetArmedBypassesGate();
+    void testNoInterceptorStockBehaviorUnchanged();
+    void testDisarmSendsDisarmNotArm();
 
 private:
     bool _pumpUntil(bool (*cond)(void* ctx), void* ctx, int timeoutMs);
@@ -253,6 +260,56 @@ void ArmSendTest::testStockSetArmedBypassesGate()
              qPrintable(QStringLiteral("armCount=%1 armed=%2 usedByUnexpectedGate")
                             .arg(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM))
                             .arg(_vehicle->armed() ? "true" : "false")));
+}
+
+// (e) NO interceptor installed: the stock arm path must be byte-for-byte identical
+//     to upstream QGC. This is the fail-open baseline that proves the veto only
+//     exists when an interceptor is installed (no-op case).
+void ArmSendTest::testNoInterceptorStockBehaviorUnchanged()
+{
+    QVERIFY(_connectPlane());
+    QVERIFY(!_vehicle->armed());
+
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    bridge.setVehicle(_vehicle);
+
+    // Deliberately do NOT install any interceptor: this is the no-op case.
+    _mockLink->clearReceivedMavCommandCounts();
+
+    _vehicle->setArmed(true, false);
+    QVERIFY(_pumpUntil([](void* ctx) {
+        MockLink* link = static_cast<MockLink*>(ctx);
+        return link->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM) >= 1;
+    }, _mockLink, 10000));
+
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 1);
+    QCOMPARE(_mockLink->lastArmDisarmParam1(), 1.0f);
+
+    QVERIFY(_pumpUntil([](void* ctx) {
+        return static_cast<Vehicle*>(ctx)->armed();
+    }, _vehicle, 10000));
+    QVERIFY(_vehicle->armed());
+}
+
+// (f) disarmVehicle(false) must send a disarm (param1=0), never an arm payload.
+//     Regression for the latent arm-via-disarm bug (disarmVehicle(false) used to
+//     call setArmedShowError(true)).
+void ArmSendTest::testDisarmSendsDisarmNotArm()
+{
+    QVERIFY(_connectPlane());
+    QVERIFY(!_vehicle->armed());
+
+    VehicleProfileManager vpm;
+    _mockLink->clearReceivedMavCommandCounts();
+
+    vpm.disarmVehicle(false);
+    QTest::qWait(500);
+
+    QVERIFY(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM) >= 1);
+    QCOMPARE(_mockLink->lastArmDisarmParam1(), 0.0f);
+    QVERIFY(!_vehicle->armed());
 }
 
 UT_REGISTER_TEST(ArmSendTest)

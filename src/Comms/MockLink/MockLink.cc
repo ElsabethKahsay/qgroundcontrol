@@ -1132,6 +1132,7 @@ void MockLink::_handleCommandLong(const mavlink_message_t &msg)
 
     switch (request.command) {
     case MAV_CMD_COMPONENT_ARM_DISARM:
+        _lastArmDisarmParam1 = request.param1;
         if (request.param1 == 0.0f) {
             _mavBaseMode &= ~MAV_MODE_FLAG_SAFETY_ARMED;
         } else {
