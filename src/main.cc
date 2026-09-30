@@ -40,6 +40,10 @@
     #include "UnitTestList.h"
 #endif
 
+#ifdef QT_DEBUG
+    #include "LiveArmDriver.h"
+#endif
+
 #ifdef Q_OS_WIN
 
 #include <crtdbg.h>
@@ -74,6 +78,7 @@ int main(int argc, char *argv[])
 {
     bool runUnitTests = false;
     bool simpleBootTest = false;
+    bool liveArmDriver = false;       // --live-arm (debug builds): drive real production arm path live
     QString systemIdStr = QString();
     bool hasSystemId = false;
     bool bypassRunGuard = false;
@@ -88,6 +93,7 @@ int main(int argc, char *argv[])
         { "--unittest-stress",      &stressUnitTests,       &unitTestOptions },
         { "--no-windows-assert-ui", &quietWindowsAsserts,   nullptr },
         { "--allow-multiple",       &bypassRunGuard,        nullptr },
+        { "--live-arm",             &liveArmDriver,         nullptr },
 #endif
         { "--system-id",            &hasSystemId,           &systemIdStr },
         { "--simple-boot-test",     &simpleBootTest,        nullptr },
@@ -115,7 +121,14 @@ int main(int argc, char *argv[])
 
 #ifdef Q_OS_LINUX
 #ifndef Q_OS_ANDROID
-    if (getuid() == 0) {
+    // --live-arm is a debug-only hook meant to run inside a loopback-only user
+    // namespace sandbox, where the process legitimately appears as uid 0.
+    // Allow it past the root guard (all other paths still refuse root).
+    if (getuid() == 0
+#ifdef QT_DEBUG
+        && !liveArmDriver
+#endif
+    ) {
         QApplication errorApp(argc, argv);
         QMessageBox::critical(nullptr, QObject::tr("Error"),
             QObject::tr("You are running %1 as root. "
@@ -161,6 +174,12 @@ int main(int argc, char *argv[])
 #ifdef QT_DEBUG
     if (stressUnitTests) {
         runUnitTests = true;
+    }
+    if (liveArmDriver) {
+        // --live-arm drives the REAL production boot; it must not enter the
+        // unit-test path (whose runningUnitTests()==true suppresses the arm
+        // interceptor install the driver is verifying).
+        runUnitTests = false;
     }
 
 #ifdef Q_OS_WIN
@@ -217,6 +236,12 @@ int main(int argc, char *argv[])
         #endif
 
         if (!simpleBootTest) {
+#ifdef QT_DEBUG
+            if (liveArmDriver) {
+                // Drive the real production path inside the running GUI app.
+                LiveArmDriver::install();
+            }
+#endif
             exitCode = app.exec();
         }
     }

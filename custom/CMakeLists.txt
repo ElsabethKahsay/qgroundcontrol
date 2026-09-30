@@ -105,6 +105,8 @@ set(CUSTOM_SOURCE_REL
     src/core/ImuTemperatureCheck.h
     src/core/LevelCalibrationCheck.cpp
     src/core/LevelCalibrationCheck.h
+    src/core/LiveArmDriver.cpp
+    src/core/LiveArmDriver.h
     src/core/ManualConfirmCheck.cpp
     src/core/ManualConfirmCheck.h
     src/core/MavlinkProtocolCheck.cpp
