@@ -13,6 +13,11 @@ public:
 
     void setDependencies(TelemetryBridge *bridge, ArmingGate *gate, ChecklistEngine *engine);
 
+    /// Compliance hook for RTL triggers. Persists an RTL_TRIGGERED event with the
+    /// operator attribution; the flight-context values are captured in the DB row
+    /// (battery/altitude/sats/mode) by _writeEvent.
+    void onRtlTriggered(double altitudeM, double groundSpeedMs, double distanceHomeM);
+
 private:
     void _writeEvent(const QString &eventType, const QString &triggeredBy);
 

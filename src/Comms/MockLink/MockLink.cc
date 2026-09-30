@@ -1140,6 +1140,21 @@ void MockLink::_handleCommandLong(const mavlink_message_t &msg)
         }
         commandResult = MAV_RESULT_ACCEPTED;
         break;
+    case MAV_CMD_DO_SET_MODE:
+        // ArduPilot flight-mode changes are MAV_CMD_DO_SET_MODE command-longs
+        // (param1 = MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, param2 = custom mode).
+        // Reflect the requested custom mode in subsequent HEARTBEATs so the
+        // GCS sees the mode ACTUALLY change — real feedback, not just an ack.
+        // This preserves the armed state across the mode change, like real
+        // autopilots do.
+        if (request.param1 != 0.0f) {
+            _mavBaseMode |= MAV_MODE_FLAG_CUSTOM_MODE_ENABLED;
+        }
+        _mavCustomMode = static_cast<uint32_t>(request.param2);
+        _lastDoSetModeParam2 = request.param2;
+        _sendHeartBeat();
+        commandResult = MAV_RESULT_ACCEPTED;
+        break;
     case MAV_CMD_PREFLIGHT_CALIBRATION:
         _handlePreFlightCalibration(request);
         commandResult = MAV_RESULT_ACCEPTED;

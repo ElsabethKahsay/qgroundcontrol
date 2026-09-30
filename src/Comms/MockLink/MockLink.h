@@ -86,9 +86,11 @@ public:
     /// Returns the filename for the simulated log file. Only available after a download is requested.
     QString logDownloadFile() const { return _logDownloadFilename; }
 
-    void clearReceivedMavCommandCounts() { _receivedMavCommandCountMap.clear(); _lastArmDisarmParam1 = qQNaN(); }
+    void clearReceivedMavCommandCounts() { _receivedMavCommandCountMap.clear(); _lastArmDisarmParam1 = qQNaN(); _lastDoSetModeParam2 = -1.0f; }
     int receivedMavCommandCount(MAV_CMD command) const { return _receivedMavCommandCountMap[command]; }
     float lastArmDisarmParam1() const { return _lastArmDisarmParam1; }
+    /// param2 of the last MAV_CMD_DO_SET_MODE received (-1.0 before any).
+    float lastDoSetModeParam2() const { return _lastDoSetModeParam2; }
 
     enum RequestMessageFailureMode_t {
         FailRequestMessageNone,
@@ -262,6 +264,7 @@ private:
 
     QMap<MAV_CMD, int> _receivedMavCommandCountMap;
     float _lastArmDisarmParam1 = qQNaN();               ///< param1 of the last MAV_CMD_COMPONENT_ARM_DISARM received
+    float _lastDoSetModeParam2 = -1.0f;                 ///< param2 of the last MAV_CMD_DO_SET_MODE received
     QMap<int, QMap<QString, QVariant>> _mapParamName2Value;
     QMap<int, QMap<QString, MAV_PARAM_TYPE>> _mapParamName2MavParamType;
 

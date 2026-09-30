@@ -4,6 +4,7 @@
 #include "ChecklistEngine.h"
 #include "FlightSession.h"
 #include "DatabaseManager.h"
+#include "OperatorManager.h"
 #include "utils/GeoUtil.h"
 
 #include <QtMath>
@@ -64,6 +65,9 @@ void TelemetryEventLogger::setDependencies(TelemetryBridge *bridge, ArmingGate *
             m_modeChanges++;
         });
 
+        connect(m_bridge, &TelemetryBridge::rtlTriggered,
+                this, &TelemetryEventLogger::onRtlTriggered);
+
         connect(m_bridge, &TelemetryBridge::groundSpeedChanged, this, [this]() {
             double gs = m_bridge->groundSpeed();
             if (gs > 0.0)
@@ -107,6 +111,19 @@ void TelemetryEventLogger::setDependencies(TelemetryBridge *bridge, ArmingGate *
             }
         });
     }
+}
+
+void TelemetryEventLogger::onRtlTriggered(double altitudeM, double groundSpeedMs, double distanceHomeM)
+{
+    Q_UNUSED(altitudeM);
+    Q_UNUSED(groundSpeedMs);
+    Q_UNUSED(distanceHomeM);
+
+    QString triggeredBy;
+    if (OperatorManager *om = OperatorManager::instance()) {
+        triggeredBy = om->currentOperatorName();
+    }
+    _writeEvent(QStringLiteral("RTL_TRIGGERED"), triggeredBy);
 }
 
 void TelemetryEventLogger::_writeEvent(const QString &eventType, const QString &triggeredBy)

@@ -11,7 +11,9 @@
 
 #include <QDateTime>
 #include <QDebug>
+#include <QEventLoop>
 #include <QLoggingCategory>
+#include <QTimer>
 #include <cmath>
 
 #include "FactSystem/Fact.h"
@@ -30,6 +32,8 @@
 #include "core/ParameterWatchlist.h"
 #include "core/ArmingGate.h"
 #include "utils/Config.h"
+#include "utils/FlightModeUtil.h"
+#include "utils/GeoUtil.h"
 
 /// Logging category for TelemetryBridge debug/warning output.
 Q_LOGGING_CATEGORY(telemetryBridgeLog, "telemetry.bridge")
@@ -45,6 +49,83 @@ constexpr qint64 kBatteryStaleMs = 5000;
 // flight controller has no battery configured, QNaN before first telemetry)
 // means "we don't know" and must be surfaced as -1, never as a bogus number.
 int normalizeBatterySoc(int raw) { return (raw >= 0 && raw <= 100) ? raw : -1; }
+
+// ---------------------------------------------------------------------------
+// Track B (B6/B7): fork-native ArduPilot RTL.
+//
+// The RTL custom-mode numbers come from the real ArduPilot mode enums
+// (B7 citations):
+//   - ArduCopter/mode.h   : enum Number { ..., LOITER=5, RTL=6, ... }
+//   - ArduPlane/mode.h    : enum Number { ..., AUTO=10, RTL=11, ... }
+//   - APMrover2/mode.h    : enum Number { ..., AUTO=10, RTL=11, ... }
+// A DO_SET_MODE command-long carries them as param2 (param1 must be
+// MAV_MODE_FLAG_CUSTOM_MODE_ENABLED = 1 << 7 = 128). DO_SET_MODE changes the
+// mode only; the armed state is untouched.
+// ---------------------------------------------------------------------------
+constexpr int kCopterRtlModeNumber     = 6;
+constexpr int kPlaneRoverRtlModeNumber = 11;
+
+bool isPlaneFamily(MAV_TYPE type)
+{
+    switch (type) {
+    case MAV_TYPE_FIXED_WING:
+    case MAV_TYPE_GROUND_ROVER:
+    case MAV_TYPE_SURFACE_BOAT:
+    case MAV_TYPE_VTOL_TAILSITTER_DUOROTOR:
+    case MAV_TYPE_VTOL_TAILSITTER_QUADROTOR:
+    case MAV_TYPE_VTOL_TILTROTOR:
+    case MAV_TYPE_VTOL_FIXEDROTOR:
+    case MAV_TYPE_VTOL_TAILSITTER:
+    case MAV_TYPE_VTOL_TILTWING:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// ArduPilot RTL custom-mode number for the given MAV_TYPE.
+int rtlModeNumberFor(MAV_TYPE type)
+{
+    return isPlaneFamily(type) ? kPlaneRoverRtlModeNumber : kCopterRtlModeNumber;
+}
+
+// Whether the vehicle's reported flight mode (heartbeat-derived, rendered as a
+// friendly name or "Custom:0x…") corresponds to the given ArduPilot mode number.
+bool isArduPilotModeReported(const Vehicle* vehicle, int modeNumber)
+{
+    return FlightModeUtil::planeModeNumber(vehicle->flightMode()) == modeNumber;
+}
+
+// Bounded wait for the vehicle heartbeat to CONFIRM a mode change. Never claims
+// success from the command send; only the vehicle's reported mode decides.
+bool waitForArduPilotModeConfirm(Vehicle* vehicle, int modeNumber, int timeoutMs)
+{
+    if (isArduPilotModeReported(vehicle, modeNumber)) {
+        return true;
+    }
+    QEventLoop loop;
+    QTimer watchdog;
+    watchdog.setSingleShot(true);
+    watchdog.setInterval(timeoutMs);
+    bool reached = false;
+    QObject::connect(&watchdog, &QTimer::timeout, &loop, &QEventLoop::quit);
+    const QMetaObject::Connection conn = QObject::connect(
+        vehicle, &Vehicle::flightModeChanged, &loop,
+        [&](const QString&) {
+            if (isArduPilotModeReported(vehicle, modeNumber)) {
+                reached = true;
+                loop.quit();
+            }
+        });
+    watchdog.start();
+    if (isArduPilotModeReported(vehicle, modeNumber)) {
+        reached = true;
+    } else {
+        loop.exec();
+    }
+    QObject::disconnect(conn);
+    return reached;
+}
 }  // namespace
 
 TelemetryBridge::TelemetryBridge(QObject* parent) : QObject(parent) {
@@ -1219,23 +1300,86 @@ void TelemetryBridge::takeoff() {
                              10.0f);  // param7 = takeoff altitude (m)
 }
 
-/// Command the vehicle to Return To Launch. Mirrors stock QGC's own Return
-/// button contract EXACTLY: Vehicle::guidedModeRTL(false) — the SAME accessor
-/// stock GuidedActionsController.rtl() uses. That accessor internally does the
-/// correctly mode-gated path per stack:
-///   - ArduPilot: sends MAV_CMD_NAV_RETURN_TO_LAUNCH via guided-mode RTL
-///   - PX4:       switches flight mode to RTL (via the mode_allow gate)
-/// We do NOT send a raw MAV_CMD_NAV_RETURN_TO_LAUNCH here: PX4 rejects it
-/// unless the vehicle is already in AUTO (that rejection = "command failed").
-/// Requires: vehicle connected, armed, GPS 3D-fix (all QML-gated).
-void TelemetryBridge::rtl() {
+/// Command the vehicle to Return To Launch. THE single RTL code path for the
+/// custom layer (RC-primary quad/FW spec): monitoring/backstop authority, never
+/// a duplicate of RC RTL. Mirrors stock QGC's own Return button contract
+/// Track B (B6): fork-native ArduPilot RTL.
+///
+/// THIS IS THE REGRESSION: in the fork the stock firmware plugins are disabled,
+/// so the generic FirmwarePlugin knows no ArduPilot modes and the old path
+/// (`Vehicle::guidedModeRTL(false)` -> `Vehicle::setFlightMode("RTL")`) ends at
+/// "flight mode change not supported / not sent" — the live repro shows ZERO
+/// MAV_CMD_DO_SET_MODE on the wire and the vehicle never leaves its mode. The
+/// driver-supported ArduPilot way to switch modes is the raw
+/// MAV_CMD_DO_SET_MODE command-long in the custom-mode form (param1 =
+/// MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, param2 = the RTL custom-mode number);
+/// real ArduPilot confirms by reporting the new mode in its heartbeat, which we
+/// wait for (bounded) before claiming success. DO_SET_MODE never touches the
+/// armed state, so the result additionally verifies armed-bit preservation.
+///
+/// Availability: connection state alone — no arming/preflight gating by design.
+bool TelemetryBridge::returnToLaunch()
+{
     if (!_vehicle) {
-        qCWarning(telemetryBridgeLog) << "rtl(): no vehicle connected";
-        return;
+        qCWarning(telemetryBridgeLog) << "returnToLaunch(): no vehicle connected — RTL refused";
+        return false;
     }
 
-    qCWarning(telemetryBridgeLog) << "rtl(): routing via Vehicle::guidedModeRTL(false)";
-    _vehicle->guidedModeRTL(false);  // smartRTL = false (plain RTL, like stock)
+    const double altM = altitudeRelative();
+    const double gsMs = groundSpeed();
+    const double distM = distanceToHome();
+    const QString mode = flightMode();
+
+    qCWarning(telemetryBridgeLog)
+        << "RTL_TRIGGERED ts=" << QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)
+        << "mode=" << mode
+        << "altitudeM=" << altM
+        << "groundSpeedMs=" << gsMs
+        << "distanceHomeM=" << distM;
+
+    // Compliance event (TelemetryEventLogger writes the DB row).
+    emit rtlTriggered(altM, gsMs, distM);
+
+    const int rtlModeId = rtlModeNumberFor(_vehicle->vehicleType());
+    const bool armedBefore = _vehicle->armed();
+
+    qCWarning(telemetryBridgeLog)
+        << "returnToLaunch(): sending MAV_CMD_DO_SET_MODE"
+        << "param1=MAV_MODE_FLAG_CUSTOM_MODE_ENABLED"
+        << "param2=" << rtlModeId
+        << "(RTL custom-mode number, fork-native path)";
+    _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_DO_SET_MODE,
+                             true /* showError */,
+                             static_cast<float>(MAV_MODE_FLAG_CUSTOM_MODE_ENABLED), // param1
+                             static_cast<float>(rtlModeId),                         // param2
+                             0.0f, 0.0f, 0.0f, 0.0f, 0.0f);                        // param3..7
+
+    // Real feedback: bounded wait for the heartbeat to confirm the RTL mode, and
+    // verify DO_SET_MODE left the armed state alone (ArduPilot contract).
+    const bool modeConfirmed = waitForArduPilotModeConfirm(_vehicle, rtlModeId, 5000);
+    const bool armedPreserved = (_vehicle->armed() == armedBefore);
+
+    qCWarning(telemetryBridgeLog)
+        << "returnToLaunch():"
+        << (modeConfirmed ? "RTL confirmed via heartbeat (custom mode " + QString::number(rtlModeId) + ")"
+                          : "RTL NOT confirmed by vehicle")
+        << "armedPreserved=" << armedPreserved;
+
+    const bool confirmed = modeConfirmed && armedPreserved;
+    emit rtlCommandCompleted(confirmed);
+    return confirmed;
+}
+
+double TelemetryBridge::distanceToHome() const
+{
+    const double gpsLat = gpsLatitude();
+    const double gpsLon = gpsLongitude();
+    const double homeLat = homeLatitude();
+    const double homeLon = homeLongitude();
+    if ((gpsLat == 0.0 && gpsLon == 0.0) || (homeLat == 0.0 && homeLon == 0.0)) {
+        return 0.0;
+    }
+    return GeoUtil::haversineMeters(gpsLat, gpsLon, homeLat, homeLon);
 }
 
 /// Set a parameter value in the local cache and expose it as a dynamic Qt property.

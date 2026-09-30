@@ -559,8 +559,8 @@ public:
 
     int gpsFixType() const { return _gpsFixType; }
     int gpsSatellites() const { return _gpsSatellites; }
-    double gpsLatitude() const { return _gpsLatitude; }
-    double gpsLongitude() const { return _gpsLongitude; }
+    virtual double gpsLatitude() const { return _gpsLatitude; }
+    virtual double gpsLongitude() const { return _gpsLongitude; }
     double gpsHdop() const { return _gpsHdop; }
     double gpsSpeedAccuracy() const { return _gpsSpeedAccuracy; }
     double gpsAltitude() const { return _gpsAltitude; }
@@ -571,8 +571,8 @@ public:
     uint16_t gps2Eph() const { return _gps2Eph; }
     uint16_t gps2Yaw() const { return _gps2Yaw; }
 
-    double homeLatitude() const { return _homeLatitude; }
-    double homeLongitude() const { return _homeLongitude; }
+    virtual double homeLatitude() const { return _homeLatitude; }
+    virtual double homeLongitude() const { return _homeLongitude; }
     double homeAltitude() const { return _homeAltitude; }
 
     bool imuHealthy() const { return _imuHealthy; }
@@ -582,10 +582,10 @@ public:
     double baroTemperature() const { return _baroTemperature; }
 
     double airspeed() const { return _airspeed; }
-    double groundSpeed() const { return _groundSpeed; }
+    virtual double groundSpeed() const { return _groundSpeed; }
     double verticalSpeed() const { return _verticalSpeed; }
     double heading() const { return _heading; }
-    double altitudeRelative() const { return _altitudeRelative; }
+    virtual double altitudeRelative() const { return _altitudeRelative; }
 
     int rcRssi() const { return _rcRssi; }
     bool rcConnected() const { return _rcConnected; }
@@ -594,7 +594,7 @@ public:
     qint64 rcLastUpdateUsec() const { return _rcLastUpdateUsec; }
 
     bool armed() const;
-    QString flightMode() const;
+    virtual QString flightMode() const;
     bool heartbeatReceived() const { return _heartbeatReceived; }
 
     double vibrationX() const { return _vibrationX; }
@@ -723,9 +723,26 @@ public:
     /// the forceArm() guard: safe for feedback-bypass use in the custom layer.
     Q_INVOKABLE void takeoff();
 
-    /// Return to launch. Sends MAV_CMD_NAV_RETURN_TO_LAUNCH. Mirrors the
-    /// forceArm() guard: safe for feedback-bypass use in the custom layer.
-    Q_INVOKABLE void rtl();
+    /// Return to launch. THE single RTL entry point for the custom layer
+    /// (RC-primary quad/FW spec: monitoring/backstop authority, never a duplicate
+    /// of RC RTL). Fork-native ArduPilot path (Track B): the stock plugins are
+    /// disabled in this fork, so FirmwarePlugin / Vehicle::guidedModeRTL /
+    /// Vehicle::setFlightMode degrade to "no command sent" — the live repro
+    /// shows zero MAV_CMD_DO_SET_MODE on the wire. This sends the raw
+    /// MAV_CMD_DO_SET_MODE command-long (the custom-mode form ArduPilot uses
+    /// for flight-mode changes: param1 = MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+    /// param2 = the RTL custom-mode number, copter 6 / plane+rover 11), then
+    /// waits (bounded, ~5 s) for the vehicle heartbeat to confirm the mode.
+    /// Returns the REAL outcome — true only once the heartbeat shows the RTL
+    /// custom mode AND the armed state was preserved by the mode change — never
+    /// "command sent" claimed as success. A timestamped RTL_TRIGGERED event is
+    /// logged and emitted (compliance).
+    /// Requires: vehicle connected (no arming/preflight gating by design).
+    Q_INVOKABLE bool returnToLaunch();
+
+    /// Great-circle distance (m) from the vehicle to home (Haversine). Returns
+    /// 0.0 until both a GPS fix and a home position are known.
+    Q_INVOKABLE virtual double distanceToHome() const;
 
     /// Set the arming gate reference so arm() can check gate state before sending.
     void setArmingGate(QObject* gate);
@@ -837,6 +854,14 @@ signals:
     void compassDataQualityChanged();
     void rcDataQualityChanged();
     void hardwareSetupRequiredChanged();
+
+    /// Emitted when a Return To Launch is commanded; carries the flight context
+    /// captured at trigger time (meters, m/s, meters). Consumed by the
+    /// compliance logger and by QML for feedback.
+    void rtlTriggered(double altitudeM, double groundSpeedMs, double distanceHomeM);
+    /// Real feedback from returnToLaunch(): true only when the vehicle heartbeat
+    /// confirmed the RTL flight-mode change.
+    void rtlCommandCompleted(bool success);
 
 private slots:
     /// Called when the Vehicle's connected state changes; clears heartbeat flag on disconnect.
