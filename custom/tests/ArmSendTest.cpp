@@ -14,10 +14,14 @@
  *   (b) forceArm() then arm()               -> exactly one arm command, vehicle arms
  *   (c) override expires (setOverrideDuration) -> arm() blocked again, no new command
  *   (d) stock setArmed path with gate closed -> vetoed: nothing on the wire, not armed
- *   (e) no interceptor installed (no-op)    -> stock setArmed arm is untouched: exactly one
+*  (e) no interceptor installed (no-op)    -> stock setArmed arm is untouched: exactly one
  *                                              command with param1=1, vehicle arms
- *   (f) disarm(false) path does not arm     -> VehicleProfileManager::disarmVehicle(false)
+ *  (f) disarm(false) path does not arm     -> VehicleProfileManager::disarmVehicle(false)
  *                                              sends param1=0 (disarm), never an arm payload
+ *  (g) production wiring installs the veto -> TelemetryBridge::setVehicle() and
+ *      setArmingGate() install the interceptor as a SIDE EFFECT (the same chain
+ *      PreflightPlugin::_setupForVehicle + init run), not via this file's manual
+ *      _makeBlockedGate() install. Closes the runningUnitTests() wiring gap.
  */
 
 #include <QTest>
@@ -63,6 +67,7 @@ private slots:
     void testStockSetArmedBypassesGate();
     void testNoInterceptorStockBehaviorUnchanged();
     void testDisarmSendsDisarmNotArm();
+    void testProductionWiringInstallsInterceptor();
 
 private:
     bool _pumpUntil(bool (*cond)(void* ctx), void* ctx, int timeoutMs);
@@ -310,6 +315,95 @@ void ArmSendTest::testDisarmSendsDisarmNotArm()
     QVERIFY(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM) >= 1);
     QCOMPARE(_mockLink->lastArmDisarmParam1(), 0.0f);
     QVERIFY(!_vehicle->armed());
+}
+
+// (g) PRODUCTION wiring: TelemetryBridge::setVehicle() -> setArmingGate() install
+//     the arm interceptor as a SIDE EFFECT (_installArmInterceptor), exactly the
+//     chain PreflightPlugin::_setupForVehicle + PreflightPlugin::init run against
+//     the real app. This proves the veto is installed by production wiring — not
+//     by this file's manual _makeBlockedGate() install.
+//
+//     The mock opts INTO the install path via the _skipArmInterceptorInstall test
+//     seam (the unit-test harness skips the install by default so the direct-arm
+//     tests in (a)-(f) are unaffected).
+void ArmSendTest::testProductionWiringInstallsInterceptor()
+{
+    QVERIFY(_connectPlane());
+    QVERIFY(!_vehicle->armed()); // start disarmed
+
+    MockTelemetryBridge bridge;
+    bridge.setSkipArmInterceptorInstall(false); // opt into production install path
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+
+    // Production call #1 (PreflightPlugin::_setupForVehicle):
+    // TelemetryBridge::setVehicle() -> _installArmInterceptor(). No gate yet.
+    bridge.setVehicle(_vehicle);
+
+    // No gate => the side-effect install must be a no-op: stock arm sends exactly
+    // one arm command (fails open). No manual interceptor installed anywhere.
+    _mockLink->clearReceivedMavCommandCounts();
+    _vehicle->setArmed(true, false);
+    QVERIFY(_pumpUntil([](void* ctx) {
+        MockLink* link = static_cast<MockLink*>(ctx);
+        return link->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM) >= 1;
+    }, _mockLink, 10000));
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 1);
+
+    QVERIFY(_pumpUntil([](void* ctx) {
+        return static_cast<Vehicle*>(ctx)->armed();
+    }, _vehicle, 10000));
+    QVERIFY(_vehicle->armed());
+
+    // Disarm so the gate-closed phase below starts from disarmed.
+    _vehicle->setArmed(false, false);
+    QVERIFY(_pumpUntil([](void* ctx) {
+        return !static_cast<Vehicle*>(ctx)->armed();
+    }, _vehicle, 10000));
+    QVERIFY(!_vehicle->armed());
+
+    // A production-shaped closed gate: mandatory safety check forced to Failed.
+    // Deliberately do NOT call _vehicle->setArmCommandInterceptor here — the
+    // side effect must install the veto.
+    ArmingGate gate;
+    gate.setMode(ArmingGate::Active);
+    PreflightManager *mgr = new PreflightManager(1, &gate);
+    mgr->setTelemetryBridge(&bridge);
+    gate.setPreflightManager(mgr);
+    gate.setTelemetryBridge(&bridge);
+    ArmSendFlowCheck *check = new ArmSendFlowCheck(QStringLiteral("test.armsend.wiring"), mgr);
+    check->forceStatus(CheckStatus::Failed, QStringLiteral("Simulated critical failure"));
+    mgr->addCheck(check);
+    QVERIFY(!gate.isArmingAllowed());
+    QVERIFY(!gate.isOverrideActive());
+
+    // Production call #2 (PreflightPlugin::init):
+    // TelemetryBridge::setArmingGate() -> _installArmInterceptor() -> the gate's
+    // predicate is now installed on the vehicle as a side effect.
+    bridge.setArmingGate(&gate);
+
+    // Stock arm path with the side-effect-installed veto: nothing reaches the wire.
+    _mockLink->clearReceivedMavCommandCounts();
+    _vehicle->setArmed(true, false);
+    QTest::qWait(500); // give any (incorrect) send time to reach the link
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 0);
+    QVERIFY(!_vehicle->armed());
+
+    // The sanctioned path (forceArm opens the override window, arm() sends) must
+    // still go through exactly once under the same side-effect-installed veto.
+    bridge.forceArm();
+    QVERIFY(gate.isOverrideActive());
+    bridge.arm();
+    QVERIFY(_pumpUntil([](void* ctx) {
+        MockLink* link = static_cast<MockLink*>(ctx);
+        return link->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM) >= 1;
+    }, _mockLink, 10000));
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 1);
+
+    QVERIFY(_pumpUntil([](void* ctx) {
+        return static_cast<Vehicle*>(ctx)->armed();
+    }, _vehicle, 10000));
+    QVERIFY(_vehicle->armed());
 }
 
 UT_REGISTER_TEST(ArmSendTest)

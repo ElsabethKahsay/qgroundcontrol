@@ -1136,6 +1136,15 @@ void TelemetryBridge::setArmingGate(QObject* gate) {
     _installArmInterceptor();
 }
 
+/// Test seam — see declaration. Production always installs; only the unit-test
+/// harness opts out (its PreflightPlugin instance would otherwise stick a live
+/// gate predicate on every mock vehicle and veto the direct arm() calls used by
+/// HardwareTestControllerTest / ControlSurfaceTestControllerTest / QmlSmokeTest).
+bool TelemetryBridge::_skipArmInterceptorInstall() const
+{
+    return qgcApp()->runningUnitTests();
+}
+
 /// Rebuilds the Vehicle's MAV_CMD_COMPONENT_ARM_DISARM arm interceptor from the
 /// current _armingGate. No gate => no interceptor => stock behavior. Under the
 /// unit-test harness this is skipped entirely: the PreflightPlugin still runs
@@ -1147,7 +1156,7 @@ void TelemetryBridge::_installArmInterceptor() {
     if (!_vehicle) {
         return;
     }
-    if (qgcApp()->runningUnitTests()) {
+    if (_skipArmInterceptorInstall()) {
         return;
     }
     if (_armingGate) {

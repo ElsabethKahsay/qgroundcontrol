@@ -860,6 +860,13 @@ private:
     /// tests are unaffected (they install their own interceptor explicitly).
     void _installArmInterceptor();
 
+    /// Test seam — whether _installArmInterceptor() should install. Defaults to
+    /// "true in unit tests": the harness runs PreflightPlugin but tests that
+    /// call arm() directly must not get a live gate predicate stuck on every
+    /// mock vehicle. A subclass (MockTelemetryBridge) overrides this to opt ONE
+    /// test into the production install path. Production is unchanged.
+    virtual bool _skipArmInterceptorInstall() const;
+
     /// Iterates the battery list model and connects Fact signals for primary/secondary batteries.
     void _connectBatteryFacts(QObject* batteryModel);
 

@@ -171,6 +171,12 @@ public:
     bool isConnected() const override { return m_connected; }
     int connectionQuality() const override { return m_connectionQuality; }
 
+    // Opt this mock into (or out of) the PRODUCTION interceptor-install path.
+    // Default mimics the unit-test harness (skip install); set false to exercise
+    // the real setVehicle()/setArmingGate() side-effect wiring in a test.
+    void setSkipArmInterceptorInstall(bool v) { m_skipArmInterceptorInstall = v; }
+    bool _skipArmInterceptorInstall() const override { return m_skipArmInterceptorInstall; }
+
     // -- Getters (return mock values) --
     bool armed() const { return m_armed; }
     double batteryVoltage() const { return m_batteryVoltage; }
@@ -323,6 +329,7 @@ signals:
 private:
     bool m_connected = false;
     int m_connectionQuality = 0;
+    bool m_skipArmInterceptorInstall = true;
     double m_batteryVoltage = 0.0;
     int m_batteryPercent = 0;
     double m_batteryCurrent = 0.0;
