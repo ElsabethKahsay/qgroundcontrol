@@ -88,6 +88,10 @@ public:
         m_gpsLatitude = lat; m_gpsLongitude = lon;
         emit gpsPositionChanged();
     }
+    void setHomePosition(double lat, double lon) {
+        m_homeLatitude = lat; m_homeLongitude = lon;
+        emit homePositionChanged();
+    }
     void setArmed(bool v) { m_armed = v; emit armedChanged(); }
     void setRcConnected(bool v) { m_rcConnected = v; emit rcConnectedChanged(); }
     void setRcRssi(int v) { m_rcRssi = v; emit rcRssiChanged(); }
@@ -189,6 +193,8 @@ public:
     double gpsHdop() const { return m_gpsHdop; }
     double gpsLatitude() const { return m_gpsLatitude; }
     double gpsLongitude() const { return m_gpsLongitude; }
+    double homeLatitude() const { return m_homeLatitude; }
+    double homeLongitude() const { return m_homeLongitude; }
     bool rcConnected() const { return m_rcConnected; }
     int rcRssi() const { return m_rcRssi; }
     bool rcFailsafe() const { return m_rcFailsafe; }
@@ -340,6 +346,8 @@ private:
     double m_gpsHdop = -1.0;
     double m_gpsLatitude = 0.0;
     double m_gpsLongitude = 0.0;
+    double m_homeLatitude = 0.0;
+    double m_homeLongitude = 0.0;
     bool m_armed = false;
     bool m_rcConnected = false;
     int m_rcRssi = 0;
