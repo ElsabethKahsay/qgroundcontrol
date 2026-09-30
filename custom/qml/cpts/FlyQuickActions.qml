@@ -28,6 +28,12 @@ Item {
 
     signal actionTriggered(string action)
 
+    // Sentinel proving THIS custom file is the one actually loaded at runtime
+    // (the custom layer shares QML module caches/aliases with stock; the smoke
+    // test asserts this value to prove the disk file being tested is real).
+    property string productMark: "FlyQuickActions-custom-rtl2"
+    objectName: "FlyQuickActions-custom-rtl2"
+
     implicitWidth: btnCol.implicitWidth
     implicitHeight: btnCol.implicitHeight
     enabled: hasVehicle
@@ -265,20 +271,20 @@ Item {
             enabled:   root.hasVehicle && root._isArmed && (TelemetryProvider.gpsFixType >= 3)
         }
 
-        // 7c. Return To Launch — enabled when armed (home + GPS required by controller).
+        // 7c. Return To Launch — MONITORING backstop (RC-primary spec). Available
+        // on connection state alone: no arming/preflight gating, so it works in
+        // exactly the situations where something else is already going wrong.
         QuickButton {
             id:        rtlBtn
             action:    "rtl"
             glyph:     "\u21BA"
             label:     qsTr("Return")
             tooltip:   root.hasVehicle
-                       ? (root._isArmed
-                          ? qsTr("Return To Launch (home)")
-                          : qsTr("Disabled \u2014 arm the vehicle first"))
+                       ? qsTr("Return To Launch (home) \u2014 confirmed via vehicle heartbeat")
                        : qsTr("Disabled \u2014 connect a vehicle first")
             isDanger:  false
             isChecked: false
-            enabled:   root.hasVehicle && root._isArmed
+            enabled:   root.hasVehicle
         }
 
         // 8. Mode toggle — MANUAL ↔ AUTO, label shows live FC mode.
@@ -319,7 +325,38 @@ Item {
         }
     }
 
-    Component.onDestruction: modeToastTimer.stop()
+    Component.onDestruction: { modeToastTimer.stop(); rtlResultToastTimer.stop() }
+
+    // ── RTL command-result toast (real feedback, not "command sent") ─────
+    property string _rtlResultLabel: ""
+    property bool   _rtlResultConfirmed: false
+    property int    _rtlToastSecsLeft: 0
+    // Flight context captured when the RTL confirm dialog opens (two-step).
+    property string _rtlContextMode: "--"
+    property string _rtlContextAlt:  "--"
+    property string _rtlContextDist: "--"
+
+    function _refreshRtlContext() {
+        if (typeof TelemetryProvider === 'undefined' || !TelemetryProvider) return
+        root._rtlContextMode = TelemetryProvider.flightMode ? TelemetryProvider.flightMode : "--"
+        var alt = TelemetryProvider.altitudeRelative
+        root._rtlContextAlt = (alt === undefined || isNaN(alt)) ? "--" : alt.toFixed(1) + " m"
+        var dist = TelemetryProvider.distanceToHome()
+        root._rtlContextDist = (dist === undefined || isNaN(dist) || dist <= 0) ? "--" : dist.toFixed(0) + " m"
+    }
+
+    Timer {
+        id: rtlResultToastTimer
+        interval: 1000
+        repeat:   true
+        onTriggered: {
+            root._rtlToastSecsLeft -= 1
+            if (root._rtlToastSecsLeft <= 0) {
+                rtlResultToastTimer.stop()
+                root._rtlToastSecsLeft = 0
+            }
+        }
+    }
 
     Rectangle {
         id:      modeToast
@@ -356,6 +393,45 @@ Item {
                     var ts = m + ":" + (s < 10 ? "0" + s : s)
                     return qsTr("Mode: ") + root._lastModeLabel + "  (" + ts + ")"
                 }
+                font.pixelSize: Config.fontSizeSmall
+                font.weight:    Font.DemiBold
+                color:          "white"
+                anchors.verticalCenter: parent.verticalCenter
+            }
+        }
+    }
+
+    Rectangle {
+        id:      rtlResultToast
+        visible: root._rtlToastSecsLeft > 0
+        width:   rtlResultToastRow.implicitWidth + ScreenTools.defaultFontPixelWidth * 3
+        height:  ScreenTools.defaultFontPixelHeight * 2.2
+        radius:  height / 2
+        color:   root._rtlResultConfirmed ? Qt.rgba(0.08, 0.55, 0.35, 0.93)
+                                          : Qt.rgba(0.70, 0.30, 0.10, 0.92)
+        border.color: root._rtlResultConfirmed ? Qt.rgba(0.2, 1.0, 0.6, 0.55)
+                                               : Qt.rgba(1.0, 0.7, 0.3, 0.55)
+        border.width: 1
+        x: 0
+        y: modeToast.y + modeToast.height + ScreenTools.defaultFontPixelHeight * 0.4
+        z: QGroundControl.zOrderWidgets + 5
+
+        Behavior on opacity { NumberAnimation { duration: 200 } }
+        opacity: root._rtlToastSecsLeft > 0 ? 1.0 : 0.0
+
+        Row {
+            id:               rtlResultToastRow
+            anchors.centerIn: parent
+            spacing:          ScreenTools.defaultFontPixelWidth * 0.6
+
+            Text {
+                text:           "\u21BA"
+                font.pixelSize: Config.fontSizeBody
+                color:          "white"
+                anchors.verticalCenter: parent.verticalCenter
+            }
+            Text {
+                text:           root._rtlResultLabel
                 font.pixelSize: Config.fontSizeSmall
                 font.weight:    Font.DemiBold
                 color:          "white"
@@ -402,6 +478,80 @@ Item {
                 v.forceArm()
             if (typeof TelemetryProvider !== 'undefined' && TelemetryProvider)
                 TelemetryProvider.forceArm()
+        }
+    }
+
+    // ── Return-To-Launch confirm dialog ────────────────────────────────────
+    // Two-step safety (RC-primary spec): the operator confirms while seeing the
+    // live flight context (mode / altitude / distance-to-home) captured when the
+    // dialog opens. The SINGLE code path is
+    //   TelemetryProvider.returnToLaunch()  →  TelemetryBridge::returnToLaunch()
+    //   →  Vehicle::guidedModeRTL(false)
+    // with the real heartbeat-confirmed outcome surfaced as a toast. No
+    // parallel paths, no direct RTL sends, no "command sent = success".
+    Dialog {
+        id:              rtlConfirmDialog
+        title:           qsTr("Return To Launch \u2014 Are you sure?")
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        modal:           true
+        closePolicy:     Popup.CloseOnEscape
+        anchors.centerIn: Overlay.overlay
+        width:           380
+
+        Column {
+            width:   parent.width
+            spacing: 8
+            Text {
+                width:    parent.width
+                wrapMode: Text.WordWrap
+                text:     qsTr("Command the vehicle to return to launch / home.\n\nThis is the RTL backstop \u2014 use it when a recovery is required.")
+                font.pixelSize: Config.fontSizeSmall
+                color:    Colors.textPrimary
+            }
+            Rectangle {
+                width:   parent.width
+                height:  rtlContextCol.implicitHeight + ScreenTools.defaultFontPixelHeight
+                radius:  4
+                color:   Qt.rgba(0.06, 0.12, 0.20, 0.60)
+                border.color: Colors.border
+                border.width: 1
+
+                Column {
+                    id:      rtlContextCol
+                    anchors.centerIn: parent
+                    spacing: 3
+                    width:   parent.width - ScreenTools.defaultFontPixelWidth * 3
+
+                    Text {
+                        text: qsTr("Mode:  ") + root._rtlContextMode
+                        font.pixelSize: Config.fontSizeSmall
+                        color: Colors.textPrimary
+                    }
+                    Text {
+                        text: qsTr("Altitude:  ") + root._rtlContextAlt
+                        font.pixelSize: Config.fontSizeSmall
+                        color: Colors.textPrimary
+                    }
+                    Text {
+                        text: qsTr("Distance from home:  ") + root._rtlContextDist
+                        font.pixelSize: Config.fontSizeSmall
+                        color: Colors.textPrimary
+                    }
+                }
+            }
+        }
+
+        onOpened: root._refreshRtlContext()
+        onAccepted: {
+            var confirmed = false
+            if (typeof TelemetryProvider !== 'undefined' && TelemetryProvider)
+                confirmed = TelemetryProvider.returnToLaunch()
+            root._rtlResultConfirmed = confirmed
+            root._rtlResultLabel = confirmed
+                    ? qsTr("Return To Launch confirmed \u2014 heading home")
+                    : qsTr("Return To Launch NOT confirmed by vehicle")
+            root._rtlToastSecsLeft = 8
+            rtlResultToastTimer.restart()
         }
     }
 
@@ -587,7 +737,8 @@ Item {
             } else if (action === "takeoff") {
                 TelemetryProvider.takeoff()
             } else if (action === "rtl") {
-                TelemetryProvider.rtl()
+                // Two-step: confirm in flight context before commanding.
+                rtlConfirmDialog.open()
             } else if (action === "disarm") {
                 disarmDialog.open()
             } else if (action === "batConfig") {

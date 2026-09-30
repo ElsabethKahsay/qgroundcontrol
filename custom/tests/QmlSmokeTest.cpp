@@ -23,6 +23,9 @@
 #include <QSignalSpy>
 #include <QDateTime>
 #include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 
 #include <QQmlApplicationEngine>
 #include <QQmlComponent>
@@ -629,7 +632,143 @@ void MainStatusIndicatorSmokeTest::testBlockedArmRouterDoesNotTransmit()
     delete gateBridge;
 }
 
+// ---------------------------------------------------------------------------
+// FlyQuickActionsSmokeTest
+// ---------------------------------------------------------------------------
+// Phase 1 (RC-primary quad/FW): the Fly view Return action must be present,
+// reachable, and wired to exactly ONE function — TelemetryProvider.returnToLaunch() —
+// with the old TelemetryProvider.rtl() entry removed so no dual path can
+// resurrect. Force Arm / Takeoff removal is asserted in later phases.
+
+static bool hasInvokable(QObject *obj, const char *name)
+{
+    if (!obj) return false;
+    const QMetaObject *mo = obj->metaObject();
+    for (int i = 0; i < mo->methodCount(); ++i) {
+        if (mo->method(i).methodType() != QMetaMethod::Signal && mo->method(i).name() == name) {
+            return true;
+        }
+    }
+    return false;
+}
+
+class FlyQuickActionsSmokeTest : public UnitTest {
+    Q_OBJECT
+
+private slots:
+    void init() override { UnitTest::init(); }
+    void cleanup() override { UnitTest::cleanup(); }
+    void cleanupTestCase();
+
+    void testLoadsCustomComponent();
+    void testReturnWiredToSingleFunction();
+    void testOldRtlEntryRemoved();
+
+private:
+    QSharedPointer<QQmlApplicationEngine> _engine;
+    QSharedPointer<QQuickWindow>          _window;
+    QSharedPointer<QQuickItem>            _root;
+    QGCPalette                           *_palette = nullptr;
+    QString                               _filePath;
+
+    void _loadComponent();
+};
+
+void FlyQuickActionsSmokeTest::cleanupTestCase()
+{
+    if (_root) _root->setParentItem(nullptr);
+    _root.clear();
+    _window.clear();
+    _engine.clear();
+    delete _palette; _palette = nullptr;
+}
+
+void FlyQuickActionsSmokeTest::_loadComponent()
+{
+    preflightInitOnce();
+
+    if (!_engine) {
+        _engine.reset(QGCCorePlugin::instance()->createQmlApplicationEngine(nullptr));
+        QVERIFY2(_engine, "createQmlApplicationEngine returned null");
+        if (!_palette) _palette = new QGCPalette(this);
+        _engine->rootContext()->setContextProperty(QStringLiteral("qgcPal"), _palette);
+    }
+    if (!_window) {
+        _window.reset(createWindow(_engine, 1100, 700));
+        QVERIFY(_window);
+    }
+    if (_root) _root->setParentItem(nullptr);
+    _root.clear();
+    if (_engine) {
+        _engine->collectGarbage();
+        pumpQml(25);
+    }
+
+    // Load the CUSTOM file from disk (not qrc) so the test exercises exactly the
+    // component this product ships; the productMark sentinel proves it is the
+    // custom file and not a stock/module-cache shadow.
+    QDir srcDir(QCoreApplication::applicationDirPath());
+    for (int i = 0; i < 4; ++i) {
+        if (QFileInfo::exists(srcDir.filePath(QStringLiteral("custom/qml/cpts/FlyQuickActions.qml")))) {
+            break;
+        }
+        if (!srcDir.cdUp()) {
+            break;
+        }
+    }
+    _filePath = srcDir.filePath(QStringLiteral("custom/qml/cpts/FlyQuickActions.qml"));
+    QVERIFY2(QFileInfo::exists(_filePath), qPrintable(QStringLiteral("missing %1").arg(_filePath)));
+
+    QString err;
+    _root.reset(createComponent(_engine, _window.data(), _filePath.toUtf8().constData(), &err));
+    QVERIFY2(_root, qPrintable(err));
+
+    QCOMPARE(QQmlProperty(_root.data(), "productMark").read().toString(),
+             QStringLiteral("FlyQuickActions-custom-rtl2"));
+    QVERIFY(findItemByText(_root.data(), QStringLiteral("Return")));
+}
+
+void FlyQuickActionsSmokeTest::testLoadsCustomComponent()
+{
+    _loadComponent();
+    // Return button found in _loadComponent(); nothing more to assert here.
+}
+
+void FlyQuickActionsSmokeTest::testReturnWiredToSingleFunction()
+{
+    _loadComponent();
+
+    // The single RTL code path is TelemetryProvider.returnToLaunch(); the QML
+    // routes the action through a confirm dialog (two-step), never a direct send.
+    QFile f(_filePath);
+    QVERIFY2(f.open(QIODevice::ReadOnly), "cannot read FlyQuickActions.qml");
+    const QString qml = QString::fromUtf8(f.readAll());
+    f.close();
+
+    QVERIFY2(qml.contains(QStringLiteral("TelemetryProvider.returnToLaunch()")),
+             "Return action must call the single returnToLaunch() code path");
+    QVERIFY2(qml.contains(QStringLiteral("rtlConfirmDialog.open()")),
+             "Return action must go through the two-step confirm dialog");
+    QVERIFY2(!qml.contains(QStringLiteral("TelemetryProvider.rtl(")),
+             "legacy TelemetryProvider.rtl() must not exist (single code path)");
+}
+
+void FlyQuickActionsSmokeTest::testOldRtlEntryRemoved()
+{
+    _loadComponent();
+
+    // The TelemetryProvider exposed to QML must expose returnToLaunch() +
+    // distanceToHome() and must NOT expose the old rtl() anymore.
+    const QVariant tpVar = _engine->rootContext()->contextProperty(QStringLiteral("TelemetryProvider"));
+    QObject *tp = tpVar.value<QObject *>();
+    QVERIFY2(tp, "TelemetryProvider context property missing");
+    QVERIFY2(hasInvokable(tp, "returnToLaunch"), "TelemetryProvider.returnToLaunch missing");
+    QVERIFY2(hasInvokable(tp, "distanceToHome"), "TelemetryProvider.distanceToHome missing");
+    QVERIFY2(!hasInvokable(tp, "rtl"), "legacy TelemetryProvider.rtl still exposed");
+}
+
 UT_REGISTER_TEST(MotorCheckPanelSmokeTest)
 UT_REGISTER_TEST(MainStatusIndicatorSmokeTest)
+UT_REGISTER_TEST(FlyQuickActionsSmokeTest)
 
 #include "QmlSmokeTest.moc"
