@@ -17,6 +17,23 @@ Rectangle {
 
     readonly property int blockerCount: FlightSession.isTraining ? 0 : PreflightChecklistModel.blockingFailedCount
 
+    // Result of the last force-arm attempt; non-empty = the funnel REFUSED
+    // (airborne / takeoff / no vehicle) and nothing was sent.
+    property string forceArmRefusal: ""
+
+    // Single force-arm path. ArmingGate.forceArm() only opened the bounded
+    // override window and sent NO command, so this button armed nothing. The
+    // funnel opens the override AND sends the one arm command; its returned
+    // refusal is surfaced to the operator.
+    function requestForceArm() {
+        if (typeof TelemetryProvider === 'undefined' || !TelemetryProvider) {
+            forceArmRefusal = qsTr("Telemetry bridge unavailable")
+            return
+        }
+        var refusal = TelemetryProvider.forceArm()
+        forceArmRefusal = refusal ? refusal : ""
+    }
+
     RowLayout {
         anchors.fill: parent
         anchors.leftMargin: Config.spacingMedium
@@ -145,9 +162,20 @@ Rectangle {
             }
             MouseArea {
                 anchors.fill: parent
-                onClicked: ArmingGate.forceArm()
+                onClicked: root.requestForceArm()
                 cursorShape: Qt.PointingHandCursor
             }
+        }
+
+        // Force-arm refusal from the funnel (e.g. vehicle airborne).
+        Text {
+            Layout.fillWidth: true
+            Layout.preferredWidth: 0
+            text: root.forceArmRefusal
+            font.pixelSize: Config.fontSizeSmall
+            color: Colors.error
+            wrapMode: Text.WordWrap
+            visible: root.forceArmRefusal.length > 0
         }
     }
 }

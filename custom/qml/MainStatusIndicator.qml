@@ -351,15 +351,26 @@ if (typeof TelemetryProvider !== 'undefined' && TelemetryProvider) {
                                 return
                             }
                             if (forceArm) {
-                                if (typeof ArmingGate !== 'undefined' && ArmingGate) {
-                                    ArmingGate.forceArm()
-                                }
-                                // Gate-skipping force-arm path (mirrors FlyQuickActions):
-                                // TelemetryBridge::forceArm bypasses the gate by design.
+                                // SINGLE force-arm path (funnel). The former trio —
+                                // gate override only (sends nothing), then the
+                                // TelemetryProvider force-arm, with a stock
+                                // mainWindow.forceArmVehicleRequest() fallback that
+                                // routes through the firmware plugins this fork
+                                // disables — is collapsed to one call.
+                                // The funnel opens the bounded override AND sends the
+                                // canonical 2989 command, and returns a refusal when
+                                // the vehicle is not on the ground. On refusal the
+                                // popup stays open so the reason is not swallowed.
+                                var refusal = ""
                                 if (typeof TelemetryProvider !== 'undefined' && TelemetryProvider) {
-                                    TelemetryProvider.forceArm()
+                                    refusal = TelemetryProvider.forceArm()
                                 } else {
-                                    mainWindow.forceArmVehicleRequest()
+                                    refusal = qsTr("Telemetry bridge unavailable")
+                                }
+                                if (refusal) {
+                                    console.warn("[MainStatusIndicator] force-arm refused:", refusal)
+                                    forceArm = false
+                                    return
                                 }
                                 forceArm = false
                                 mainWindow.hideIndicatorPopup()
