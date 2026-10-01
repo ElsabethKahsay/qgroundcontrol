@@ -195,6 +195,12 @@ constexpr double kAssumedGroundSpeedKmph  = 30.0; // assumed cruise ground speed
 constexpr float kForceArmParam2       = 2989.0f;
 constexpr float kLegacyForceArmParam2 = 21196.0f;
 
+// ── Force-arm ground-safety precondition ─────────────────────────────────────
+// TelemetryBridge::forceArm() refuses to force-arm when the vehicle is not on
+// the ground: any ground speed above this threshold (m/s) means the vehicle is
+// moving and force-arming airborne must never be permitted.
+constexpr float kForceArmMaxGroundSpeedMs = 1.0f;
+
 // ── Geodesic ─────────────────────────────────────────────────────────────────
 // Mean Earth radius in meters for Haversine distance calculations.
 constexpr double kEarthRadiusM = 6371000.0;

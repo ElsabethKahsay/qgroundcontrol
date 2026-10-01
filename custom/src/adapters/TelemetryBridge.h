@@ -711,13 +711,16 @@ public:
     /// or an override is active; otherwise it is silently blocked.
     Q_INVOKABLE void arm();
 
-    /// Force-arm the vehicle, bypassing all pre-arm checks.
-    /// Sends MAV_CMD_COMPONENT_ARM_DISARM with param1=1 and the ArduPilot
+    /// Force-arm the vehicle, bypassing all pre-arm checks. THE single force-arm
+    /// funnel for the custom layer: it opens the bounded gate override window and
+    /// sends MAV_CMD_COMPONENT_ARM_DISARM with param1=1 and the ArduPilot
     /// force-arm magic (Config.h kForceArmParam2).
-    /// If an ArmingGate is set, forceArm() first opens the gate's bounded
-    /// override window via ArmingGate::forceArm() so the arm goes out while the
-    /// check results are bypassed. Use with caution.
-    Q_INVOKABLE void forceArm();
+    /// Ground-safety precondition: refuses when the vehicle is not on the ground
+    /// (ground speed > kForceArmMaxGroundSpeedMs) or reports flying/takeoff —
+    /// force-arming airborne is never permitted.
+    /// Returns an empty string when the command was issued, or a non-empty
+    /// refusal reason the UI can display.
+    Q_INVOKABLE QString forceArm();
 
     /// Return to launch. THE single RTL entry point for the custom layer
     /// (RC-primary quad/FW spec: monitoring/backstop authority, never a duplicate

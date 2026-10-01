@@ -1254,10 +1254,31 @@ void TelemetryBridge::_installArmInterceptor() {
 /// then sending MAV_CMD_COMPONENT_ARM_DISARM with param1=1 (arm) and the
 /// ArduPilot force-arm magic number (param2) accepted by both ArduPilot and PX4.
 /// The override window is bounded (kForceArmOverrideSec) and logged.
-void TelemetryBridge::forceArm() {
+QString TelemetryBridge::forceArm() {
     if (!_vehicle) {
         qCWarning(telemetryBridgeLog) << "forceArm(): no vehicle connected";
-        return;
+        return tr("No vehicle connected");
+    }
+
+    const double gs = groundSpeed();
+    if (gs > static_cast<double>(kForceArmMaxGroundSpeedMs)) {
+        const QString msg = tr("Force-arm refused: vehicle is airborne (ground speed %.1f m/s > %.1f m/s)",
+                               "Force-arm refusal — airborne/groundspeed")
+                                .arg(gs, 0, 'f', 1)
+                                .arg(static_cast<double>(kForceArmMaxGroundSpeedMs), 0, 'f', 1);
+        qCWarning(telemetryBridgeLog) << msg;
+        return msg;
+    }
+    if (_vehicle->flying()) {
+        const QString msg = tr("Force-arm refused: vehicle reports flying");
+        qCWarning(telemetryBridgeLog) << msg;
+        return msg;
+    }
+    if (_vehicle->property("takeoffInProgress").toBool() ||
+        _vehicle->property("landingInProgress").toBool()) {
+        const QString msg = tr("Force-arm refused: vehicle in takeoff/landing");
+        qCWarning(telemetryBridgeLog) << msg;
+        return msg;
     }
 
     // Open the ArmingGate override window (bounded, logged). This is the
@@ -1273,9 +1294,10 @@ void TelemetryBridge::forceArm() {
 
     qCWarning(telemetryBridgeLog) << "forceArm(): sending MAV_CMD_COMPONENT_ARM_DISARM with force flag";
     _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
-                             true,  // showError
-                             1.0f,  // param1 = 1 (arm)
-                             kForceArmParam2);
+                              true,  // showError
+                              1.0f,  // param1 = 1 (arm)
+                              kForceArmParam2);
+    return QString();
 }
 
 /// Command the vehicle to Return To Launch. THE single RTL code path for the

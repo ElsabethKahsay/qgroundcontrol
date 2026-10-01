@@ -86,9 +86,12 @@ public:
     /// Returns the filename for the simulated log file. Only available after a download is requested.
     QString logDownloadFile() const { return _logDownloadFilename; }
 
-    void clearReceivedMavCommandCounts() { _receivedMavCommandCountMap.clear(); _lastArmDisarmParam1 = qQNaN(); _lastDoSetModeParam2 = -1.0f; }
+    void clearReceivedMavCommandCounts() { _receivedMavCommandCountMap.clear(); _lastArmDisarmParam1 = qQNaN(); _lastArmDisarmParam2 = qQNaN(); _lastDoSetModeParam2 = -1.0f; }
     int receivedMavCommandCount(MAV_CMD command) const { return _receivedMavCommandCountMap[command]; }
     float lastArmDisarmParam1() const { return _lastArmDisarmParam1; }
+    /// param2 of the last MAV_CMD_COMPONENT_ARM_DISARM received (the force-arm
+    /// magic: 2989 from the funnel, 21196 legacy).
+    float lastArmDisarmParam2() const { return _lastArmDisarmParam2; }
     /// param2 of the last MAV_CMD_DO_SET_MODE received (-1.0 before any).
     float lastDoSetModeParam2() const { return _lastDoSetModeParam2; }
 
@@ -264,6 +267,7 @@ private:
 
     QMap<MAV_CMD, int> _receivedMavCommandCountMap;
     float _lastArmDisarmParam1 = qQNaN();               ///< param1 of the last MAV_CMD_COMPONENT_ARM_DISARM received
+    float _lastArmDisarmParam2 = qQNaN();               ///< param2 (force-arm magic) of the last MAV_CMD_COMPONENT_ARM_DISARM received
     float _lastDoSetModeParam2 = -1.0f;                 ///< param2 of the last MAV_CMD_DO_SET_MODE received
     QMap<int, QMap<QString, QVariant>> _mapParamName2Value;
     QMap<int, QMap<QString, MAV_PARAM_TYPE>> _mapParamName2MavParamType;
