@@ -63,6 +63,9 @@ public:
     /// sends unless the gate allows it or an override is active).
     void setArmingGate(QObject *gate);
 
+    /// Register the TelemetryBridge used as the single force-arm funnel.
+    void setTelemetryBridge(class TelemetryBridge *bridge);
+
     QVariantList surfaces() const;
     int activeSurface() const { return m_activeSurface; }
     QVariantList surfaceStates() const;
@@ -174,6 +177,7 @@ private:
 
     Vehicle *m_vehicle = nullptr;
     QObject *m_armingGate = nullptr;    /// ArmingGate for arm-command override (set by PreflightPlugin)
+    class TelemetryBridge *m_telemetryBridge = nullptr; /// Single force-arm funnel (set by PreflightPlugin)
     QVector<ControlSurface> m_surfaceList;
     QVector<SurfaceState> m_states;
     int m_activeSurface = -1;

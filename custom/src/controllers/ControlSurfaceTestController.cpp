@@ -14,6 +14,7 @@
 #include "../utils/FlightModeUtil.h"
 #include "../utils/Config.h"
 #include "../utils/RcOverrideInterlock.h"
+#include "../adapters/TelemetryBridge.h"
 
 Q_DECLARE_LOGGING_CATEGORY(controlSurfaceTestLog)
 Q_LOGGING_CATEGORY(controlSurfaceTestLog, "preflight.surfacetest")
@@ -71,6 +72,11 @@ void ControlSurfaceTestController::setSwapElevonLR(bool swap)
 void ControlSurfaceTestController::setArmingGate(QObject *gate)
 {
     m_armingGate = gate;
+}
+
+void ControlSurfaceTestController::setTelemetryBridge(TelemetryBridge *bridge)
+{
+    m_telemetryBridge = bridge;
 }
 
 void ControlSurfaceTestController::setVehicle(Vehicle *vehicle)
@@ -512,18 +518,26 @@ void ControlSurfaceTestController::_beginSurfaceTest(int idx)
     // reaches the servos.  Already armed → sweep immediately.
     if (m_vehicle && !m_vehicle->armed()) {
         qCWarning(controlSurfaceTestLog) << "Surface test requesting arm before sweep (mode:" << m_flightMode << ")";
-        // Open a bounded, logged gate override first: the Vehicle-level arm
-        // interceptor vetoes any arm send (param1==1) unless the gate allows it.
-        if (m_armingGate) {
-            QMetaObject::invokeMethod(m_armingGate, "forceArm");
-        } else {
-            qCWarning(controlSurfaceTestLog) << "Surface test arm: no ArmingGate registered";
-        }
         m_pendingSurfaceIndex = idx;
-        m_vehicle->sendMavCommand(
-            m_vehicle->defaultComponentId(),
-            MAV_CMD_COMPONENT_ARM_DISARM, false,
-            1.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
+        // Routed through the funnel (TelemetryBridge::forceArm) which opens the
+        // bounded override and sends the canonical kForceArmParam2.
+        if (m_telemetryBridge) {
+            const QString refusal = m_telemetryBridge->forceArm();
+            if (!refusal.isEmpty()) {
+                qCWarning(controlSurfaceTestLog) << "Surface test arm refused:" << refusal;
+                m_pendingSurfaceIndex = -1;
+            }
+        } else {
+            if (m_armingGate) {
+                QMetaObject::invokeMethod(m_armingGate, "forceArm");
+            } else {
+                qCWarning(controlSurfaceTestLog) << "Surface test arm: no ArmingGate registered";
+            }
+            m_vehicle->sendMavCommand(
+                m_vehicle->defaultComponentId(),
+                MAV_CMD_COMPONENT_ARM_DISARM, false,
+                1.0f, kForceArmParam2, 0, 0, 0, 0, 0);
+        }
         return;
     }
 

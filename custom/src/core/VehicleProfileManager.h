@@ -140,7 +140,7 @@ public:
     /// no vehicle is connected).
     void _persistBatteryConfig();
 
-    /// Force arm vehicle, bypassing pre-arm checks.
+    /// Force arm vehicle, bypassing pre-arm checks (funnels to TelemetryBridge).
     Q_INVOKABLE void forceArm();
     /// Disarm vehicle via MAVLink (set force=true to bypass in-flight/pre-disarm checks, sends kForceArmParam2).
     Q_INVOKABLE void disarmVehicle(bool force = false);

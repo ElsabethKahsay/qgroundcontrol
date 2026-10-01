@@ -152,6 +152,9 @@ public:
     /// arm sends unless the gate allows it or an override is active).
     void setArmingGate(QObject *gate);
 
+    /// Register the TelemetryBridge used as the single force-arm funnel.
+    void setTelemetryBridge(class TelemetryBridge *bridge);
+
     /// Determine motor count from vehicle parameters (PX4 CA_AIRFRAME / ArduPilot FRAME_CLASS)
     /// or fall back to HEARTBEAT type.  Also detects VTOL mode.
     void resolveMotorCount();
@@ -378,6 +381,7 @@ private:
 
     Vehicle *_vehicle = nullptr;
     QObject *_armingGate = nullptr;   /// ArmingGate for arm-command override (set by PreflightPlugin)
+    class TelemetryBridge *_telemetryBridge = nullptr; /// Telemetry bridge for funnelled force-arm (set by PreflightPlugin)
 
     int _motorCount = 0;            /// Total number of motor/servo outputs detected from parameters
     QVector<MotorState> _state;     /// Per-motor state array (indexed 0-based; QML uses 1-based)

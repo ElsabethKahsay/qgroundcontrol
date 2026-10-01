@@ -23,6 +23,7 @@
 #include "utils/FlightModeUtil.h"
 #include "utils/Config.h"
 #include "utils/RcOverrideInterlock.h"
+#include "adapters/TelemetryBridge.h"
 
 Q_LOGGING_CATEGORY(hardwareTestLog, "preflight.hardwaretest")
 
@@ -65,6 +66,11 @@ HardwareTestController::HardwareTestController(QObject *parent)
 void HardwareTestController::setArmingGate(QObject *gate)
 {
     _armingGate = gate;
+}
+
+void HardwareTestController::setTelemetryBridge(TelemetryBridge *bridge)
+{
+    _telemetryBridge = bridge;
 }
 
 void HardwareTestController::setVehicle(Vehicle *vehicle)
@@ -749,19 +755,22 @@ void HardwareTestController::_startFixedWingMotorTest(int idx)
     }
 
     // Force-ARM the vehicle (param1=1.0). Plane bench tests need the ESC to
-    // respond to the throttle channel; param2=kLegacyForceArmParam2 bypasses the pre-arm checks.
-    // Open a bounded, logged gate override first: the Vehicle-level arm
-    // interceptor vetoes any arm send (param1==1) unless the gate allows it.
-    if (_armingGate) {
-        QMetaObject::invokeMethod(_armingGate, "forceArm");
+    // respond to the throttle channel. Routed through the funnel (TelemetryBridge::forceArm)
+    // which opens the bounded override and sends the canonical kForceArmParam2.
+    if (_telemetryBridge) {
+        _telemetryBridge->forceArm();
     } else {
-        qCWarning(hardwareTestLog) << "FW motor test arm: no ArmingGate registered";
+        if (_armingGate) {
+            QMetaObject::invokeMethod(_armingGate, "forceArm");
+        } else {
+            qCWarning(hardwareTestLog) << "FW motor test arm: no ArmingGate registered";
+        }
+        _vehicle->sendMavCommand(
+            _vehicle->defaultComponentId(),
+            MAV_CMD_COMPONENT_ARM_DISARM, false,
+            1.0f, kForceArmParam2, 0, 0, 0, 0, 0
+        );
     }
-    _vehicle->sendMavCommand(
-        _vehicle->defaultComponentId(),
-        MAV_CMD_COMPONENT_ARM_DISARM, false,
-        1.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0
-    );
 
     // Phase 1 — wait for arm confirmation BEFORE driving the ESC. The phase
     // timer polls the armed state every kFwArmRetryIntervalMs up to kFwArmRetries

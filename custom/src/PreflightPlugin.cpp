@@ -213,6 +213,10 @@ void PreflightPlugin::init()
     // sanctioned arm commands; hand them the same gate as the telemetry bridge.
     _hardwareTestController->setArmingGate(_armingGate);
     _controlSurfaceTestController->setArmingGate(_armingGate);
+    // Force-arm from either bench controller must go through the single funnel
+    // (TelemetryBridge::forceArm): one bounded override, one 2989-param2 send.
+    _hardwareTestController->setTelemetryBridge(_telemetryBridge);
+    _controlSurfaceTestController->setTelemetryBridge(_telemetryBridge);
 
     // The NoFlyZoneModel constructor reloads zones from the database, so the
     // DB must be initialized before the model is created or the dropdown will

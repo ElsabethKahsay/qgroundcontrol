@@ -627,16 +627,16 @@ void VehicleProfileManager::setBatteryType(const QString &type)
 
 void VehicleProfileManager::forceArm()
 {
+    if (m_telemetry) {
+        qInfo() << "VehicleProfileManager: Force arming vehicle (funnel)";
+        m_telemetry->forceArm();
+        return;
+    }
     Vehicle *vehicle = MultiVehicleManager::instance() ? MultiVehicleManager::instance()->activeVehicle() : nullptr;
     if (vehicle) {
-        qInfo() << "VehicleProfileManager: Force arming vehicle";
-        // Open a bounded, logged override window on the ArmingGate first: the
-        // Vehicle-level interceptor vetoes MAV_CMD_COMPONENT_ARM_DISARM (param1==1)
-        // outbound consumes the gate, so a sanctioned force-arm must open the gate.
+        qWarning() << "VehicleProfileManager: TelemetryBridge unavailable; falling back to vehicle->forceArm()";
         if (m_armingGate) {
             QMetaObject::invokeMethod(m_armingGate, "forceArm");
-        } else {
-            qWarning().noquote() << "VehicleProfileManager::forceArm: no ArmingGate registered";
         }
         vehicle->forceArm();
     }
