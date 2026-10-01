@@ -232,7 +232,81 @@ Implementation notes:
     and `ControlSurfaceTestControllerTest` to assert the bounded override + single
     param 2989 on the wire; assert the airborne-precondition refusal.
 
-### Phase 4 — Bench Test panel with hardened Force Arm
+### Phase 4 — Bench Test panel with hardened Force Arm — SCOPED DOWN
+
+**Decision (user):** the Bench Test panel was NOT built. The intended host,
+`custom/qml/pages/MaintenancePage.qml`, is **dead UI** — it is registered in
+`custom/custom.qrc:51` but nothing navigates to it: no `Config.navigatePush()`
+target names it, and no QML or C++ file references it anywhere. Building the
+panel would have put a hardened force-arm affordance into unreachable UI.
+Phase 4 was therefore spent **hardening the force-arm paths that ARE reachable**
+instead.
+
+Reachability audit of every force-arm call site:
+
+| Call site | Reachable via | Phase 4 action |
+|---|---|---|
+| `FlyQuickActions.qml:459` | Fly view | already single-path (Phase 3) |
+| `MainStatusIndicator.qml:353` | custom toolbar (aliased over stock) | **hardened** |
+| `WizardStep4Review.qml:294` | `PreFlightChecklist.qml` step 3 | **hardened** |
+| `ArmGatePanel.qml:148` | `PreflightChecklistView.qml:1323` | **hardened** |
+| `ControlSurfacePanel.qml:270` | unreferenced, but shipped in qrc | **hardened** |
+| `MaintenancePage.qml` | **nothing** | not touched (dead) |
+
+Defects found and fixed:
+
+1. **`ArmGatePanel.qml` "Force Arm" armed nothing.** `ArmingGate.forceArm()`
+   (`ArmingGate.cpp:284`) only sets `_overrideActive` and starts the bounded
+   timer — it sends **no command**. That button was the whole of its
+   `onClicked`, so pressing it opened an override window and nothing else.
+   Now calls the funnel, which opens the override *and* sends.
+2. **`WizardStep4Review.qml` sent a plain arm after forcing.** It called
+   `ArmingGate.forceArm()` then `TelemetryProvider.arm()`, i.e. `param2=0` with
+   no force magic — the autopilot was still free to reject the arm on its own
+   pre-arm checks, so the operator's "force" could silently no-op. Now the funnel
+   is called **first** and the audit `Database.insertTelemetryEvent(...,
+   "FORCE_ARM", ...)` plus the success overlay only happen if it was accepted; a
+   refusal shows a red panel and logs nothing.
+3. **`MainStatusIndicator.qml` kept the Phase 3 trio** — gate override only, then
+   the force-arm, with a `mainWindow.forceArmVehicleRequest()` fallback that
+   routes to stock `GuidedActionsController` and so through the APM/PX4 firmware
+   plugins this fork disables (`CustomOverrides.cmake:42-45`). Collapsed to the
+   one funnel call; the stock fallback is gone. On refusal the popup stays open
+   and the reason is logged rather than swallowed.
+4. **`ControlSurfacePanel.qml` called raw `v.forceArm()`**, bypassing the funnel:
+   no 2989 magic, and none of the Phase 3 ground-speed precondition. Now routed
+   through the funnel with the refusal rendered inside the dialog.
+
+Standing regression check (item 16 substitute):
+`FlyQuickActionsSmokeTest::testNoQmlCallsGateOnlyForceArm` walks the whole
+`custom/qml` tree, strips line comments, and fails if any file makes a live call
+to `ArmingGate.forceArm()` or `mainWindow.forceArmVehicleRequest()`, and asserts
+the funnel is wired in more than one panel. It is proven live: stashing the
+`MainStatusIndicator.qml` hardening back to its pre-Phase-4 state makes it fail
+with both offenders named, and restoring the fix makes it pass.
+
+Evidence (final build):
+
+```
+FlyQuickActionsSmokeTest         Totals: 8 passed, 0 failed, 0 skipped, 0 blacklisted, 961ms
+ArmSendTest                      Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 33587ms
+HardwareTestControllerTest       Totals: 12 passed, 0 failed, 0 skipped, 0 blacklisted, 14668ms
+ControlSurfaceTestControllerTest Totals: 9 passed, 0 failed, 5 skipped, 0 blacklisted, 23915ms
+ReturnToLaunchTest               Totals: 9 passed, 0 failed, 0 skipped, 0 blacklisted, 16212ms
+TelemetryBridgeTest              Totals: 7 passed, 0 failed, 0 skipped, 0 blacklisted, 52ms
+ArmingGateTest                   Totals: 8 passed, 0 failed, 0 skipped, 0 blacklisted, 62ms
+ArmingGateExtendedTest           Totals: 10 passed, 0 failed, 0 skipped, 0 blacklisted, 272ms
+ArmingFlowIntegrationTest        Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 2243ms
+VehicleProfileManagerTest        Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 97ms
+```
+
+Live-app regression (`--live-arm`, Track A driver, exit 0): phase A
+`armCount=0 armed=false vetoDenied=true`; phase B
+`armCount=1 lastParam1=1.0 armed=true overrideActive=true`; `SUCCESS`; RTL repro
+`doSetModeWireCount=1` `Custom:0x10000`→`Custom:0xb`; productMark sentinel present.
+
+Still open from the original Phase 4: the Bench Test panel itself (items 13-17)
+needs a reachable host page first.
 
 13. Extend `custom/qml/pages/MaintenancePage.qml` with the bench section
     (decision 1 above; it already hosts vehicle profile/history and is the
