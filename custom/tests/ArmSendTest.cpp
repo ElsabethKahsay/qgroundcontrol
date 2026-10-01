@@ -68,11 +68,23 @@ private slots:
     void testNoInterceptorStockBehaviorUnchanged();
     void testDisarmSendsDisarmNotArm();
     void testProductionWiringInstallsInterceptor();
+    void testBenchForceArmFunnelSingle2989Command();
+    void testForceArmRefusedAirborne();
 
 private:
     bool _pumpUntil(bool (*cond)(void* ctx), void* ctx, int timeoutMs);
     Vehicle* _connectPlane();
     void _makeBlockedGate(ArmingGate &gate, MockTelemetryBridge &bridge);
+    struct FunnelProbe {
+        MockLink* mockLink = nullptr;
+        Vehicle*  vehicle  = nullptr;
+    };
+    static bool _sawParam2(void* ctx) {
+        return !qIsNaN(static_cast<FunnelProbe*>(ctx)->mockLink->lastArmDisarmParam2());
+    }
+    static bool _wireCount(void* ctx) {
+        return static_cast<FunnelProbe*>(ctx)->mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM) >= 1;
+    }
 };
 
 bool ArmSendTest::_pumpUntil(bool (*cond)(void* ctx), void* ctx, int timeoutMs)
@@ -404,6 +416,87 @@ void ArmSendTest::testProductionWiringInstallsInterceptor()
         return static_cast<Vehicle*>(ctx)->armed();
     }, _vehicle, 10000));
     QVERIFY(_vehicle->armed());
+}
+
+// (g) Bench-panel force-arm through the funnel with a CLOSED gate: exactly one
+// arm command reaches the wire, carrying the canonical 2989 param2 (never the
+// legacy 21196), the bounded override is open, and the vehicle arms.
+void ArmSendTest::testBenchForceArmFunnelSingle2989Command()
+{
+    QVERIFY(_connectPlane());
+    QVERIFY(!_vehicle->armed());
+
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    bridge.setVehicle(_vehicle);
+
+    ArmingGate gate;
+    _makeBlockedGate(gate, bridge);
+    bridge.setArmingGate(&gate);
+    QVERIFY(!gate.isArmingAllowed());   // gate genuinely closed
+
+    _mockLink->clearReceivedMavCommandCounts();
+
+    FunnelProbe probe{ _mockLink, _vehicle };
+    const QString refusal = bridge.forceArm();   // funnel: override + one send
+
+    QVERIFY2(refusal.isEmpty(), qPrintable(QStringLiteral("funnel refused on the ground: %1").arg(refusal)));
+    QVERIFY(gate.isOverrideActive());            // bounded override opened
+    QVERIFY(gate.isArmingAllowed());
+    QVERIFY(_pumpUntil(&ArmSendTest::_wireCount, &probe, 10000));
+
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 1);
+    QCOMPARE(_mockLink->lastArmDisarmParam1(), 1.0f);   // arm, not disarm
+
+    QVERIFY(_pumpUntil(&ArmSendTest::_sawParam2, &probe, 10000));
+    QCOMPARE(_mockLink->lastArmDisarmParam2(), kForceArmParam2);          // 2989
+    QVERIFY(_mockLink->lastArmDisarmParam2() != kLegacyForceArmParam2);   // never 21196
+
+    QVERIFY(_pumpUntil([](void* ctx) {
+        return static_cast<Vehicle*>(ctx)->armed();
+    }, _vehicle, 10000));
+    QVERIFY(_vehicle->armed());
+}
+
+// (h) Ground-safety precondition: with the vehicle airborne, the funnel REFUSES —
+// no override window is opened and nothing reaches the wire.
+void ArmSendTest::testForceArmRefusedAirborne()
+{
+    QVERIFY(_connectPlane());
+    QVERIFY(!_vehicle->armed());
+
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    bridge.setVehicle(_vehicle);
+
+    ArmingGate gate;
+    _makeBlockedGate(gate, bridge);
+    bridge.setArmingGate(&gate);
+
+    // Airborne: ground speed above the bench threshold.
+    bridge.setGroundSpeed(static_cast<double>(kForceArmMaxGroundSpeedMs) + 3.0);
+
+    _mockLink->clearReceivedMavCommandCounts();
+
+    const QString refusal = bridge.forceArm();
+
+    QVERIFY2(!refusal.isEmpty(), "force-arm accepted an airborne vehicle");
+    QVERIFY2(!gate.isOverrideActive(), "override window opened for a refused airborne force-arm");
+
+    QTest::qWait(500); // give any (incorrect) send time to reach the link
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 0);
+    QVERIFY(!_vehicle->armed());
+
+    // Back on the ground the same funnel accepts (override + one 2989 send).
+    bridge.setGroundSpeed(0.0);
+    const QString accepted = bridge.forceArm();
+    QVERIFY2(accepted.isEmpty(), qPrintable(QStringLiteral("grounded force-arm refused: %1").arg(accepted)));
+    QVERIFY(_pumpUntil([](void* ctx) {
+        return static_cast<MockLink*>(ctx)->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM) >= 1;
+    }, _mockLink, 10000));
+    QCOMPARE(_mockLink->lastArmDisarmParam2(), kForceArmParam2);
 }
 
 UT_REGISTER_TEST(ArmSendTest)

@@ -7,6 +7,8 @@
 #include "UnitTest.h"
 #include "ControlSurfaceTestController.h"
 #include "HardwareTestController.h"
+#include "mocks/MockTelemetryBridge.h"
+#include "ArmingGate.h"
 #include "MultiVehicleManager.h"
 #include "Vehicle/Vehicle.h"
 #include "utils/RcOverrideInterlock.h"
@@ -28,6 +30,7 @@ private slots:
     void testAllSurfaceTypesLoadCorrectly();
     void testManualModeForcedAndReasserted();
     void testArmBeforeSweepWithDeferredStart();
+    void testPreSweepArmViaFunnelWith2989();
     void testDbResultLoggingFires();
 
     // Bug hypothesis tests (each targets one audit finding)
@@ -136,6 +139,57 @@ void ControlSurfaceTestControllerTest::testArmBeforeSweepWithDeferredStart()
     QVERIFY(_pumpUntil([](void *ctx) {
         return static_cast<ControlSurfaceTestController *>(ctx)->activeSurface() >= 0;
     }, &ctrl, 15000));
+}
+
+// Phase 3 funnel convergence: the pre-sweep arm must go through
+// TelemetryBridge::forceArm() — bounded override opened by the funnel, exactly
+// ONE arm command on the wire carrying the canonical 2989 param2, never the
+// legacy 21196 magic. An airborne vehicle is refused by the funnel and no
+// sweep may start.
+void ControlSurfaceTestControllerTest::testPreSweepArmViaFunnelWith2989()
+{
+    QVERIFY(_connectPlane());
+
+    if (_vehicle->armed()) {
+        _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
+                                 false, 0.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
+        QVERIFY(_pumpUntil([](void *ctx) {
+            return !static_cast<Vehicle *>(ctx)->armed();
+        }, _vehicle, 10000));
+    }
+
+    ControlSurfaceTestController ctrl;
+    ctrl.setVehicle(_vehicle);
+    ctrl.loadSurfacesForVehicle(QStringLiteral("Fixed Wing"), 1);
+
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    bridge.setVehicle(_vehicle);
+    ArmingGate gate;
+    gate.setMode(ArmingGate::Active);
+    bridge.setArmingGate(&gate);
+    ctrl.setTelemetryBridge(&bridge);
+
+    _mockLink->clearReceivedMavCommandCounts();
+
+    ctrl.testAileron();
+
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<MockLink *>(ctx)->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM) >= 1;
+    }, _mockLink, 10000));
+
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 1);
+    QCOMPARE(_mockLink->lastArmDisarmParam1(), 1.0f);
+    QCOMPARE(_mockLink->lastArmDisarmParam2(), kForceArmParam2);
+    QVERIFY2(_mockLink->lastArmDisarmParam2() != kLegacyForceArmParam2,
+             "pre-sweep arm still sends the legacy 21196 force-arm magic instead of the funnel's 2989");
+    QVERIFY2(gate.isOverrideActive(), "funnel did not open the bounded gate override");
+
+    // Airborne: the funnel refuses, so no sweep may be armed from a flying vehicle.
+    bridge.setGroundSpeed(static_cast<double>(kForceArmMaxGroundSpeedMs) + 5.0);
+    const QString refusal = bridge.forceArm();
+    QVERIFY2(!refusal.isEmpty(), "funnel force-armed an airborne vehicle");
 }
 
 void ControlSurfaceTestControllerTest::testDbResultLoggingFires()

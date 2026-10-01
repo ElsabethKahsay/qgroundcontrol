@@ -7,8 +7,12 @@
 #include "HardwareTestController.h"
 #include "HardwareTestProfile.h"
 #include "mocks/MockVehicle.h"
+#include "mocks/MockTelemetryBridge.h"
+#include "ArmingGate.h"
 #include "MultiVehicleManager.h"
 #include "Vehicle/Vehicle.h"
+#include "Comms/MockLink/MockLink.h"
+#include "utils/Config.h"
 
 class HardwareTestControllerTest : public UnitTest {
     Q_OBJECT
@@ -25,6 +29,7 @@ private slots:
     void testFixedWingTestLabelDefaultsToM3();
     void testFixedWingTestLabelWithoutVehicle();
     void testFixedWingMotorTestWaitsForArmBeforeSpin();
+    void testFixedWingMotorTestArmsViaFunnelWith2989();
     void testStopAllDisarmsVehicle();
 
 private:
@@ -140,12 +145,38 @@ void HardwareTestControllerTest::testFixedWingMotorTestWaitsForArmBeforeSpin()
     HardwareTestController ctrl;
     ctrl.setVehicle(_vehicle);
 
+    // Route the FW auto-arm through the single funnel. The gate is left closed
+    // (no override pre-opened) so the funnel must open the bounded override
+    // itself and send exactly ONE arm command with the canonical 2989 param2 —
+    // never the legacy 21196, and never a second parallel command.
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    bridge.setVehicle(_vehicle);
+    ArmingGate gate;
+    gate.setMode(ArmingGate::Active);
+    bridge.setArmingGate(&gate);
+    ctrl.setTelemetryBridge(&bridge);
+
     // Motor count must resolve (HEARTBEAT fallback → 1 for a plane) before a test can start.
     QVERIFY(_pumpUntil([](void *ctx) {
         return static_cast<HardwareTestController *>(ctx)->motorCount() >= 1;
     }, &ctrl, 15000));
 
+    _mockLink->clearReceivedMavCommandCounts();
+
     ctrl.testMotor(1);
+
+    // Exactly one arm on the wire, with the funnel's param2.
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<MockLink *>(ctx)->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM) >= 1;
+    }, _mockLink, 10000));
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 1);
+    QCOMPARE(_mockLink->lastArmDisarmParam1(), 1.0f);
+    QCOMPARE(_mockLink->lastArmDisarmParam2(), kForceArmParam2);
+    QVERIFY(_mockLink->lastArmDisarmParam2() != kLegacyForceArmParam2);
+    // The funnel opened the bounded override rather than the controller sending blind.
+    QVERIFY(gate.isOverrideActive());
 
     // Track whether the mock vehicle reported armed during the run (the mock
     // ACKs the force-arm, which is exactly the confirmation phase 1 waits for).
@@ -170,6 +201,60 @@ void HardwareTestControllerTest::testFixedWingMotorTestWaitsForArmBeforeSpin()
         Vehicle *v = static_cast<Vehicle *>(ctx);
         return !v->armed();
     }, _vehicle, 10000));
+}
+
+// Phase 3 funnel convergence, isolated from the full motor run: the FW auto-arm
+// must go through TelemetryBridge::forceArm() — which opens the bounded gate
+// override and sends ONE command with the canonical 2989 param2 — instead of a
+// blind sendMavCommand() with the legacy 21196 magic.
+void HardwareTestControllerTest::testFixedWingMotorTestArmsViaFunnelWith2989()
+{
+    _mockLink = MockLink::startAPMArduPlaneMockLink(false);
+    QVERIFY(_mockLink);
+    QSignalSpy spyVehicle(MultiVehicleManager::instance(), &MultiVehicleManager::activeVehicleChanged);
+    QVERIFY(spyVehicle.wait(10000));
+    _vehicle = MultiVehicleManager::instance()->activeVehicle();
+    QVERIFY(_vehicle);
+    QSignalSpy spyPlan(_vehicle, &Vehicle::initialConnectComplete);
+    QVERIFY(spyPlan.wait(30000));
+
+    HardwareTestController ctrl;
+    ctrl.setVehicle(_vehicle);
+
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    bridge.setVehicle(_vehicle);
+    ArmingGate gate;
+    gate.setMode(ArmingGate::Active);
+    bridge.setArmingGate(&gate);
+    ctrl.setTelemetryBridge(&bridge);
+
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<HardwareTestController *>(ctx)->motorCount() >= 1;
+    }, &ctrl, 15000));
+
+    _mockLink->clearReceivedMavCommandCounts();
+
+    ctrl.testMotor(1);
+
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<MockLink *>(ctx)->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM) >= 1;
+    }, _mockLink, 10000));
+
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 1);
+    QCOMPARE(_mockLink->lastArmDisarmParam1(), 1.0f);
+    QCOMPARE(_mockLink->lastArmDisarmParam2(), kForceArmParam2);
+    QVERIFY2(_mockLink->lastArmDisarmParam2() != kLegacyForceArmParam2,
+             "FW motor test still sends the legacy 21196 force-arm magic instead of the funnel's 2989");
+    QVERIFY2(gate.isOverrideActive(), "funnel did not open the bounded gate override");
+
+    // Airborne force-arm is refused by the funnel, so the same controller path
+    // must not arm: stop the run and put the vehicle back on the ground.
+    bridge.setGroundSpeed(static_cast<double>(kForceArmMaxGroundSpeedMs) + 5.0);
+    const QString refusal = bridge.forceArm();
+    QVERIFY2(!refusal.isEmpty(), "funnel force-armed an airborne vehicle");
+    QTest::qWait(400);
 }
 
 // P0.4: stopAll() on the multirotor path must leave the vehicle DISARMED, not

@@ -664,6 +664,7 @@ private slots:
     void testReturnWiredToSingleFunction();
     void testOldRtlEntryRemoved();
     void testTakeoffRemoved();
+    void testSingleForceArmPath();
 
 private:
     QSharedPointer<QQmlApplicationEngine> _engine;
@@ -791,6 +792,26 @@ void FlyQuickActionsSmokeTest::testTakeoffRemoved()
              "no takeoff call may remain in the QML");
     QVERIFY2(!qml.contains(QStringLiteral("action:    \"takeoff\"")),
              "no takeoff action wiring may remain in the QML");
+}
+
+// Phase 3: the Fly view's Force Arm must have exactly ONE code path. The former
+// parallel trio (ArmingGate.forceArm() + vehicle.forceArm() + TelemetryProvider
+// forceArm()) collapsed to TelemetryProvider.forceArm() only.
+void FlyQuickActionsSmokeTest::testSingleForceArmPath()
+{
+    _loadComponent();
+
+    QFile f(_filePath);
+    QVERIFY2(f.open(QIODevice::ReadOnly), "cannot read FlyQuickActions.qml");
+    const QString qml = QString::fromUtf8(f.readAll());
+    f.close();
+
+    QVERIFY2(qml.contains(QStringLiteral("TelemetryProvider.forceArm()")),
+             "the single force-arm funnel (TelemetryProvider.forceArm) must be wired");
+    QVERIFY2(!qml.contains(QStringLiteral("ArmingGate.forceArm()")),
+             "parallel ArmingGate.forceArm() path must be gone from FlyQuickActions.qml");
+    QVERIFY2(!qml.contains(QStringLiteral("v.forceArm()")),
+             "parallel vehicle.forceArm() path must be gone from FlyQuickActions.qml");
 }
 
 UT_REGISTER_TEST(MotorCheckPanelSmokeTest)
