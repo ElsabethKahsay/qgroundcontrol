@@ -3,7 +3,7 @@
 //   hardware results, and operator identity. Provides:
 //     - "Arm Vehicle" when all blocking checks pass
 //     - "Force Arm" when blockers exist — requires typed reason + responsibility checkbox
-//       before calling ArmingGate.forceArm(); all force-arm events are logged to DB.
+//       before calling TelemetryProvider.forceArm(); all force-arm events are logged to DB.
 // Signals:
 //   backClicked()  — navigate back to hardware verification
 // Properties passed in:
@@ -260,6 +260,28 @@ Item {
                         cursorShape: parent.parent._dialogValid ? Qt.PointingHandCursor : Qt.ArrowCursor
                         enabled: parent.parent._dialogValid
                         onClicked: {
+                            // 0. Execute force arm THROUGH THE SINGLE FUNNEL FIRST.
+                            // ArmingGate.forceArm() only opened the bounded override
+                            // and sent nothing; arming with param2=0 left the
+                            // autopilot free to reject the arm on its own pre-arm
+                            // checks. TelemetryProvider.forceArm() opens the override
+                            // AND sends the canonical 2989 force magic, and returns a
+                            // refusal when the vehicle is not on the ground.
+                            var refusal = ""
+                            if (typeof TelemetryProvider !== "undefined" && TelemetryProvider)
+                                refusal = TelemetryProvider.forceArm()
+                            else
+                                refusal = qsTr("Telemetry bridge unavailable")
+
+                            if (refusal) {
+                                // Nothing was sent — do not log a FORCE_ARM event and
+                                // do not claim success; show why.
+                                root._forceArmRefusal = refusal
+                                forceArmDialog.close()
+                                return
+                            }
+                            root._forceArmRefusal = ""
+
                             // 1. Assemble full audit context
                             var auditPayload = {
                                 event:           "FORCE_ARM",
@@ -290,10 +312,6 @@ Item {
                                 )
                             }
 
-                            // 3. Execute force arm
-                            ArmingGate.forceArm()
-                            TelemetryProvider.arm()
-
                             forceArmDialog.close()
                             forceArmSuccessTimer.restart()
                         }
@@ -305,6 +323,8 @@ Item {
 
     // Post-force-arm confirmation banner
     property bool _forceArmLogged: false
+    // Non-empty when the funnel refused the force-arm (nothing was sent).
+    property string _forceArmRefusal: ""
     Timer { id: forceArmSuccessTimer; interval: 3000; onTriggered: root._forceArmLogged = false }
     Component.onDestruction: forceArmSuccessTimer.stop()
 
@@ -421,10 +441,27 @@ Item {
                 }
             }
 
+            // Force-arm REFUSED by the funnel (e.g. vehicle airborne): no command
+            // was sent and no audit event was written.
+            Rectangle {
+                anchors.fill: parent
+                radius: parent.radius
+                color: Colors.errorDim
+                visible: root._forceArmRefusal.length > 0
+                Text {
+                    anchors.centerIn: parent
+                    text: root._forceArmRefusal
+                    font.pixelSize: Config.fontSizeBody; font.bold: true
+                    color: Colors.textPrimary
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
+                }
+            }
+
             RowLayout {
                 anchors.fill: parent; anchors.margins: Config.spacingMedium
                 spacing: Config.spacingSmall
-                visible: !root._forceArmLogged
+                visible: !root._forceArmLogged && root._forceArmRefusal.length === 0
 
                 Text {
                     font.pixelSize: 22

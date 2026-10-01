@@ -250,10 +250,22 @@ Rectangle {
         x: Math.round((parent.width - width) / 2)
         y: Math.round((parent.height - height) / 2)
         width: 360
-        contentItem: Label {
-            text: "Force arm bypasses all preflight checks.\n"
-                + "Ensure area is clear and props are safe."
-            wrapMode: Text.Wrap
+        contentItem: Column {
+            spacing: 8
+            Label {
+                text: "Force arm bypasses all preflight checks.\n"
+                    + "Ensure area is clear and props are safe."
+                wrapMode: Text.Wrap
+            }
+            // Funnel refusal (airborne / takeoff / no vehicle): nothing was sent.
+            Label {
+                id: forceArmRefusalLabel
+                text: ""
+                wrapMode: Text.Wrap
+                color: Colors.error
+                font.bold: true
+                visible: text.length > 0
+            }
         }
         footer: DialogButtonBox {
             Button {
@@ -264,10 +276,20 @@ Rectangle {
                 text: "Force Arm"
                 DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
                 onClicked: {
-                    var v = QGroundControl.multiVehicleManager.activeVehicle
-                    if (!v) return
-                    // Stock QGC force-arm path so Vehicle.armed updates from the ACK/heartbeat.
-                    v.forceArm()
+                    // SINGLE force-arm path (funnel). The former raw
+                    // vehicle.forceArm() bypassed the funnel entirely, so it sent
+                    // no 2989 force magic and had no ground-speed precondition.
+                    // TelemetryProvider.forceArm() opens the bounded override AND
+                    // sends the one arm command; it returns a refusal (e.g. the
+                    // vehicle is airborne) which is shown instead of closing.
+                    if (typeof TelemetryProvider === 'undefined' || !TelemetryProvider) {
+                        forceArmRefusalLabel.text = qsTr("Telemetry bridge unavailable")
+                        return
+                    }
+                    var refusal = TelemetryProvider.forceArm()
+                    forceArmRefusalLabel.text = refusal ? refusal : ""
+                    if (!refusal)
+                        forceArmDialog.close()
                 }
                 background: Rectangle { color: Colors.warning; radius: 6 }
                 contentItem: Label {
