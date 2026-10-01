@@ -448,14 +448,17 @@ Item {
             }
         }
 
+        // SINGLE force-arm path. The gate-only override call (which sends nothing) and
+        // the raw vehicle forceArm() call (a second, ungated command) are NOT
+        // invoked here: TelemetryProvider.forceArm() opens the bounded override
+        // AND sends the one arm command. It returns "" when it sent, or a
+        // non-empty refusal (e.g. vehicle airborne) to display.
         onAccepted: {
-            if (typeof ArmingGate !== 'undefined' && ArmingGate)
-                ArmingGate.forceArm()
-            var v = root._activeVehicle
-            if (v && typeof v.forceArm === "function")
-                v.forceArm()
+            var refusal = ""
             if (typeof TelemetryProvider !== 'undefined' && TelemetryProvider)
-                TelemetryProvider.forceArm()
+                refusal = TelemetryProvider.forceArm()
+            if (refusal)
+                root._rtlResultLabel = refusal
         }
     }
 
