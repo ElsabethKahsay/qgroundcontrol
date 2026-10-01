@@ -162,7 +162,53 @@ ArmSendTest               Totals: 9 passed, 0 failed
 ArmingFlowIntegrationTest Totals: 11 passed, 0 failed
 ```
 
-### Phase 3 — Converge force-arm callers on the funnel (prereq for bench panel)
+### Phase 3 — Converge force-arm callers on the funnel (prereq for bench panel) — DONE
+
+Evidence (final build, `PreflightQGroundControl`):
+
+```
+ArmSendTest                      Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 29955ms
+HardwareTestControllerTest       Totals: 12 passed, 0 failed, 0 skipped, 0 blacklisted, 13762ms
+ControlSurfaceTestControllerTest Totals: 9 passed, 0 failed, 5 skipped, 0 blacklisted, 21454ms
+FlyQuickActionsSmokeTest         Totals: 7 passed, 0 failed, 0 skipped, 0 blacklisted, 479ms
+ReturnToLaunchTest               Totals: 9 passed, 0 failed, 0 skipped, 0 blacklisted, 14545ms
+TelemetryBridgeTest              Totals: 7 passed, 0 failed, 0 skipped, 0 blacklisted, 64ms
+ArmingGateTest                   Totals: 8 passed, 0 failed, 0 skipped, 0 blacklisted, 66ms
+ArmingGateExtendedTest           Totals: 10 passed, 0 failed, 0 skipped, 0 blacklisted, 242ms
+ArmingFlowIntegrationTest        Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 1742ms
+VehicleProfileManagerTest        Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 78ms
+```
+
+New tests, all PASS:
+
+| Test | Asserts |
+|---|---|
+| `ArmSendTest::testBenchForceArmFunnelSingle2989Command` | Closed gate + funnel → bounded override opens, exactly ONE `ARM_DISARM` on the wire, param1=1, param2=**2989** (never 21196), vehicle arms |
+| `ArmSendTest::testForceArmRefusedAirborne` | Airborne (ground speed > `kForceArmMaxGroundSpeedMs`) → non-empty refusal, **no** override opened, 0 commands; grounded → accepted, 2989 on the wire |
+| `HardwareTestControllerTest::testFixedWingMotorTestArmsViaFunnelWith2989` | FW auto-arm goes through the funnel: 1 command, param2=2989 ≠ 21196, `gate.isOverrideActive()` |
+| `ControlSurfaceTestControllerTest::testPreSweepArmViaFunnelWith2989` | Pre-sweep arm via funnel: 1 command, param2=2989 ≠ 21196, override open |
+| `FlyQuickActionsSmokeTest::testSingleForceArmPath` | Fly view wires only `TelemetryProvider.forceArm()`; the `ArmingGate.forceArm()` / `v.forceArm()` parallel paths are gone from the QML |
+
+Implementation notes:
+
+- `TelemetryBridge::forceArm()` now returns `QString`: empty = sent, non-empty = displayable refusal.
+  Ground-safety precondition (item 11): refuses when ground speed >
+  `kForceArmMaxGroundSpeedMs` (1.0 m/s, `custom/src/utils/Config.h`), when
+  `vehicle->flying()`, or during takeoff/landing. The refusal is checked **before**
+  the override window is opened, so a refused force-arm leaves no gate window open.
+- `MockLink` gained `lastArmDisarmParam2()` (reset by
+  `clearReceivedMavCommandCounts()`) so tests can prove the wire carried 2989 rather
+  than only counting commands.
+- `VehicleProfileManager::forceArm()` now calls `m_telemetry->forceArm()` when a
+  bridge is injected; the old `m_armingGate->forceArm()` + `vehicle->forceArm()`
+  body survives only as a no-bridge fallback.
+- `HardwareTestController` / `ControlSurfaceTestController` take a new
+  `setTelemetryBridge()` (wired in `PreflightPlugin`) and route their arm through
+  the funnel when present; the raw fallback now also uses `kForceArmParam2` instead
+  of the legacy 21196. The remaining `kLegacyForceArmParam2` uses in those files
+  are **disarm** paths (param1=0), out of scope for this phase.
+- `FlyQuickActions.qml` force-arm dialog: only `TelemetryProvider.forceArm()`,
+  with the returned refusal surfaced via `_rtlResultLabel`.
 
 7. **VehicleProfileManager::forceArm()** → replace body with a call into the
    funnel: `TelemetryBridge::forceArm()` semantics (open override, log, send 2989).
