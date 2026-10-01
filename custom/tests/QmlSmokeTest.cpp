@@ -24,6 +24,7 @@
 #include <QDateTime>
 #include <QCoreApplication>
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 
@@ -665,6 +666,7 @@ private slots:
     void testOldRtlEntryRemoved();
     void testTakeoffRemoved();
     void testSingleForceArmPath();
+    void testNoQmlCallsGateOnlyForceArm();
 
 private:
     QSharedPointer<QQmlApplicationEngine> _engine;
@@ -812,6 +814,61 @@ void FlyQuickActionsSmokeTest::testSingleForceArmPath()
              "parallel ArmingGate.forceArm() path must be gone from FlyQuickActions.qml");
     QVERIFY2(!qml.contains(QStringLiteral("v.forceArm()")),
              "parallel vehicle.forceArm() path must be gone from FlyQuickActions.qml");
+}
+
+void FlyQuickActionsSmokeTest::testNoQmlCallsGateOnlyForceArm()
+{
+    _loadComponent();   // establishes the custom/ source root via _filePath
+
+    QDir root = QFileInfo(_filePath).dir();
+    QVERIFY2(root.cdUp() && root.cdUp(), "cannot locate custom/ source root");
+
+    // ArmingGate.forceArm() only opens the bounded override window and sends NO
+    // command; a QML path that calls it as its whole force-arm action arms
+    // nothing. vehicle.forceArm() sends without the 2989 magic and with no
+    // ground-speed precondition. Neither may appear as a live call anywhere in
+    // the custom QML tree — only TelemetryProvider.forceArm() may.
+    const QStringList banned = {
+        QStringLiteral("ArmingGate.forceArm()"),
+        QStringLiteral("mainWindow.forceArmVehicleRequest()"),
+    };
+    QStringList offenders;
+    QStringList funnelCallers;
+    for (const QString &dir : { root.filePath(QStringLiteral("qml")) }) {
+        QDirIterator it(dir, QStringList{QStringLiteral("*.qml")}, QDir::Files, QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            const QString path = it.next();
+            QFile f(path);
+            if (!f.open(QIODevice::ReadOnly)) continue;
+            const QString text = QString::fromUtf8(f.readAll());
+            f.close();
+            // Strip line comments so explanatory prose naming the old path does
+            // not trip the sentinel; the point is to ban live calls.
+            QString code;
+            for (const QString &line : text.split(QLatin1Char('\n'))) {
+                const QString trimmed = line.trimmed();
+                if (trimmed.startsWith(QLatin1String("//")) || trimmed.startsWith(QLatin1String("*"))) continue;
+                code += line + QLatin1Char('\n');
+            }
+            for (const QString &bad : banned) {
+                if (code.contains(bad)) {
+                    offenders.append(QStringLiteral("%1 -> %2").arg(path).arg(bad));
+                }
+            }
+            if (code.contains(QStringLiteral("TelemetryProvider.forceArm()"))) {
+                funnelCallers.append(path);
+            }
+        }
+    }
+    QVERIFY2(offenders.isEmpty(),
+             qPrintable(QStringLiteral("gate-only / stock force-arm paths still live:\n%1").arg(offenders.join(QLatin1Char('\n')))));
+
+    // The funnel must actually be wired where force arm is offered.
+    QVERIFY2(funnelCallers.contains(_filePath),
+             "FlyQuickActions.qml must call TelemetryProvider.forceArm()");
+    QVERIFY2(funnelCallers.size() >= 2,
+             qPrintable(QStringLiteral("expected the funnel in more than one panel, found: %1")
+                            .arg(funnelCallers.join(QStringLiteral(", ")))));
 }
 
 UT_REGISTER_TEST(MotorCheckPanelSmokeTest)
