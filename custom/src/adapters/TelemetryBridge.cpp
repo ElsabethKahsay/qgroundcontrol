@@ -1262,7 +1262,9 @@ QString TelemetryBridge::forceArm() {
 
     const double gs = groundSpeed();
     if (gs > static_cast<double>(kForceArmMaxGroundSpeedMs)) {
-        const QString msg = tr("Force-arm refused: vehicle is airborne (ground speed %.1f m/s > %.1f m/s)",
+        // QString::arg placeholders are %1/%2 — NOT printf %.1f, which would leave
+        // the literal "%.1f" in the operator-facing text.
+        const QString msg = tr("Force-arm refused: vehicle is airborne (ground speed %1 m/s > %2 m/s)",
                                "Force-arm refusal — airborne/groundspeed")
                                 .arg(gs, 0, 'f', 1)
                                 .arg(static_cast<double>(kForceArmMaxGroundSpeedMs), 0, 'f', 1);

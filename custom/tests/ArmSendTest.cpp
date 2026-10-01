@@ -70,6 +70,7 @@ private slots:
     void testProductionWiringInstallsInterceptor();
     void testBenchForceArmFunnelSingle2989Command();
     void testForceArmRefusedAirborne();
+    void testForceArmRefusalTextIsSubstituted();
 
 private:
     bool _pumpUntil(bool (*cond)(void* ctx), void* ctx, int timeoutMs);
@@ -497,6 +498,47 @@ void ArmSendTest::testForceArmRefusedAirborne()
         return static_cast<MockLink*>(ctx)->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM) >= 1;
     }, _mockLink, 10000));
     QCOMPARE(_mockLink->lastArmDisarmParam2(), kForceArmParam2);
+}
+
+// (i) The refusal text is operator-facing, so its placeholders must actually
+// be substituted. This caught a shipped bug: QString::arg takes %1/%2, but the
+// airborne message was written printf-style (%.1f), so the operator would have
+// been shown the literal "%.1f" instead of the measured ground speed. Asserting
+// only !refusal.isEmpty() passed regardless.
+void ArmSendTest::testForceArmRefusalTextIsSubstituted()
+{
+    QVERIFY(_connectPlane());
+
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    bridge.setVehicle(_vehicle);
+
+    ArmingGate gate;
+    _makeBlockedGate(gate, bridge);
+    bridge.setArmingGate(&gate);
+
+    // Airborne at a known speed so the substituted numbers are checkable.
+    const double gs = static_cast<double>(kForceArmMaxGroundSpeedMs) + 3.0;
+    bridge.setGroundSpeed(gs);
+
+    const QString refusal = bridge.forceArm();
+    QVERIFY2(!refusal.isEmpty(), "expected an airborne refusal");
+
+    // No un-substituted printf placeholder may survive.
+    // No un-substituted placeholder of either style may survive: the printf
+    // form (%.1f) is the actual bug, the Qt form (%1) would also be a failure.
+    QVERIFY2(!refusal.contains(QStringLiteral("%")),
+             qPrintable(QStringLiteral("refusal still contains an unsubstituted placeholder: %1").arg(refusal)));
+
+    // The measured ground speed (4.0 m/s: 1.0 threshold + 3.0) must appear.
+    QVERIFY2(refusal.contains(QString::number(gs, 'f', 1)),
+             qPrintable(QStringLiteral("refusal does not contain the measured ground speed %1: %2")
+                            .arg(QString::number(gs, 'f', 1)).arg(refusal)));
+
+    // And the reason must name the cause, not just the numbers.
+    QVERIFY2(refusal.contains(QStringLiteral("airborne"), Qt::CaseInsensitive),
+             qPrintable(QStringLiteral("refusal does not name the cause: %1").arg(refusal)));
 }
 
 UT_REGISTER_TEST(ArmSendTest)
