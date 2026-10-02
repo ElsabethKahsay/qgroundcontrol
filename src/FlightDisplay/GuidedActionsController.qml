@@ -504,10 +504,9 @@ Item {
         case actionRTL:
             confirmDialog.title = rtlTitle
             confirmDialog.message = rtlMessage
-            if (_activeVehicle.supportsSmartRTL) {
-                confirmDialog.optionText = qsTr("Smart RTL")
-                confirmDialog.optionChecked = false
-            }
+            // FORK PATCH: the stock "Smart RTL" checkbox is removed. executeAction(actionRTL)
+            // routes exclusively through TelemetryProvider.returnToLaunch() (fixed ArduPilot
+            // RTL DO_SET_MODE) and never reads optionChecked, so the checkbox had no effect.
             confirmDialog.hideTrigger = Qt.binding(function() { return !showRTL })
             break;
         case actionChangeAlt:
