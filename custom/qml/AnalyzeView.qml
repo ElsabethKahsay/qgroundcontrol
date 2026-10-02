@@ -163,6 +163,9 @@ Rectangle {
 
     Loader {
         id:                     panelLoader
+        // Named so the live driver can read back which page the Analyze tool is
+        // actually showing as the operator's pre-flight checklist page.
+        objectName:             "analyzePanelLoader"
         anchors.topMargin:      _verticalMargin
         anchors.bottomMargin:   _verticalMargin
         anchors.leftMargin:     _horizontalMargin
@@ -200,6 +203,27 @@ Rectangle {
             pendingSource = ""
             pendingTitle = ""
         }
+    }
+
+    // Selects the "Preflight Checklist" entry from analyzePages() the same way
+    // tapping its sidebar button does (see SubMenuButton.onClicked). Split out so
+    // the live driver can drive the operator's real Analyze -> Preflight
+    // Checklist path. Skips the session-mode gate by loading the page directly,
+    // which is the same thing onClicked does once a mode is chosen.
+    function openPreflightChecklistPage() {
+        var pages = QGroundControl.corePlugin ? QGroundControl.corePlugin.analyzePages : []
+        for (var i = 0; i < pages.length; i++) {
+            var urlString = pages[i] && pages[i].url ? pages[i].url.toString() : ""
+            if (urlString.indexOf("PreflightChecklistView.qml") !== -1) {
+                _clearAnalyzeButtonSelection()
+                panelLoader.source = urlString
+                panelLoader.title = pages[i].title
+                console.info("[sentinel] AnalyzeView opened Preflight Checklist page: " + urlString)
+                return true
+            }
+        }
+        console.warn("[sentinel] AnalyzeView: no Preflight Checklist page in analyzePages()")
+        return false
     }
 
     function _clearAnalyzeButtonSelection() {

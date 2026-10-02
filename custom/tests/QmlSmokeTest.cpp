@@ -729,31 +729,65 @@ void FlyQuickActionsSmokeTest::_loadComponent()
 
     QCOMPARE(QQmlProperty(_root.data(), "productMark").read().toString(),
              QStringLiteral("FlyQuickActions-custom-rtl2"));
-    QVERIFY(findItemByText(_root.data(), QStringLiteral("Return")));
+    QVERIFY2(!findItemByText(_root.data(), QStringLiteral("Return")),
+             "custom bar must not ship its own Return button (single RTL lives in the stock FlyViewToolStrip)");
 }
 
 void FlyQuickActionsSmokeTest::testLoadsCustomComponent()
 {
     _loadComponent();
-    // Return button found in _loadComponent(); nothing more to assert here.
+    // Custom bar must load and must NOT expose Return/Force Arm/Takeoff/Land/Pause
+    // (those live in the stock Fly strip and ArmGatePanel only).
+    QVERIFY2(!findItemByText(_root.data(), QStringLiteral("Return")),
+             "custom bar must not ship its own Return button");
+    QVERIFY2(!findItemByText(_root.data(), QStringLiteral("Force Arm")),
+             "custom bar must not ship its own Force Arm button");
+    QVERIFY2(!findItemByText(_root.data(), QStringLiteral("Takeoff")),
+             "custom bar must not ship its own Takeoff button");
+    QVERIFY2(!findItemByText(_root.data(), QStringLiteral("Land")),
+             "custom bar must not ship its own Land button");
+    QVERIFY2(!findItemByText(_root.data(), QStringLiteral("Pause")),
+             "custom bar must not ship its own Pause button");
 }
 
 void FlyQuickActionsSmokeTest::testReturnWiredToSingleFunction()
 {
     _loadComponent();
 
-    // The single RTL code path is TelemetryProvider.returnToLaunch(); the QML
-    // routes the action through a confirm dialog (two-step), never a direct send.
+    // The single RTL code path is TelemetryProvider.returnToLaunch(), reached
+    // from the STOCK FlyViewToolStrip Return button through
+    // GuidedActionsController.actionRTL (the custom bar's RTL was removed).
     QFile f(_filePath);
     QVERIFY2(f.open(QIODevice::ReadOnly), "cannot read FlyQuickActions.qml");
     const QString qml = QString::fromUtf8(f.readAll());
     f.close();
 
-    QVERIFY2(qml.contains(QStringLiteral("TelemetryProvider.returnToLaunch()")),
-             "Return action must call the single returnToLaunch() code path");
-    QVERIFY2(qml.contains(QStringLiteral("rtlConfirmDialog.open()")),
-             "Return action must go through the two-step confirm dialog");
-    QVERIFY2(!qml.contains(QStringLiteral("TelemetryProvider.rtl(")),
+    QVERIFY2(!qml.contains(QStringLiteral("action:    \"rtl\"")),
+             "no RTL action may live in the custom bar (single RTL via stock strip)");
+    QVERIFY2(!qml.contains(QStringLiteral("rtlConfirmDialog")),
+             "the custom bar's RTL confirm dialog must be gone");
+    QVERIFY2(!qml.contains(QStringLiteral("TelemetryProvider.returnToLaunch()")),
+             "custom bar must not re-route RTL (stock GuidedActionsController owns it)");
+
+    // The stock controller dispatches actionRTL to the bridge.
+    QDir srcDir(QCoreApplication::applicationDirPath());
+    for (int i = 0; i < 4; ++i) {
+        if (QFileInfo::exists(srcDir.filePath(QStringLiteral("src/FlightDisplay/GuidedActionsController.qml")))) {
+            break;
+        }
+        if (!srcDir.cdUp()) break;
+    }
+    const QString ctlPath = srcDir.filePath(QStringLiteral("src/FlightDisplay/GuidedActionsController.qml"));
+    QVERIFY2(QFileInfo::exists(ctlPath), qPrintable(QStringLiteral("missing %1").arg(ctlPath)));
+    QFile cf(ctlPath);
+    QVERIFY2(cf.open(QIODevice::ReadOnly), "cannot read GuidedActionsController.qml");
+    const QString ctlQml = QString::fromUtf8(cf.readAll());
+    cf.close();
+    QVERIFY2(ctlQml.contains(QStringLiteral("case actionRTL:")),
+             "stock controller must dispatch actionRTL");
+    QVERIFY2(ctlQml.contains(QStringLiteral("TelemetryProvider.returnToLaunch()")),
+             "stock actionRTL must call the single returnToLaunch() code path");
+    QVERIFY2(!ctlQml.contains(QStringLiteral("TelemetryProvider.rtl(")),
              "legacy TelemetryProvider.rtl() must not exist (single code path)");
 }
 
@@ -775,16 +809,16 @@ void FlyQuickActionsSmokeTest::testTakeoffRemoved()
 {
     _loadComponent();
 
-    // Phase 2: pure deletion of GCS-commanded takeoff from the default Fly view.
-    // TelemetryProvider must not expose takeoff() anymore (stock ToolStrip keeps
-    // its own takeoff; the custom column is RC-primary).
+    // Phase 2: pure deletion of GCS-commanded takeoff from the Fly view. The
+    // stock FlyViewToolStrip registration was removed; the custom bar never
+    // owned Takeoff. TelemetryProvider must not expose takeoff() anymore.
     const QVariant tpVar = _engine->rootContext()->contextProperty(QStringLiteral("TelemetryProvider"));
     QObject *tp = tpVar.value<QObject *>();
     QVERIFY2(tp, "TelemetryProvider context property missing");
     QVERIFY2(!hasInvokable(tp, "takeoff"), "TelemetryProvider.takeoff still exposed");
 
     QVERIFY2(!findItemByText(_root.data(), QStringLiteral("Takeoff")),
-             "Takeoff QuickButton must be absent from the default Fly view");
+             "Takeoff button must be absent from the default Fly view");
 
     QFile f(_filePath);
     QVERIFY2(f.open(QIODevice::ReadOnly), "cannot read FlyQuickActions.qml");
@@ -794,11 +828,35 @@ void FlyQuickActionsSmokeTest::testTakeoffRemoved()
              "no takeoff call may remain in the QML");
     QVERIFY2(!qml.contains(QStringLiteral("action:    \"takeoff\"")),
              "no takeoff action wiring may remain in the QML");
+
+    // The stock FlyViewToolStrip must not register Takeoff/Land/Pause anymore.
+    QDir srcDir(QCoreApplication::applicationDirPath());
+    for (int i = 0; i < 4; ++i) {
+        if (QFileInfo::exists(srcDir.filePath(QStringLiteral("src/FlightDisplay/FlyViewToolStripActionList.qml")))) {
+            break;
+        }
+        if (!srcDir.cdUp()) break;
+    }
+    const QString stripPath = srcDir.filePath(QStringLiteral("src/FlightDisplay/FlyViewToolStripActionList.qml"));
+    QVERIFY2(QFileInfo::exists(stripPath), qPrintable(QStringLiteral("missing %1").arg(stripPath)));
+    QFile sf(stripPath);
+    QVERIFY2(sf.open(QIODevice::ReadOnly), "cannot read FlyViewToolStripActionList.qml");
+    const QString stripQml = QString::fromUtf8(sf.readAll());
+    sf.close();
+    QVERIFY2(!stripQml.contains(QStringLiteral("GuidedActionTakeoff")),
+             "stock Fly strip must not register Takeoff");
+    QVERIFY2(!stripQml.contains(QStringLiteral("GuidedActionLand")),
+             "stock Fly strip must not register Land");
+    QVERIFY2(!stripQml.contains(QStringLiteral("GuidedActionPause")),
+             "stock Fly strip must not register Pause");
+    QVERIFY2(stripQml.contains(QStringLiteral("GuidedActionRTL")),
+             "stock Fly strip must keep the single Return button");
 }
 
 // Phase 3: the Fly view's Force Arm must have exactly ONE code path. The former
 // parallel trio (ArmingGate.forceArm() + vehicle.forceArm() + TelemetryProvider
-// forceArm()) collapsed to TelemetryProvider.forceArm() only.
+// forceArm()) collapsed to TelemetryProvider.forceArm() only, and the standalone
+// custom-bar Force Arm button was removed — the single UI trigger is ArmGatePanel.
 void FlyQuickActionsSmokeTest::testSingleForceArmPath()
 {
     _loadComponent();
@@ -808,12 +866,14 @@ void FlyQuickActionsSmokeTest::testSingleForceArmPath()
     const QString qml = QString::fromUtf8(f.readAll());
     f.close();
 
-    QVERIFY2(qml.contains(QStringLiteral("TelemetryProvider.forceArm()")),
-             "the single force-arm funnel (TelemetryProvider.forceArm) must be wired");
     QVERIFY2(!qml.contains(QStringLiteral("ArmingGate.forceArm()")),
              "parallel ArmingGate.forceArm() path must be gone from FlyQuickActions.qml");
     QVERIFY2(!qml.contains(QStringLiteral("v.forceArm()")),
              "parallel vehicle.forceArm() path must be gone from FlyQuickActions.qml");
+    QVERIFY2(!qml.contains(QStringLiteral("action:    \"forceArm\"")),
+             "standalone Force Arm button must be gone from the custom bar");
+    QVERIFY2(!qml.contains(QStringLiteral("forceArmDialog")),
+             "the custom bar's force-arm confirm dialog must be gone");
 }
 
 void FlyQuickActionsSmokeTest::testNoQmlCallsGateOnlyForceArm()
@@ -834,7 +894,12 @@ void FlyQuickActionsSmokeTest::testNoQmlCallsGateOnlyForceArm()
     };
     QStringList offenders;
     QStringList funnelCallers;
-    for (const QString &dir : { root.filePath(QStringLiteral("qml")) }) {
+    const QStringList scanDirs = {
+        root.filePath(QStringLiteral("qml")),
+        root.filePath(QStringLiteral("../src/FlightDisplay")),
+    };
+    for (const QString &dir : scanDirs) {
+        if (!QDir(dir).exists()) continue;
         QDirIterator it(dir, QStringList{QStringLiteral("*.qml")}, QDir::Files, QDirIterator::Subdirectories);
         while (it.hasNext()) {
             const QString path = it.next();
@@ -863,9 +928,14 @@ void FlyQuickActionsSmokeTest::testNoQmlCallsGateOnlyForceArm()
     QVERIFY2(offenders.isEmpty(),
              qPrintable(QStringLiteral("gate-only / stock force-arm paths still live:\n%1").arg(offenders.join(QLatin1Char('\n')))));
 
-    // The funnel must actually be wired where force arm is offered.
-    QVERIFY2(funnelCallers.contains(_filePath),
-             "FlyQuickActions.qml must call TelemetryProvider.forceArm()");
+    // The funnel must actually be wired where force arm is offered. The single
+    // UI trigger is ArmGatePanel.qml; the stock GuidedActionsController keeps
+    // actionForceArm routed to the bridge (defense in depth), but the custom bar
+    // must no longer call the funnel at all.
+    QVERIFY2(!funnelCallers.contains(_filePath),
+             "FlyQuickActions.qml must NOT call TelemetryProvider.forceArm() — the bar no longer offers Force Arm");
+    QVERIFY2(funnelCallers.contains(root.filePath(QStringLiteral("qml/cpts/ArmGatePanel.qml"))),
+             "ArmGatePanel.qml must be the single operator force-arm trigger");
     QVERIFY2(funnelCallers.size() >= 2,
              qPrintable(QStringLiteral("expected the funnel in more than one panel, found: %1")
                             .arg(funnelCallers.join(QStringLiteral(", ")))));

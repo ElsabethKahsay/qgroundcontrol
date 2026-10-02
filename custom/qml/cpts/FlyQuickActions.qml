@@ -3,8 +3,9 @@
 //   Buttons are visually consistent pill-shaped controls that mirror the
 //   look of the standard QGC ToolStrip (which remains visible on the left).
 //   This column sits above/alongside it and adds:
-//     Checklist, Flight time, FC status, Events, and Force Arm.
-//   Takeoff/Land/RTL/Pause are handled by the standard QGC ToolStrip.
+//   FORK PATCH: Takeoff, Land and Pause were removed from the stock
+//   FlyViewToolStrip (dead on every firmware in this fork); Return and Force Arm
+//   were removed from THIS bar so each has exactly one control.
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 UAV Preflight Contributors
 
@@ -225,17 +226,11 @@ Item {
             color:  Qt.rgba(Colors.border.r, Colors.border.g, Colors.border.b, 0.5)
         }
 
-        // 6. Force Arm — red danger button.
-        QuickButton {
-            id:        forceArmBtn
-            action:    "forceArm"
-            glyph:     "\u26A0\uFE0F"
-            label:     root._isArmed ? qsTr("Armed \u2713") : qsTr("Force Arm")
-            tooltip:   qsTr("Bypass pre-arm checks and arm immediately (dangerous!)")
-            isDanger:  !root._isArmed
-            isChecked: root._isArmed
-            enabled:   root.hasVehicle && !root._isArmed
-        }
+        // FORK PATCH: the Force Arm button is removed. It sat one gesture away
+        // from Disarm with no acknowledgement step, while ArmGatePanel collects
+        // the pilot name and responsibility text for the same action. Force arm
+        // now has exactly one entry point.
+
 
         // 7. Disarm — enabled only when armed.
         QuickButton {
@@ -249,21 +244,8 @@ Item {
             enabled:   root.hasVehicle && root._isArmed
         }
 
-        // 7b. Return To Launch — MONITORING backstop (RC-primary spec). Available
-        // on connection state alone: no arming/preflight gating, so it works in
-        // exactly the situations where something else is already going wrong.
-        QuickButton {
-            id:        rtlBtn
-            action:    "rtl"
-            glyph:     "\u21BA"
-            label:     qsTr("Return")
-            tooltip:   root.hasVehicle
-                       ? qsTr("Return To Launch (home) \u2014 confirmed via vehicle heartbeat")
-                       : qsTr("Disabled \u2014 connect a vehicle first")
-            isDanger:  false
-            isChecked: false
-            enabled:   root.hasVehicle
-        }
+        // FORK PATCH: the custom Return button was removed. RTL now has exactly
+        // one control: the stock FlyViewToolStrip Return button.
 
         // 8. Mode toggle — MANUAL ↔ AUTO, label shows live FC mode.
         QuickButton {
@@ -303,35 +285,23 @@ Item {
         }
     }
 
-    Component.onDestruction: { modeToastTimer.stop(); rtlResultToastTimer.stop() }
+    Component.onDestruction: { modeToastTimer.stop(); commandResultToastTimer.stop() }
 
-    // ── RTL command-result toast (real feedback, not "command sent") ─────
-    property string _rtlResultLabel: ""
-    property bool   _rtlResultConfirmed: false
-    property int    _rtlToastSecsLeft: 0
-    // Flight context captured when the RTL confirm dialog opens (two-step).
-    property string _rtlContextMode: "--"
-    property string _rtlContextAlt:  "--"
-    property string _rtlContextDist: "--"
+    // ── Command-result toast (real feedback, not "command sent") ────────
+    property string _commandResultLabel: ""
+    property bool   _commandResultConfirmed: false
+    property int    _commandToastSecsLeft: 0
 
-    function _refreshRtlContext() {
-        if (typeof TelemetryProvider === 'undefined' || !TelemetryProvider) return
-        root._rtlContextMode = TelemetryProvider.flightMode ? TelemetryProvider.flightMode : "--"
-        var alt = TelemetryProvider.altitudeRelative
-        root._rtlContextAlt = (alt === undefined || isNaN(alt)) ? "--" : alt.toFixed(1) + " m"
-        var dist = TelemetryProvider.distanceToHome()
-        root._rtlContextDist = (dist === undefined || isNaN(dist) || dist <= 0) ? "--" : dist.toFixed(0) + " m"
-    }
 
     Timer {
-        id: rtlResultToastTimer
+        id: commandResultToastTimer
         interval: 1000
         repeat:   true
         onTriggered: {
-            root._rtlToastSecsLeft -= 1
-            if (root._rtlToastSecsLeft <= 0) {
-                rtlResultToastTimer.stop()
-                root._rtlToastSecsLeft = 0
+            root._commandToastSecsLeft -= 1
+            if (root._commandToastSecsLeft <= 0) {
+                commandResultToastTimer.stop()
+                root._commandToastSecsLeft = 0
             }
         }
     }
@@ -380,14 +350,14 @@ Item {
     }
 
     Rectangle {
-        id:      rtlResultToast
-        visible: root._rtlToastSecsLeft > 0
-        width:   rtlResultToastRow.implicitWidth + ScreenTools.defaultFontPixelWidth * 3
+        id:      commandResultToast
+        visible: root._commandToastSecsLeft > 0
+        width:   commandResultToastRow.implicitWidth + ScreenTools.defaultFontPixelWidth * 3
         height:  ScreenTools.defaultFontPixelHeight * 2.2
         radius:  height / 2
-        color:   root._rtlResultConfirmed ? Qt.rgba(0.08, 0.55, 0.35, 0.93)
+        color:   root._commandResultConfirmed ? Qt.rgba(0.08, 0.55, 0.35, 0.93)
                                           : Qt.rgba(0.70, 0.30, 0.10, 0.92)
-        border.color: root._rtlResultConfirmed ? Qt.rgba(0.2, 1.0, 0.6, 0.55)
+        border.color: root._commandResultConfirmed ? Qt.rgba(0.2, 1.0, 0.6, 0.55)
                                                : Qt.rgba(1.0, 0.7, 0.3, 0.55)
         border.width: 1
         x: 0
@@ -395,21 +365,21 @@ Item {
         z: QGroundControl.zOrderWidgets + 5
 
         Behavior on opacity { NumberAnimation { duration: 200 } }
-        opacity: root._rtlToastSecsLeft > 0 ? 1.0 : 0.0
+        opacity: root._commandToastSecsLeft > 0 ? 1.0 : 0.0
 
         Row {
-            id:               rtlResultToastRow
+            id:               commandResultToastRow
             anchors.centerIn: parent
             spacing:          ScreenTools.defaultFontPixelWidth * 0.6
 
             Text {
-                text:           "\u21BA"
+                text:           root._commandResultConfirmed ? "\u2713" : "\u26A0"
                 font.pixelSize: Config.fontSizeBody
                 color:          "white"
                 anchors.verticalCenter: parent.verticalCenter
             }
             Text {
-                text:           root._rtlResultLabel
+                text:           root._commandResultLabel
                 font.pixelSize: Config.fontSizeSmall
                 font.weight:    Font.DemiBold
                 color:          "white"
@@ -418,123 +388,13 @@ Item {
         }
     }
 
-    // ── Force-Arm confirm dialog ──────────────────────────────────────────
-    Dialog {
-        id:              forceArmDialog
-        title:           qsTr("Force Arm \u2014 Are you sure?")
-        standardButtons: Dialog.Ok | Dialog.Cancel
-        modal:           true
-        closePolicy:     Popup.CloseOnEscape
-        anchors.centerIn: Overlay.overlay
-        width:           340
+    // FORK PATCH: the Force-Arm confirm dialog was removed from this bar along with
+    // its button. Force arm is reachable only from ArmGatePanel, which collects the
+    // acknowledgement before calling TelemetryProvider.forceArm().
 
-        Column {
-            width:   parent.width
-            spacing: 8
-            Text {
-                width:    parent.width
-                wrapMode: Text.WordWrap
-                text:     qsTr("This will arm the vehicle immediately, bypassing ALL pre-arm safety checks.\n\nOnly use this if you are certain the vehicle is safe to arm.")
-                font.pixelSize: Config.fontSizeSmall
-                color:    Colors.textPrimary
-            }
-            Text {
-                width:    parent.width
-                wrapMode: Text.WordWrap
-                text:     qsTr("\u26A0 Propellers will spin. Keep clear of the vehicle.")
-                font.pixelSize: Config.fontSizeSmall
-                font.weight:    Font.Bold
-                color:    Qt.rgba(1.0, 0.4, 0.2, 1.0)
-            }
-        }
-
-        // SINGLE force-arm path. The gate-only override call (which sends nothing) and
-        // the raw vehicle forceArm() call (a second, ungated command) are NOT
-        // invoked here: TelemetryProvider.forceArm() opens the bounded override
-        // AND sends the one arm command. It returns "" when it sent, or a
-        // non-empty refusal (e.g. vehicle airborne) to display.
-        onAccepted: {
-            var refusal = ""
-            if (typeof TelemetryProvider !== 'undefined' && TelemetryProvider)
-                refusal = TelemetryProvider.forceArm()
-            if (refusal)
-                root._rtlResultLabel = refusal
-        }
-    }
-
-    // ── Return-To-Launch confirm dialog ────────────────────────────────────
-    // Two-step safety (RC-primary spec): the operator confirms while seeing the
-    // live flight context (mode / altitude / distance-to-home) captured when the
-    // dialog opens. The SINGLE code path is
-    //   TelemetryProvider.returnToLaunch()  →  TelemetryBridge::returnToLaunch()
-    //   →  Vehicle::guidedModeRTL(false)
-    // with the real heartbeat-confirmed outcome surfaced as a toast. No
-    // parallel paths, no direct RTL sends, no "command sent = success".
-    Dialog {
-        id:              rtlConfirmDialog
-        title:           qsTr("Return To Launch \u2014 Are you sure?")
-        standardButtons: Dialog.Ok | Dialog.Cancel
-        modal:           true
-        closePolicy:     Popup.CloseOnEscape
-        anchors.centerIn: Overlay.overlay
-        width:           380
-
-        Column {
-            width:   parent.width
-            spacing: 8
-            Text {
-                width:    parent.width
-                wrapMode: Text.WordWrap
-                text:     qsTr("Command the vehicle to return to launch / home.\n\nThis is the RTL backstop \u2014 use it when a recovery is required.")
-                font.pixelSize: Config.fontSizeSmall
-                color:    Colors.textPrimary
-            }
-            Rectangle {
-                width:   parent.width
-                height:  rtlContextCol.implicitHeight + ScreenTools.defaultFontPixelHeight
-                radius:  4
-                color:   Qt.rgba(0.06, 0.12, 0.20, 0.60)
-                border.color: Colors.border
-                border.width: 1
-
-                Column {
-                    id:      rtlContextCol
-                    anchors.centerIn: parent
-                    spacing: 3
-                    width:   parent.width - ScreenTools.defaultFontPixelWidth * 3
-
-                    Text {
-                        text: qsTr("Mode:  ") + root._rtlContextMode
-                        font.pixelSize: Config.fontSizeSmall
-                        color: Colors.textPrimary
-                    }
-                    Text {
-                        text: qsTr("Altitude:  ") + root._rtlContextAlt
-                        font.pixelSize: Config.fontSizeSmall
-                        color: Colors.textPrimary
-                    }
-                    Text {
-                        text: qsTr("Distance from home:  ") + root._rtlContextDist
-                        font.pixelSize: Config.fontSizeSmall
-                        color: Colors.textPrimary
-                    }
-                }
-            }
-        }
-
-        onOpened: root._refreshRtlContext()
-        onAccepted: {
-            var confirmed = false
-            if (typeof TelemetryProvider !== 'undefined' && TelemetryProvider)
-                confirmed = TelemetryProvider.returnToLaunch()
-            root._rtlResultConfirmed = confirmed
-            root._rtlResultLabel = confirmed
-                    ? qsTr("Return To Launch confirmed \u2014 heading home")
-                    : qsTr("Return To Launch NOT confirmed by vehicle")
-            root._rtlToastSecsLeft = 8
-            rtlResultToastTimer.restart()
-        }
-    }
+    // FORK PATCH: the Return-To-Launch dialog was removed from this bar. RTL now
+    // has exactly one control: the stock FlyViewToolStrip Return button, whose
+    // actionRTL dispatch in GuidedActionsController.qml routes to the bridge.
 
     // ── Disarm confirm dialog ──────────────────────────────────────────────
     Dialog {
@@ -713,12 +573,7 @@ Item {
     Connections {
         target: root
         function onActionTriggered(action) {
-            if (action === "forceArm") {
-                forceArmDialog.open()
-            } else if (action === "rtl") {
-                // Two-step: confirm in flight context before commanding.
-                rtlConfirmDialog.open()
-            } else if (action === "disarm") {
+            if (action === "disarm") {
                 disarmDialog.open()
             } else if (action === "batConfig") {
                 batteryConfigDialog.open()

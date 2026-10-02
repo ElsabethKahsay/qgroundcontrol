@@ -166,7 +166,14 @@ public:
 
 ### Arming Gate
 
-`PreflightPlugin::mavlinkMessage` intercepts INBOUND `MAV_CMD_COMPONENT_ARM_DISARM` COMMAND_LONG from link peers (companion/external GCS) and routes the decision through `ArmingGate::interceptCommandLong`. Its scope is inbound-only: outbound arm commands sent via `Vehicle::sendMavCommand -> sendMessageOnLinkThreadSafe` never pass through `mavlinkMessage()`, so the outbound arm path is gated solely by `TelemetryBridge::arm()`. Depending on mode:
+`PreflightPlugin::mavlinkMessage` intercepts INBOUND `MAV_CMD_COMPONENT_ARM_DISARM` COMMAND_LONG from link peers (companion/external GCS) and routes the decision through `ArmingGate::interceptCommandLong`. Its scope is inbound-only: outbound arm commands sent via `Vehicle::sendMavCommand -> sendMessageOnLinkThreadSafe` never pass through `mavlinkMessage()`. The outbound paths are closed instead by:
+
+- **Outbound interceptor (chokepoint).** `Vehicle::_sendMavCommandWorker` calls the gate's `makeArmInterceptor()` for every local `ARM_DISARM` (param1=1). If no matching gate override authorizes it, the command is vetoed **before** reaching the link, `MAV_RESULT_DENIED` is reported, and zero bytes reach the wire. `PreflightPlugin` installs it on every connected vehicle; `ArmingGateTest.cpp` mirrors the wiring.
+- **Caller-scoped one-shot token.** Genuine force-arm (`TelemetryBridge::forceArm()`) mints a caller-scoped `quint32` token and installs it on the vehicle, then sends in the **same synchronous call frame** (no event-loop yield between mint and send). The interceptor authorizes only a command presenting the exact unconsumed token and consumes it immediately after granting. A second arm re-presenting the same (consumed) token inside the still-open window is **denied**: the window is open but strictly one-shot per token — re-arm requires a new sanctioned `forceArm()` (fresh mint). Window length: `kForceArmOverrideSec` (60 s default), cleared by expiry or `resetGate()`.
+- **Airborne refusal.** `TelemetryBridge::forceArm()` refuses while the vehicle reports groundspeed above `kForceArmMaxGroundSpeedMs`, while airborne, or during takeoff/landing, before any token is minted.
+- **Single sanctioned entry.** The stock `forceArmVehicleRequest()` terminal (`Vehicle::forceArm()`, param1=1 param2=2989) is disabled at every UI layer: the press-and-hold gesture is removed from `MainStatusIndicator.qml` (stock and custom), `GuidedActionsController.onForceArmVehicleRequest` is left unconnected (no-op warn), and `actionForceArm` dispatches through `TelemetryProvider.forceArm()` (the funnel). `FlightModeIndicator.qml` hides SetFlightMode (display-only) — mode changes belong to Vehicle Setup.
+
+Depending on mode:
 - **PASSIVE** — logs attempt, passes through
 - **ACTIVE** — blocks arming unless checklist state permits
 - **HYBRID** — blocks arming for guided arm, passes for RC arm
@@ -248,6 +255,14 @@ This header is force-included into every translation unit via `-include` (set in
 `src/Camera/MavlinkCameraControlInterface.h` uses MAVLink types (e.g., `mavlink_message_t`) without including the MAVLink header. In Qt 6 builds with unity/build optimizations, this can cause "unknown type" errors. Fix: added `#include "MAVLinkLib.h"`.
 
 ---
+
+### Deterministic Live-Probe Teardown
+
+The live arm-verdict probe (`./Debug/PreflightQGroundControl --live-arm`) intermittently hung at exit. Root cause: the multithreaded app's graceful-shutdown path (`fflush(nullptr)` / `execl()` in the logging/restart helpers) deadlocks against the glibc stdio/loader locks; `_Exit` was never reached. The probe now tears down via a plain `std::_Exit(exitCode)`: it closes the override window (`resetGate()`), logs the verdict and `probe exit code=N`, then terminates deterministically. `_exit`/`_Exit` exists only in the probe driver (`LiveArmDriver`, `_probeTeardown`) — no production shutdown path uses it.
+
+### Known Issue: MainStatusIndicatorSmokeTest QML teardown crash
+
+`MainStatusIndicatorSmokeTest` (full `--unittest` marathon and isolated runs) segfaults during engine-root reap/garbage-collection at the end of the connected-state tests. It is a pre-existing Qt6 **AOT use-after-free** while AOT-compiled QML components log their teardown (documented inline in `QmlSmokeTest.cpp`; the shared qrc alias between stock and custom `MainStatusIndicator` makes the engine cache both). Reproduces identically on the committed tree with all working-tree QML changes stashed — unrelated to the interceptor/probe work. Mitigation used for CI-style verification: run the suite set **without** `MainStatusIndicatorSmokeTest` (all other suites pass; 287/287 non-crashing tests green), and treat this suite's crash as a separate Qt/QML-teardown defect.
 
 ## Files of Interest
 

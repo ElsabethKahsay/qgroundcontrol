@@ -184,23 +184,9 @@ Rectangle {
                         rightPadding:          0
                     }
 
-                    QGCButton {
-                        text:                  qsTr("Start")
-                        enabled:               multiVehicleList.startAvailable()
-                        onClicked:             _guidedController.confirmAction(_guidedController.actionMVStartMission)
-                        Layout.preferredWidth: ScreenTools.defaultFontPixelHeight * 2.75
-                        leftPadding:           0
-                        rightPadding:          0
-                    }
+                    
 
-                    QGCButton {
-                        text:                  qsTr("Pause")
-                        enabled:               multiVehicleList.pauseAvailable()
-                        onClicked:             _guidedController.confirmAction(_guidedController.actionMVPause)
-                        Layout.preferredWidth: ScreenTools.defaultFontPixelHeight * 2.75
-                        leftPadding:           0
-                        rightPadding:          0
-                    }
+                    
                 }
             }
         }

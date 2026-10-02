@@ -18,6 +18,8 @@ import cpts 1.0 as CE
 Rectangle {
     id: root
 
+    objectName: "preflightChecklistViewRoot"
+
     CE.ChecklistEngine {
         id: _engine
         viewMode: "analyze"
@@ -421,6 +423,9 @@ Rectangle {
             // ── LEFT: checklist (70%) ──────────────────────────────
             Item {
                 id: left70Panel
+                // Named so the live driver can switch to the "gimbal" view the
+                // same way the operator's button does (line ~1236).
+                objectName: "preflightChecklistLeftPanel"
                 width: parent.width * Config.kChecklistPanelRatio
                 height: parent.height
 
@@ -839,8 +844,9 @@ Rectangle {
                                     }
 
                                     Loader {
-                                        id: motorPanelLoader
-                                        anchors.fill: parent
+ id: motorPanelLoader
+ objectName: "preflightMotorPanelLoader"
+ anchors.fill: parent
                                         visible: isMotorSpinCheck
                                         active: isMotorSpinCheck
                                         source: active ? "qrc:/qml/cpts/MotorCheckPanel.qml" : ""
@@ -1246,10 +1252,11 @@ Rectangle {
                     visible: left70Panel._leftView === "gimbal"
 
                     Loader {
-                        id: gimbalLoader
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        active: left70Panel._leftView === "gimbal"
+ id: gimbalLoader
+ objectName: "preflightGimbalSurfaceLoader"
+ Layout.fillWidth: true
+ Layout.fillHeight: true
+ active: left70Panel._leftView === "gimbal"
                         source: active ? "qrc:/qml/pages/GimbalTest.qml" : ""
                         onStatusChanged: {
                             if (status === Loader.Error) {

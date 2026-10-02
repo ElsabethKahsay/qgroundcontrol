@@ -677,22 +677,7 @@ FlightMap {
                 ColumnLayout {
                     spacing: ScreenTools.defaultFontPixelWidth / 2
 
-                    QGCButton {
-                        Layout.fillWidth:   true
-                        text:               qsTr("Go to location")
-                        visible:            globals.guidedControllerFlyView.showGotoLocation
-                        onClicked: {
-                            mapClickDropPanel.close()
-                            gotoLocationItem.show(mapClickCoord)
-
-                            if ((_activeVehicle.flightMode == _activeVehicle.gotoFlightMode) && !_flyViewSettings.goToLocationRequiresConfirmInGuided.value) {
-                                globals.guidedControllerFlyView.executeAction(globals.guidedControllerFlyView.actionGoto, mapClickCoord, gotoLocationItem)
-                                gotoLocationItem.actionConfirmed() // Still need to call this to commit the new coordinate and radius
-                            } else {
-                                globals.guidedControllerFlyView.confirmAction(globals.guidedControllerFlyView.actionGoto, mapClickCoord, gotoLocationItem)
-                            }
-                        }
-                    }
+                    
 
                     QGCButton {
                         Layout.fillWidth:   true
@@ -735,15 +720,7 @@ FlightMap {
                         }
                     }
 
-                    QGCButton {
-                        Layout.fillWidth:   true
-                        text:               qsTr("Set Heading")
-                        visible:            globals.guidedControllerFlyView.showChangeHeading
-                        onClicked: {
-                            mapClickDropPanel.close()
-                            globals.guidedControllerFlyView.confirmAction(globals.guidedControllerFlyView.actionChangeHeading, mapClickCoord)
-                        }
-                    }
+                    
 
                     ColumnLayout {
                         spacing: 0

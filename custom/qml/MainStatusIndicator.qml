@@ -314,10 +314,12 @@ if (typeof TelemetryProvider !== 'undefined' && TelemetryProvider) {
                         enabled:            _armed || (_activeVehicle !== null)
                         text:               _armed ?  qsTr("Disarm") : qsTr("Arm")
 
-                        property bool forceArm: false
-
-                        onPressAndHold: forceArm = true
-
+                        // FORK PATCH: the press-and-hold force-arm gesture is
+                        // removed. Force arm now lives in exactly one place --
+                        // ArmGatePanel (PreflightChecklistView.qml), which routes
+                        // through TelemetryProvider.forceArm(). An armed-vehicle
+                        // force-arm is a deliberate, confirmed action, not a
+                        // hidden gesture on the status bar.
                         contentItem: Text {
                             text: armBtn.text
                             font.pixelSize: ScreenTools.defaultFontPixelSize
@@ -346,36 +348,10 @@ if (typeof TelemetryProvider !== 'undefined' && TelemetryProvider) {
                         onClicked: {
                             if (_armed) {
                                 mainWindow.disarmVehicleRequest()
-                                forceArm = false
                                 mainWindow.hideIndicatorPopup()
                                 return
                             }
-                            if (forceArm) {
-                                // SINGLE force-arm path (funnel). The former trio —
-                                // gate override only (sends nothing), then the
-                                // TelemetryProvider force-arm, with a stock
-                                // mainWindow.forceArmVehicleRequest() fallback that
-                                // routes through the firmware plugins this fork
-                                // disables — is collapsed to one call.
-                                // The funnel opens the bounded override AND sends the
-                                // canonical 2989 command, and returns a refusal when
-                                // the vehicle is not on the ground. On refusal the
-                                // popup stays open so the reason is not swallowed.
-                                var refusal = ""
-                                if (typeof TelemetryProvider !== 'undefined' && TelemetryProvider) {
-                                    refusal = TelemetryProvider.forceArm()
-                                } else {
-                                    refusal = qsTr("Telemetry bridge unavailable")
-                                }
-                                if (refusal) {
-                                    console.warn("[MainStatusIndicator] force-arm refused:", refusal)
-                                    forceArm = false
-                                    return
-                                }
-                                forceArm = false
-                                mainWindow.hideIndicatorPopup()
-                                return
-                            }
+                            
                             var criticalFails = typeof PreflightManager !== 'undefined' && PreflightManager ? PreflightManager.failedChecks : 0
                             var manualFails = typeof PreflightManager !== 'undefined' && PreflightManager ? PreflightManager.pendingChecks : 0
                             // If the gate is genuinely closed (critical fails present and no
@@ -400,7 +376,6 @@ if (typeof TelemetryProvider !== 'undefined' && TelemetryProvider) {
                                 }
                                 mainWindow.hideIndicatorPopup()
                             }
-                            forceArm = false
                         }
                     }
 

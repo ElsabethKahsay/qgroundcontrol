@@ -32,33 +32,15 @@ Rectangle {
             Layout.fillWidth: true
             spacing: 8
 
-            // FORCE ARM
-            Button {
-                id: forceArmBtn
-                width: parent.width
-                property bool _isArmed:
-                    QGroundControl.multiVehicleManager.activeVehicle
-                        ? QGroundControl.multiVehicleManager.activeVehicle.armed
-                        : false
-                text: _isArmed ? "✓ Armed" : "Force Arm"
-                enabled: !_isArmed
-                onClicked: forceArmDialog.open()
-                background: Rectangle {
-                    color: parent._isArmed ? "#1A3A2A" : Colors.warning
-                    radius: 6
-                }
-                contentItem: Label {
-                    text: parent.text
-                    color: "white"
-                    font.bold: true
-                    horizontalAlignment: Text.AlignHCenter
-                }
-            }
+            // FORK PATCH: the Force Arm button is removed. This panel is about
+            // control-surface verification; arming belongs to ArmGatePanel. This
+            // button was a fourth force-arm entry point with its own dialog.
 
             // DISARM
             Button {
+                id: disarmBtn
                 width: parent.width
-                height: forceArmBtn.height
+                height: 40
                 text: "Disarm"
                 enabled: {
                     var v = QGroundControl.multiVehicleManager.activeVehicle
@@ -81,7 +63,7 @@ Rectangle {
             Button {
                 id: modeButton
                 width: parent.width
-                height: forceArmBtn.height
+                height: disarmBtn.height
                 property string _mode: {
                     var v = QGroundControl.multiVehicleManager.activeVehicle
                     return v ? v.flightMode : ""
@@ -242,65 +224,7 @@ Rectangle {
         }
     }
 
-    // ── Force Arm confirmation dialog ────────────────────────────────
-    Dialog {
-        id: forceArmDialog
-        modal: true
-        title: "Force Arm"
-        x: Math.round((parent.width - width) / 2)
-        y: Math.round((parent.height - height) / 2)
-        width: 360
-        contentItem: Column {
-            spacing: 8
-            Label {
-                text: "Force arm bypasses all preflight checks.\n"
-                    + "Ensure area is clear and props are safe."
-                wrapMode: Text.Wrap
-            }
-            // Funnel refusal (airborne / takeoff / no vehicle): nothing was sent.
-            Label {
-                id: forceArmRefusalLabel
-                text: ""
-                wrapMode: Text.Wrap
-                color: Colors.error
-                font.bold: true
-                visible: text.length > 0
-            }
-        }
-        footer: DialogButtonBox {
-            Button {
-                text: "Cancel"
-                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
-            }
-            Button {
-                text: "Force Arm"
-                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
-                onClicked: {
-                    // SINGLE force-arm path (funnel). The former raw
-                    // vehicle.forceArm() bypassed the funnel entirely, so it sent
-                    // no 2989 force magic and had no ground-speed precondition.
-                    // TelemetryProvider.forceArm() opens the bounded override AND
-                    // sends the one arm command; it returns a refusal (e.g. the
-                    // vehicle is airborne) which is shown instead of closing.
-                    if (typeof TelemetryProvider === 'undefined' || !TelemetryProvider) {
-                        forceArmRefusalLabel.text = qsTr("Telemetry bridge unavailable")
-                        return
-                    }
-                    var refusal = TelemetryProvider.forceArm()
-                    forceArmRefusalLabel.text = refusal ? refusal : ""
-                    if (!refusal)
-                        forceArmDialog.close()
-                }
-                background: Rectangle { color: Colors.warning; radius: 6 }
-                contentItem: Label {
-                    text: "Force Arm"
-                    color: "white"
-                    font.bold: true
-                    horizontalAlignment: Text.AlignHCenter
-                }
-            }
-        }
-    }
+    
 
     // ── Disarm confirmation dialog ───────────────────────────────────
     Dialog {

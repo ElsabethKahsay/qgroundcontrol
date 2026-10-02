@@ -25,6 +25,17 @@ Rectangle {
     readonly property string _vt:    HardwareTestController.vehicleTypeLabel
     readonly property bool   _armed: HardwareTestController.isArmed
 
+    // Sentinel: proves which MotorCheckPanel build the running app loaded, and
+    // that the motor-test launcher is reachable from the normal pre-flight
+    // checklist (PreflightChecklistView / PreFlightChecklist loaders).
+    property string productMark: "MotorCheckPanel-preflight-reachable"
+    // Named so the live driver can find this instance anywhere in the running
+    // object tree and prove WHICH panel is live (the loader that owns it sits
+    // inside a Repeater delegate and has no stable handle).
+    objectName: "preflightMotorCheckPanel"
+    Component.onCompleted: console.info("[sentinel] MotorCheckPanel productMark=" + productMark
+                                        + " vehicleType=" + _vt + " motorCount=" + _mc)
+
     function openDialog() { motorDialog.open() }
     function testLabel(index) {
         if (HardwareTestController.isFixedWing && index === 1) {

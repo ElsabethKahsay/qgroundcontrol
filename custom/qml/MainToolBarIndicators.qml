@@ -44,6 +44,19 @@ Row {
     // ── Preflight Checklist toolbar button ─────────────────────────────
     Rectangle {
         id: preflightChecklistBtn
+        // Named so the live driver can tap this control the way an operator does
+        // and prove the pre-flight checklist (and the motor / surface panels it
+        // hosts) is reachable from the toolbar, not only from the one-time wizard.
+        objectName: "mainToolBarPreflightChecklistButton"
+
+        // Opens the REAL pre-flight checklist page in a popup. Split out of the
+        // click handler so the live driver can invoke the operator's entry point
+        // and prove the checklist (plus the motor / surface-sweep panels it
+        // hosts) is reachable from the toolbar, not just from the wizard.
+        function openPreflightTestPage() {
+            var obj = Qt.createQmlObject('import QtQuick.Controls; import QGroundControl.Controls; QGCPopupDialog { title: "Preflight Checklist"; buttons: StandardButton.Close; Loader { source: "qrc:/qml/cpts/PreflightChecklistView.qml"; width: ScreenTools.defaultFontPixelWidth * 80; height: ScreenTools.defaultFontPixelHeight * 40 } }', mainWindow)
+            obj.open()
+        }
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         width: ScreenTools.defaultFontPixelWidth * 10
@@ -85,11 +98,7 @@ Row {
                                            : qsTr("Connect a vehicle first")
             ToolTip.delay:   400
 
-            onClicked: {
-                // Show the preflight checklist via a popup dialog
-                var obj = Qt.createQmlObject('import QtQuick.Controls; import QGroundControl.Controls; QGCPopupDialog { title: "Preflight Checklist"; buttons: StandardButton.Close; Loader { source: "qrc:/qml/cpts/PreflightChecklistView.qml"; width: ScreenTools.defaultFontPixelWidth * 80; height: ScreenTools.defaultFontPixelHeight * 40 } }', mainWindow)
-                obj.open()
-            }
+            onClicked: root.openPreflightTestPage()
         }
     }
 

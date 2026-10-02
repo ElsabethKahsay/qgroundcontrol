@@ -368,7 +368,14 @@ Item {
     Connections {
         target:                             mainWindow
         function onArmVehicleRequest() { armVehicleRequest() }
-        function onForceArmVehicleRequest() { forceArmVehicleRequest() }
+        // FORK PATCH: the stock force-arm funnel entry point is disabled.
+        // Vehicle::forceArm() sends MAV_CMD_COMPONENT_ARM_DISARM param2=2989
+        // directly and bypasses TelemetryBridge::forceArm(), the single sanctioned
+        // force-arm path. Nothing in the fork UI should reach it; the funnel in
+        // TelemetryProvider.forceArm() is the only supported entry.
+        // Leaving the slot unconnected makes any residual caller a no-op rather
+        // than an ungated arm.
+        // (was: function onForceArmVehicleRequest() { forceArmVehicleRequest() })
         function onDisarmVehicleRequest() { disarmVehicleRequest() }
         function onVtolTransitionToFwdFlightRequest() { vtolTransitionToFwdFlightRequest() }
         function onVtolTransitionToMRFlightRequest() { vtolTransitionToMRFlightRequest() }
@@ -378,8 +385,12 @@ Item {
         confirmAction(actionArm)
     }
 
+    // FORK PATCH: kept only so a residual QML caller cannot crash on a missing
+    // function. It deliberately does NOT dispatch actionForceArm: that path
+    // reaches Vehicle::forceArm() (param2=2989) and bypasses the
+    // TelemetryBridge funnel. Use TelemetryProvider.forceArm() instead.
     function forceArmVehicleRequest() {
-        confirmAction(actionForceArm)
+        console.warn(qsTr("Internal error: stock force-arm path disabled; use the arming panel"))
     }
 
     function disarmVehicleRequest() {
@@ -602,7 +613,18 @@ Item {
         var selectedVehicles;
         switch (actionCode) {
         case actionRTL:
-            _activeVehicle.guidedModeRTL(optionChecked)
+            // FORK PATCH: both the APM and PX4 firmware-plugin factories are
+            // disabled in custom/cmake/CustomOverrides.cmake, so
+            // Vehicle::guidedModeRTL() -> FirmwarePlugin::guidedModeRTL() is a
+            // no-op that sends NOTHING. Verified live: zero MAV_CMD_DO_SET_MODE
+            // on the wire. Route the stock Return button through the fork's
+            // TelemetryBridge::returnToLaunch(), which sends the ArduPilot
+            // custom-mode DO_SET_MODE and confirms the mode via heartbeat.
+            if (typeof TelemetryProvider !== 'undefined' && TelemetryProvider) {
+                TelemetryProvider.returnToLaunch()
+            } else {
+                console.warn(qsTr("Internal error: TelemetryProvider unavailable"))
+            }
             break
         case actionLand:
             _activeVehicle.guidedModeLand()
@@ -642,7 +664,16 @@ Item {
             }
             break
         case actionForceArm:
-            _activeVehicle.forceArm()
+            // FORK PATCH: refuse the ungated dispatch. Vehicle::forceArm() sends
+            // MAV_CMD_COMPONENT_ARM_DISARM param2=2989 without going through
+            // TelemetryBridge::forceArm(), which is the single sanctioned path
+            // (bounded override + refusal checks). Route to the funnel so no
+            // caller can arm outside it.
+            if (typeof TelemetryProvider !== 'undefined' && TelemetryProvider) {
+                TelemetryProvider.forceArm()
+            } else {
+                console.warn(qsTr("Internal error: TelemetryProvider unavailable"))
+            }
             break
         case actionDisarm:
             _activeVehicle.armed = false

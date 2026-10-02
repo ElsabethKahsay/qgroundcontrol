@@ -32,6 +32,11 @@ RowLayout {
     property var  activeVehicle:    QGroundControl.multiVehicleManager.activeVehicle
     property bool allowEditMode:    true
     property bool editMode:         false
+    // FORK PATCH: SetFlightMode is hidden on the toolbar indicator. The quick
+    // drawer should display the current mode, never change it; flight-mode
+    // changes belong in the Vehicle Setup page (KnownFlightModes). The read-mode
+    // list is suppressed unless this flag is explicitly enabled.
+    property bool allowSetFlightMode: false
 
     RowLayout {
         Layout.fillWidth: true
@@ -133,7 +138,7 @@ RowLayout {
 
                 RowLayout {
                     spacing: ScreenTools.defaultFontPixelWidth
-                    visible: editMode || !hiddenFlightModesList.find(item => { return item === modelData } )
+                    visible: editMode || (control.allowSetFlightMode && !hiddenFlightModesList.find(item => { return item === modelData } ) )
 
                     QGCButton {
                         id:                 modeButton

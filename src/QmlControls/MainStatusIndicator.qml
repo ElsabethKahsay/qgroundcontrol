@@ -194,21 +194,21 @@ RowLayout {
                 text:               _armed ?  qsTr("Disarm") : (forceArm ? qsTr("Force Arm") : qsTr("Arm"))
                 Layout.alignment:   Qt.AlignLeft
 
+                // FORK PATCH: the press-and-hold force-arm gesture is removed.
+                // mainWindow.forceArmVehicleRequest() ends at
+                // Vehicle::forceArm() -> MAV_CMD_COMPONENT_ARM_DISARM param2=2989,
+                // which bypasses the TelemetryBridge funnel (the single sanctioned
+                // force-arm path). The fork's own MainStatusIndicator provides the
+                // intended gesture instead; this stock file is kept only as a
+                // fallback for views that still instantiate it.
                 property bool forceArm: false
-
-                onPressAndHold: forceArm = true
 
                 onClicked: {
                     if (_armed) {
                         mainWindow.disarmVehicleRequest()
                     } else {
-                        if (forceArm) {
-                            mainWindow.forceArmVehicleRequest()
-                        } else {
-                            mainWindow.armVehicleRequest()
-                        }
+                        mainWindow.armVehicleRequest()
                     }
-                    forceArm = false
                     mainWindow.closeIndicatorDrawer()
                 }
             }

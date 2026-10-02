@@ -51,8 +51,17 @@ Page {
         }
     }
 
+    // Sentinel: proves which GimbalTest build the running app loaded, and that
+    // the control-surface sweep UI is reachable from the normal pre-flight
+    // checklist (PreflightChecklistView "gimbal" view / PreFlightChecklist).
+    readonly property string productMark: "GimbalTest-surface-sweep-reachable"
+    objectName: "preflightGimbalSurfacePanel"
+
     Component.onCompleted: {
         _loadSurfaces()
+        console.info("[sentinel] GimbalTest productMark=" + productMark
+                     + " surfaceCount=" + _surfaces.length
+                     + " controllerPresent=" + (typeof ControlSurfaceTestController !== "undefined"))
         if (!isNaN(FlightSession.targetLat) && !isNaN(FlightSession.targetLon)) {
             targetLat.text = FlightSession.targetLat.toFixed(6)
             targetLon.text = FlightSession.targetLon.toFixed(6)

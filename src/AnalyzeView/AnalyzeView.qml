@@ -183,8 +183,39 @@ Rectangle {
         color:                  qgcPal.windowShade
     }
 
+    // Selects the "Preflight Checklist" entry from analyzePages() and loads it.
+    // This mirrors what tapping the sidebar button does once a session mode has
+    // been chosen (SubMenuButton.onClicked's else branch). modeSetter, when
+    // supplied, is invoked first to choose a session mode so the page can load
+    // without operator interaction; the live driver passes it to drive the real
+    // Analyze -> Preflight Checklist path headlessly. Left unset in normal use.
+    property var  modeSetter:  null
+
+    function openPreflightChecklistPage() {
+        var pages = QGroundControl.corePlugin ? QGroundControl.corePlugin.analyzePages : []
+        for (var i = 0; i < pages.length; i++) {
+            var urlString = pages[i] && pages[i].url ? pages[i].url.toString() : ""
+            if (urlString.indexOf("PreflightChecklistView.qml") !== -1) {
+                if (FlightSession.mode === FlightSession.None && modeSetter) {
+                    console.info("[sentinel] AnalyzeView choosing session mode for Preflight Checklist")
+                    modeSetter()
+                }
+                console.info("[sentinel] AnalyzeView loading Preflight Checklist page: " + urlString
+                             + " sessionMode=" + FlightSession.mode)
+                panelLoader.source = urlString
+                panelLoader.title = pages[i].title
+                return true
+            }
+        }
+        console.warn("[sentinel] AnalyzeView: no Preflight Checklist page in analyzePages()")
+        return false
+    }
+
     Loader {
         id:                     panelLoader
+        // Named so the live driver can read back which page the Analyze tool is
+        // actually showing as the operator's pre-flight checklist page.
+        objectName:             "analyzePanelLoader"
         anchors.topMargin:      _verticalMargin
         anchors.bottomMargin:   _verticalMargin
         anchors.leftMargin:     _horizontalMargin

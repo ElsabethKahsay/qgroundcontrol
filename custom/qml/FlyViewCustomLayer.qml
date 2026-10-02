@@ -24,6 +24,10 @@ import cpts 1.0
 
 Item {
     id: _root
+    // Named so the live driver can find this layer and invoke the operator's
+    // real "open the pre-flight checklist" entry point, proving the checklist
+    // page (and the panels it hosts) is reachable from the normal Fly flow.
+    objectName: "flyViewCustomLayer"
 
     property var parentToolInsets
     property var totalToolInsets:   _toolInsets
