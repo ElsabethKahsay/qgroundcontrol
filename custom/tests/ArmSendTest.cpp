@@ -71,6 +71,8 @@ private slots:
     void testBenchForceArmFunnelSingle2989Command();
     void testForceArmRefusedAirborne();
     void testForceArmRefusalTextIsSubstituted();
+    void testStockChainDeniedInsideBenchOverrideWindow();
+    void testSameTokenSecondArmDeniedThenFreshMintArms();
 
 private:
     bool _pumpUntil(bool (*cond)(void* ctx), void* ctx, int timeoutMs);
@@ -539,6 +541,143 @@ void ArmSendTest::testForceArmRefusalTextIsSubstituted()
     // And the reason must name the cause, not just the numbers.
     QVERIFY2(refusal.contains(QStringLiteral("airborne"), Qt::CaseInsensitive),
              qPrintable(QStringLiteral("refusal does not name the cause: %1").arg(refusal)));
+}
+
+// (j) The bench force-arm override is ONE-SHOT and CALLER-SCOPED. The sanctioned
+//     call (TelemetryBridge::forceArm) mints a token for its OWN pending command
+//     and consumes it on success; the window stays open for kForceArmOverrideSec
+//     but it is NOT ambient. The real-signal-chain terminal of
+//     mainWindow.forceArmVehicleRequest (Vehicle::forceArm(), wire-identical:
+//     param1=1 param2=2989) holds no token, so inside the still-open window it
+//     must be vetoed locally with MAV_RESULT_DENIED and nothing reaching the wire.
+//     This fail against the pre-fix ambient-window gate (wire=1, no denial) and
+//     passes only once the override is caller-scoped. Covers the stock chain
+//     without needing the QML dialog: Vehicle::forceArm() IS the stock handler
+//     body for ForceArmVehicleRequest.
+void ArmSendTest::testStockChainDeniedInsideBenchOverrideWindow()
+{
+    QVERIFY(_connectPlane());
+    QVERIFY(!_vehicle->armed());
+
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    bridge.setVehicle(_vehicle);
+
+    ArmingGate gate;
+    _makeBlockedGate(gate, bridge);
+    bridge.setArmingGate(&gate);
+    QVERIFY(!gate.isArmingAllowed());        // gate genuinely closed
+
+    // Sanctioned bench override: opens the window and mints the one-shot token
+    // for its own command.
+    const QString refusal = bridge.forceArm();
+    QVERIFY2(refusal.isEmpty(), qPrintable(QStringLiteral("funnel refused on the ground: %1").arg(refusal)));
+    QVERIFY(gate.isOverrideActive());        // window open
+    QVERIFY(gate.isArmingAllowed());
+
+    // The sanctioned command arms through its own token; pump until its ACK
+    // lands so the Vehicle duplicate-command guard is clear and a later zero
+    // wire count can only mean an interceptor veto, never a dropped duplicate.
+    QVERIFY(_pumpUntil([](void* ctx) { return static_cast<Vehicle*>(ctx)->armed(); }, _vehicle, 10000));
+    QVERIFY(_vehicle->armed());
+
+    _mockLink->clearReceivedMavCommandCounts();
+
+    // Stock entry-point terminal (what mainWindow.forceArmVehicleRequest ->
+    // GuidedActionsController -> handler would invoke). Same params as the
+    // sanctioned send but it presents NO token: it must be denied.
+    QSignalSpy denySpy(_vehicle, &Vehicle::mavCommandResult);
+    _vehicle->forceArm();
+
+    QTest::qWait(1500);   // give an (incorrect) ambient send time to reach the link
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 0);
+    QVERIFY(qIsNaN(_mockLink->lastArmDisarmParam2()));
+
+    bool sawDenied = false;
+    const QList<QList<QVariant>> deny = denySpy;
+    for (const QList<QVariant> &args : deny) {
+        if (args.size() >= 4 && args.at(2).toInt() == MAV_CMD_COMPONENT_ARM_DISARM &&
+            args.at(3).toInt() == MAV_RESULT_DENIED) {
+            sawDenied = true;
+            break;
+        }
+    }
+    QVERIFY2(sawDenied, "stock force-arm inside the bench override window was NOT denied "
+                        "(override must be caller-scoped, not ambient)");
+}
+
+// (k) The bench force-arm token is STRICTLY ONE-SHOT — not reusable-per-caller.
+//     INTENDED DESIGN: each operator arm requires ONE deliberate confirmation; a
+//     second arm inside the same window that re-presents the SAME (now-consumed)
+//     token is denied locally with MAV_RESULT_DENIED, nothing reaching the wire.
+//     Re-arming requires a NEW authorization: a second sanctioned forceArm() call
+//     mints a fresh token and arms again. This guards the "one arm, one intent"
+//     model end-to-end.
+void ArmSendTest::testSameTokenSecondArmDeniedThenFreshMintArms()
+{
+    QVERIFY(_connectPlane());
+    QVERIFY(!_vehicle->armed());
+
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    bridge.setVehicle(_vehicle);
+
+    ArmingGate gate;
+    _makeBlockedGate(gate, bridge);
+    bridge.setArmingGate(&gate);
+
+    // Mint the token ourselves exactly as TelemetryBridge::forceArm() does, so the
+    // exact consumed value can be replayed to prove consumption.
+    const quint32 token = gate.forceArm();
+    QVERIFY2(token != 0, "forceArm() must mint a nonzero caller-scoped token");
+    QVERIFY(gate.isOverrideActive());
+    _vehicle->setArmOverrideToken(token);
+
+    // First arm via the stock terminal (Vehicle::forceArm() == the
+    // mainWindow.forceArmVehicleRequest handler body) presenting the token:
+    // authorized and consumed.
+    _mockLink->clearReceivedMavCommandCounts();
+    _vehicle->forceArm();
+    QVERIFY(_pumpUntil([](void* ctx) { return static_cast<Vehicle*>(ctx)->armed(); }, _vehicle, 10000));
+    QVERIFY(_vehicle->armed());
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 1);
+
+    // Same sanctioned caller, same window, SAME token value, second arm: the token
+    // was consumed by the first command, so this must be denied (strict one-shot).
+    _mockLink->clearReceivedMavCommandCounts();
+    QSignalSpy denySpy(_vehicle, &Vehicle::mavCommandResult);
+    _vehicle->setArmOverrideToken(token);
+    _vehicle->forceArm();
+
+    QTest::qWait(1500);   // give an (incorrect) reuse time to reach the link
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 0);
+    QVERIFY(qIsNaN(_mockLink->lastArmDisarmParam2()));
+
+    bool sawDenied = false;
+    const QList<QList<QVariant>> deny = denySpy;
+    for (const QList<QVariant> &args : deny) {
+        if (args.size() >= 4 && args.at(2).toInt() == MAV_CMD_COMPONENT_ARM_DISARM &&
+            args.at(3).toInt() == MAV_RESULT_DENIED) {
+            sawDenied = true;
+            break;
+        }
+    }
+    QVERIFY2(sawDenied, "same-token second arm inside the window was NOT denied "
+                        "(token must be one-shot, not reusable-per-caller)");
+
+    // Recovery path: a second SANCTIONED forceArm() mints a FRESH token and arms
+    // again — one deliberate operator confirmation per arm.
+    _mockLink->clearReceivedMavCommandCounts();
+    const QString refusal = bridge.forceArm();
+    QVERIFY2(refusal.isEmpty(), qPrintable(QStringLiteral("fresh force-arm refused on the ground: %1").arg(refusal)));
+    QVERIFY(_pumpUntil([](void* ctx) {
+        return static_cast<MockLink*>(ctx)->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM) >= 1;
+    }, _mockLink, 10000));
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 1);
+    QVERIFY(_pumpUntil([](void* ctx) { return static_cast<Vehicle*>(ctx)->armed(); }, _vehicle, 10000));
+    QVERIFY(_vehicle->armed());
 }
 
 UT_REGISTER_TEST(ArmSendTest)

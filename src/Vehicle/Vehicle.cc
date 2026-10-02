@@ -2639,10 +2639,12 @@ void Vehicle::_sendMavCommandWorker(
 {
     // Preflight arming gate: veto ARM_DISARM (param1==1) locally before it can
     // reach the wire. Sanctioned arm paths (forceArm, dispatch override) open a
-    // bounded, logged gate override first so the interceptor allows them.
+    // bounded, logged gate override first so the interceptor allows them. The
+    // token presented is the caller-scoped one-shot token minted by the
+    // sanctioned force-arm caller for its specific pending command.
     if (command == MAV_CMD_COMPONENT_ARM_DISARM && qFuzzyCompare(param1, 1.0f) && _armCommandInterceptor) {
         QString denialReason;
-        if (!_armCommandInterceptor(denialReason)) {
+        if (!_armCommandInterceptor(denialReason, _armOverrideToken)) {
             qCDebug(VehicleLog) << "Arm command vetoed by arming gate:" << denialReason;
 
             if (ackHandlerInfo && ackHandlerInfo->resultHandler) {

@@ -79,18 +79,28 @@ public:
     Q_INVOKABLE bool acknowledgeOverride(const QString &pilotName, const QString &reason);
     /// Temporarily override the gate for a given duration.
     Q_INVOKABLE void overrideGate(const QString &reason, int timeoutSec = 30);
-    /// Test-only: set a custom override duration in milliseconds for testing override expiration.
-    void setOverrideDuration(int timeoutMs);
+    /// Test-only: set a custom override duration in milliseconds for testing override
+    /// expiry. Mints and returns a fresh one-shot caller token like forceArm().
+    quint32 setOverrideDuration(int timeoutMs);
     /// Reset the gate to normal evaluation mode.
     Q_INVOKABLE void resetGate();
-    /// Force arming regardless of gate state.
-    Q_INVOKABLE void forceArm();
+    /// Force arming regardless of gate state. Opens a bounded, logged window and
+    /// mints a one-shot CALLER-SCOPED token that it returns: the holder attaches
+    /// the token to its SPECIFIC pending arm command (Vehicle::setArmOverrideToken),
+    /// and the interceptor authorizes exactly that command, consuming the token.
+    /// The window is NOT ambient — no other arm passes during it. Auto-closes
+    /// after kForceArmOverrideSec even if the token was never presented.
+    Q_INVOKABLE quint32 forceArm();
 
     /// Build a vehicle-level arm interceptor consulting this gate. The returned
-    /// callable takes a QString& denial-reason slot and returns true when arming
-    /// is allowed or an override is active; false otherwise (fail-closed when the
-    /// gate is gone). Installed via Vehicle::setArmCommandInterceptor.
-    std::function<bool(QString&)> makeArmInterceptor() const;
+    /// callable takes a QString& denial-reason slot plus the caller-scoped arm
+    /// token the vehicle currently bears, and returns true when arming is
+    /// allowed or an override is active; false otherwise (fail-closed when the
+    /// gate is gone). During a force-arm override only the command presenting
+    /// the current unconsumed minted token passes; overrides opened via
+    /// overrideGate() remain permissive. Installed via
+    /// Vehicle::setArmCommandInterceptor.
+    std::function<bool(QString&, quint32)> makeArmInterceptor() const;
 
     /// Most recent pilot acknowledgment record.
     Acknowledgment lastAcknowledgment() const { return m_lastAck; }
@@ -151,6 +161,18 @@ private:
     QTimer *m_overrideTimer = nullptr;
     QTimer *m_gateTimer = nullptr;
     Acknowledgment m_lastAck;
+
+    // One-shot override token model. forceArm()/setOverrideDuration() mint a fresh
+    // token (m_overrideTokenSeq counter) and return it to the caller, who attaches
+    // it to the vehicle for its specific pending command. The interceptor
+    // authorizes exactly the command presenting the CURRENT unconsumed token and
+    // consumes it on success. m_forceArmOverride distinguishes this caller-scoped
+    // window from an acknowledged overrideGate() window (which is permissive by
+    // design and uses no token). A force-arm window whose token is spent or that
+    // expires authorizes no other command: it is not ambient.
+    mutable quint32 m_overrideToken = 0;
+    quint32 m_overrideTokenSeq = 0;
+    bool m_forceArmOverride = false;
 
     uint16_t m_armCommandCode = kMavCmdArmDisarm;
     static constexpr int EVAL_INTERVAL_MS = kArmingGateEvalMs;

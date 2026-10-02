@@ -1283,13 +1283,23 @@ QString TelemetryBridge::forceArm() {
         return msg;
     }
 
-    // Open the ArmingGate override window (bounded, logged). This is the
-    // only gate relevant to the outbound force-arm path. PreflightPlugin's
-    // mavlinkMessage() intercepts only INBOUND commands from link peers and
-    // does not see this locally-sent command. If no gate is registered, the
-    // command is sent unconditionally (legacy behavior for mock testing).
+    // Open the ArmingGate override window (bounded, logged) and mint the one-shot
+    // caller-scoped token for THIS specific pending command. The token is attached
+    // to the vehicle so the arm interceptor authorizes exactly this command and
+    // consumes it — any other arm inside the window (the stock force-arm chain
+    // included) is denied. This is the only gate relevant to the outbound
+    // force-arm path. PreflightPlugin's mavlinkMessage() intercepts only INBOUND
+    // commands from link peers and does not see this locally-sent command. If no
+    // gate is registered, the command is sent unconditionally (legacy behavior
+    // for mock testing).
     if (_armingGate) {
-        QMetaObject::invokeMethod(_armingGate, "forceArm");
+        auto *gate = qobject_cast<ArmingGate*>(_armingGate);
+        if (gate) {
+            const quint32 token = gate->forceArm();
+            _vehicle->setArmOverrideToken(token);
+        } else {
+            QMetaObject::invokeMethod(_armingGate, "forceArm");
+        }
     } else {
         qCWarning(telemetryBridgeLog) << "forceArm(): no ArmingGate registered — sending unconditionally";
     }

@@ -477,10 +477,18 @@ public:
 
     /// Install a callable that is consulted before any MAV_CMD_COMPONENT_ARM_DISARM
     /// with param1 == 1 is actually sent to the wire. The callable receives a
-    /// QString& denial reason slot and must return true to allow the command or
-    /// false to veto it locally (MAV_RESULT_DENIED is reported, nothing is sent).
-    /// An empty callable restores the stock behavior (no veto).
-    void setArmCommandInterceptor(const std::function<bool(QString&)>& interceptor) { _armCommandInterceptor = interceptor; }
+    /// QString& denial reason slot and the caller-scoped arm token this vehicle
+    /// currently bears (see setArmOverrideToken), and must return true to allow
+    /// the command or false to veto it locally (MAV_RESULT_DENIED is reported,
+    /// nothing is sent). An empty callable restores the stock behavior (no veto).
+    void setArmCommandInterceptor(const std::function<bool(QString&, quint32)>& interceptor) { _armCommandInterceptor = interceptor; }
+
+    /// Caller-scoped one-shot arm token: set by the sanctioned force-arm caller
+    /// (TelemetryBridge::forceArm mints it from the ArmingGate) so the interceptor
+    /// can authorise exactly the specific pending command and no other during an
+    /// override window. Zero means the vehicle bears no token.
+    void setArmOverrideToken(quint32 token) { _armOverrideToken = token; }
+    quint32 armOverrideToken() const { return _armOverrideToken; }
 
     bool flightModeSetAvailable             ();
     QStringList flightModes                 ();
@@ -1087,7 +1095,8 @@ private:
 #endif
 
     bool    _armed = false;         ///< true: vehicle is armed
-    std::function<bool(QString&)> _armCommandInterceptor; ///< optional veto for MAV_CMD_COMPONENT_ARM_DISARM (param1==1)
+    std::function<bool(QString&, quint32)> _armCommandInterceptor; ///< optional veto for MAV_CMD_COMPONENT_ARM_DISARM (param1==1)
+    quint32 _armOverrideToken = 0;  ///< caller-scoped one-shot arm token (see setArmOverrideToken)
     uint8_t _base_mode = 0;     ///< base_mode from HEARTBEAT
     uint32_t _custom_mode = 0;  ///< custom_mode from HEARTBEAT
     uint32_t _custom_mode_user_intention = 0;  ///< custom_mode_user_intention from CURRENT_MODE

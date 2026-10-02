@@ -30,6 +30,8 @@ ArmingGate::ArmingGate(QObject *parent)
     m_overrideTimer->setSingleShot(true);
     connect(m_overrideTimer, &QTimer::timeout, this, [this]() {
         m_overrideActive = false;
+        m_overrideToken = 0;
+        m_forceArmOverride = false;
         emit overrideActiveChanged(false);
         emit armingOverrideExpired();
         // Re-evaluate checks now that the override window is closed; if checks
@@ -252,17 +254,19 @@ void ArmingGate::resetGate()
     m_overrideActive = false;
     m_ackReceived = false;
     m_overrideTimer->stop();
+    m_overrideToken = 0;
+    m_overrideTokenSeq = 0;
+    m_forceArmOverride = false;
     emit overrideActiveChanged(false);
     updateArmingState();
 }
 
-// Unconditionally allow arming for a bounded window. Used for emergency
-// overrides: the operator has a kForceArmOverrideSec window to arm, then the
-// gate re-closes and re-evaluates checks. Logs the action for audit trail.
-// Test-only: set a custom override duration in milliseconds for testing
-// override expiration. Keeps the override open for the given window, then the
-// gate re-closes exactly as the timed force-arm path does.
-void ArmingGate::setOverrideDuration(int timeoutMs)
+// Unconditionally allow the SPECIFIC pending command through a bounded window.
+// Test-only: set a custom override duration in milliseconds for testing override
+// expiration. Mints a fresh one-shot caller token (like forceArm()) so the
+// window stays caller-scoped; the gate re-closes after the given window exactly
+// as the timed force-arm path does.
+quint32 ArmingGate::setOverrideDuration(int timeoutMs)
 {
     m_overrideActive = true;
     emit overrideActiveChanged(true);
@@ -273,14 +277,24 @@ void ArmingGate::setOverrideDuration(int timeoutMs)
     emit armingAllowedChanged(true);
     emit denialReasonChanged({});
 
+    // Mint a one-shot caller-scoped token for the sanctioned caller.
+    m_forceArmOverride = true;
+    const quint32 token = ++m_overrideTokenSeq;
+    m_overrideToken = token;
+
     // Close the window automatically so the gate does not stay open forever.
     m_overrideTimer->start(timeoutMs);
+    return token;
 }
 
-// Unconditionally allow arming for a bounded window. Used for emergency
-// overrides: the operator has a kForceArmOverrideSec window to arm, then the
-// gate re-closes and re-evaluates checks. Logs the action for audit trail.
-void ArmingGate::forceArm()
+// Unconditionally authorise the SANCTIONED caller's pending command, once.
+// Force-arm path: opens a bounded, logged window and mints a one-shot
+// CALLER-SCOPED token returned to the caller. The caller (TelemetryBridge)
+// attaches the token to its vehicle so the interceptor authorizes exactly that
+// pending command — and nothing else while the window is open. The window is
+// NOT ambient: it auto-closes after kForceArmOverrideSec even if the token was
+// never presented (60s hard expiry on an unconsumed token).
+quint32 ArmingGate::forceArm()
 {
     m_overrideActive = true;
     emit overrideActiveChanged(true);
@@ -291,27 +305,57 @@ void ArmingGate::forceArm()
     emit armingAllowedChanged(true);
     emit denialReasonChanged({});
 
+    // Mint a one-shot caller-scoped token for the pending command about to be
+    // issued by the sanctioned caller.
+    m_forceArmOverride = true;
+    const quint32 token = ++m_overrideTokenSeq;
+    m_overrideToken = token;
+
     emit gateOverrideLogged(QStringLiteral("Operator force arm"), kForceArmOverrideSec);
     qWarning().noquote() << QStringLiteral("Arming overridden: Operator force arm (%1s window)").arg(kForceArmOverrideSec);
 
     // Close the window automatically so the gate does not stay open forever.
     m_overrideTimer->start(kForceArmOverrideSec * 1000);
+    return token;
 }
 
 // Build a vehicle-level arm interceptor that consults this gate. The returned
-// callable allows arming only when the gate allows it or an override window is
-// open; it fills the denial reason otherwise and fails closed if the gate has
-// been destroyed. The Vehicle stores no reference to the gate itself, only to
-// this callable, so no extra coupling is introduced.
-std::function<bool(QString&)> ArmingGate::makeArmInterceptor() const
+// callable allows arming only when the gate allows it or the OVERRIDE KIND
+// genuinely covers the call; it fills the denial reason otherwise and fails
+// closed if the gate has been destroyed. The Vehicle stores no reference to the
+// gate itself, only to this callable, so no extra coupling is introduced.
+//
+// Override kinds:
+//   * force-arm override (forceArm()/setOverrideDuration()): CALLER-SCOPED and
+//     ONE-SHOT. Only the command presenting the current unconsumed minted token
+//     passes, and it is consumed on success. An open force-arm window whose token
+//     is spent or never presented authorizes NOTHING else until its exhaust —
+//     this window is not ambient.
+//   * acknowledged override (overrideGate()): permissive by design — the
+//     operator acknowledged responsibility, normal arming passes for the window.
+std::function<bool(QString&, quint32)> ArmingGate::makeArmInterceptor() const
 {
     QPointer<const ArmingGate> guard(this);
-    return [guard](QString &denialReason) -> bool {
+    return [guard](QString &denialReason, quint32 callToken) -> bool {
         if (!guard) {
             denialReason = QStringLiteral("Arming gate unavailable (fail-closed)");
             return false;
         }
-        if (guard->isArmingAllowed() || guard->isOverrideActive()) {
+        if (guard->isOverrideActive() && guard->m_forceArmOverride) {
+            // One-shot, caller-scoped force-arm window: authorize exactly the
+            // command holding the current unconsumed token, then consume it.
+            // Any other arm inside the window is denied — including after this
+            // token is spent (it stays exclusive until the window closes).
+            if (guard->m_overrideToken != 0 && callToken == guard->m_overrideToken) {
+                const_cast<ArmingGate*>(guard.data())->m_overrideToken = 0;
+                denialReason.clear();
+                return true;
+            }
+            denialReason = QStringLiteral("Force-arm override is one-shot and caller-scoped; "
+                                          "this arm command does not hold the minted token");
+            return false;
+        }
+        if (guard->isArmingAllowed()) {
             denialReason.clear();
             return true;
         }
