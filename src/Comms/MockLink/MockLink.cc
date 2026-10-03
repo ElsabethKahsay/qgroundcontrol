@@ -518,53 +518,109 @@ void MockLink::respondWithMavlinkMessage(const mavlink_message_t &msg)
 
 bool MockLink::setFlightMode(const QString &modeName)
 {
-    // Map mode names to PX4CustomMode values (ArduPilot/Plane compatible)
     uint32_t newCustomMode = 0;
     bool found = false;
 
-    if (modeName.compare(QStringLiteral("MANUAL"), Qt::CaseInsensitive) == 0) {
-        newCustomMode = PX4CustomMode::MANUAL;
-        found = true;
-    } else if (modeName.compare(QStringLiteral("STABILIZE"), Qt::CaseInsensitive) == 0 ||
-               modeName.compare(QStringLiteral("STABILIZED"), Qt::CaseInsensitive) == 0) {
-        newCustomMode = PX4CustomMode::STABILIZED;
-        found = true;
-    } else if (modeName.compare(QStringLiteral("LOITER"), Qt::CaseInsensitive) == 0 ||
-               modeName.compare(QStringLiteral("HOLD"), Qt::CaseInsensitive) == 0) {
-        newCustomMode = PX4CustomMode::AUTO_LOITER;
-        found = true;
-    } else if (modeName.compare(QStringLiteral("RTL"), Qt::CaseInsensitive) == 0 ||
-               modeName.compare(QStringLiteral("RETURN"), Qt::CaseInsensitive) == 0) {
-        newCustomMode = PX4CustomMode::AUTO_RTL;
-        found = true;
-    } else if (modeName.compare(QStringLiteral("AUTO"), Qt::CaseInsensitive) == 0 ||
-               modeName.compare(QStringLiteral("MISSION"), Qt::CaseInsensitive) == 0) {
-        newCustomMode = PX4CustomMode::AUTO_MISSION;
-        found = true;
-    } else if (modeName.compare(QStringLiteral("LAND"), Qt::CaseInsensitive) == 0) {
-        newCustomMode = PX4CustomMode::AUTO_LAND;
-        found = true;
-    } else if (modeName.compare(QStringLiteral("TAKEOFF"), Qt::CaseInsensitive) == 0) {
-        newCustomMode = PX4CustomMode::AUTO_TAKEOFF;
-        found = true;
-    } else if (modeName.compare(QStringLiteral("ACRO"), Qt::CaseInsensitive) == 0) {
-        newCustomMode = PX4CustomMode::ACRO;
-        found = true;
-    } else if (modeName.compare(QStringLiteral("ALTCTL"), Qt::CaseInsensitive) == 0 ||
-               modeName.compare(QStringLiteral("ALTITUDE"), Qt::CaseInsensitive) == 0) {
-        newCustomMode = PX4CustomMode::ALTCTL;
-        found = true;
-    } else if (modeName.compare(QStringLiteral("POSCTL"), Qt::CaseInsensitive) == 0 ||
-               modeName.compare(QStringLiteral("POSITION"), Qt::CaseInsensitive) == 0) {
-        newCustomMode = PX4CustomMode::POSCTL_POSCTL;
-        found = true;
-    } else if (modeName.compare(QStringLiteral("OFFBOARD"), Qt::CaseInsensitive) == 0) {
-        newCustomMode = PX4CustomMode::OFFBOARD;
-        found = true;
+    if (_vehicleType == MAV_TYPE_FIXED_WING) {
+        // ArduPilot plane: custom_mode carries the APMPlaneMode numeric enum.
+        // Keep the values in sync with APMPlaneMode (ArduPlaneFirmwarePlugin.h).
+        // The firmware plugin decodes these back to the plane's Title-case mode
+        // strings, e.g. "Manual", "Stabilize", "Loiter", "Auto", "RTL".
+        if (modeName.compare(QStringLiteral("MANUAL"), Qt::CaseInsensitive) == 0) {
+            newCustomMode = 0; // APMPlaneMode::MANUAL
+            found = true;
+        } else if (modeName.compare(QStringLiteral("CIRCLE"), Qt::CaseInsensitive) == 0) {
+            newCustomMode = 1; // APMPlaneMode::CIRCLE
+            found = true;
+        } else if (modeName.compare(QStringLiteral("STABILIZE"), Qt::CaseInsensitive) == 0 ||
+                   modeName.compare(QStringLiteral("STABILIZED"), Qt::CaseInsensitive) == 0) {
+            newCustomMode = 2; // APMPlaneMode::STABILIZE
+            found = true;
+        } else if (modeName.compare(QStringLiteral("TRAINING"), Qt::CaseInsensitive) == 0) {
+            newCustomMode = 3; // APMPlaneMode::TRAINING
+            found = true;
+        } else if (modeName.compare(QStringLiteral("ACRO"), Qt::CaseInsensitive) == 0) {
+            newCustomMode = 4; // APMPlaneMode::ACRO
+            found = true;
+        } else if (modeName.compare(QStringLiteral("FLY_BY_WIRE_A"), Qt::CaseInsensitive) == 0 ||
+                   modeName.compare(QStringLiteral("FBWA"), Qt::CaseInsensitive) == 0) {
+            newCustomMode = 5; // APMPlaneMode::FLY_BY_WIRE_A
+            found = true;
+        } else if (modeName.compare(QStringLiteral("FLY_BY_WIRE_B"), Qt::CaseInsensitive) == 0 ||
+                   modeName.compare(QStringLiteral("FBWB"), Qt::CaseInsensitive) == 0) {
+            newCustomMode = 6; // APMPlaneMode::FLY_BY_WIRE_B
+            found = true;
+        } else if (modeName.compare(QStringLiteral("CRUISE"), Qt::CaseInsensitive) == 0) {
+            newCustomMode = 7; // APMPlaneMode::CRUISE
+            found = true;
+        } else if (modeName.compare(QStringLiteral("AUTOTUNE"), Qt::CaseInsensitive) == 0) {
+            newCustomMode = 8; // APMPlaneMode::AUTOTUNE
+            found = true;
+        } else if (modeName.compare(QStringLiteral("AUTO"), Qt::CaseInsensitive) == 0 ||
+                   modeName.compare(QStringLiteral("MISSION"), Qt::CaseInsensitive) == 0) {
+            newCustomMode = 10; // APMPlaneMode::AUTO
+            found = true;
+        } else if (modeName.compare(QStringLiteral("RTL"), Qt::CaseInsensitive) == 0 ||
+                   modeName.compare(QStringLiteral("RETURN"), Qt::CaseInsensitive) == 0) {
+            newCustomMode = 11; // APMPlaneMode::RTL
+            found = true;
+        } else if (modeName.compare(QStringLiteral("LOITER"), Qt::CaseInsensitive) == 0 ||
+                   modeName.compare(QStringLiteral("HOLD"), Qt::CaseInsensitive) == 0) {
+            newCustomMode = 12; // APMPlaneMode::LOITER
+            found = true;
+        } else if (modeName.compare(QStringLiteral("TAKEOFF"), Qt::CaseInsensitive) == 0) {
+            newCustomMode = 13; // APMPlaneMode::TAKEOFF
+            found = true;
+        } else if (modeName.compare(QStringLiteral("GUIDED"), Qt::CaseInsensitive) == 0) {
+            newCustomMode = 15; // APMPlaneMode::GUIDED
+            found = true;
+        }
+    } else {
+        // Map mode names to PX4CustomMode values (multirotor/other)
+        if (modeName.compare(QStringLiteral("MANUAL"), Qt::CaseInsensitive) == 0) {
+            newCustomMode = PX4CustomMode::MANUAL;
+            found = true;
+        } else if (modeName.compare(QStringLiteral("STABILIZE"), Qt::CaseInsensitive) == 0 ||
+                   modeName.compare(QStringLiteral("STABILIZED"), Qt::CaseInsensitive) == 0) {
+            newCustomMode = PX4CustomMode::STABILIZED;
+            found = true;
+        } else if (modeName.compare(QStringLiteral("LOITER"), Qt::CaseInsensitive) == 0 ||
+                   modeName.compare(QStringLiteral("HOLD"), Qt::CaseInsensitive) == 0) {
+            newCustomMode = PX4CustomMode::AUTO_LOITER;
+            found = true;
+        } else if (modeName.compare(QStringLiteral("RTL"), Qt::CaseInsensitive) == 0 ||
+                   modeName.compare(QStringLiteral("RETURN"), Qt::CaseInsensitive) == 0) {
+            newCustomMode = PX4CustomMode::AUTO_RTL;
+            found = true;
+        } else if (modeName.compare(QStringLiteral("AUTO"), Qt::CaseInsensitive) == 0 ||
+                   modeName.compare(QStringLiteral("MISSION"), Qt::CaseInsensitive) == 0) {
+            newCustomMode = PX4CustomMode::AUTO_MISSION;
+            found = true;
+        } else if (modeName.compare(QStringLiteral("LAND"), Qt::CaseInsensitive) == 0) {
+            newCustomMode = PX4CustomMode::AUTO_LAND;
+            found = true;
+        } else if (modeName.compare(QStringLiteral("TAKEOFF"), Qt::CaseInsensitive) == 0) {
+            newCustomMode = PX4CustomMode::AUTO_TAKEOFF;
+            found = true;
+        } else if (modeName.compare(QStringLiteral("ACRO"), Qt::CaseInsensitive) == 0) {
+            newCustomMode = PX4CustomMode::ACRO;
+            found = true;
+        } else if (modeName.compare(QStringLiteral("ALTCTL"), Qt::CaseInsensitive) == 0 ||
+                   modeName.compare(QStringLiteral("ALTITUDE"), Qt::CaseInsensitive) == 0) {
+            newCustomMode = PX4CustomMode::ALTCTL;
+            found = true;
+        } else if (modeName.compare(QStringLiteral("POSCTL"), Qt::CaseInsensitive) == 0 ||
+                   modeName.compare(QStringLiteral("POSITION"), Qt::CaseInsensitive) == 0) {
+            newCustomMode = PX4CustomMode::POSCTL_POSCTL;
+            found = true;
+        } else if (modeName.compare(QStringLiteral("OFFBOARD"), Qt::CaseInsensitive) == 0) {
+            newCustomMode = PX4CustomMode::OFFBOARD;
+            found = true;
+        }
     }
 
     if (!found) {
-        qCWarning(MockLinkLog) << "setFlightMode: unknown mode" << modeName;
+        qCWarning(MockLinkLog) << "setFlightMode: unknown mode" << modeName << "for vehicle type" << _vehicleType;
         return false;
     }
 
@@ -676,6 +732,9 @@ void MockLink::_handleIncomingMavlinkMsg(const mavlink_message_t &msg)
     case MAVLINK_MSG_ID_PARAM_MAP_RC:
         _handleParamMapRC(msg);
         break;
+    case MAVLINK_MSG_ID_RC_CHANNELS_OVERRIDE:
+        _handleRcChannelsOverride(msg);
+        break;
     default:
         break;
     }
@@ -722,6 +781,38 @@ void MockLink::_handleSetMode(const mavlink_message_t &msg)
         _mavBaseMode |= MAV_MODE_FLAG_SAFETY_ARMED;
     }
     _mavCustomMode = request.custom_mode;
+}
+
+void MockLink::_handleRcChannelsOverride(const mavlink_message_t &msg)
+{
+    mavlink_rc_channels_override_t override{};
+    mavlink_msg_rc_channels_override_decode(&msg, &override);
+
+    _rcOverrideMsgCount++;
+    _lastRcOverrideChannels[0] = override.chan1_raw;
+    _lastRcOverrideChannels[1] = override.chan2_raw;
+    _lastRcOverrideChannels[2] = override.chan3_raw;
+    _lastRcOverrideChannels[3] = override.chan4_raw;
+    _lastRcOverrideChannels[4] = override.chan5_raw;
+    _lastRcOverrideChannels[5] = override.chan6_raw;
+    _lastRcOverrideChannels[6] = override.chan7_raw;
+    _lastRcOverrideChannels[7] = override.chan8_raw;
+    _lastRcOverrideChannels[8] = override.chan9_raw;
+    _lastRcOverrideChannels[9] = override.chan10_raw;
+    _lastRcOverrideChannels[10] = override.chan11_raw;
+    _lastRcOverrideChannels[11] = override.chan12_raw;
+    _lastRcOverrideChannels[12] = override.chan13_raw;
+    _lastRcOverrideChannels[13] = override.chan14_raw;
+    _lastRcOverrideChannels[14] = override.chan15_raw;
+    _lastRcOverrideChannels[15] = override.chan16_raw;
+    _lastRcOverrideChannels[16] = override.chan17_raw;
+    _lastRcOverrideChannels[17] = override.chan18_raw;
+}
+
+uint16_t MockLink::lastRcOverrideValue(int rcChannel) const
+{
+    Q_ASSERT(rcChannel >= 1 && rcChannel <= 18);
+    return _lastRcOverrideChannels[rcChannel - 1];
 }
 
 void MockLink::_handleManualControl(const mavlink_message_t &msg)

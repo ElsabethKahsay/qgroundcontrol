@@ -3,6 +3,11 @@
 #include <QDateTime>
 #include <QCoreApplication>
 #include <QSettings>
+#include <QTemporaryFile>
+#include <QSqlDatabase>
+#include <QSqlQuery>
+#include <QSqlError>
+#include <QDir>
 
 #include "UnitTest.h"
 #include "ControlSurfaceTestController.h"
@@ -16,6 +21,8 @@
 #include "FactSystem/Fact.h"
 #include "Comms/MAVLinkProtocol.h"
 #include "utils/Config.h"
+#include "utils/DatabaseManager.h"
+#include "utils/FlightModeUtil.h"
 
 Q_DECLARE_LOGGING_CATEGORY(controlSurfaceTestLog)
 
@@ -29,6 +36,7 @@ private slots:
     // Working path tests
     void testAllSurfaceTypesLoadCorrectly();
     void testManualModeForcedAndReasserted();
+    void testManualModeReassertReachesAutopilot();
     void testArmBeforeSweepWithDeferredStart();
     void testPreSweepArmViaFunnelWith2989();
     void testDbResultLoggingFires();
@@ -46,6 +54,7 @@ private:
     bool _pumpUntil(bool (*cond)(void *ctx), void *ctx, int timeoutMs);
     Vehicle *_connectPlane();
     void _bindController(ControlSurfaceTestController &ctrl);
+    void _setParam(const QString &name, double value, bool expectMutation);
     void _setupFlapInChannel(int ch);
     void _sendServoOutputRaw(int ch1, int ch2, int ch3, int ch4);
 };
@@ -105,9 +114,123 @@ void ControlSurfaceTestControllerTest::testAllSurfaceTypesLoadCorrectly()
     }
 }
 
+// The sweep-force timer must continuously re-assert MANUAL: an external mode
+// change (e.g. the operator's CH8 switch or a ground station) to a
+// non-autopilot-commanded mode (STABILIZE) must NOT stop the sweep and must be
+// re-asserted back to MANUAL within the 1 s interval, while the sweep keeps
+// running.  Requires the mock link to encode ArduPilot Plane mode numbers in
+// the heartbeat custom_mode field (matching APMPlaneMode).
+// External STABILIZE (ArduPilot plane mode 2, NOT autopilot-commanded) arrives
+// with the sweep active.  It must not trigger the auto-stop.
+//
+// Mode comparison is NUMERIC on purpose: the flight-mode string differs by
+// build flavor (the ArduPilot firmware plugin renders "Stabilize", the generic
+// plugin used when QGC_DISABLE_APM_PLUGIN is set renders "Custom:0x2"), so
+// FlightModeUtil::planeModeNumber() is the only stable identity.
 void ControlSurfaceTestControllerTest::testManualModeForcedAndReasserted()
 {
-    QSKIP("Mock FirmwarePlugin::setFlightMode() returns false; cannot test MANUAL re-assert interval (timer fires but setFlightMode fails silently)");
+    QVERIFY(_connectPlane());
+
+    if (_vehicle->armed()) {
+        _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
+                                 false, 0.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
+        QVERIFY(_pumpUntil([](void *ctx) {
+            return !static_cast<Vehicle *>(ctx)->armed();
+        }, _vehicle, 10000));
+    }
+    QVERIFY(!_vehicle->armed());
+
+    ControlSurfaceTestController ctrl;
+    _bindController(ctrl);
+
+    ctrl.testAileron();
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<ControlSurfaceTestController *>(ctx)->activeSurface() >= 0;
+    }, &ctrl, 15000));
+    QVERIFY(ctrl.isArmed());
+
+    QVERIFY(_mockLink->setFlightMode(QStringLiteral("STABILIZE")));    // custom_mode = 2
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return FlightModeUtil::planeModeNumber(static_cast<ControlSurfaceTestController *>(ctx)->flightMode()) == 2;
+    }, &ctrl, 5000));
+    QVERIFY2(ctrl.activeSurface() >= 0, "STABILIZE incorrectly auto-stopped the sweep");
+    QVERIFY(ctrl.isArmed());
+
+    // The 1 s re-assert timer keeps running: the controller must not stop the
+    // sweep while it is re-asserting MANUAL.  (That the autopilot actually
+    // accepts the re-assert is covered by
+    // testManualModeReassertReachesAutopilot(), which is skipped in builds
+    // without the ArduPilot firmware plugin.)
+    QTest::qWait(2500);
+    QVERIFY2(ctrl.activeSurface() >= 0, "re-asserting MANUAL stopped the active sweep");
+    QVERIFY(ctrl.isArmed());
+
+    ctrl.stopAllSurfaces();
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return !static_cast<Vehicle *>(ctx)->armed();
+    }, _vehicle, 10000));
+}
+
+// The 1 s re-assert sends MAV_CMD_DO_SET_MODE and the autopilot must honour it.
+// Requires a Vehicle whose firmware plugin can SET flight modes, i.e. the
+// ArduPilot firmware plugin.  This build flavor compiles with
+// QGC_DISABLE_APM_PLUGIN / QGC_DISABLE_APM_PLUGIN_FACTORY
+// (custom/cmake/CustomOverrides.cmake), so every Vehicle gets the generic
+// FirmwarePlugin: flight modes decode to "Custom:0x<n>" and
+// Vehicle::setFlightMode() bails out with "called on base class, not
+// supported", leaving the mode unchanged.  That is a build-configuration
+// finding, not a controller defect — the controller's re-assert path is
+// exercised for the non-stop behaviour in
+// testManualModeForcedAndReasserted().
+void ControlSurfaceTestControllerTest::testManualModeReassertReachesAutopilot()
+{
+    QVERIFY(_connectPlane());
+
+    if (_vehicle->armed()) {
+        _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
+                                 false, 0.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
+        QVERIFY(_pumpUntil([](void *ctx) {
+            return !static_cast<Vehicle *>(ctx)->armed();
+        }, _vehicle, 10000));
+    }
+
+    ControlSurfaceTestController ctrl;
+    _bindController(ctrl);
+
+    ctrl.testAileron();
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<ControlSurfaceTestController *>(ctx)->activeSurface() >= 0;
+    }, &ctrl, 15000));
+
+    QVERIFY(_mockLink->setFlightMode(QStringLiteral("STABILIZE")));
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return FlightModeUtil::planeModeNumber(static_cast<ControlSurfaceTestController *>(ctx)->flightMode()) == 2;
+    }, &ctrl, 5000));
+
+    // Capability probe: the controller re-asserts MANUAL once a second, so the
+    // mock records a MAV_CMD_DO_SET_MODE with param2 = 0 within a few seconds
+    // iff this build's firmware plugin can actually command flight modes.
+    _mockLink->clearReceivedMavCommandCounts();
+    const bool canCommandModes = _pumpUntil([](void *ctx) {
+        return static_cast<MockLink *>(ctx)->lastDoSetModeParam2() >= 0.0f;
+    }, _mockLink, 4000);
+
+    if (!canCommandModes) {
+        QSKIP("Vehicle cannot command flight modes: this build flavor compiles with "
+              "QGC_DISABLE_APM_PLUGIN / QGC_DISABLE_APM_PLUGIN_FACTORY "
+              "(custom/cmake/CustomOverrides.cmake), so Vehicle::setFlightMode() fails on the generic "
+              "FirmwarePlugin base class and the MANUAL re-assert never reaches the autopilot");
+    }
+
+    QCOMPARE(_mockLink->lastDoSetModeParam2(), 0.0f);    // APMPlaneMode::MANUAL
+
+    // The autopilot honours the re-assert and the sweep survives it.
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return FlightModeUtil::planeModeNumber(static_cast<ControlSurfaceTestController *>(ctx)->flightMode()) == 0;
+    }, &ctrl, 5000));
+    QVERIFY(ctrl.activeSurface() >= 0);
+
+    ctrl.stopAllSurfaces();
 }
 
 void ControlSurfaceTestControllerTest::testArmBeforeSweepWithDeferredStart()
@@ -192,9 +315,73 @@ void ControlSurfaceTestControllerTest::testPreSweepArmViaFunnelWith2989()
     QVERIFY2(!refusal.isEmpty(), "funnel force-armed an airborne vehicle");
 }
 
+// Full feedback loop: inject real SERVO_OUTPUT_RAW so the sweep records
+// min/max deflection, then confirm the direction.  confirmSurfaceDirection()
+// must push a row into surface_test_results via DatabaseManager.
 void ControlSurfaceTestControllerTest::testDbResultLoggingFires()
 {
-    QSKIP("Mock vehicle/link lacks injectMavlinkMessage() for SERVO_OUTPUT_RAW injection; cannot simulate servo feedback to reach confirmSurfaceDirection() and exercise DatabaseManager::logSurfaceTestResult()");
+    // Isolate the singleton DB at a fresh temp file so the row count is clean.
+    DatabaseManager &db = DatabaseManager::instance();
+    db.reset();
+    QString tmpPath = QDir::tempPath() + QStringLiteral("/surfacetest_XXXXXX.db");
+    QTemporaryFile tmpFile;
+    tmpFile.setFileTemplate(tmpPath);
+    tmpFile.open();
+    const QString dbPath = tmpFile.fileName();
+    tmpFile.close();
+    QVERIFY(db.initialize(dbPath));
+
+    QVERIFY(_connectPlane());
+
+    if (_vehicle->armed()) {
+        _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
+                                 false, 0.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
+        QVERIFY(_pumpUntil([](void *ctx) {
+            return !static_cast<Vehicle *>(ctx)->armed();
+        }, _vehicle, 10000));
+    }
+
+    ControlSurfaceTestController ctrl;
+    _bindController(ctrl);
+
+    ctrl.testAileron();
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<ControlSurfaceTestController *>(ctx)->activeSurface() >= 0;
+    }, &ctrl, 15000));
+
+    // SERVO_OUTPUT_RAW feedback on the aileron output channel (CH1) — the mock
+    // APM plane maps aileron onto SERVO1_FUNCTION=4.  Two distinct readings make
+    // min_actual and max_actual distinguishable in the DB row.
+    _sendServoOutputRaw(1750, 0, 0, 0);
+    QTest::qWait(120);
+    _sendServoOutputRaw(1250, 0, 0, 0);
+    QTest::qWait(120);
+
+    ctrl.confirmSurfaceDirection(QStringLiteral("aileron"), true);
+
+    QSqlQuery countQuery;
+    QVERIFY2(countQuery.exec("SELECT count(*) FROM surface_test_results"),
+             qPrintable(countQuery.lastError().text()));
+    countQuery.next();
+    QCOMPARE(countQuery.value(0).toInt(), 1);
+
+    QSqlQuery rowQuery;
+    QVERIFY2(rowQuery.exec("SELECT channel, min_pwm_actual, max_pwm_actual, direction_ok, result "
+                           "FROM surface_test_results WHERE surface_id='aileron'"),
+             qPrintable(rowQuery.lastError().text()));
+    QVERIFY2(rowQuery.next(), "no aileron row logged");
+    QCOMPARE(rowQuery.value(0).toInt(), 1);                      // channel
+    QCOMPARE(rowQuery.value(1).toInt(), 1250);                   // min_pwm_actual
+    QCOMPARE(rowQuery.value(2).toInt(), 1750);                   // max_pwm_actual
+    QCOMPARE(rowQuery.value(3).toInt(), 1);                      // direction_ok
+    QCOMPARE(rowQuery.value(4).toString(), QStringLiteral("PASS"));
+    QVERIFY(!rowQuery.next());                                   // exactly one row
+
+    // Sweep tear-down disarms and releases the interlock.
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return !static_cast<ControlSurfaceTestController *>(ctx)->isArmed();
+    }, &ctrl, 10000));
+    QVERIFY(RcOverrideInterlock::owner().isEmpty());
 }
 
 // ============================================================================
@@ -202,16 +389,77 @@ void ControlSurfaceTestControllerTest::testDbResultLoggingFires()
 // ============================================================================
 
 // BUG 1: Flap RC channel clobber
-// _rcMapForSurface("flap") returns -1 (line 426), but _beginSurfaceTest()
-// unconditionally overwrites rcChannel when liveRc > 0 (line 497).
-// Since liveRc is -1 for flap, the condition `if (liveRc > 0)` should protect it,
-// but the audit found a potential overwrite at line 475 (testFlap()) vs 301-310
-// where flapRcCh is set from FLAP_IN_CHANNEL. Verify the flap retains its
-// FLAP_IN_CHANNEL rcChannel and does NOT fall back to DO_SET_SERVO when the
-// RC channel is available.
+// _rcMapForSurface("flap") returns -1 (flaps carry their RC channel from
+// FLAP_IN_CHANNEL and must NOT be overwritten by the RCMAP-based re-resolve in
+// _beginSurfaceTest).  Configure a real flap (SERVO_FUNCTION=2 on CH8 driven by
+// FLAP_IN_CHANNEL=7 on RC7) and verify the sweep drives RC7 — proving the
+// clobber guard held and the flap was NOT downgraded to a DO_SET_SERVO fallback.
 void ControlSurfaceTestControllerTest::testFlapRcChannelClobber()
 {
-    QSKIP("Mock vehicle lacks SERVO_FUNCTION=2 (Flap) and FLAP_IN_CHANNEL parameter setter; cannot exercise flap RC channel path to verify _beginSurfaceTest clobber guard at line 496");
+    QVERIFY(_connectPlane());
+
+    QVERIFY(_pumpUntil([](void *ctx) {
+        auto *paramMgr = static_cast<Vehicle *>(ctx)->parameterManager();
+        return paramMgr && paramMgr->parametersReady();
+    }, _vehicle, 20000));
+
+    // Flap output on CH8 (SERVO8_FUNCTION=2) fed by RC input CH7.  Both params
+    // exist in the mock plane parameter map and are ACKed by _handleParamSet.
+    const int flapServoCh = 8;
+    _setupFlapInChannel(7);
+    _setParam(QStringLiteral("SERVO8_FUNCTION"), 2, true);
+    QVERIFY(_pumpUntil([](void *ctx) {
+        auto *paramMgr = static_cast<Vehicle *>(ctx)->parameterManager();
+        Fact *f = paramMgr->getParameter(static_cast<Vehicle *>(ctx)->defaultComponentId(), QStringLiteral("SERVO8_FUNCTION"));
+        return f && f->rawValue().toInt() == 2;
+    }, _vehicle, 5000));
+
+    if (_vehicle->armed()) {
+        _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
+                                 false, 0.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
+        QVERIFY(_pumpUntil([](void *ctx) {
+            return !static_cast<Vehicle *>(ctx)->armed();
+        }, _vehicle, 10000));
+    }
+
+    ControlSurfaceTestController ctrl;
+    ctrl.setVehicle(_vehicle);
+    ctrl.loadSurfacesForVehicle(QStringLiteral("Fixed Wing"), 1);
+
+    // The flap surface must carry the FLAP_IN_CHANNEL RC input (7) untouched.
+    bool flapFound = false;
+    for (const QVariant &v : ctrl.surfaces()) {
+        const QVariantMap m = v.toMap();
+        if (m[QStringLiteral("id")].toString() == QStringLiteral("flap")) {
+            flapFound = true;
+            QCOMPARE(m[QStringLiteral("channel")].toInt(), flapServoCh);
+            QCOMPARE(m[QStringLiteral("rcChannel")].toInt(), 7);
+        }
+    }
+    QVERIFY2(flapFound, "flap surface did not load with the configured SERVO_FUNCTION=2");
+
+    _mockLink->clearReceivedMavCommandCounts();
+    ctrl.testFlap();
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<ControlSurfaceTestController *>(ctx)->activeSurface() >= 0;
+    }, &ctrl, 15000));
+    QVERIFY(ctrl.isArmed());
+
+    // Let the stream timer issue several 50 ms RC override ticks.
+    QTest::qWait(1500);
+
+    // PROOF of no clobber: the flap is driven through its RC input channel 7
+    // with a live PWM, and NOT once through DO_SET_SERVO.
+    QVERIFY2(_mockLink->rcOverrideCount() > 0, "no RC_CHANNELS_OVERRIDE reached the mock");
+    const int rc7Value = _mockLink->lastRcOverrideValue(7);
+    QVERIFY2(rc7Value >= 1000 && rc7Value <= 2000,
+             qPrintable(QStringLiteral("flap RC input ch7 not actively driven (got %1)").arg(rc7Value)));
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_DO_SET_SERVO), 0);
+
+    ctrl.stopAllSurfaces();
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return !static_cast<Vehicle *>(ctx)->armed();
+    }, _vehicle, 10000));
 }
 
 // BUG 2: Unverified disarm ACK
@@ -327,19 +575,46 @@ void ControlSurfaceTestControllerTest::testNoAutoStopOnExternalArmOrModeChange()
     QVERIFY(ctrl.lastErrorMessage().contains(QStringLiteral("disarmed")));
     QVERIFY(RcOverrideInterlock::owner().isEmpty());
 
-    // Test 2 & 3: External mode changes (LOITER = autopilot-commanded, STABILIZE = not)
-    // The mock link's setFlightMode() now sends a HEARTBEAT with the new mode.
-    // However, the mock link uses PX4CustomMode encoding while the Vehicle uses
-    // ArduPilot firmware plugin which expects ArduPilot mode encoding in the
-    // HEARTBEAT custom_mode field. This causes the Vehicle's flightMode() to not
-    // change, so flightModeChanged is not emitted. This is a MOCK INFRASTRUCTURE GAP:
-    // the mock link needs ArduPilot mode encoding support for full mode-change testing.
-    //
-    // Once the mock link supports ArduPilot mode encoding, the following should work:
-    // - External mode change to LOITER (autopilot-commanded) → auto-stop with "MANUAL" message
-    // - External mode change to STABILIZE (not autopilot-commanded) → no auto-stop
+    // Test 2: External mode change to LOITER (autopilot-commanded) → auto-stop.
+    // The autopilot now drives the surfaces itself, so the sweep must halt and
+    // the interlock must be released.
+    ctrl.testAileron();
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<ControlSurfaceTestController *>(ctx)->activeSurface() >= 0;
+    }, &ctrl, 15000));
 
-    QSKIP("Mock link uses PX4 mode encoding; Vehicle uses ArduPilot firmware plugin which expects ArduPilot mode encoding. Mock link needs ArduPilot mode encoding support for flight mode change injection.");
+    QVERIFY(_mockLink->setFlightMode(QStringLiteral("LOITER")));
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<ControlSurfaceTestController *>(ctx)->activeSurface() == -1;
+    }, &ctrl, 10000));
+    QVERIFY2(ctrl.lastErrorMessage().contains(QStringLiteral("left MANUAL")),
+             qPrintable(QStringLiteral("expected mode-escape auto-stop, got: %1").arg(ctrl.lastErrorMessage())));
+    QVERIFY(RcOverrideInterlock::owner().isEmpty());
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return !static_cast<Vehicle *>(ctx)->armed();
+    }, _vehicle, 10000));
+
+    // Test 3: External mode change to STABILIZE (plane mode 2, NOT
+    // autopilot-commanded) → the sweep must keep running; the 1 s re-assert
+    // timer then tries to force MANUAL back.  Whether the autopilot accepts
+    // that re-assert is covered by testManualModeReassertReachesAutopilot().
+    ctrl.testAileron();
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<ControlSurfaceTestController *>(ctx)->activeSurface() >= 0;
+    }, &ctrl, 15000));
+
+    QVERIFY(_mockLink->setFlightMode(QStringLiteral("STABILIZE")));
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return FlightModeUtil::planeModeNumber(static_cast<ControlSurfaceTestController *>(ctx)->flightMode()) == 2;
+    }, &ctrl, 5000));
+    QTest::qWait(2500); // let several 1 s re-assert intervals elapse
+    QVERIFY2(ctrl.activeSurface() >= 0, "STABILIZE incorrectly auto-stopped the sweep");
+    QVERIFY(ctrl.isArmed());
+
+    ctrl.stopAllSurfaces();
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return !static_cast<Vehicle *>(ctx)->armed();
+    }, _vehicle, 10000));
 }
 
 // BUG 4: Missing TIMEOUT verdict
@@ -440,13 +715,72 @@ void ControlSurfaceTestControllerTest::testRcReleaseValueMismatch()
 }
 
 // BUG 6: Dead config fields
-// channel2Invert, surfaceAutopilotCommanded, cooldown fields - do they have
-// any observable effect? This test attempts to exercise each and reports
-// whether it can be observed. If not, the field is "dead" (audit finding
-// confirmed).
+// Audit findings (code-inspection): ControlSurface::channel2Invert is never
+// read anywhere in the controller, and SurfaceState::Cooldown is never ASSIGNED
+// by ControlSurfaceTestController (it only serves as a guard in
+// _beginSurfaceTest).  Verify what is observable at runtime: the Cooldown enum
+// survives, the controller never emits it over a full sweep lifecycle, and the
+// single-axis surfaces report channel2 = -1 (the elevon isolation path that
+// would exercise channel2Invert is unreachable on the mock plane, which has no
+// SERVO_FUNCTION 77/78 outputs).
 void ControlSurfaceTestControllerTest::testDeadConfigFields()
 {
-    QSKIP("No test path to exercise channel2Invert (requires elevon isolation with inverted secondary) or SurfaceState::Cooldown (never assigned); code-inspection-only findings need elevon isolation path + parameter setter for channel2Invert");
+    const int cooldownValue = static_cast<int>(ControlSurfaceTestController::Cooldown);
+    QCOMPARE(cooldownValue, 4); // enum numbering is load-bearing elsewhere
+
+    QVERIFY(_connectPlane());
+
+    if (_vehicle->armed()) {
+        _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
+                                 false, 0.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
+        QVERIFY(_pumpUntil([](void *ctx) {
+            return !static_cast<Vehicle *>(ctx)->armed();
+        }, _vehicle, 10000));
+    }
+
+    ControlSurfaceTestController ctrl;
+    _bindController(ctrl);
+
+    // Single-axis plane: aileron drives RCMAP_ROLL only; its channel2 (invert /
+    // elevon isolation) field is -1 — channel2Invert has nothing to act on.
+    bool aileronFound = false;
+    for (const QVariant &v : ctrl.surfaces()) {
+        const QVariantMap m = v.toMap();
+        if (m[QStringLiteral("id")].toString() == QStringLiteral("aileron")) {
+            aileronFound = true;
+            QCOMPARE(m[QStringLiteral("rcChannel2")].toInt(), -1);
+        }
+    }
+    QVERIFY(aileronFound);
+
+    auto stateNeverCooldown = [&ctrl, cooldownValue]() {
+        for (const QVariant &v : ctrl.surfaceStates()) {
+            if (v.toInt() == cooldownValue) return false;
+        }
+        return true;
+    };
+
+    // Run a full sweep through TIMEOUT auto-finalize (no SERVO_OUTPUT_RAW
+    // feedback) and confirm Cooldown is never assigned along the way.
+    ctrl.testAileron();
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<ControlSurfaceTestController *>(ctx)->activeSurface() >= 0;
+    }, &ctrl, 15000));
+
+    bool finalised = false;
+    const quint64 t0 = QDateTime::currentMSecsSinceEpoch();
+    while (!finalised && QDateTime::currentMSecsSinceEpoch() - t0 < 25000) {
+        QVERIFY2(stateNeverCooldown(), "controller assigned the dead Cooldown state");
+        if (ctrl.activeSurface() == -1) {
+            finalised = true;
+        }
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+        QTest::qWait(50);
+    }
+    QVERIFY2(finalised, "sweep never finalised (no TIMEOUT auto-stop)");
+    QVERIFY2(ctrl.lastErrorMessage().contains(QStringLiteral("TIMEOUT")),
+             qPrintable(QStringLiteral("expected TIMEOUT verdict, got: %1").arg(ctrl.lastErrorMessage())));
+    QVERIFY(stateNeverCooldown());
 }
 
 // BUG 7: No interlock with HardwareTestController
@@ -514,47 +848,52 @@ void ControlSurfaceTestControllerTest::_bindController(ControlSurfaceTestControl
     ctrl.loadSurfacesForVehicle(QStringLiteral("Fixed Wing"), 1);
 }
 
-void ControlSurfaceTestControllerTest::_setupFlapInChannel(int ch)
+// Sets an ArduPilot parameter through the real ParamManager/Fact path.  The
+// full parse round-trips PARAM_SET to the mock, whose _handleParamSet ACKs it
+// (Q_ASSERTing the param exists with a matching type — the mock plane ships
+// FLAP_IN_CHANNEL / SERVOx_FUNCTION as INT16).
+void ControlSurfaceTestControllerTest::_setParam(const QString &name, double value, bool expectMutation)
 {
-    // FLAP_IN_CHANNEL is an ArduPilot parameter. The mock vehicle's parameter
-    // manager doesn't expose a setter for arbitrary params. We need to either:
-    // a) Use the mock's parameter manager if it supports it
-    // b) Set it on the real vehicle's param manager if connected
-    // c) Note this as a test-infra gap
-    //
-    // The mock link creates a Vehicle with a ParameterManager. We can try
-    // to set the parameter directly if the mock exposes it.
     auto *paramMgr = _vehicle->parameterManager();
-    if (paramMgr && paramMgr->parametersReady()) {
-        int compId = _vehicle->defaultComponentId();
-        Fact *fact = paramMgr->getParameter(compId, QStringLiteral("FLAP_IN_CHANNEL"));
-        if (fact) {
-            fact->setRawValue(ch);
-        }
+    QVERIFY2(paramMgr && paramMgr->parametersReady(), "parameters not ready before set");
+    int compId = _vehicle->defaultComponentId();
+    Fact *fact = paramMgr->getParameter(compId, name);
+    QVERIFY2(fact, qPrintable(QStringLiteral("param %1 not present in mock plane").arg(name)));
+    const QVariant before = fact->rawValue();
+    fact->setRawValue(value);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+    QTest::qWait(100);
+    if (expectMutation) {
+        QVERIFY2(fact->rawValue() != before,
+                 qPrintable(QStringLiteral("param %1 value did not change (set %2, now %3)")
+                                .arg(name).arg(value).arg(fact->rawValue().toString())));
     }
-    // If we can't set it, the test will use fallback behavior (DO_SET_SERVO)
-    // and the flapRcChannelClobber test will fail to exercise the RC path.
-    // This is a TEST INFRASTRUCTURE GAP: MockTelemetryBridge doesn't expose
-    // parameter setters for arbitrary params like FLAP_IN_CHANNEL.
 }
 
+void ControlSurfaceTestControllerTest::_setupFlapInChannel(int ch)
+{
+    _setParam(QStringLiteral("FLAP_IN_CHANNEL"), ch, true);
+}
+
+// Injects SERVO_OUTPUT_RAW through the mock link into the vehicle's normal
+// mavlink parse path so the controller observes real servo feedback on the
+// aileron output channel (CH1).  packed with the vehicle sysid so Vehicle's
+// _mavlinkMessageReceived accepts it.
 void ControlSurfaceTestControllerTest::_sendServoOutputRaw(int ch1, int ch2, int ch3, int ch4)
 {
-    // Inject a fake SERVO_OUTPUT_RAW message into the vehicle's MAVLink stream
-    // so the controller sees servo feedback.
-    //
-    // The mock vehicle doesn't expose a direct way to inject arbitrary MAVLink
-    // messages. The controller listens to _onMavlinkMessage() connected to
-    // Vehicle::mavlinkMessageReceived. We need the mock to emit this signal
-    // with our crafted message.
-    //
-    // This is a TEST INFRASTRUCTURE GAP: the mock vehicle/link doesn't provide
-    // a way to inject arbitrary MAVLink messages for SERVO_OUTPUT_RAW simulation.
-    //
-    // Workaround: In a real test environment, the mock would need a method like:
-    //   _mockLink->injectMavlinkMessage(msg);
-    // Without this, we cannot simulate servo feedback in tests.
-    Q_UNUSED(ch1); Q_UNUSED(ch2); Q_UNUSED(ch3); Q_UNUSED(ch4);
+    mavlink_message_t msg;
+    mavlink_msg_servo_output_raw_pack(
+        static_cast<uint8_t>(_mockLink->vehicleId()),
+        MAV_COMP_ID_AUTOPILOT1,
+        &msg,
+        0,                  // time_usec
+        0,                  // port
+        static_cast<uint16_t>(ch1), static_cast<uint16_t>(ch2),
+        static_cast<uint16_t>(ch3), static_cast<uint16_t>(ch4),
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    _mockLink->respondWithMavlinkMessage(msg);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+    QTest::qWait(100);
 }
 
 UT_REGISTER_TEST(ControlSurfaceTestControllerTest)

@@ -248,6 +248,7 @@ private:
     friend class CheckSmokeTest;
     friend class RcCalibrationCheckTest;
     friend class WeatherProviderTest;
+    friend class MotorSpinCheckTest;
     QHash<QString, QVariant> m_testOverrides;
     Q_INVOKABLE void setTestValue(const QString &prop, const QVariant &val) {
         m_testOverrides[prop] = val;

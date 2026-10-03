@@ -38,6 +38,16 @@ static bool surfaceAutopilotCommanded(int modeNum)
     }
 }
 
+/// True when the vehicle is in Manual flight mode.  The mode is compared as the
+/// ArduPilot plane mode NUMBER, not as a string: the rendered name differs per
+/// firmware plugin ("Manual", "MANUAL", or "Custom:0x0" when the vehicle has no
+/// APM plugin), and a string comparison that misses makes the MANUAL re-assert
+/// guard below never match, so it spams DO_SET_MODE on every sweep tick.
+static bool surfaceInManualMode(const QString &mode)
+{
+    return FlightModeUtil::planeModeNumber(mode) == 0;
+}
+
 ControlSurfaceTestController::ControlSurfaceTestController(QObject *parent)
     : QObject(parent)
 {
@@ -560,7 +570,7 @@ void ControlSurfaceTestController::_startSurfaceSweep(int idx)
         return;
     }
 
-    if (m_vehicle && m_vehicle->flightMode() != QStringLiteral("MANUAL")) {
+    if (m_vehicle && !surfaceInManualMode(m_vehicle->flightMode())) {
         m_vehicle->setFlightMode(QStringLiteral("MANUAL"));
     }
 
@@ -650,7 +660,7 @@ void ControlSurfaceTestController::_setElevonGain(bool boost)
 /// its whole duration. Stops as soon as no surface test is active.
 void ControlSurfaceTestController::_forceManualMode()
 {
-    if (m_activeSurface != -1 && m_vehicle && m_vehicle->flightMode() != QStringLiteral("MANUAL")) {
+    if (m_activeSurface != -1 && m_vehicle && !surfaceInManualMode(m_vehicle->flightMode())) {
         m_vehicle->setFlightMode(QStringLiteral("MANUAL"));
         qCWarning(controlSurfaceTestLog) << "Re-forcing MANUAL flight mode during surface sweep (current:" << m_vehicle->flightMode() << ")";
     }

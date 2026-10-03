@@ -95,6 +95,15 @@ public:
     /// param2 of the last MAV_CMD_DO_SET_MODE received (-1.0 before any).
     float lastDoSetModeParam2() const { return _lastDoSetModeParam2; }
 
+    /// Number of MAV_CMD_RC_CHANNELS_OVERRIDE messages received (counted by
+    /// _handleRcChannelsOverride).  The ControlSurfaceTestController streams
+    /// these while it drives the RC override path.
+    int rcOverrideCount() const { return _rcOverrideMsgCount; }
+
+    /// Last RC override value observed for the given 1-based RC channel.
+    /// Returns 0 if no override has ever been received on that channel.
+    uint16_t lastRcOverrideValue(int rcChannel) const;
+
     enum RequestMessageFailureMode_t {
         FailRequestMessageNone,
         FailRequestMessageCommandAcceptedMsgNotSent,
@@ -172,6 +181,7 @@ private:
     void _handleLogRequestList(const mavlink_message_t &msg);
     void _handleLogRequestData(const mavlink_message_t &msg);
     void _handleParamMapRC(const mavlink_message_t &msg);
+    void _handleRcChannelsOverride(const mavlink_message_t &msg);
     bool _handleRequestMessage(const mavlink_command_long_t &request, bool &noAck);
 
     void _sendHeartBeat();
@@ -269,6 +279,8 @@ private:
     float _lastArmDisarmParam1 = qQNaN();               ///< param1 of the last MAV_CMD_COMPONENT_ARM_DISARM received
     float _lastArmDisarmParam2 = qQNaN();               ///< param2 (force-arm magic) of the last MAV_CMD_COMPONENT_ARM_DISARM received
     float _lastDoSetModeParam2 = -1.0f;                 ///< param2 of the last MAV_CMD_DO_SET_MODE received
+    uint16_t _lastRcOverrideChannels[18] = {};          ///< last RC_CHANNELS_OVERRIDE value per 1-based RC channel (index 0 = chan1)
+    int _rcOverrideMsgCount = 0;                        ///< number of RC_CHANNELS_OVERRIDE messages received
     QMap<int, QMap<QString, QVariant>> _mapParamName2Value;
     QMap<int, QMap<QString, MAV_PARAM_TYPE>> _mapParamName2MavParamType;
 
