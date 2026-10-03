@@ -76,6 +76,7 @@ void DatabaseManager::reset()
 
 void DatabaseManager::backupBeforeMigration()
 {
+    assertMainThread();
     const QString dbFile = m_db.databaseName();
     if (dbFile.isEmpty() || !QFile::exists(dbFile))
         return;
@@ -102,6 +103,7 @@ void DatabaseManager::assertMainThread() const
 
 void DatabaseManager::walCheckpoint()
 {
+    assertMainThread();
     if (!m_initialized || !m_db.isOpen())
         return;
     QSqlQuery q(m_db);
@@ -256,6 +258,7 @@ static const int kLatestSchemaVersion = 18;
 
 bool DatabaseManager::createTables()
 {
+    assertMainThread();
     QSqlQuery query(m_db);
 
     // ── Schema version tracking ─────────────────────────────────────────
@@ -554,6 +557,7 @@ bool DatabaseManager::createTables()
 bool DatabaseManager::saveTemplate(const QString &templateId, const QString &vehicleType,
                                    const QString &templateName, const QString &templateJson)
 {
+    assertMainThread();
     if (!m_initialized) return false;
     
     QSqlQuery query(m_db);
@@ -579,6 +583,7 @@ bool DatabaseManager::saveTemplate(const QString &templateId, const QString &veh
  */
 QString DatabaseManager::loadTemplate(const QString &templateId)
 {
+    assertMainThread();
     if (!m_initialized) return QString();
     
     QSqlQuery query(m_db);
@@ -598,6 +603,7 @@ QString DatabaseManager::loadTemplate(const QString &templateId)
  */
 QStringList DatabaseManager::listTemplates(const QString &vehicleType)
 {
+    assertMainThread();
     QStringList result;
     if (!m_initialized) return result;
     
@@ -620,6 +626,7 @@ QStringList DatabaseManager::listTemplates(const QString &vehicleType)
  */
 bool DatabaseManager::deleteTemplate(const QString &templateId)
 {
+    assertMainThread();
     if (!m_initialized) return false;
     QSqlQuery query(m_db);
     query.prepare("DELETE FROM checklist_templates WHERE template_id = ?");
@@ -641,6 +648,7 @@ bool DatabaseManager::saveComplianceLog(const QString &logId, const QString &veh
                                         const QString &vehicleType, const QString &operatorId,
                                         const QString &logJson, const QString &telemetrySnapshot)
 {
+    assertMainThread();
     if (!m_initialized) return false;
     
     QSqlQuery query(m_db);
@@ -668,6 +676,7 @@ bool DatabaseManager::saveComplianceLog(const QString &logId, const QString &veh
  */
 QString DatabaseManager::loadComplianceLog(const QString &logId)
 {
+    assertMainThread();
     if (!m_initialized) return QString();
     
     QSqlQuery query(m_db);
@@ -688,6 +697,7 @@ QString DatabaseManager::loadComplianceLog(const QString &logId)
  */
 QStringList DatabaseManager::listComplianceLogs(const QString &vehicleId, int limit)
 {
+    assertMainThread();
     QStringList result;
     if (!m_initialized) return result;
     
@@ -711,6 +721,7 @@ QStringList DatabaseManager::listComplianceLogs(const QString &vehicleId, int li
  */
 bool DatabaseManager::deleteComplianceLog(const QString &logId)
 {
+    assertMainThread();
     if (!m_initialized) return false;
     QSqlQuery query(m_db);
     query.prepare("DELETE FROM compliance_logs WHERE log_id = ?");
@@ -735,6 +746,7 @@ bool DatabaseManager::logHardwareTestStep(
     const QString &operatorId,
     int durationMs)
 {
+    assertMainThread();
     if (!m_initialized) return false;
 
     QSqlQuery query(m_db);
@@ -780,6 +792,7 @@ bool DatabaseManager::logMotorTestResult(int vehicleSysId, int motorIndex,
                                          int expectedPwm, int actualPwm,
                                          int pwmDelta, const QString &result)
 {
+    assertMainThread();
     if (!m_initialized) return false;
 
     QSqlQuery query(m_db);
@@ -813,6 +826,7 @@ bool DatabaseManager::logSurfaceTestResult(int flightId, const QString &surfaceI
                                            int minPwmActual, int maxPwmActual,
                                            int directionOk, const QString &result)
 {
+    assertMainThread();
     if (!m_initialized) return false;
 
     QSqlQuery query(m_db);
@@ -852,6 +866,7 @@ bool DatabaseManager::logSurfaceTestResult(int flightId, const QString &surfaceI
  */
 QString DatabaseManager::getHardwareTestEvents(int flightId)
 {
+    assertMainThread();
     if (!m_initialized) return QString();
 
     QSqlQuery query(m_db);
@@ -981,6 +996,7 @@ int DatabaseManager::schemaVersion() const
 /** @brief Returns the highest schema version recorded in the database. */
 int DatabaseManager::storedSchemaVersion() const
 {
+    assertMainThread();
     if (!m_initialized) return 0;
     QSqlQuery q(m_db);
     q.exec("SELECT MAX(version) FROM schema_version");
@@ -998,6 +1014,7 @@ int DatabaseManager::storedSchemaVersion() const
  */
 bool DatabaseManager::migrateSchema()
 {
+    assertMainThread();
     int stored = storedSchemaVersion();
     int latest = schemaVersion();
     if (stored >= latest)
@@ -1522,6 +1539,7 @@ bool DatabaseManager::migrateSchema()
  */
 bool DatabaseManager::recoverOrphanedSessions()
 {
+    assertMainThread();
     if (!m_initialized || !m_db.isOpen()) return false;
 
     QSqlQuery q(m_db);
@@ -1569,6 +1587,7 @@ bool DatabaseManager::recoverOrphanedSessions()
 bool DatabaseManager::addComponent(const QString &name, const QString &type,
                                     double maxHours, int maxCycles)
 {
+    assertMainThread();
     if (!m_initialized) return false;
     QSqlQuery query(m_db);
     query.prepare("INSERT INTO maintenance_components "
@@ -1587,6 +1606,7 @@ bool DatabaseManager::addComponent(const QString &name, const QString &type,
 
 bool DatabaseManager::updateComponentHours(int id, double hours)
 {
+    assertMainThread();
     if (!m_initialized) return false;
     QSqlQuery query(m_db);
     query.prepare("UPDATE maintenance_components SET current_hours = ? WHERE id = ?");
@@ -1597,6 +1617,7 @@ bool DatabaseManager::updateComponentHours(int id, double hours)
 
 bool DatabaseManager::incrementComponentCycle(int id)
 {
+    assertMainThread();
     if (!m_initialized) return false;
     QSqlQuery query(m_db);
     query.prepare("UPDATE maintenance_components SET current_cycles = current_cycles + 1 WHERE id = ?");
@@ -1606,6 +1627,7 @@ bool DatabaseManager::incrementComponentCycle(int id)
 
 bool DatabaseManager::resetComponentMaintenance(int id, const QString &notes)
 {
+    assertMainThread();
     if (!m_initialized) return false;
     QSqlQuery query(m_db);
     query.prepare("UPDATE maintenance_components SET current_hours = 0, current_cycles = 0, "
@@ -1618,6 +1640,7 @@ bool DatabaseManager::resetComponentMaintenance(int id, const QString &notes)
 
 bool DatabaseManager::deleteComponent(int id)
 {
+    assertMainThread();
     if (!m_initialized) return false;
     QSqlQuery query(m_db);
     query.prepare("DELETE FROM maintenance_components WHERE id = ?");
@@ -1627,6 +1650,7 @@ bool DatabaseManager::deleteComponent(int id)
 
 QString DatabaseManager::listComponentsJson()
 {
+    assertMainThread();
     if (!m_initialized) return QStringLiteral("[]");
     QSqlQuery query(m_db);
     query.exec("SELECT id, name, type, max_hours, current_hours, max_cycles, "
@@ -1782,6 +1806,7 @@ bool DatabaseManager::updateVehicleUavWeight(const QString &deviceUid, double we
 /** @brief Returns the stored empty-airframe weight (kg), or 0 when unknown. */
 double DatabaseManager::vehicleUavWeight(const QString &deviceUid) const
 {
+    assertMainThread();
     if (!m_initialized || deviceUid.isEmpty()) return 0.0;
     QSqlQuery q(m_db);
     q.prepare("SELECT uav_weight_kg FROM vehicles WHERE device_uid = ?");
@@ -1807,6 +1832,7 @@ bool DatabaseManager::updateVehicleMotorThrustTable(const QString &deviceUid, co
 /** @brief Returns the stored thrust→current datasheet JSON ('' when none). */
 QString DatabaseManager::vehicleMotorThrustTable(const QString &deviceUid) const
 {
+    assertMainThread();
     if (!m_initialized || deviceUid.isEmpty()) return {};
     QSqlQuery q(m_db);
     q.prepare("SELECT motor_thrust_table FROM vehicles WHERE device_uid = ?");
@@ -1842,6 +1868,7 @@ bool DatabaseManager::vehicleBatteryConfig(const QString &deviceUid, int *series
                                            int *parallel, int *cellMah, double *reserve,
                                            QString *batteryType) const
 {
+    assertMainThread();
     if (!m_initialized || deviceUid.isEmpty()) return false;
     QSqlQuery q(m_db);
     q.prepare("SELECT battery_series_cells, battery_parallel_cells, battery_cell_mah, "
@@ -1858,6 +1885,7 @@ bool DatabaseManager::vehicleBatteryConfig(const QString &deviceUid, int *series
 
 QString DatabaseManager::getVehicle(const QString &deviceUid)
 {
+    assertMainThread();
     if (!m_initialized) return {};
     QSqlQuery q(m_db);
     q.prepare("SELECT device_uid, friendly_name, autopilot_type, airframe_type, "
@@ -1882,6 +1910,7 @@ QString DatabaseManager::getVehicle(const QString &deviceUid)
 
 QStringList DatabaseManager::listVehicles()
 {
+    assertMainThread();
     QStringList result;
     if (!m_initialized) return result;
     QSqlQuery q(m_db);
@@ -1892,6 +1921,7 @@ QStringList DatabaseManager::listVehicles()
 
 bool DatabaseManager::deleteVehicle(const QString &deviceUid)
 {
+    assertMainThread();
     if (!m_initialized) return false;
     QSqlQuery q(m_db);
     q.prepare("DELETE FROM vehicles WHERE device_uid = ?");
@@ -1953,6 +1983,7 @@ bool DatabaseManager::updatePreflightStatus(const QString &deviceUid, const QStr
 
 QString DatabaseManager::exportVehiclesJson()
 {
+    assertMainThread();
     if (!m_initialized) return QStringLiteral("[]");
     QSqlQuery q(m_db);
     q.exec("SELECT device_uid, friendly_name, autopilot_type, airframe_type, "
@@ -1997,6 +2028,7 @@ QString DatabaseManager::exportVehiclesJson()
 
 bool DatabaseManager::importVehiclesJson(const QString &json)
 {
+    assertMainThread();
     if (!m_initialized) return false;
     QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8());
     if (!doc.isArray()) return false;
@@ -2058,6 +2090,7 @@ bool DatabaseManager::importVehiclesJson(const QString &json)
 
 QString DatabaseManager::searchVehicles(const QString &query)
 {
+    assertMainThread();
     if (!m_initialized) return QStringLiteral("[]");
     QSqlQuery q(m_db);
     QString pattern = QStringLiteral("%%1%").arg(query);
@@ -2116,6 +2149,7 @@ int DatabaseManager::insertOperator(const QString &name, const QString &role)
 
 QList<QVariantMap> DatabaseManager::getAllOperators()
 {
+    assertMainThread();
     QList<QVariantMap> result;
     if (!m_initialized) return result;
     QSqlQuery q(m_db);
@@ -2239,6 +2273,7 @@ bool DatabaseManager::closeFlight(int flightId, int durationSec,
 
 QList<QVariantMap> DatabaseManager::getFlightsForVehicle(int vehicleId, int limit)
 {
+    assertMainThread();
     QList<QVariantMap> result;
     if (!m_initialized || vehicleId <= 0) return result;
     QSqlQuery q(m_db);
@@ -2289,6 +2324,7 @@ QList<QVariantMap> DatabaseManager::getFlightsForVehicle(int vehicleId, int limi
 
 QVariantMap DatabaseManager::getFlightById(int flightId)
 {
+    assertMainThread();
     QVariantMap row;
     if (!m_initialized || flightId <= 0) return row;
     QSqlQuery q(m_db);
@@ -2347,6 +2383,7 @@ QVariantMap DatabaseManager::queryFlights(int page, const QString &fromDate,
                                           const QString &sortBy,
                                           int pageSize)
 {
+    assertMainThread();
     QVariantMap result;
     result[QStringLiteral("rows")] = QVariantList();
     result[QStringLiteral("totalCount")] = 0;
@@ -2474,6 +2511,7 @@ QVariantMap DatabaseManager::queryFlights(int page, const QString &fromDate,
 
 QList<QVariantMap> DatabaseManager::getCheckResultsForFlight(int flightId, bool isPostFlight)
 {
+    assertMainThread();
     QList<QVariantMap> records;
     if (!m_initialized || flightId <= 0) return records;
     QSqlQuery q(m_db);
@@ -2505,6 +2543,7 @@ QList<QVariantMap> DatabaseManager::getCheckResultsForFlight(int flightId, bool 
 
 QList<QVariantMap> DatabaseManager::getTelemetryEventsForFlight(int flightId)
 {
+    assertMainThread();
     QList<QVariantMap> records;
     if (!m_initialized || flightId <= 0) return records;
     QSqlQuery q(m_db);
@@ -2538,6 +2577,7 @@ QList<QVariantMap> DatabaseManager::getTelemetryEventsForFlight(int flightId)
 
 QList<QVariantMap> DatabaseManager::getHandoverEventsForFlight(int flightId)
 {
+    assertMainThread();
     QList<QVariantMap> records;
     if (!m_initialized || flightId <= 0) return records;
     QSqlQuery q(m_db);
@@ -2566,6 +2606,7 @@ QList<QVariantMap> DatabaseManager::getHandoverEventsForFlight(int flightId)
 
 QList<QVariantMap> DatabaseManager::getMotorTestsForVehicle(int vehicleSysId)
 {
+    assertMainThread();
     QList<QVariantMap> records;
     if (!m_initialized || vehicleSysId <= 0) return records;
     QSqlQuery q(m_db);
@@ -2594,6 +2635,7 @@ QList<QVariantMap> DatabaseManager::getMotorTestsForVehicle(int vehicleSysId)
 
 QList<QVariantMap> DatabaseManager::getSurfaceTestsForFlight(int flightId)
 {
+    assertMainThread();
     QList<QVariantMap> records;
     if (!m_initialized || flightId <= 0) return records;
     QSqlQuery q(m_db);
@@ -2623,6 +2665,7 @@ QList<QVariantMap> DatabaseManager::getSurfaceTestsForFlight(int flightId)
 
 QVariantMap DatabaseManager::getCheckCountsForFlight(int flightId)
 {
+    assertMainThread();
     QVariantMap counts;
     counts[QStringLiteral("pass")] = 0;
     counts[QStringLiteral("fail")] = 0;
@@ -2650,6 +2693,7 @@ QVariantMap DatabaseManager::getCheckCountsForFlight(int flightId)
 
 int DatabaseManager::getAnomalyCountForFlight(int flightId)
 {
+    assertMainThread();
     if (!m_initialized || flightId <= 0) return 0;
     QSqlQuery q(m_db);
     q.prepare("SELECT COUNT(*) FROM flight_telemetry_events "
@@ -2740,6 +2784,7 @@ bool DatabaseManager::insertTelemetryEventSnapshot(int flightId, const QString &
 
 QString DatabaseManager::lookupVehicleByFingerprint(const QString &fingerprint)
 {
+    assertMainThread();
     if (!m_initialized || fingerprint.isEmpty()) return {};
     QSqlQuery q(m_db);
     q.prepare("SELECT device_uid, friendly_name, autopilot_type, airframe_type, "
@@ -2944,6 +2989,7 @@ bool DatabaseManager::incrementVehicleFlightTime(const QString &fingerprint, int
 
 QString DatabaseManager::getAllVehiclesJson()
 {
+    assertMainThread();
     if (!m_initialized) return QStringLiteral("[]");
     QSqlQuery q(m_db);
     q.exec("SELECT device_uid, friendly_name, autopilot_type, airframe_type, "
@@ -2997,6 +3043,7 @@ static QString csvQuote(const QString &value)
  * @return absolute path of the written file, or an empty string on failure. */
 QString DatabaseManager::exportVehiclesCsv(const QString &fromDate, const QString &toDate)
 {
+    assertMainThread();
     if (!m_initialized) return {};
 
     QString query = "SELECT device_uid, friendly_name, vehicle_type_name, autopilot_type, "
@@ -3095,6 +3142,7 @@ QString DatabaseManager::exportFlightsCsv(const QString &fromDate,
                                           int vehicleId,
                                           const QString &mode)
 {
+    assertMainThread();
     if (!m_initialized) return {};
 
     QStringList where;
@@ -3304,6 +3352,7 @@ QVariantMap DatabaseManager::getFlightStats(const QString &fromDate,
                                             int vehicleId,
                                             const QString &mode)
 {
+    assertMainThread();
     QVariantMap stats;
     stats[QStringLiteral("totalFlights")] = 0;
     stats[QStringLiteral("totalHoursStr")] = QStringLiteral("0h 0m");
@@ -3386,6 +3435,7 @@ bool DatabaseManager::saveVehicleConfig(const QString &fingerprint, const QStrin
 
 QString DatabaseManager::loadVehicleConfig(const QString &fingerprint)
 {
+    assertMainThread();
     if (!m_initialized || fingerprint.isEmpty()) return {};
     QSqlQuery q(m_db);
     q.prepare("SELECT config_json FROM vehicle_config WHERE fingerprint = ?");
@@ -3419,6 +3469,7 @@ bool DatabaseManager::upsertBattery(const QString &serialNumber, const QString &
 
 QString DatabaseManager::getBattery(const QString &serialNumber)
 {
+    assertMainThread();
     if (!m_initialized) return {};
     QSqlQuery q(m_db);
     q.prepare("SELECT serial_number, operator_label, first_seen, last_seen, total_cycles, identity_source "
@@ -3438,6 +3489,7 @@ QString DatabaseManager::getBattery(const QString &serialNumber)
 
 QStringList DatabaseManager::listBatteries()
 {
+    assertMainThread();
     QStringList result;
     if (!m_initialized) return result;
     QSqlQuery q(m_db);
@@ -3455,6 +3507,7 @@ bool DatabaseManager::saveBatteryCycle(const QString &serialNumber, int flightSe
                                        double capacityAtFullMah, double voltageSagV,
                                        double restingVoltageV, int cycleCount)
 {
+    assertMainThread();
     if (!m_initialized || serialNumber.trimmed().isEmpty()) return false;
     QSqlQuery q(m_db);
     q.prepare(R"(
@@ -3480,6 +3533,7 @@ bool DatabaseManager::saveBatteryCycle(const QString &serialNumber, int flightSe
 
 QString DatabaseManager::getBatteryCycles(const QString &serialNumber, int limit)
 {
+    assertMainThread();
     if (!m_initialized) return QStringLiteral("[]");
     QSqlQuery q(m_db);
     q.prepare("SELECT id, flight_session_id, capacity_at_full_mah, voltage_sag_v, "
@@ -3506,6 +3560,7 @@ QString DatabaseManager::getBatteryCycles(const QString &serialNumber, int limit
 
 int DatabaseManager::getBatteryCycleCount(const QString &serialNumber)
 {
+    assertMainThread();
     if (!m_initialized) return 0;
     QSqlQuery q(m_db);
     q.prepare("SELECT COUNT(*) FROM battery_cycles WHERE battery_serial = ?");
@@ -3525,6 +3580,7 @@ int DatabaseManager::getBatteryCycleCount(const QString &serialNumber)
  */
 bool DatabaseManager::incrementBatteryCycle(int flightSessionId, const QString &batterySerial)
 {
+    assertMainThread();
     if (!m_initialized) return false;
 
     // Check session exists and has duration >= 30s
@@ -3585,6 +3641,7 @@ bool DatabaseManager::incrementBatteryCycle(int flightSessionId, const QString &
  */
 QString DatabaseManager::getBatteryHealthTrend(const QString &serialNumber)
 {
+    assertMainThread();
     if (!m_initialized) return {};
     QSqlQuery q(m_db);
     q.prepare("SELECT capacity_at_full_mah, voltage_sag_v, resting_voltage_v, cycle_count "
@@ -3748,6 +3805,7 @@ bool DatabaseManager::updateFlightSessionEnergy(int sessionId, double energyCons
 
 QString DatabaseManager::getFlightSessions(const QString &deviceUid, int limit)
 {
+    assertMainThread();
     if (!m_initialized) return QStringLiteral("[]");
     QSqlQuery q(m_db);
     q.prepare("SELECT id, battery_serial, started_at, ended_at, duration_seconds "
@@ -3780,6 +3838,7 @@ QString DatabaseManager::getFlightSessions(const QString &deviceUid, int limit)
 DatabaseManager::CalibratedPowerModel DatabaseManager::getCalibratedPowerModel(
     const QString &deviceUid, double payloadKg, int minSessions)
 {
+    assertMainThread();
     CalibratedPowerModel result;
     if (!m_initialized || deviceUid.isEmpty()) return result;
 
@@ -3884,6 +3943,7 @@ QVector<QPair<double, double>> DatabaseManager::getPowerCalibrationHistory(
 
 QString DatabaseManager::getCheckConfig(const QString &checkId, const QString &key, int vehicleId)
 {
+    assertMainThread();
     if (!m_initialized) return {};
     QSqlQuery q(m_db);
     if (vehicleId >= 0) {
@@ -3978,6 +4038,7 @@ bool DatabaseManager::saveCheckResult(const QString &deviceUid, int flightSessio
 
 QString DatabaseManager::getCheckResults(int flightSessionId)
 {
+    assertMainThread();
     if (!m_initialized) return QStringLiteral("[]");
     QSqlQuery q(m_db);
     q.prepare("SELECT check_id, status, message, evaluated_at "
@@ -4004,6 +4065,7 @@ int DatabaseManager::insertZone(const QString &name, const QString &description,
                                 double lat, double lon, double radiusM,
                                 const QString &reason, int createdBy)
 {
+    assertMainThread();
     if (!m_initialized || name.trimmed().isEmpty()) return -1;
     QSqlQuery q(m_db);
     q.prepare("INSERT INTO no_fly_zones "
@@ -4034,6 +4096,7 @@ bool DatabaseManager::updateZone(int id, const QString &name, const QString &des
                                  double lat, double lon, double radiusM,
                                  const QString &reason, bool active)
 {
+    assertMainThread();
     if (!m_initialized || id <= 0) return false;
     QSqlQuery q(m_db);
     q.prepare("UPDATE no_fly_zones SET "
@@ -4061,6 +4124,7 @@ bool DatabaseManager::updateZone(int id, const QString &name, const QString &des
 
 bool DatabaseManager::deleteZone(int id)
 {
+    assertMainThread();
     if (!m_initialized || id <= 0) return false;
     QSqlQuery q(m_db);
     q.prepare("DELETE FROM no_fly_zones WHERE id = ?");
@@ -4079,6 +4143,7 @@ bool DatabaseManager::deleteZone(int id)
 
 QList<QVariantMap> DatabaseManager::getAllZones()
 {
+    assertMainThread();
     QList<QVariantMap> zones;
     if (!m_initialized) return zones;
     QSqlQuery q(m_db);
@@ -4109,6 +4174,7 @@ QList<QVariantMap> DatabaseManager::getAllZones()
 
 QList<QVariantMap> DatabaseManager::getActiveZones()
 {
+    assertMainThread();
     QList<QVariantMap> zones;
     if (!m_initialized) return zones;
     QSqlQuery q(m_db);
@@ -4139,6 +4205,7 @@ QList<QVariantMap> DatabaseManager::getActiveZones()
 
 QVariantMap DatabaseManager::getZoneByName(const QString &name)
 {
+    assertMainThread();
     QVariantMap zone;
     if (!m_initialized || name.trimmed().isEmpty()) return zone;
     QSqlQuery q(m_db);
@@ -4165,6 +4232,7 @@ QVariantMap DatabaseManager::getZoneByName(const QString &name)
 
 bool DatabaseManager::seedDefaultZonesIfNeeded()
 {
+    assertMainThread();
     if (!m_initialized) return false;
     QSqlQuery q(m_db);
     if (!q.exec(QStringLiteral("SELECT COUNT(*) FROM no_fly_zones"))) {
@@ -4204,6 +4272,7 @@ bool DatabaseManager::insertComplianceRecord(int flightId, int operatorId,
                                              const QString &overrideReason,
                                              int zoneId, bool intersecting)
 {
+    assertMainThread();
     if (!m_initialized) return false;
     QSqlQuery q(m_db);
     q.prepare("INSERT INTO zone_compliance_log "
@@ -4231,6 +4300,7 @@ bool DatabaseManager::insertComplianceRecord(int flightId, int operatorId,
 bool DatabaseManager::updateComplianceOverrideReason(int zoneId, int flightId,
                                                      const QString &reason)
 {
+    assertMainThread();
     if (!m_initialized || zoneId <= 0) return false;
     QSqlQuery q(m_db);
     // Stamp only the newest row for this zone/flight pair so earlier runs
@@ -4254,6 +4324,7 @@ bool DatabaseManager::updateComplianceOverrideReason(int zoneId, int flightId,
 
 QList<QVariantMap> DatabaseManager::getComplianceForFlight(int flightId)
 {
+    assertMainThread();
     QList<QVariantMap> records;
     if (!m_initialized || flightId <= 0) return records;
     QSqlQuery q(m_db);
@@ -4283,6 +4354,7 @@ QList<QVariantMap> DatabaseManager::getComplianceForFlight(int flightId)
 
 QList<QVariantMap> DatabaseManager::getComplianceHistory(int limit)
 {
+    assertMainThread();
     QList<QVariantMap> records;
     if (!m_initialized) return records;
     QSqlQuery q(m_db);
