@@ -1,3 +1,7 @@
+# Build trees and Qt-generated output are not source.  Without this, check-json
+# and friends walk the entire build directory.
+exclude: '^(build/|custom/scratch/|.*_autogen/|.*\.qmlc$)'
+
 repos:
 -   repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -5,3 +9,34 @@ repos:
     -   id: check-yaml
         args: [--allow-multiple-documents, --unsafe]
     -   id: check-json
+    # NOTE: end-of-file-fixer / trailing-whitespace are deliberately absent.
+    # They are mutating fixers, and running them across this tree rewrites 400+
+    # pre-existing files, which buries real review signal.  Whitespace is not a
+    # defect gate; add them later only if the tree is first normalised.
+
+# QML is the highest-risk surface in this fork: a typo in a property name or a
+# call into a non-Q_INVOKABLE C++ method compiles cleanly and then fails
+# silently at runtime.  qmllint is the only automated gate for that class, and
+# it also catches plain syntax errors -- it is what flags the stray
+# "Config.navigatePop();" currently sitting in custom/qml/pages/GimbalTest.qml.
+-   repo: local
+    hooks:
+    -   id: qmllint
+        name: qmllint (QML syntax, identifiers, call arity)
+        entry: python3 tools/lint/qmllint_hook.py
+        language: system
+        types: [qml]
+
+# Catches the "Temporary"/"receive" class of typo that survives review,
+# including a misspelled Q_INVOKABLE macro.  typos.toml pins the load-bearing
+# misspellings that must not be "corrected".
+-   repo: https://github.com/crate-ci/typos
+    rev: v1.50.3
+    hooks:
+    -   id: typos
+
+-   repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+    -   id: shellcheck
+        args: [--severity=warning]

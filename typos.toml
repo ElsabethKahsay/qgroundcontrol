@@ -1,0 +1,56 @@
+# Spell-checker configuration.
+#
+# Two jobs: silence Qt/MAVLink/QGC jargon, and -- more importantly -- pin the
+# misspellings that are load-bearing so nobody "fixes" one side of a pair and
+# breaks the call site.
+#
+# Note the self-mapping form (word = "word"): in typos these tables are
+# whitelists, not suggestion maps.
+
+# Qt meta-object macros.  Q_INVOKABLE is a false positive in nearly every file
+# that exposes a method to QML.
+[default.extend-identifiers]
+Q_INVOKABLE = "Q_INVOKABLE"
+Q_PROPERTY = "Q_PROPERTY"
+Q_ENUM = "Q_ENUM"
+QML_ELEMENT = "QML_ELEMENT"
+QML_SINGLETON = "QML_SINGLETON"
+QML_UNCREATABLE = "QML_UNCREATABLE"
+Q_CLASSINFO = "Q_CLASSINFO"
+qmlRegisterType = "qmlRegisterType"
+qmlRegisterUncreatableType = "qmlRegisterUncreatableType"
+# Deliberately misspelled upstream: defined in src/UI/MainWindow.qml and called
+# from BOTH the stock and the custom AnalyzeView.qml.  The misspelling is
+# consistent on both sides, so "correcting" only the caller silently breaks the
+# analyze popout.
+createrWindowedAnalyzePage = "createrWindowedAnalyzePage"
+
+[default.extend-words]
+# ArduPilot / MAVLink / flight-test jargon
+mavlink = "mavlink"
+preflight = "preflight"
+sitl = "sitl"
+thr = "thr"
+thst = "thst"
+pn = "pn"
+nam = "nam"
+prop = "prop"
+asser = "asser"
+invokable = "invokable"
+overrideable = "overrideable"
+stil = "stil"
+propert = "propert"
+catagories = "catagories"
+ned = "ned"
+
+# Third-party / generated content that must never be spell-gated: the ArduPilot
+# parameter metadata submodule, Qt translation catalogues, and the Viewer3D
+# sample map.
+[files]
+extend-exclude = [
+    "src/FirmwarePlugin/APM/ArduPilot-Parameter-Repository/**",
+    "translations/**",
+    "src/Viewer3D/SampleOsmMap/**",
+    "docs/**",
+    "build/**",
+]

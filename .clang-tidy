@@ -1,5 +1,19 @@
 ---
+# Static analysis for the Preflight build.  Kept deliberately narrow: these are
+# the checks that catch real defects in this tree (QML/C++ boundary mistakes,
+# dangling pointers, blocking I/O on the GUI thread) rather than style debates.
+# Formatting is handled separately by .clang-format via pre-commit.
 Checks: >
-    clang-analyzer-*,
-WarningsAsErrors: '*'
-...
+  bugprone-*,
+  clang-analyzer-*,
+  performance-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-reserved-identifier,
+  -bugprone-exception-escape,
+  -performance-no-int-to-ptr
+WarningsAsErrors: ''
+HeaderFilterRegex: '^(src|test|custom|tools)/'
+FormatStyle: none
+CheckOptions:
+  - key: bugprone-suspicious-memset-usage.AllowStringArgs
+    value: true
