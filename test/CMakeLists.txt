@@ -22,6 +22,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_
 
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE QGC_UNITTEST_BUILD)
 
+
 include(CTest)
 add_custom_target(check
     COMMAND ctest --output-on-failure .
@@ -35,6 +36,28 @@ function(add_qgc_test test_name)
     )
     add_dependencies(check ${PROJECT_NAME})
 endfunction()
+
+# The Preflight plugin's tests self-register into the main binary but were never
+# registered with CTest, so `ctest` / the `check` target silently ran none of
+# them.  Register each class named by a UT_REGISTER_TEST in custom/tests.
+if(QGC_CUSTOM_BUILD AND EXISTS ${CMAKE_SOURCE_DIR}/custom/tests)
+    file(GLOB_RECURSE _custom_test_srcs ${CMAKE_SOURCE_DIR}/custom/tests/*.cpp)
+    set(_custom_registered_tests "")
+    foreach(_custom_test_src ${_custom_test_srcs})
+        file(STRINGS ${_custom_test_src} _custom_regs REGEX "UT_REGISTER_TEST[A-Z_]*\\(")
+        foreach(_custom_reg ${_custom_regs})
+            string(REGEX MATCH "UT_REGISTER_TEST[A-Z_]*\\(([A-Za-z0-9_]+)\\)" _m "${_custom_reg}")
+            if(CMAKE_MATCH_1 AND NOT CMAKE_MATCH_1 IN_LIST _custom_registered_tests)
+                list(APPEND _custom_registered_tests ${CMAKE_MATCH_1})
+            endif()
+        endforeach()
+    endforeach()
+    list(LENGTH _custom_registered_tests _custom_test_count)
+    message(STATUS "QGC: registering ${_custom_test_count} Preflight tests with CTest")
+    foreach(_custom_test ${_custom_registered_tests})
+        add_qgc_test(${_custom_test})
+    endforeach()
+endif()
 
 add_subdirectory(ADSB)
 add_qgc_test(ADSBTest)

@@ -59,16 +59,26 @@ QList<UnitTest*> &UnitTest::_testList()
 int UnitTest::run(QStringView singleTest)
 {
     int ret = 0;
+    int matched = 0;
 
     for (UnitTest *test: _testList()) {
         if (singleTest.isEmpty() || singleTest == test->objectName()) {
             if (test->standalone() && singleTest.isEmpty()) {
                 continue;
             }
+            matched++;
             QStringList args;
             args << "*" << "-maxwarnings" << "0";
             ret += QTest::qExec(test, args);
         }
+    }
+
+    // A requested test name that matches nothing is a typo or a rename, not a
+    // pass.  Without this, CI gating on --unittest:<Name> goes green silently
+    // the moment the name stops existing.
+    if (!singleTest.isEmpty() && matched == 0) {
+        qWarning("UnitTest::run: no test named '%s' is registered", singleTest.toLatin1().constData());
+        return -1;
     }
 
     return ret;

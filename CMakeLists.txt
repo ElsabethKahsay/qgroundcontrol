@@ -519,6 +519,12 @@ qt_add_qml_module(${CMAKE_PROJECT_NAME}
 
 add_subdirectory(src)
 if(QGC_BUILD_TESTING)
+    # enable_testing() must be called in the top-level directory, otherwise no
+    # top-level CTestTestfile.cmake is generated and `ctest` in the build root
+    # reports "Total Tests: 0" even though test/ registers tests.  The stock tree
+    # never called it (only vendored cpm_modules do), so the registered tests
+    # were unreachable from the build root.
+    enable_testing()
     add_subdirectory(test)
 endif()
 
