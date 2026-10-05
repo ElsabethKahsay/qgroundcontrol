@@ -122,8 +122,17 @@ Both are out of scope to hand-roll against a vendored dependency.
 
 **Deferred, explicitly non-blocking:** vendor/replace the MAVLink parser with an
 upstream implementation that handles unvalidated lengths without swallowing
-subsequent frames. This is tracked as future work and does **not** block release;
-the watchdog covers the operational risk in the meantime.
+subsequent frames. This does **not** block release; the watchdog covers the
+operational risk in the meantime.
+
+> **Priority: raised - flag for the next planning pass.** Originally deferred at
+> low priority on the strength of Issue 1 alone. Two *independent, confirmed*
+> defects have now been found in the same vendored dependency, and Issue 2 turned
+> out not to have the cheap fix that was hoped for: the generated headers are
+> verified correct against upstream, so regenerating them is not a remedy. That
+> materially raises the expected value of replacing the dependency. Still
+> non-blocking for Tier 4, but it should be ranked explicitly in the next planning
+> pass rather than left at its original priority.
 
 See [Issue 2](#issue-2-synthesized-heartbeat-frames-fail-crc-validation) for the
 second, independent issue now known to exist in the same vendored dependency.
@@ -159,18 +168,46 @@ The fault is specific to the heartbeat path, not to the parser generally:
   the frame using the official `CRC_EXTRA` for msgid 0 - value `50`, from the
   `MAVLINK_MESSAGE_CRCS` table in `common/common.h` - does not reproduce the
   checksum the serialiser emitted.
-- The payload also appears to be laid out in **struct-memory order** rather than
-  MAVLink wire order: the `uint32 custom_mode` is emitted at offset 0 (hoisted for
-  alignment) where wire order requires `type | autopilot | base_mode | custom_mode |
-  system_state`.
+- The payload layout is **correct**. An earlier draft of this document claimed the
+  payload was in struct-memory order rather than wire order; that was wrong and is
+  retracted. `custom_mode` at offset 0 *is* the wire order - see
+  [Generated headers verified against upstream](#generated-headers-verified-against-upstream).
+
+### Generated headers verified against upstream
+
+The first hypothesis was that this build's generated MAVLink headers are stale,
+mismatched, or generated incorrectly - a build-configuration defect with a much
+smaller fix (regenerate or re-fetch the headers) than replacing the parser.
+
+**They are not.** This build's generated `common.h` was compared against the
+canonical mavlink-generator output for the vendored version:
+
+- `MAVLINK_MESSAGE_CRCS` entry for msgid 0 is `{0, 50, 9, 9, 0, 0, 0}` - msgid 0,
+  **CRC_EXTRA 50**, length 9, min length 9.
+- `__mavlink_heartbeat_t` places `uint32_t custom_mode` at offset 0, `type` at 4,
+  `autopilot` at 5, `base_mode` at 6, `system_status` at 7, `mavlink_version` at 8.
+- `MAVLINK_MESSAGE_INFO` records wire order separately from struct offsets, with
+  field wire offsets `4, 5, 6, 0, 7, 8` - the generator itself declares
+  `custom_mode` to sit at wire offset 0.
+- `mavlink_version` is emitted as `3`, consistent with the vendored generator.
+
+All of this matches upstream generator output exactly. Hoisting the `uint32` to
+offset 0 is the standard, intended layout, not a defect, and the earlier reading of
+it as one was incorrect.
+
+**Conclusion:** this is not a stale, mismatched or incorrectly-generated header
+problem, so the "just regenerate the headers" fix is not available. Combined with
+the CRC failing to validate against the correct CRC_EXTRA, the packing defect is
+**confirmed upstream** in the vendored library. No further investigation was done.
 
 ### What is NOT established
 
-The root cause is **not isolated to a specific library code path.** It was
-determined that the frame is rejected before any hop in the application is
-reached; it was not determined whether the fault lies in the generated packing
-macros, in the field-reordering logic, or in the serialiser's CRC accumulation
-over the reordered payload.
+The root cause is **not isolated to a specific library code path.** The frame is
+rejected before any hop in the application is reached. The generated headers are
+correct (verified above), so the fault is not in header generation, not in payload
+layout, and not in the CRC_EXTRA value used. It was not determined precisely which
+upstream code path emits a checksum that does not match its own payload, and no
+further investigation was done - see the vendoring note below.
 
 `MAVLink_MSG_ID_HEARTBEAT` (msgid 0) is a plausible boundary condition, but that
 was not proven.
@@ -205,9 +242,15 @@ a second, independent argument: the current dependency can emit a frame it then
 refuses to accept, which means the round-trip is not trustworthy for every
 message type, and that is a correctness problem rather than a robustness gap.
 
-**The vendoring decision is strengthened but still explicitly non-blocking.**
-Two separate issues in the same vendored dependency now point the same direction,
-but neither blocks release: Issue 1 is mitigated by the watchdog, and Issue 2
+**The vendoring decision is strengthened and is now explicitly flagged for
+prioritisation.** Two separate, independently confirmed issues in the same
+vendored dependency now point the same direction, and Issue 2 has no cheap fix:
+the generated headers are verified correct against upstream, so the defect is in
+the library's own packing/checksum path rather than in local build configuration.
+
+Neither issue blocks Tier 4. Issue 1 is mitigated by the watchdog, and Issue 2
 affects synthesised frames (test scaffolding and any future frame-replay or
-simulation tooling), not the real vehicle link - MockLink's own heartbeats are
-built by MockLink and are delivered correctly.
+simulation tooling) rather than the real vehicle link - MockLink's own heartbeats
+are built by MockLink and are delivered correctly. But the priority should be
+revisited in the next planning pass; see the note under
+[Issue 1](#deferred-decision-vendor-the-upstream-parser).

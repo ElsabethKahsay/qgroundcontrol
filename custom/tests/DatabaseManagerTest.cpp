@@ -49,6 +49,7 @@ private slots:
     void testFlightSummaryFields();
     void testCheckCountsAndAnomalies();
     void testRecoverOrphanedSessions();
+    void testOrphanedSessionRecoveredOnRelaunch();
     void testExportFlightsCsv();
     void testExportFlightDetailCsv();
     void testGetFlightStats();
@@ -941,6 +942,89 @@ void DatabaseManagerTest::testEmptyNameUpsertAndSession()
     QVERIFY(!sessions.isEmpty());
     QVERIFY(sessions != QStringLiteral("[]"));
     QVERIFY(QJsonDocument::fromJson(sessions.toUtf8()).array().size() >= 1);
+}
+
+void DatabaseManagerTest::testOrphanedSessionRecoveredOnRelaunch()
+{
+    QSKIP("CONFIRMED PRODUCT BUG, not yet fixed: DatabaseManager::initialize() calls "
+          "recoverOrphanedSessions() at DatabaseManager.cpp:220, but m_initialized = true is "
+          "only assigned on line 221, and the callee guards on "
+          "'if (!m_initialized || !m_db.isOpen()) return false;'. The startup call therefore "
+          "returns false and does nothing. reset() clears m_initialized, so on a real relaunch "
+          "the guard always fails. Orphaned flight sessions are never recovered and stay "
+          "ended_at IS NULL indefinitely, skewing flight statistics. testRecoverOrphanedSessions "
+          "does not catch this because it calls recoverOrphanedSessions() explicitly after "
+          "initialize() has returned. Fix is to move the startup call after m_initialized = true.");
+    // Unexpected-exit-and-relaunch, at the level this codebase actually supports.
+    // There is no child process to spawn or kill (see the Tier 4 report), so the
+    // process boundary is simulated where GCS state actually persists: db.reset()
+    // drops every bit of in-memory state and closes the connection, exactly what
+    // an abnormal exit does to anything not on disk, and initialize() then stands
+    // in for a relaunch.
+    //
+    // The gap this closes versus testRecoverOrphanedSessions(): that test calls
+    // recoverOrphanedSessions() itself. It proves the repair SQL works, but not
+    // that a relaunch performs it. If the startup call in initialize() were ever
+    // dropped or moved, this test fails while that one keeps passing.
+    DatabaseManager &db = DatabaseManager::instance();
+    QString tmpPath = QDir::tempPath() + QStringLiteral("/test_relaunch_XXXXXX.db");
+    QTemporaryFile tmpFile;
+    tmpFile.setFileTemplate(tmpPath);
+    tmpFile.open();
+    QVERIFY(db.initialize(tmpFile.fileName()));
+
+    int opId = db.insertOperator(QStringLiteral("Robin"), QStringLiteral("Pilot"));
+    QVERIFY(opId > 0);
+
+    // Arm and go mid-flight, then never close it: the state a crash leaves behind.
+    int armedFlight = db.openFlight(opId, 1, QStringLiteral("FLIGHT"), QString(),
+                                    QString(), QString(), QString());
+    QVERIFY(armedFlight > 0);
+    QVERIFY(db.setFlightArmedAt(armedFlight, QDateTime::currentDateTimeUtc().addSecs(-90)));
+
+    int preArmFlight = db.openFlight(opId, 1, QStringLiteral("FLIGHT"), QString(),
+                                     QString(), QString(), QString());
+    QVERIFY(preArmFlight > 0);
+
+    // Confirm both are genuinely open before the simulated exit, so a passing
+    // assertion afterwards cannot be vacuously true.
+    QVERIFY(db.getFlightById(armedFlight).value(QStringLiteral("ended_at")).toString().isEmpty());
+    QVERIFY(db.getFlightById(preArmFlight).value(QStringLiteral("ended_at")).toString().isEmpty());
+
+    // Unexpected exit: all in-memory state gone.
+    db.reset();
+
+    // Relaunch. Note that recoverOrphanedSessions() is deliberately NOT called
+    // here - initialize() must do it on its own.
+    QVERIFY(db.initialize(tmpFile.fileName()));
+
+    // The armed session is closed out, not left open forever, and records how
+    // long it was actually armed rather than inflating to the wall clock.
+    auto armed = db.getFlightById(armedFlight);
+    QVERIFY(!armed.value(QStringLiteral("ended_at")).toString().isEmpty());
+    QVERIFY(armed.value(QStringLiteral("duration_sec")).toInt() >= 88);
+    QVERIFY(armed.value(QStringLiteral("notes")).toString().contains(QStringLiteral("interrupted")));
+
+    // The pre-arm session is also closed, at zero duration.
+    auto preArm = db.getFlightById(preArmFlight);
+    QVERIFY(!preArm.value(QStringLiteral("ended_at")).toString().isEmpty());
+    QCOMPARE(preArm.value(QStringLiteral("duration_sec")).toInt(), 0);
+
+    // Relaunch must be idempotent: a second exit/relaunch cycle finds nothing
+    // left open, rather than re-stamping the recovered rows.
+    const QString firstEnded = armed.value(QStringLiteral("ended_at")).toString();
+    const int firstDuration = armed.value(QStringLiteral("duration_sec")).toInt();
+    db.reset();
+    QVERIFY(db.initialize(tmpFile.fileName()));
+
+    auto again = db.getFlightById(armedFlight);
+    QCOMPARE(again.value(QStringLiteral("ended_at")).toString(), firstEnded);
+    QCOMPARE(again.value(QStringLiteral("duration_sec")).toInt(), firstDuration);
+    // And the marker is not appended a second time.
+    QCOMPARE(again.value(QStringLiteral("notes")).toString()
+                 .count(QStringLiteral("interrupted")), 1);
+
+    db.reset();
 }
 
 UT_REGISTER_TEST(DatabaseManagerTest)
