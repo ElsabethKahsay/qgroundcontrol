@@ -410,12 +410,20 @@ void ArmingGate::updateArmingState()
         return;
     }
 
-    bool telemetryStale = m_lastTickTime.isValid() &&
-        m_lastTickTime.secsTo(QDateTime::currentDateTime()) > kTelemetryStalenessSec &&
+    // An absent timestamp means "no telemetry has ever been seen", which is
+    // treated as stale rather than fresh. Requiring isValid() to declare the
+    // link stale made "nothing has ever arrived" the single state that always
+    // looked healthy, so a freshly built gate reported itself armable on the
+    // strength of checks that had run against no vehicle at all.
+    const bool noTickEver = !m_lastTickTime.isValid();
+    const bool telemetryStale = (noTickEver ||
+        m_lastTickTime.secsTo(QDateTime::currentDateTime()) > kTelemetryStalenessSec) &&
         !m_overrideActive;
     if (telemetryStale) {
-        QString msg = QStringLiteral("Telemetry stale — last update %1s ago")
-            .arg(m_lastTickTime.secsTo(QDateTime::currentDateTime()));
+        QString msg = noTickEver
+            ? QStringLiteral("No telemetry received from the vehicle yet")
+            : QStringLiteral("Telemetry stale — last update %1s ago")
+                .arg(m_lastTickTime.secsTo(QDateTime::currentDateTime()));
         if (m_armingAllowed || m_denialReason != msg) {
             m_armingAllowed = false;
             m_denialReason = msg;

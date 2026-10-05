@@ -10,6 +10,7 @@
 #pragma once
 
 #include <QtCore/QByteArray>
+#include <QtCore/QDateTime>
 #include <QtCore/QLoggingCategory>
 #include <QtCore/QObject>
 #include <QtCore/QString>
@@ -41,6 +42,15 @@ public:
     static MAVLinkProtocol *instance();
 
     void init();
+
+    /// Seconds of continuous byte arrival with no successful frame parse after
+    /// which the channel state machine is considered wedged and reset. 5 s is
+    /// about five missed 1 Hz heartbeats: long enough that a busy or rate-limited
+    /// link will not trip it, short enough that a wedged channel is noticed while
+    /// the pilot is still looking at it. Public so tests can assert against the
+    /// same value the implementation uses rather than a copy of it.
+    static constexpr int kParserWatchdogSec = 5;
+
 
     /// Get the human-friendly name of this protocol
     static QString getName() { return QStringLiteral("MAVLink protocol"); }
@@ -79,6 +89,17 @@ signals:
     void messageReceived(LinkInterface *link, const mavlink_message_t &message);
 
     void mavlinkMessageStatus(int sysid, uint64_t totalSent, uint64_t totalReceived, uint64_t totalLoss, float lossPercent);
+
+    /// The MAVLink parser on @a link's channel accepted bytes but has not produced a
+    /// frame for kParserWatchdogSec seconds. The channel state machine has been reset.
+    ///
+    /// mavlink_parse_char() consumes bytes as soon as it accepts a length field, and
+    /// a bogus length therefore swallows the frames behind it *before* any parse
+    /// failure is reported. There is no safe way to resynchronise from here, because
+    /// payload bytes may legitimately contain the 0xFD magic value. This signal exists
+    /// so a wedged channel presents to the rest of the system as a dead link rather
+    /// than as a silently working one.
+    void parserStalled(LinkInterface *link, int secondsSinceLastFrame);
 
 public slots:
     /// Receive bytes from a communication interface and constructs a MAVLink packet
@@ -123,6 +144,12 @@ private:
     uint64_t _totalReceiveCounter[MAVLINK_COMM_NUM_BUFFERS]{};  ///< The total number of successfully received messages
     uint64_t _totalLossCounter[MAVLINK_COMM_NUM_BUFFERS]{};     ///< Total messages lost during transmission.
     float _runningLossPercent[MAVLINK_COMM_NUM_BUFFERS]{};      ///< Loss rate
+
+    // Parser wedge watchdog. See receiveBytes() and the parserStalled() signal.
+    // The watchdog additionally requires that bytes are *still arriving* on the
+    // channel, so a genuinely idle link is never reported as wedged.
+    QDateTime _lastParsedFrameTime[MAVLINK_COMM_NUM_BUFFERS]{}; ///< Last successful parse, per channel
+    QDateTime _lastByteTime[MAVLINK_COMM_NUM_BUFFERS]{};        ///< Last byte arrival, per channel
 
     unsigned _currentVersion = 100;
     bool _initialized = false;

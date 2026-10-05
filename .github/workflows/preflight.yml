@@ -150,15 +150,15 @@ jobs:
       #
       # A single `PreflightQGroundControl --unittest` process is NOT usable as a
       # gate for this tree: the QML smoke tests deliberately leak engines and
-      # windows to dodge a Qt 6 AOT teardown crash, and MockLink binds fixed UDP
-      # ports, so test order matters and later cases crash or hang on state the
-      # earlier ones corrupted (observed: ReturnToLaunchTest segfaults only when
-      # run after other classes, and passes 9/9 alone).  Per-class processes make
-      # the result deterministic.
+      # windows to dodge a Qt 6 AOT teardown crash, and they share singletons
+      # (QGCCorePlugin, FactSystem, ToolBarSettings) across cases, so the run is
+      # order-dependent - ReturnToLaunchTest segfaults only after other classes
+      # have run and passes 9/9 on its own. Per-class processes make the result
+      # deterministic.
       #
       # timeout-minutes matters too: a crashing test leaves the process (plus its
-      # crash-handler gdb attach) alive holding those ports, which makes later
-      # runs hang rather than report the real failure.
+      # crash-handler gdb attach) alive, which makes later runs hang rather than
+      # report the real failure.
       #
       # EXCLUDED below are five stock upstream tests that already fail in this
       # fork before any change here.  They were invisible until enable_testing()

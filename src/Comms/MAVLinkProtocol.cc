@@ -110,14 +110,48 @@ void MAVLinkProtocol::receiveBytes(LinkInterface *link, const QByteArray &data)
         return;
     }
 
+    const uint8_t mavlinkChannel = link->mavlinkChannel();
+    const QDateTime now = QDateTime::currentDateTime();
+
+    // Watchdog first: evaluate whether this channel is already wedged before
+    // feeding it more bytes.
+    //
+    // The test is "bytes have been flowing continuously AND nothing has parsed
+    // for kParserWatchdogSec". Requiring both matters: without the first half, a
+    // link that was quiet for a minute and then emitted a single byte would look
+    // wedged purely because of the silence before it.
+    const bool bytesWereFlowing = !_lastByteTime[mavlinkChannel].isValid()
+        || _lastByteTime[mavlinkChannel].secsTo(now) <= kParserWatchdogSec;
+    if (!_lastParsedFrameTime[mavlinkChannel].isValid()) {
+        // Start the clock at the first byte so a link that never parses at all is
+        // still detected, rather than being exempt for lack of a baseline.
+        _lastParsedFrameTime[mavlinkChannel] = now;
+    }
+    if (bytesWereFlowing) {
+        _lastByteTime[mavlinkChannel] = now;
+
+        const int secondsSinceFrame = _lastParsedFrameTime[mavlinkChannel].secsTo(now);
+        if (secondsSinceFrame > kParserWatchdogSec) {
+            qWarning() << "MAVLink parser stalled on channel" << mavlinkChannel << "for link" << static_cast<const void *>(link)
+                       << "- bytes are arriving but no frame has parsed in" << secondsSinceFrame << "s."
+                       << "Resetting the channel state machine.";
+            mavlink_reset_channel_status(mavlinkChannel);
+            // Re-arm from now so a permanently corrupt stream reports once per
+            // interval instead of on every arriving byte.
+            _lastParsedFrameTime[mavlinkChannel] = now;
+            emit parserStalled(link, secondsSinceFrame);
+        }
+    }
+
     for (const uint8_t &byte: data) {
-        const uint8_t mavlinkChannel = link->mavlinkChannel();
         mavlink_message_t message{};
         mavlink_status_t status{};
 
         if (mavlink_parse_char(mavlinkChannel, byte, &message, &status) != MAVLINK_FRAMING_OK) {
             continue;
         }
+
+        _lastParsedFrameTime[mavlinkChannel] = QDateTime::currentDateTime();
 
         _updateVersion(link, mavlinkChannel);
         _updateCounters(mavlinkChannel, message);
