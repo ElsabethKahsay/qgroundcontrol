@@ -946,15 +946,6 @@ void DatabaseManagerTest::testEmptyNameUpsertAndSession()
 
 void DatabaseManagerTest::testOrphanedSessionRecoveredOnRelaunch()
 {
-    QSKIP("CONFIRMED PRODUCT BUG, not yet fixed: DatabaseManager::initialize() calls "
-          "recoverOrphanedSessions() at DatabaseManager.cpp:220, but m_initialized = true is "
-          "only assigned on line 221, and the callee guards on "
-          "'if (!m_initialized || !m_db.isOpen()) return false;'. The startup call therefore "
-          "returns false and does nothing. reset() clears m_initialized, so on a real relaunch "
-          "the guard always fails. Orphaned flight sessions are never recovered and stay "
-          "ended_at IS NULL indefinitely, skewing flight statistics. testRecoverOrphanedSessions "
-          "does not catch this because it calls recoverOrphanedSessions() explicitly after "
-          "initialize() has returned. Fix is to move the startup call after m_initialized = true.");
     // Unexpected-exit-and-relaunch, at the level this codebase actually supports.
     // There is no child process to spawn or kill (see the Tier 4 report), so the
     // process boundary is simulated where GCS state actually persists: db.reset()
@@ -986,10 +977,23 @@ void DatabaseManagerTest::testOrphanedSessionRecoveredOnRelaunch()
                                      QString(), QString(), QString());
     QVERIFY(preArmFlight > 0);
 
+    // Armed, then disarmed cleanly, and only the *recording* of the close was
+    // lost. Duration must come from armed_at -> disarmed_at, not from
+    // armed_at -> "now", or a flight flown at 10:05 and closed at 14:00 is
+    // recorded as nearly four hours of flight time.
+    const QDateTime armTime = QDateTime::currentDateTimeUtc().addSecs(-3600);
+    const QDateTime disarmTime = armTime.addSecs(45);
+    int disarmedFlight = db.openFlight(opId, 1, QStringLiteral("FLIGHT"), QString(),
+                                       QString(), QString(), QString());
+    QVERIFY(disarmedFlight > 0);
+    QVERIFY(db.setFlightArmedAt(disarmedFlight, armTime));
+    QVERIFY(db.setFlightDisarmedAt(disarmedFlight, disarmTime));
+
     // Confirm both are genuinely open before the simulated exit, so a passing
     // assertion afterwards cannot be vacuously true.
     QVERIFY(db.getFlightById(armedFlight).value(QStringLiteral("ended_at")).toString().isEmpty());
     QVERIFY(db.getFlightById(preArmFlight).value(QStringLiteral("ended_at")).toString().isEmpty());
+    QVERIFY(db.getFlightById(disarmedFlight).value(QStringLiteral("ended_at")).toString().isEmpty());
 
     // Unexpected exit: all in-memory state gone.
     db.reset();
@@ -1009,6 +1013,15 @@ void DatabaseManagerTest::testOrphanedSessionRecoveredOnRelaunch()
     auto preArm = db.getFlightById(preArmFlight);
     QVERIFY(!preArm.value(QStringLiteral("ended_at")).toString().isEmpty());
     QCOMPARE(preArm.value(QStringLiteral("duration_sec")).toInt(), 0);
+
+    // The armed-then-disarmed session records the real armed window (~45s), not
+    // the ~1h between arming and this relaunch.
+    auto disarmed = db.getFlightById(disarmedFlight);
+    QVERIFY(!disarmed.value(QStringLiteral("ended_at")).toString().isEmpty());
+    const int disarmedDuration = disarmed.value(QStringLiteral("duration_sec")).toInt();
+    QVERIFY2(disarmedDuration >= 44 && disarmedDuration <= 46,
+             qPrintable(QStringLiteral("expected ~45s armed window, got %1s")
+                            .arg(disarmedDuration)));
 
     // Relaunch must be idempotent: a second exit/relaunch cycle finds nothing
     // left open, rather than re-stamping the recovered rows.

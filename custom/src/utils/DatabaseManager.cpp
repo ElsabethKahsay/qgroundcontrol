@@ -215,11 +215,15 @@ bool DatabaseManager::initialize(const QString &dbPath)
             qCDebug(dbLog) << "DB integrity check: ok";
     }
 
+    m_initialized = true;
+
     // Close any flight records left open by a crash or power loss so
     // interrupted sessions don't skew statistics.
+    //
+    // Must run *after* m_initialized is set. recoverOrphanedSessions() guards on
+    // m_initialized, so calling it first made it a guaranteed no-op on every
+    // launch and orphaned sessions were never recovered.
     recoverOrphanedSessions();
-
-    m_initialized = true;
     seedDefaultZonesIfNeeded();
     startMaintenanceTimer();
     return true;
@@ -1547,7 +1551,8 @@ bool DatabaseManager::recoverOrphanedSessions()
         UPDATE flights
         SET ended_at = datetime('now'),
             duration_sec = CAST(
-                (julianday('now') - julianday(armed_at)) * 86400 AS INTEGER),
+                (julianday(COALESCE(disarmed_at, datetime('now'))) -
+                 julianday(armed_at)) * 86400 AS INTEGER),
             notes = COALESCE(notes || ' ', '') || '[Session interrupted — app closed mid-flight]'
         WHERE ended_at IS NULL
           AND armed_at IS NOT NULL
