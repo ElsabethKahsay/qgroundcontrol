@@ -113,7 +113,53 @@ asserts both that the signal fires when a stream of corrupt bytes arrives with n
 frame parsing, and that it does **not** fire on a healthy frame burst (the
 false-positive guard).
 
-### Deferred decision: vendor the upstream parser
+### Tier 4 closeout
+
+Final state of the tests that cover these two issues:
+
+| Suite | Result |
+|---|---|
+| `MavLinkFuzzTest` | 8 passed, 5 skipped (Issue 1) |
+| `LinkStressTest` | 8 passed, 2 skipped (Issue 2) |
+| `ArmGateResilienceTest` | passed (arming gate) |
+| `DatabaseManagerTest` | 24 passed, 0 skipped (orphaned-session recovery) |
+
+All 7 skips are deliberate and each carries the specific finding it depends on.
+None is a "could not get it working" placeholder, and none should be read as
+passing coverage. Re-enabling them requires a fix to the vendored parser.
+
+### Known unrelated test debt
+
+A full `ctest` run reports 70/75. The failures are **not** related to this work:
+
+- `GpsTest`, `SimpleMissionItemTest`, `SurveyComplexItemTest`,
+  `CorridorScanComplexItemTest` - all four were confirmed to fail on a clean
+  baseline with the Tier 4 changes reverted, so they are pre-existing.
+- `ParameterManagerTest` - an intermittent startup hang with no test output.
+  Reproduced as pass / timeout / pass across three identical runs, and it passes
+  in isolation in ~73s. It references neither `Preflight` nor `DatabaseManager`,
+  and `DatabaseManager::initialize()` is reached only from the `PreflightPlugin`
+  constructor, so it cannot be executing that code. *Caveat: the baseline rebuild
+  needed to prove this the same way as the other four was not completed, so this
+  one is classified by inspection rather than by a direct baseline run.*
+
+### Repo-wide lint debt, and a destructive hook
+
+`pre-commit` does not currently pass, on either failing hook, for reasons that
+predate this work:
+
+- `typos` reports **810 pre-existing findings** across the repository.
+- `shellcheck` reports warnings in `tools/setup/*.sh`, `deploy/macos/*.sh` and
+  `translations/qgc-lupdate.sh`.
+
+None of the Tier 4 files contribute findings from either hook (verified
+read-only). The notable hazard is that the `typos` hook runs with auto-fix, so
+invoking `pre-commit run --all-files` **rewrites roughly 280 files** across
+`src/`, `test/`, `tools/` and `.github/`. Run it read-only (`typos --format=brief`)
+when you only want the report, and treat any mass rewrite it produces as
+unrelated churn rather than something to commit.
+
+## Deferred decision: vendor the upstream parser
 
 Proper recovery requires a resynchronisation policy that this codebase does not
 currently have, and doing it safely means either a resync rule with proven
