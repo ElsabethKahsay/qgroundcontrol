@@ -147,7 +147,7 @@ int runTests(bool stress, QStringView unitTestOptions)
     UT_REGISTER_TEST(FollowMeTest)
 
     // GPS
-    // UT_REGISTER_TEST(GpsTest)
+    UT_REGISTER_TEST(GpsTest)
 
     // MAVLink
     UT_REGISTER_TEST(StatusTextHandlerTest)
