@@ -113,6 +113,14 @@ void MAVLinkProtocol::receiveBytes(LinkInterface *link, const QByteArray &data)
     const uint8_t mavlinkChannel = link->mavlinkChannel();
     const QDateTime now = QDateTime::currentDateTime();
 
+    // A link with no channel yet reports invalidMavlinkChannel() (uint8_t::max),
+    // and LinkManager::allocateMavlinkChannel() hands back the same value when
+    // every channel is taken. mavlink_parse_char() rejects such a channel
+    // internally, but the watchdog arrays below are indexed raw, so they must be
+    // skipped entirely for one: otherwise this reads and writes past the end of a
+    // MAVLINK_COMM_NUM_BUFFERS-element QDateTime array.
+    const bool watchdogChannelValid = mavlinkChannel < MAVLINK_COMM_NUM_BUFFERS;
+
     // Watchdog first: evaluate whether this channel is already wedged before
     // feeding it more bytes.
     //
@@ -120,26 +128,28 @@ void MAVLinkProtocol::receiveBytes(LinkInterface *link, const QByteArray &data)
     // for kParserWatchdogSec". Requiring both matters: without the first half, a
     // link that was quiet for a minute and then emitted a single byte would look
     // wedged purely because of the silence before it.
-    const bool bytesWereFlowing = !_lastByteTime[mavlinkChannel].isValid()
-        || _lastByteTime[mavlinkChannel].secsTo(now) <= kParserWatchdogSec;
-    if (!_lastParsedFrameTime[mavlinkChannel].isValid()) {
-        // Start the clock at the first byte so a link that never parses at all is
-        // still detected, rather than being exempt for lack of a baseline.
-        _lastParsedFrameTime[mavlinkChannel] = now;
-    }
-    if (bytesWereFlowing) {
-        _lastByteTime[mavlinkChannel] = now;
-
-        const int secondsSinceFrame = _lastParsedFrameTime[mavlinkChannel].secsTo(now);
-        if (secondsSinceFrame > kParserWatchdogSec) {
-            qWarning() << "MAVLink parser stalled on channel" << mavlinkChannel << "for link" << static_cast<const void *>(link)
-                       << "- bytes are arriving but no frame has parsed in" << secondsSinceFrame << "s."
-                       << "Resetting the channel state machine.";
-            mavlink_reset_channel_status(mavlinkChannel);
-            // Re-arm from now so a permanently corrupt stream reports once per
-            // interval instead of on every arriving byte.
+    if (watchdogChannelValid) {
+        const bool bytesWereFlowing = !_lastByteTime[mavlinkChannel].isValid()
+            || _lastByteTime[mavlinkChannel].secsTo(now) <= kParserWatchdogSec;
+        if (!_lastParsedFrameTime[mavlinkChannel].isValid()) {
+            // Start the clock at the first byte so a link that never parses at all is
+            // still detected, rather than being exempt for lack of a baseline.
             _lastParsedFrameTime[mavlinkChannel] = now;
-            emit parserStalled(link, secondsSinceFrame);
+        }
+        if (bytesWereFlowing) {
+            _lastByteTime[mavlinkChannel] = now;
+
+            const int secondsSinceFrame = _lastParsedFrameTime[mavlinkChannel].secsTo(now);
+            if (secondsSinceFrame > kParserWatchdogSec) {
+                qWarning() << "MAVLink parser stalled on channel" << mavlinkChannel << "for link" << static_cast<const void *>(link)
+                           << "- bytes are arriving but no frame has parsed in" << secondsSinceFrame << "s."
+                           << "Resetting the channel state machine.";
+                mavlink_reset_channel_status(mavlinkChannel);
+                // Re-arm from now so a permanently corrupt stream reports once per
+                // interval instead of on every arriving byte.
+                _lastParsedFrameTime[mavlinkChannel] = now;
+                emit parserStalled(link, secondsSinceFrame);
+            }
         }
     }
 
