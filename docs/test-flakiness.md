@@ -92,41 +92,110 @@ Related: `TransectStyleComplexItem.cc:1207` (condition-gate path) and
 `TransectStyleComplexItemTestBase.cc` (TRACK vehicle default) are the suspected
 product-side causes for the two item-generation failures.
 
-### `ControlSurfaceTestControllerTest` — newly found, root cause not yet found
+### `ControlSurfaceTestControllerTest` — measured, fixed at one layer, one finding open
 
 Not part of the original two, but it surfaced once the two above were fixed, so it
 belongs here rather than being rediscovered later.
 
-**Symptom:** `testNoAutoStopOnExternalArmOrModeChange` fails at
-`custom/tests/ControlSurfaceTestControllerTest.cpp:602` —
-`_pumpUntil(activeSurface() >= 0, 15000)` returns false, i.e. Test 3's
-`ctrl.testAileron()` never starts a sweep.
+#### The experiment
 
-**What this is *not*:** it is not a too-tight timeout. `_pumpUntil`
-(`...cpp:821`) is already a correctly written bounded poll with a 15 s ceiling that
-spins `processEvents` + `qWait`. And it is **not** load-related — measured the
-opposite way round from the two above:
+Two conditions, **10 full-suite runs each** (`ctest -j1`, unloaded — contention is
+not the trigger for this one, so loads runs were deliberately not used), split by
+failure mode because they are not the same bug:
 
-| Condition | Result |
-|---|---|
-| full ctest run | **fail** |
-| isolation, unloaded | **fail**, then 3/3 pass |
-| isolation under 6-way contention | **pass** |
+| Failure mode | Baseline (10 runs) | With arm wait (10 runs) |
+|---|---|---|
+| **A** — sweep never starts; fails at the `activeSurface() >= 0` pump | **0** | **0** |
+| **B** — sweep starts, then stops; fails at the auto-stop `QVERIFY2` | **0** | **1** (`fixed_run_2`, `cpp:622`) |
+| same missing-wait pattern, *different test* — `testDeadConfigFields`, mode A | **1** (`baseline_run_10`, `cpp:766`) | **0** |
 
-That is roughly 2 failures in 6 runs, and slower runs do *better*, which points at a
-settle/ordering race rather than a deadline.
+Baseline for `testNoAutoStopOnExternalArmOrModeChange` was therefore **0/10 on both
+modes** — too rare in a full suite to verify anything against, so the mutation check
+was run where the signal actually is: the test binary in isolation.
 
-**Leading hypothesis (unconfirmed):** Test 3 calls `ctrl.testAileron()` immediately
-after Test 2 ends with an external disarm + LOITER mode change, reusing the same
-`ctrl` instance without an intervening settle. The very first sweep in the test
-(lines 559-564) waits for `isArmed()` *before* waiting for `activeSurface() >= 0`;
-Tests 2 and 3 (lines 582-584, 602-604) skip that and only wait for
-`activeSurface()`, so they depend on arming having completed implicitly.
+| Condition | Isolation runs | Mode A | Mode B | Arm-wait timeout | Total fails |
+|---|---|---|---|---|---|
+| **mutated** (arm waits removed) | 12 | **1** | 1 | n/a | **2** |
+| **fixed** (arm waits added) | 40 | **0** | 2 | **3** | **5** |
 
-**Status:** open. This lives in `custom/tests/`, i.e. the fork's own surface rather
-than stock upstream, so it should be fixed there rather than excluded — but it needs
-the control-surface sweep lifecycle confirmed before the fix is trustworthy.
-Do not add it to the CI exclusion list: that would violate the policy below.
+#### What the fix actually did — and did not do
+
+**Applied:** an explicit `_pumpUntil(isArmed(), 10000)` before the
+`activeSurface() >= 0` wait in Tests 2 and 3 of
+`testNoAutoStopOnExternalArmOrModeChange`, matching what the first sweep already does
+at `cpp:559-564`.
+
+**Mutation-verified both ways.** Removing the two waits restores mode A (1/12).
+But the fix does **not** make the test deterministic, and reporting it as fixed would
+be wrong:
+
+- **Mode A is gone** (0/40 vs 1/12) — the ordering hypothesis was correct.
+- **Mode A was not eliminated, it was relocated.** With the wait in place the same
+  underlying event now fails *at the arm wait* instead of at the sweep wait:
+  `_pumpUntil(isArmed(), 10000)` false at `cpp:610`, 3 times in 40 runs.
+  Mutated arm-failure-equivalent rate ≈ 8.3 % (1/12); fixed arm-wait rate ≈ 7.5 %
+  (3/40). **The same failure rate, now correctly named** — the vehicle does not arm
+  within 10 s, and the old assertion could not tell you that.
+- **Mode B is unaffected** (2/40 vs 1/12) — the arm wait has no bearing on it.
+
+So the arm wait is kept: it converts an ambiguous "the sweep never started" into
+"the vehicle never armed", which is the actual diagnosis. It is a diagnostic fix, not
+a stability fix. The test remains ~10 % intermittent.
+
+#### Named finding: mode B is unreachable in this build flavor
+
+**Not a flakiness quarantine — a distinct finding with a distinct cause.**
+
+> **Sweep auto-stop verification is unreachable in this build flavor, because
+> `Vehicle::setFlightMode()` is inert with the APM plugin compiled out.**
+
+`testNoAutoStopOnExternalArmOrModeChange` Test 3 (`cpp:597-622`) asserts that an
+external change to STABILIZE does *not* auto-stop the sweep, while "the 1 s re-assert
+timer then tries to force MANUAL back". In this build that re-assert **cannot reach
+the autopilot at all**: `QGC_DISABLE_APM_PLUGIN` /
+`QGC_DISABLE_APM_PLUGIN_FACTORY` (`custom/cmake/CustomOverrides.cmake`) leave
+`Vehicle::setFlightMode()` failing on the generic `FirmwarePlugin` base. The vehicle
+therefore sits in STABILIZE indefinitely instead of returning to MANUAL, which is a
+state the product would never be left in with the plugin enabled — so the assertion
+is being made against conditions production does not produce.
+
+**Identical root cause, already recorded:** `testManualModeReassertReachesAutopilot`
+`QSKIP`s for exactly this reason and says so in its skip text
+(`ControlSurfaceTestControllerTest.cpp:219`). One build decision, two tests'
+worth of safety-relevant coverage unavailable:
+`testManualModeReassertReachesAutopilot` is **skipped outright**, and Test 3 of
+`testNoAutoStopOnExternalArmOrModeChange` runs but cannot be trusted either way.
+That is not zero.
+
+**Consequence for the suspected product bug:** the no-auto-stop-on-external-arm-change
+behaviour is **still unproven in either direction**. Mode B is evidence about the
+build, not about the product.
+
+Do not add this to the CI exclusion list: that would violate the policy below.
+
+#### The five originally-skipped gaps — what is actually proven
+
+Baseline for this suite, recorded in `custom/FlyQuickActions Implementation Plan.md`
+(lines 172 and 294): `9 passed, 0 failed, 5 skipped`. All five QSKIPs were removed by
+one commit, `b3c0bbd1a`, which is the only mock-infra commit since. Current status:
+
+| # | Gap / test | Status | Proven on |
+|---|---|---|---|
+| 1 | `testFlapRcChannelClobber` | **PASS** | **genuine new capability** — MockLink `RC_CHANNELS_OVERRIDE` capture plus `_setParam()` driving `FLAP_IN_CHANNEL` through the real `PARAM_SET` round-trip |
+| 2 | `testNoAutoStopOnExternalArmOrModeChange` | **RUNS, ~10 % intermittent** — mode A addressed, mode B open (above) | **genuine new capability** — MockLink APM plane-mode encoding in `setFlightMode()`; the *assertions* are intact, the build flavour limits what they can prove |
+| 3 | `testDbResultLoggingFires` | **PASS** | **narrowed** — the old QSKIP demanded a MockLink `injectMavlinkMessage()`; that API was never built and does not exist. The test was rewritten to inject `SERVO_OUTPUT_RAW` via the test's own `_sendServoOutputRaw()` helper |
+| 4 | `testManualModeForcedAndReasserted` | **PASS** | **genuine new capability** — APM plane-mode encoding; this is the half of the MANUAL re-assert that does not need the firmware plugin |
+| 5 | `testDeadConfigFields` | **PASS** (but failed mode A once in 10 baseline runs) | **narrowed** — no elevon-isolation or `channel2Invert` infra was ever built; the test now asserts the *reachable* facts (`channel2 == -1`, `Cooldown == 4`) instead of exercising the dead field |
+
+Gaps 1, 2 and 4 rest on real infrastructure. **Gaps 3 and 5 rest on assertions that were
+rewritten to fit what the mock can do** — they are green, but they are not the coverage
+the original audit asked for, and they should not be counted as such in any coverage
+roll-up.
+
+Separately, `testDeadConfigFields` carries the *same* missing arm wait that Tests 2 and 3
+had (`cpp:778-781`, unguarded `activeSurface()` pump) and produced the one baseline
+mode-A failure of this round. It has been left as-is deliberately — changing two tests
+at once would have made the experiment above uninterpretable.
 
 ## CI exclusion list
 
@@ -147,3 +216,36 @@ are fixed and both pass in a full serial run (`GpsTest` 0.40 s,
 `MissionControllerTest` 12.68 s). Exclusions that are never pruned silently become a
 permanent allow-list of failures, which is why the removal is part of the fix rather
 than a follow-up.
+
+## Standing build decision: `custom/cmake/CustomOverrides.cmake` disables the APM plugin
+
+No other document tracks this as a decision — it is cited as an established fact in
+`custom/FlyQuickActions Implementation Plan.md:76` and `:273`, so it is recorded here
+where the costs are actually measurable.
+
+**Decision:** `QGC_DISABLE_APM_PLUGIN` / `QGC_DISABLE_APM_PLUGIN_FACTORY` are forced
+on (`CustomOverrides.cmake:42-45`), so `Vehicle::setFlightMode()` and every other
+firmware-plugin override fail through to the generic `FirmwarePlugin` base.
+
+**Cost 1 — already known, and it is the reason RTL needed a fork-native path.**
+`Vehicle::guidedModeRTL()` is unusable, which is why `TelemetryBridge` sends a raw
+`MAV_CMD_DO_SET_MODE` itself.
+
+**Cost 2 — added this round: two tests' worth of safety-relevant control-surface
+coverage, not zero.**
+
+| Test | Effect | Reference |
+|---|---|---|
+| `testManualModeReassertReachesAutopilot` | **skipped outright** on every run of this flavour | `ControlSurfaceTestControllerTest.cpp:219` |
+| `testNoAutoStopOnExternalArmOrModeChange`, Test 3 | runs, but mode B ("STABILIZE must not auto-stop the sweep") is **unverifiable** — the re-assert that the test's own comment depends on cannot reach the autopilot | `ControlSurfaceTestControllerTest.cpp:597-622`, finding above |
+
+Both are about the same thing: whether a mode re-assert actually lands on the
+autopilot. That is the mechanism the surface-sweep safety interlock depends on, so
+this is not cosmetic coverage — it is the assertion that the sweep stays under
+control when the pilot or autopilot changes mode underneath it.
+
+**Re-evaluate when:** the fork either ships its own firmware-plugin shim that
+implements `setFlightMode()` for ArduPilot, or drops the disable and takes the Qt /
+branding consequences. Until one of those happens, neither test can be made to prove
+what it was written to prove, and adding either to the CI exclusion list would hide
+the gap rather than close it.

@@ -579,6 +579,12 @@ void ControlSurfaceTestControllerTest::testNoAutoStopOnExternalArmOrModeChange()
     // The autopilot now drives the surfaces itself, so the sweep must halt and
     // the interlock must be released.
     ctrl.testAileron();
+    // Same ordering as the first sweep (lines 559-564): testAileron() defers the
+    // sweep until the arm completes, so waiting for activeSurface() alone leaves
+    // the arm window unobserved.
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<ControlSurfaceTestController *>(ctx)->isArmed();
+    }, &ctrl, 10000));
     QVERIFY(_pumpUntil([](void *ctx) {
         return static_cast<ControlSurfaceTestController *>(ctx)->activeSurface() >= 0;
     }, &ctrl, 15000));
@@ -599,6 +605,11 @@ void ControlSurfaceTestControllerTest::testNoAutoStopOnExternalArmOrModeChange()
     // timer then tries to force MANUAL back.  Whether the autopilot accepts
     // that re-assert is covered by testManualModeReassertReachesAutopilot().
     ctrl.testAileron();
+    // Same ordering as the first sweep (see the wait added for Test 2): the arm
+    // must be observed before the sweep is expected to be running.
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<ControlSurfaceTestController *>(ctx)->isArmed();
+    }, &ctrl, 10000));
     QVERIFY(_pumpUntil([](void *ctx) {
         return static_cast<ControlSurfaceTestController *>(ctx)->activeSurface() >= 0;
     }, &ctrl, 15000));
