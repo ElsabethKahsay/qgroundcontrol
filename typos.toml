@@ -42,6 +42,10 @@ stil = "stil"
 propert = "propert"
 catagories = "catagories"
 ned = "ned"
+# Misspelled in the product itself: VehicleLinkManager::_heartbeatMaxElpasedMSecs
+# (src/Vehicle/VehicleLinkManager.h). Load-bearing, so pin rather than "fix" -
+# correcting only the test call sites would break the build.
+Elpased = "Elpased"
 
 # Third-party / generated content that must never be spell-gated: the ArduPilot
 # parameter metadata submodule, Qt translation catalogues, and the Viewer3D

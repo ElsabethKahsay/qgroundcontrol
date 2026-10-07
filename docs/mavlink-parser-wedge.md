@@ -183,6 +183,25 @@ operational risk in the meantime.
 See [Issue 2](#issue-2-synthesized-heartbeat-frames-fail-crc-validation) for the
 second, independent issue now known to exist in the same vendored dependency.
 
+> **Future hardening (not implemented): an ASan/UBSan CMake option.** This effort's
+> first genuine memory-safety finding was an out-of-bounds index of
+> `MAVLINK_COMM_NUM_BUFFERS`-element arrays in `MAVLinkProtocol::receiveBytes()`
+> using `invalidMavlinkChannel()` (255, i.e. `uint8_t::max()`) - introduced and
+> then fixed within this tier, guarded by `QGCMAVLink::isValidChannel()`. The
+> failure mode is worse than a silent overrun: because `MAVLINK_GET_CHANNEL_STATUS`
+> is defined, `mavlink_get_channel_status()` resolves to QGC's override, which
+> bounds-checks and returns `nullptr`, while `mavlink_get_channel_buffer()` still
+> resolves to mavlink's own unchecked `&m_mavlink_buffer[chan]`. So the first byte
+> reached `mavlink_frame_char_buffer()` with a null `status` and dereferenced it on
+> its first line - a crash, alongside an unchecked pointer into a 16-element static
+> array. This tree has no sanitizer build option, which is why
+> `MavLinkChannelValidityTest` can only argue memory safety from control flow
+> rather than observe it. Adding something like `-DQGC_ENABLE_SANITIZERS=ON`
+> (ASan + UBSan, wired into the unit-test target only) would turn that class of
+> defect into a hard test failure instead of a null dereference. Deliberately
+> deferred: it is a build-system change with a real cost on a 2-core box, not a
+> code fix.
+
 ---
 
 ## Issue 2: synthesized HEARTBEAT frames fail CRC validation

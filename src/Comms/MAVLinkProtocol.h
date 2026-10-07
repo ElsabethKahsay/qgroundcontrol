@@ -51,6 +51,12 @@ public:
     /// same value the implementation uses rather than a copy of it.
     static constexpr int kParserWatchdogSec = 5;
 
+    /// Seconds between "dropping bytes, link has no valid MAVLink channel"
+    /// warnings. The condition is per-byte and can persist for a whole buffer,
+    /// so it is throttled rather than logged on every arrival. Public so tests
+    /// can assert the throttle against the value the implementation uses.
+    static constexpr int kInvalidChannelWarnIntervalSec = 10;
+
 
     /// Get the human-friendly name of this protocol
     static QString getName() { return QStringLiteral("MAVLink protocol"); }
@@ -150,6 +156,7 @@ private:
     // channel, so a genuinely idle link is never reported as wedged.
     QDateTime _lastParsedFrameTime[MAVLINK_COMM_NUM_BUFFERS]{}; ///< Last successful parse, per channel
     QDateTime _lastByteTime[MAVLINK_COMM_NUM_BUFFERS]{};        ///< Last byte arrival, per channel
+    QDateTime _lastInvalidChannelWarn;                          ///< When the dropped-for-invalid-channel warning last fired
 
     unsigned _currentVersion = 100;
     bool _initialized = false;

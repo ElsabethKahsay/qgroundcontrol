@@ -20,6 +20,30 @@
 
 #include <QtTest/QTest>
 
+#include <QElapsedTimer>
+#include <functional>
+
+namespace {
+
+// MissionController delivers its recalcs through _recalcMissionFlightStatusSignal,
+// which is both Qt::QueuedConnection and registered as a compressed signal
+// (QGCApplication::compressEvent). Sleeping a fixed 500ms for that delivery is a
+// timing assumption, not a correctness guarantee: on this 2-CPU machine under
+// 6-way CPU contention MissionControllerTest::_testGimbalRecalc fails 3/3 with
+// missionGimbalYaw() still NaN, because the queued recalc has not run yet. Poll
+// for the recalc's effect instead. The timeout keeps a genuine regression a fast
+// failure rather than a hang.
+void waitForRecalc(const std::function<bool()>& done, int timeoutMs = 10000)
+{
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < timeoutMs && !done()) {
+        QTest::qWait(25);
+    }
+}
+
+} // namespace
+
 MissionControllerTest::MissionControllerTest(void)
 {
     
@@ -173,7 +197,17 @@ void MissionControllerTest::_testGimbalRecalc(void)
     item->cameraSection()->setSpecifyGimbal(true);
     item->cameraSection()->gimbalYaw()->setRawValue(0.0);
     SettingsManager::instance()->planViewSettings()->showGimbalOnlyWhenSet()->setRawValue(false);
-    QTest::qWait(500); // Recalcs in MissionController are queued to remove dups. Allow return to main message loop.
+
+    // Wait for the queued recalc to land rather than assuming 500ms is enough.
+    waitForRecalc([this, yawIndex]() {
+        for (int i = yawIndex; i < _missionController->visualItems()->count(); i++) {
+            if (_missionController->visualItems()->value<VisualMissionItem*>(i)->missionGimbalYaw() != 0.0) {
+                return false;
+            }
+        }
+        return true;
+    });
+
     for (int i=1; i<_missionController->visualItems()->count(); i++) {
         //qDebug() << i;
         VisualMissionItem* visualItem = _missionController->visualItems()->value<VisualMissionItem*>(i);
@@ -202,7 +236,11 @@ void MissionControllerTest::_testVehicleYawRecalc(void)
         _missionController->insertSimpleMissionItem(currentCoord, i);
     }
 
-    QTest::qWait(500); // Recalcs in MissionController are queued to remove dups. Allow return to main message loop.
+    // Wait for the queued recalc to land rather than assuming 500ms is enough.
+    waitForRecalc([this, wpAngleInc]() {
+        const double yaw = _missionController->visualItems()->value<VisualMissionItem*>(2)->missionVehicleYaw();
+        return !qIsNaN(yaw) && qAbs(yaw - wpAngleInc) < 1e-6;
+    });
 
     // No specific vehicle yaw set yet. Vehicle yaw should track flight path.
     double expectedVehicleYaw = wpAngleInc;
@@ -218,7 +256,11 @@ void MissionControllerTest::_testVehicleYawRecalc(void)
     SimpleMissionItem* simpleItem = _missionController->visualItems()->value<SimpleMissionItem*>(3);
     simpleItem->missionItem().setParam4(66);
 
-    QTest::qWait(500); // Recalcs in MissionController are queued to remove dups. Allow return to main message loop.
+    // Wait for the queued recalc to land rather than assuming 500ms is enough.
+    waitForRecalc([this]() {
+        const double yaw = _missionController->visualItems()->value<VisualMissionItem*>(3)->missionVehicleYaw();
+        return !qIsNaN(yaw) && qAbs(yaw - 66.0) < 1e-6;
+    });
 
     // All item should track vehicle path except for the one changed
     expectedVehicleYaw = wpAngleInc;

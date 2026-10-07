@@ -1023,6 +1023,40 @@ void DatabaseManagerTest::testOrphanedSessionRecoveredOnRelaunch()
              qPrintable(QStringLiteral("expected ~45s armed window, got %1s")
                             .arg(disarmedDuration)));
 
+    // Not left inconsistent: recovery must close EVERY row with a NULL ended_at,
+    // not just the three this test created, and must not stamp a state that is
+    // internally impossible. Read the file through a separate connection so the
+    // check is about what is actually on disk rather than anything DatabaseManager
+    // is holding.
+    {
+        QSqlDatabase verifyDb = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                                          QStringLiteral("relaunch_verify_conn"));
+        verifyDb.setDatabaseName(tmpFile.fileName());
+        QVERIFY(verifyDb.open());
+        QSqlQuery q(verifyDb);
+
+        QVERIFY(q.exec(QStringLiteral("SELECT COUNT(*) FROM flights WHERE ended_at IS NULL")));
+        QVERIFY(q.next());
+        QCOMPARE(q.value(0).toInt(), 0);
+
+        // A negative duration would log a flight that never happened as flying.
+        QVERIFY(q.exec(QStringLiteral("SELECT COUNT(*) FROM flights WHERE duration_sec < 0")));
+        QVERIFY(q.next());
+        QCOMPARE(q.value(0).toInt(), 0);
+
+        // A disarmed_at before armed_at is the only way the duration above could
+        // go negative, and would mean recovery stamped the window backwards.
+        QVERIFY(q.exec(QStringLiteral(
+            "SELECT COUNT(*) FROM flights WHERE armed_at IS NOT NULL "
+            "AND disarmed_at IS NOT NULL "
+            "AND julianday(disarmed_at) < julianday(armed_at)")));
+        QVERIFY(q.next());
+        QCOMPARE(q.value(0).toInt(), 0);
+
+        verifyDb.close();
+    }
+    QSqlDatabase::removeDatabase(QStringLiteral("relaunch_verify_conn"));
+
     // Relaunch must be idempotent: a second exit/relaunch cycle finds nothing
     // left open, rather than re-stamping the recovered rows.
     const QString firstEnded = armed.value(QStringLiteral("ended_at")).toString();

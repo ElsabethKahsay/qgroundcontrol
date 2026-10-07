@@ -32,6 +32,7 @@
 
 // Comms
 #include "QGCSerialPortInfoTest.h"
+#include "MavLinkChannelValidityTest.h"
 
 // FactSystem
 #include "FactSystemTestGeneric.h"
@@ -137,6 +138,7 @@ int runTests(bool stress, QStringView unitTestOptions)
 
     // Comms
     UT_REGISTER_TEST(QGCSerialPortInfoTest)
+    UT_REGISTER_TEST(MavLinkChannelValidityTest)
 
     // FactSystem
     UT_REGISTER_TEST(FactSystemTestGeneric)

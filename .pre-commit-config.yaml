@@ -30,10 +30,17 @@ repos:
 # Catches the "Temporary"/"receive" class of typo that survives review,
 # including a misspelled Q_INVOKABLE macro.  typos.toml pins the load-bearing
 # misspellings that must not be "corrected".
+#
+# args here REPLACES the upstream hook's own args (which are
+# [--write-changes, --force-exclude]).  --write-changes makes the hook rewrite
+# files in place during a commit, which across the ~800 pre-existing findings in
+# this tree would silently edit hundreds of untouched files on the first run.
+# Report-only instead: a typo should fail the hook and be fixed deliberately.
 -   repo: https://github.com/crate-ci/typos
     rev: v1.50.3
     hooks:
     -   id: typos
+        args: [--force-exclude]
 
 -   repo: https://github.com/shellcheck-py/shellcheck-py
     rev: v0.10.0.1

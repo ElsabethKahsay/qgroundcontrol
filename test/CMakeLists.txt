@@ -78,6 +78,7 @@ add_qgc_test(QGCCameraManagerTest)
 
 add_subdirectory(Comms)
 add_qgc_test(QGCSerialPortInfoTest)
+add_qgc_test(MavLinkChannelValidityTest)
 
 add_subdirectory(FactSystem)
 add_qgc_test(FactSystemTestGeneric)

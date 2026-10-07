@@ -160,13 +160,22 @@ jobs:
       # crash-handler gdb attach) alive, which makes later runs hang rather than
       # report the real failure.
       #
-      # EXCLUDED below are five stock upstream tests that already fail in this
+      # EXCLUDED below are three stock upstream tests that already fail in this
       # fork before any change here.  They were invisible until enable_testing()
       # was added, because `ctest` previously reported "Total Tests: 0".
-      # Remove an entry once it is fixed - do not add new ones.
+      # Remove an entry once it is fixed - do not add new ones.  GpsTest and
+      # MissionControllerTest have been removed for that reason: both are fixed
+      # and both pass in a full serial run.  docs/test-flakiness.md is the single
+      # home for the rationale behind exclusions and fixes.
+      #
+      # -j1 is deliberate.  ctest defaults to the runner's core count, and this
+      # suite is NOT parallel-safe on a small machine: on the 2-CPU dev box the
+      # full suite runs in ~412s serial but ~1500s with -j2, and under -j2 it
+      # also trips tests whose assertions assume a quiet machine.  Serial is
+      # both faster here and stable.
       - name: Run ctest
         working-directory: build
         timeout-minutes: 45
         run: |
-          ctest --output-on-failure \
-            -E '^(GpsTest|CorridorScanComplexItemTest|MissionControllerTest|SimpleMissionItemTest|SurveyComplexItemTest)$'
+          ctest -j1 --output-on-failure \
+            -E '^(CorridorScanComplexItemTest|SimpleMissionItemTest|SurveyComplexItemTest)$'
