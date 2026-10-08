@@ -32,7 +32,6 @@
 #include "core/ParameterWatchlist.h"
 #include "core/ArmingGate.h"
 #include "utils/Config.h"
-#include "utils/FlightModeUtil.h"
 #include "utils/GeoUtil.h"
 
 /// Logging category for TelemetryBridge debug/warning output.
@@ -89,11 +88,16 @@ int rtlModeNumberFor(MAV_TYPE type)
     return isPlaneFamily(type) ? kPlaneRoverRtlModeNumber : kCopterRtlModeNumber;
 }
 
-// Whether the vehicle's reported flight mode (heartbeat-derived, rendered as a
-// friendly name or "Custom:0x…") corresponds to the given ArduPilot mode number.
+// Whether the vehicle's reported flight mode (heartbeat `custom_mode`) matches
+// the given ArduPilot mode number. Compare the RAW custom mode, not the
+// rendered name: with the firmware plugin enabled the plugin renders a friendly
+// name ("RTL") and FlightModeUtil::planeModeNumber() decodes it with the
+// *Plane* table, which returns 11 for every vehicle type — so an ArduCopter RTL
+// (custom mode 6) could never confirm. The raw value is also what we send as
+// DO_SET_MODE param2, so this compares like with like.
 bool isArduPilotModeReported(const Vehicle* vehicle, int modeNumber)
 {
-    return FlightModeUtil::planeModeNumber(vehicle->flightMode()) == modeNumber;
+    return static_cast<int>(vehicle->customMode()) == modeNumber;
 }
 
 // Bounded wait for the vehicle heartbeat to CONFIRM a mode change. Never claims
@@ -1317,12 +1321,15 @@ QString TelemetryBridge::forceArm() {
 /// a duplicate of RC RTL. Mirrors stock QGC's own Return button contract
 /// Track B (B6): fork-native ArduPilot RTL.
 ///
-/// THIS IS THE REGRESSION: in the fork the stock firmware plugins are disabled,
-/// so the generic FirmwarePlugin knows no ArduPilot modes and the old path
-/// (`Vehicle::guidedModeRTL(false)` -> `Vehicle::setFlightMode("RTL")`) ends at
-/// "flight mode change not supported / not sent" — the live repro shows ZERO
-/// MAV_CMD_DO_SET_MODE on the wire and the vehicle never leaves its mode. The
-/// driver-supported ArduPilot way to switch modes is the raw
+/// THIS IS THE REGRESSION: in the fork the stock firmware plugins were disabled,
+/// so the generic FirmwarePlugin knew no ArduPilot modes and the old path
+/// (`Vehicle::guidedModeRTL(false)` -> `Vehicle::setFlightMode("RTL")`) ended at
+/// "flight mode change not supported / not sent" — the live repro showed ZERO
+/// MAV_CMD_DO_SET_MODE on the wire and the vehicle never left its mode. The
+/// APM plugin has since been re-enabled (docs/test-flakiness.md), so the stock
+/// path would now work; this raw path is kept deliberately until RTL has been
+/// re-validated on hardware. The driver-supported ArduPilot way to switch modes
+/// is the raw
 /// MAV_CMD_DO_SET_MODE command-long in the custom-mode form (param1 =
 /// MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, param2 = the RTL custom-mode number);
 /// real ArduPilot confirms by reporting the new mode in its heartbeat, which we

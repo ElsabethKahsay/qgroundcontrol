@@ -300,7 +300,7 @@ file build_custom/Release/PreflightQGroundControl
 | `Qt5::Sql` not found | Old build directory from different config | Delete `build_custom/` and reconfigure |
 | `QGC_CUSTOM_DIR is set but not found` | Wrong path | Set `-DQGC_CUSTOM_DIR=/absolute/path/to/custom` |
 | `multiple definition of 'qml_register_types_*'` | Unity build conflict | Set `-DQGC_UNITY_BUILD=OFF` |
-| `APMParameterMetaData` undefined | APM plugin not disabled correctly | Check `QGC_DISABLE_APM_PLUGIN=ON` in CustomOverrides |
+| `APMParameterMetaData` undefined | APM plugin compiled out of the build | Set `QGC_DISABLE_APM_PLUGIN=OFF` in CustomOverrides (this fork ships it `OFF`) |
 | `cannot open shared object file` at runtime | LD_LIBRARY_PATH not set | `export LD_LIBRARY_PATH=/path/to/Qt/6.10.3/gcc_64/lib:$LD_LIBRARY_PATH` |
 
 ### 6.4 Incremental builds

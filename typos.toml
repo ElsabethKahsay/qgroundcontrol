@@ -25,7 +25,15 @@ qmlRegisterUncreatableType = "qmlRegisterUncreatableType"
 # analyze popout.
 createrWindowedAnalyzePage = "createrWindowedAnalyzePage"
 
+# Upstream QGC spelling of a virtual that is overridden in five firmware
+# plugins and called from ParameterManager.  Renaming it would only diverge
+# this fork from upstream for a cosmetic win in one header comment.
+remapParamNameHigestMinorVersionNumber = "remapParamNameHigestMinorVersionNumber"
+
 [default.extend-words]
+# QByteArray local suffix: typos camel-case-splits `nameBA`/`uriBA`/`modelBA`
+# into `name` + `BA` and then insists `BA` is a misspelling of `BY`/`BE`.
+BA = "BA"
 # ArduPilot / MAVLink / flight-test jargon
 mavlink = "mavlink"
 preflight = "preflight"

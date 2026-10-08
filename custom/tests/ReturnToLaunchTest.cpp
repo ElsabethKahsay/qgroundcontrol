@@ -56,7 +56,6 @@
 #include "PreflightManager.h"
 #include "AbstractCheck.h"
 #include "utils/GeoUtil.h"
-#include "utils/FlightModeUtil.h"
 
 // Test helper check used to drive the arm gate into a blocked state
 // deterministically (same mechanism ArmSendTest uses).
@@ -246,8 +245,10 @@ void ReturnToLaunchTest::testRtlPlaneSendsDoSetModeAndConfirms()
     QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_NAV_TAKEOFF), 0);
 
     // Real feedback, not "command sent": the heartbeat must report the RTL
-    // custom mode (FlightModeUtil parses both friendly names and "Custom:0x…").
-    QVERIFY2(FlightModeUtil::planeModeNumber(_vehicle->flightMode()) == 11,
+    // custom mode. Compare the RAW custom_mode (the same value we sent as
+    // param2) — the rendered name is firmware-plugin dependent and
+    // FlightModeUtil::planeModeNumber() decodes it with the *Plane* table.
+    QVERIFY2(static_cast<int>(_vehicle->customMode()) == 11,
              "Mock did not confirm RTL via heartbeat");
     QCOMPARE(result, true);
     QCOMPARE(spyCompleted.takeFirst().at(0).toBool(), true);
@@ -284,8 +285,9 @@ void ReturnToLaunchTest::testRtlModeIdsPerVehicleType()
 
         QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_DO_SET_MODE), 1);
         QCOMPARE(_mockLink->lastDoSetModeParam2(), c.expectedParam2);
-        QVERIFY2(FlightModeUtil::planeModeNumber(_vehicle->flightMode()) == int(c.expectedParam2),
-                 qPrintable(QString("RTL %1 not confirmed via heartbeat").arg(c.expectedParam2)));
+        QVERIFY2(static_cast<int>(_vehicle->customMode()) == int(c.expectedParam2),
+                 qPrintable(QString("RTL %1 not confirmed via heartbeat (custom_mode is %2)")
+                                .arg(c.expectedParam2).arg(_vehicle->customMode())));
         QVERIFY(result);
     }
 }
@@ -354,7 +356,7 @@ void ReturnToLaunchTest::testRtlPreservesArmedState()
 
     QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_DO_SET_MODE), 1);
     QCOMPARE(_mockLink->lastDoSetModeParam2(), 11.0f);
-    QVERIFY2(FlightModeUtil::planeModeNumber(_vehicle->flightMode()) == 11,
+    QVERIFY2(static_cast<int>(_vehicle->customMode()) == 11,
              "RTL not confirmed via heartbeat");
     QVERIFY2(_vehicle->armed(), "DO_SET_MODE must not disarm the vehicle");
     QVERIFY(result); // armed-safe + mode-confirmed == success

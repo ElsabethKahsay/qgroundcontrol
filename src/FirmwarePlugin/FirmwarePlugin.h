@@ -70,7 +70,7 @@ typedef QMap<uint32_t,QString> FlightModeCustomModeMap;
 /// The FirmwarePlugin class represents the methods and objects which are specific to a certain Firmware flight stack.
 /// This is the only place where flight stack specific code should reside in QGroundControl. The remainder of the
 /// QGroundControl source is generic to a common mavlink implementation. The implementation in the base class supports
-/// mavlink generic firmware. Override the base clase virtuals to create your own firmware specific plugin.
+/// mavlink generic firmware. Override the base class virtuals to create your own firmware specific plugin.
 class FirmwarePlugin : public QObject
 {
     Q_OBJECT
@@ -79,7 +79,7 @@ public:
     explicit FirmwarePlugin(QObject *parent = nullptr);
     virtual ~FirmwarePlugin();
 
-    /// Set of optional capabilites which firmware may support
+    /// Set of optional capabilities which firmware may support
     enum FirmwareCapabilities {
         SetFlightModeCapability =   1 << 0, ///< FirmwarePlugin::setFlightMode method is supported
         PauseVehicleCapability =    1 << 1, ///< Vehicle supports pausing at current location
@@ -112,7 +112,7 @@ public:
     /// Called when Vehicle is first created to perform any firmware specific setup.
     virtual void initializeVehicle(Vehicle* /*vehicle*/) {}
 
-    /// @return true: Firmware supports all specified capabilites
+    /// @return true: Firmware supports all specified capabilities
     virtual bool isCapable(const Vehicle* /*vehicle*/, FirmwareCapabilities /*capabilities*/) const { return false; }
 
     /// Returns the list of available flight modes for the Fly View dropdown. This may or may not be the full
@@ -257,7 +257,7 @@ public:
     /// (CompassMot). Default is true.
     virtual bool supportsMotorInterference() const { return true; }
 
-    /// Called before any mavlink message is processed by Vehicle such that the firmwre plugin
+    /// Called before any mavlink message is processed by Vehicle such that the firmware plugin
     /// can adjust any message characteristics. This is handy to adjust or differences in mavlink
     /// spec implementations such that the base code can remain mavlink generic.
     ///     @param vehicle Vehicle message came from
@@ -272,7 +272,7 @@ public:
     /// This method must be thread safe.
     ///
     ///     @param vehicle Vehicle message came from
-    ///     @param outgoingLink Link that messae is going out on
+    ///     @param outgoingLink Link that message is going out on
     ///     @param message[in,out] Mavlink message to adjust if needed.
     virtual void adjustOutgoingMavlinkMessageThreadSafe(Vehicle* /*vehicle*/, LinkInterface* /*outgoingLink*/, mavlink_message_t* /*message*/) {}
 
@@ -322,7 +322,7 @@ public:
     /// @return true: Motors are coaxial like an X8 config, false: Quadcopter for example
     virtual bool multiRotorCoaxialMotors(Vehicle* /*vehicle*/) const { return false; }
 
-    /// @return true: X confiuration, false: Plus configuration
+    /// @return true: X configuration, false: Plus configuration
     virtual bool multiRotorXConfig(Vehicle* /*vehicle*/) const { return false; }
 
     /// Return the resource file which contains the set of params loaded for offline editing.
@@ -403,8 +403,12 @@ public:
     /// Creates Autotune object.
     virtual Autotune *createAutotune(Vehicle *vehicle) const;
 
-    /// Update Available flight modes recieved from vehicle
+    /// Update Available flight modes received from vehicle
     virtual void updateAvailableFlightModes(FlightModeList &flightModeList) { _updateFlightModeList(flightModeList); }
+
+    /// Flight modes this plugin declares for the vehicle it was created for.
+    /// Replaced wholesale when the vehicle reports its own modes at runtime.
+    const FlightModeList &availableFlightModes() const { return _flightModeList; }
 
 signals:
     void toolIndicatorsChanged();

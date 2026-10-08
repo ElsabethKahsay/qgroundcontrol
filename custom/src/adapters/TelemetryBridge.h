@@ -724,10 +724,13 @@ public:
 
     /// Return to launch. THE single RTL entry point for the custom layer
     /// (RC-primary quad/FW spec: monitoring/backstop authority, never a duplicate
-    /// of RC RTL). Fork-native ArduPilot path (Track B): the stock plugins are
-    /// disabled in this fork, so FirmwarePlugin / Vehicle::guidedModeRTL /
-    /// Vehicle::setFlightMode degrade to "no command sent" — the live repro
-    /// shows zero MAV_CMD_DO_SET_MODE on the wire. This sends the raw
+    /// of RC RTL). Fork-native ArduPilot path (Track B): the stock plugins were
+    /// disabled in this fork at the time, so FirmwarePlugin / Vehicle::guidedModeRTL /
+    /// Vehicle::setFlightMode degraded to "no command sent" — the live repro
+    /// showed zero MAV_CMD_DO_SET_MODE on the wire. The APM plugin has since been
+    /// re-enabled (docs/test-flakiness.md), so the stock path would now work; this
+    /// raw path is kept deliberately until RTL is re-validated on hardware.
+    /// This sends the raw
     /// MAV_CMD_DO_SET_MODE command-long (the custom-mode form ArduPilot uses
     /// for flight-mode changes: param1 = MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
     /// param2 = the RTL custom-mode number, copter 6 / plane+rover 11), then

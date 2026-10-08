@@ -142,11 +142,12 @@ private slots:
 
 private:
     typedef struct {
-        const char *name;
+        QString name;
         uint8_t standard_mode;
         uint32_t custom_mode;
         bool canBeSet;
         bool advanced;
+        bool delayed = false;   ///< Excluded from the count while no AVAILABLE_MODES_MONITOR sequence is running
     } FlightMode_t;
 
     bool _connect() final;
@@ -311,5 +312,12 @@ private:
 
     static constexpr bool _mavlinkStarted = true;
 
-    static QList<FlightMode_t> _availableFlightModes;
+    /// Modes this link advertises over AVAILABLE_MODES. Built in the constructor
+    /// so that each mock reports the modes its own firmware really has.
+    QList<FlightMode_t> _availableFlightModes;
+
+    /// Fallback table used when the firmware plugin declares no modes of its own.
+    static const QList<FlightMode_t> _genericFlightModes;
+
+    static QList<FlightMode_t> _flightModesFor(MAV_AUTOPILOT firmwareType, MAV_TYPE vehicleType);
 };

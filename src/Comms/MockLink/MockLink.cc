@@ -14,6 +14,7 @@
 #include "QGCApplication.h"
 #include "QGCLoggingCategory.h"
 #include "FirmwarePlugin.h"
+#include "FirmwarePluginManager.h"
 
 #include <QtCore/QFile>
 #include <QtCore/QMutexLocker>
@@ -27,7 +28,7 @@ QGC_LOGGING_CATEGORY(MockLinkVerboseLog, "qgc.comms.mocklink.mocklink:verbose")
 
 int MockLink::_nextVehicleSystemId = 128;
 
-QList<MockLink::FlightMode_t> MockLink::_availableFlightModes = {
+const QList<MockLink::FlightMode_t> MockLink::_genericFlightModes = {
     // Mode Name                Standard Mode               Custom Mode                         CanBeSet    adv
     { "Manual",                 0,                          PX4CustomMode::MANUAL,              true,       true },
     { "Stabilized",             0,                          PX4CustomMode::STABILIZED,          true,       true },
@@ -44,8 +45,33 @@ QList<MockLink::FlightMode_t> MockLink::_availableFlightModes = {
     { "Takeoff",                MAV_STANDARD_MODE_TAKEOFF,  PX4CustomMode::AUTO_TAKEOFF,        false,      false},
     { "MockLink Mode",          0,                          PX4CustomMode::RATTITUDE,           true,       false},
     { "(Mode not available)",   0,                          PX4CustomMode::AUTO_RTGS,           false,      false},
-    { "MockLink Mode (delayed)",0,                          PX4CustomMode::AUTO_FOLLOW_TARGET,  true,       false},
+    { "MockLink Mode (delayed)",0,                          PX4CustomMode::AUTO_FOLLOW_TARGET,  true,       false, true },
 };
+
+// ArduPilot has advertised its own modes over AVAILABLE_MODES since 4.7
+// (ardupilot#28566) and does not set MAV_STANDARD_MODE yet, so everything is
+// reported as a custom mode. Source the list from the firmware plugin rather
+// than hard-coding it: StandardModes feeds whatever the vehicle reports back
+// into FirmwarePlugin::updateAvailableFlightModes(), so a mismatched list would
+// clobber the plugin's own mode map and every flightMode() decode would go
+// through the wrong table.
+QList<MockLink::FlightMode_t> MockLink::_flightModesFor(MAV_AUTOPILOT firmwareType, MAV_TYPE vehicleType)
+{
+    if (firmwareType == MAV_AUTOPILOT_ARDUPILOTMEGA) {
+        FirmwarePlugin *plugin = FirmwarePluginManager::instance()->firmwarePluginForAutopilot(firmwareType, vehicleType);
+        if (plugin) {
+            QList<FlightMode_t> modes;
+            for (const FirmwareFlightMode &mode : plugin->availableFlightModes()) {
+                modes += FlightMode_t{ mode.mode_name, mode.standard_mode, mode.custom_mode,
+                                       mode.canBeSet, mode.advanced };
+            }
+            if (!modes.isEmpty()) {
+                return modes;
+            }
+        }
+    }
+    return _genericFlightModes;
+}
 
 MockLink::MockLink(SharedLinkConfigurationPtr &config, QObject *parent)
     : LinkInterface(config, parent)
@@ -63,6 +89,8 @@ MockLink::MockLink(SharedLinkConfigurationPtr &config, QObject *parent)
     , _mockLinkFTP(new MockLinkFTP(_vehicleSystemId, _vehicleComponentId, this))
 {
     // qCDebug(MockLinkLog) << Q_FUNC_INFO << this;
+
+    _availableFlightModes = _flightModesFor(_firmwareType, _vehicleType);
 
     // Initialize 5 ADS-B vehicles with different starting conditions _numberOfVehicles
     _adsbVehicles.resize(_numberOfVehicles);
@@ -130,18 +158,35 @@ void MockLink::disconnect()
 
     if (_connected) {
         _connected = false;
+
+        // LinkManager::_linkDisconnected() frees our mavlink channel from the
+        // disconnected() signal below, on this thread, while the worker's
+        // 1 Hz/10 Hz/500 Hz senders are still live.  A sender that had already
+        // passed its _connected and mavlinkChannelIsSet() guard would then pack
+        // with chan 255, and mavlink_get_channel_status() returns NULL for that,
+        // so mavlink_finalize_message_buffer() dereferences a NULL status
+        // pointer.  That is the SIGSEGV seen in _sendADSBVehicles() and
+        // _sendGpsRawInt().  Stop the timers and wait for any in-flight handler
+        // to finish BEFORE the channel goes away.
+        if (_worker && _workerThread && _workerThread->isRunning()
+                && QThread::currentThread() != _workerThread) {
+            (void) QMetaObject::invokeMethod(_worker, &MockLinkWorker::stopWork,
+                                             Qt::BlockingQueuedConnection);
+        }
+
         emit disconnected();
     }
 }
 
 void MockLink::run1HzTasks()
 {
-    if (!_mavlinkStarted || !_connected) {
+    if (!_mavlinkStarted || !_connected || !mavlinkChannelIsSet()) {
         return;
     }
 
     if (linkConfiguration()->isHighLatency() && _highLatencyTransmissionEnabled) {
-        _sendHighLatency2();
+        // Run on the link thread: see the note on _sendHeartBeat() below.
+        QMetaObject::invokeMethod(this, [this]() { _sendHighLatency2(); }, Qt::QueuedConnection);
         return;
     }
 
@@ -176,8 +221,30 @@ void MockLink::run10HzTasks()
         return;
     }
 
-    if (_mavlinkStarted && _connected) {
-        _sendHeartBeat();
+    // A released/never-allocated mavlink channel makes every *_pack_chan() call
+    // below dereference a NULL status pointer (chan 255), which is how
+    // VehicleLinkManagerTest segfaulted in _sendGpsRawInt() during teardown.
+    if (_mavlinkStarted && _connected && mavlinkChannelIsSet()) {
+        // _mavCustomMode/_mavBaseMode are written ONLY on this link's own
+        // thread: by setFlightMode() (called directly by tests) and by the
+        // receive path (_writeBytes -> writeBytesQueuedSignal, a queued
+        // connection -> _writeBytesQueued -> _handleSetMode/_handleCommandLong).
+        //
+        // This timer runs on the worker thread, so packing the heartbeat here
+        // races those writes.  Worse, respondWithMavlinkMessage() emits
+        // bytesReceived() directly, which Vehicle (living on the link thread)
+        // handles SYNCHRONOUSLY when emitted from that thread but QUEUED when
+        // emitted from the worker.  A tick that reads a stale custom mode just
+        // after the link thread wrote a newer one is therefore not merely
+        // late, it is delivered out of order: the vehicle applies the stale
+        // mode after the fresh one.
+        //
+        // That is what made flightMode() bounce Loiter -> Manual -> Loiter
+        // during the control-surface sweep, spuriously auto-stopping it (and
+        // then disarming, which raced the test's isArmed() poll).  Marshal the
+        // build+send onto the link thread so the heartbeat always reflects the
+        // current mode and is delivered synchronously, in order.
+        QMetaObject::invokeMethod(this, [this]() { _sendHeartBeat(); }, Qt::QueuedConnection);
         if (_sendGPSPositionDelayCount > 0) {
             // We delay gps position for better testing
             _sendGPSPositionDelayCount--;
@@ -195,7 +262,7 @@ void MockLink::run500HzTasks()
         return;
     }
 
-    if (_mavlinkStarted && _connected) {
+    if (_mavlinkStarted && _connected && mavlinkChannelIsSet()) {
         _paramRequestListWorker();
         _logDownloadWorker();
         _availableModesWorker();
@@ -321,6 +388,14 @@ void MockLink::_loadParams()
 
 void MockLink::_sendHeartBeat()
 {
+    // mavlinkChannel() warns and returns 255 once the channel has been
+    // released, and mavlink_finalize_message_chan() then dereferences a NULL
+    // mavlink_status_t.  The heartbeat is also posted to the link thread, so it
+    // can land after teardown has begun — check here as well as at the caller.
+    if (!mavlinkChannelIsSet()) {
+        return;
+    }
+
     mavlink_message_t msg{};
     (void) mavlink_msg_heartbeat_pack_chan(
         _vehicleSystemId,
@@ -935,7 +1010,7 @@ float MockLink::_floatUnionForParam(int componentId, const QString &paramName)
 
 void MockLink::_handleParamRequestList(const mavlink_message_t &msg)
 {
-    if (_failureMode == MockConfiguration::FailParamNoReponseToRequestList) {
+    if (_failureMode == MockConfiguration::FailParamNoResponseToRequestList) {
         return;
     }
 
@@ -961,7 +1036,7 @@ void MockLink::_paramRequestListWorker()
     const int cParameters = _mapParamName2Value[componentId].count();
     const QString paramName = _mapParamName2Value[componentId].keys()[_currentParamRequestListParamIndex];
 
-    if (((_failureMode == MockConfiguration::FailMissingParamOnInitialReqest) || (_failureMode == MockConfiguration::FailMissingParamOnAllRequests)) && (paramName == _failParam)) {
+    if (((_failureMode == MockConfiguration::FailMissingParamOnInitialRequest) || (_failureMode == MockConfiguration::FailMissingParamOnAllRequests)) && (paramName == _failParam)) {
         qCDebug(MockLinkLog) << "Skipping param send:" << paramName;
     } else {
         char paramId[MAVLINK_MSG_ID_PARAM_VALUE_LEN]{};
@@ -2102,6 +2177,12 @@ void MockLink::_sendAvailableMode(uint8_t modeIndexOneBased)
     const FlightMode_t &availableMode = _availableFlightModes[modeIndexOneBased - 1];
     mavlink_message_t msg{};
 
+    // mavlink's pack always reads the full 35-byte mode_name field, so give it
+    // a buffer of exactly that size rather than the QString's shorter UTF-8 form.
+    constexpr size_t kModeNameLen = 35;
+    char modeName[kModeNameLen] = {};
+    (void) qstrncpy(modeName, availableMode.name.toUtf8().constData(), sizeof(modeName));
+
     (void) mavlink_msg_available_modes_pack_chan(
         _vehicleSystemId,
         _vehicleComponentId,
@@ -2112,7 +2193,7 @@ void MockLink::_sendAvailableMode(uint8_t modeIndexOneBased)
         availableMode.standard_mode,
         availableMode.custom_mode,
         availableMode.canBeSet ? 0 : MAV_MODE_PROPERTY_NOT_USER_SELECTABLE,
-        availableMode.name);
+        modeName);
     respondWithMavlinkMessage(msg);
 }
 
@@ -2150,5 +2231,15 @@ void MockLink::_sendAvailableModesMonitor()
 
 int MockLink::_availableModesCount() const
 {
-    return _availableFlightModes.count() - (_availableModesMonitorSeqNumber == 0 ? 1 : 0); // Exclude the delayed mode
+    int count = _availableFlightModes.count();
+    if (_availableModesMonitorSeqNumber == 0) {
+        // Modes flagged "delayed" only become visible once the monitor
+        // sequence number is running.
+        for (const FlightMode_t &mode : _availableFlightModes) {
+            if (mode.delayed) {
+                count--;
+            }
+        }
+    }
+    return count;
 }

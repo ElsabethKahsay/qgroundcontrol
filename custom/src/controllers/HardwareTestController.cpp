@@ -748,9 +748,12 @@ void HardwareTestController::_startFixedWingMotorTest(int idx)
                              << "duration" << _durationSec << "s";
 
     // Request MANUAL mode (best-effort). Planes with FLTMODE_CH are driven by the
-    // physical switch, so testMotor() gates on flightMode() == MANUAL before
-    // this function is reached; the request only helps airframes without a mode switch.
-    if (_vehicle && _vehicle->flightMode() != QStringLiteral("MANUAL")) {
+    // physical switch, so testMotor() gates on the mode number before this
+    // function is reached; the request only helps airframes without a mode switch.
+    // Compare the mode NUMBER, not the rendered name: the ArduPilot plugin
+    // renders "Manual" and the generic base renders "Custom:0x0", so a string
+    // test against "MANUAL" never matches either.
+    if (_vehicle && FlightModeUtil::planeModeNumber(_vehicle->flightMode()) != 0) {
         _vehicle->setFlightMode(QStringLiteral("MANUAL"));
     }
 

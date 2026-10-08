@@ -716,7 +716,14 @@ void VehicleProfileManager::setVehicleFlightMode(const QString &mode)
     }
 
 execute_set_mode:
-    qInfo() << "VehicleProfileManager: setting flight mode to" << targetMode;
+    if (!availableModes.contains(targetMode)) {
+        qWarning() << "VehicleProfileManager: flight mode" << targetMode
+                   << "is not in the vehicle's available modes" << availableModes
+                   << "- the request will be rejected";
+    }
+    // Request only — Vehicle::setFlightMode() returns void and warns itself if the
+    // firmware plugin cannot command the mode, so do not log this as an outcome.
+    qInfo() << "VehicleProfileManager: requesting flight mode" << targetMode;
     vehicle->setFlightMode(targetMode);
 }
 

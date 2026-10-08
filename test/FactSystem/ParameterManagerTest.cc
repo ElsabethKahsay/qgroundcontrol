@@ -65,14 +65,14 @@ void ParameterManagerTest::_noFailure(void)
 
 void ParameterManagerTest::_requestListMissingParamSuccess(void)
 {
-    _noFailureWorker(MockConfiguration::FailMissingParamOnInitialReqest);
+    _noFailureWorker(MockConfiguration::FailMissingParamOnInitialRequest);
 }
 
 // Test no response to param_request_list
 void ParameterManagerTest::_requestListNoResponse(void)
 {
     Q_ASSERT(!_mockLink);
-    _mockLink = MockLink::startPX4MockLink(false, MockConfiguration::FailParamNoReponseToRequestList);
+    _mockLink = MockLink::startPX4MockLink(false, MockConfiguration::FailParamNoResponseToRequestList);
 
     MultiVehicleManager* vehicleMgr = MultiVehicleManager::instance();
     QVERIFY(vehicleMgr);
@@ -134,7 +134,7 @@ void ParameterManagerTest::_requestListMissingParamFail(void)
 void ParameterManagerTest::_FTPnoFailure()
 {
     Q_ASSERT(!_mockLink);
-    _mockLink = MockLink::startAPMArduPlaneMockLink(false, MockConfiguration::FailParamNoReponseToRequestList);
+    _mockLink = MockLink::startAPMArduPlaneMockLink(false, MockConfiguration::FailParamNoResponseToRequestList);
     _mockLink->mockLinkFTP()->enableBinParamFile(true);
     MultiVehicleManager* vehicleMgr = MultiVehicleManager::instance();
     QVERIFY(vehicleMgr);
@@ -176,7 +176,7 @@ void ParameterManagerTest::_FTPnoFailure()
 void ParameterManagerTest::_FTPChangeParam()
 {
     Q_ASSERT(!_mockLink);
-    _mockLink = MockLink::startAPMArduPlaneMockLink(false, MockConfiguration::FailParamNoReponseToRequestList);
+    _mockLink = MockLink::startAPMArduPlaneMockLink(false, MockConfiguration::FailParamNoResponseToRequestList);
     _mockLink->mockLinkFTP()->enableBinParamFile(true);
     MultiVehicleManager* vehicleMgr = MultiVehicleManager::instance();
     QVERIFY(vehicleMgr);

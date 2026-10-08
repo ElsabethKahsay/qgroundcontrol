@@ -73,8 +73,9 @@ chains (RTL / Force Arm), no shared code, no path that skips the gate.
 
 1. **TelemetryBridge: `returnToLaunch()` fork-native DO_SET_MODE** (TelemetryBridge.h:726,
    TelemetryBridge.cpp:1237-1326) — landed (Track B, B6). The fork ships with
-   APM/PX4 firmware plugins FORCE-disabled (CustomOverrides.cmake:42-45), so the
-   stock `Vehicle::guidedModeRTL()` path is unusable; the bridge therefore sends a
+   APM/PX4 firmware plugins FORCE-disabled at the time (CustomOverrides.cmake:42-45;
+   the APM half has since been re-enabled, see `docs/test-flakiness.md`), so the
+   stock `Vehicle::guidedModeRTL()` path was unusable; the bridge therefore sends a
    raw `MAV_CMD_DO_SET_MODE` command-long with `param1=MAV_MODE_FLAG_CUSTOM_MODE_ENABLED`
    and `param2=<RTL custom-mode number>` (6 for ArduCopter, 11 for ArduPlane/Rover —
    citations in TelemetryBridge.cpp:52-68), then waits (bounded ≈5 s) for the
@@ -270,7 +271,8 @@ Defects found and fixed:
 3. **`MainStatusIndicator.qml` kept the Phase 3 trio** — gate override only, then
    the force-arm, with a `mainWindow.forceArmVehicleRequest()` fallback that
    routes to stock `GuidedActionsController` and so through the APM/PX4 firmware
-   plugins this fork disables (`CustomOverrides.cmake:42-45`). Collapsed to the
+   plugins this fork disabled at the time (`CustomOverrides.cmake:42-45`; the APM
+   half has since been re-enabled, see `docs/test-flakiness.md`). Collapsed to the
    one funnel call; the stock fallback is gone. On refusal the popup stays open
    and the reason is logged rather than swallowed.
 4. **`ControlSurfacePanel.qml` called raw `v.forceArm()`**, bypassing the funnel:

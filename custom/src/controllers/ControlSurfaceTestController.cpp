@@ -131,7 +131,8 @@ void ControlSurfaceTestController::setVehicle(Vehicle *vehicle)
             // AUTO / RTL / GUIDED / ...): stick overrides would be suppressed
             // and the test can no longer demonstrate reliable deflection.
             if (sweeping && surfaceAutopilotCommanded(FlightModeUtil::planeModeNumber(mode))) {
-                _autoStopSweep(QStringLiteral("Vehicle left MANUAL during the sweep — control surface test stopped"));
+                _autoStopSweep(QStringLiteral("Vehicle left MANUAL for %1 during the sweep — control surface test stopped")
+                                   .arg(mode));
             }
         });
         m_flightMode = m_vehicle->flightMode();
@@ -661,8 +662,10 @@ void ControlSurfaceTestController::_setElevonGain(bool boost)
 void ControlSurfaceTestController::_forceManualMode()
 {
     if (m_activeSurface != -1 && m_vehicle && !surfaceInManualMode(m_vehicle->flightMode())) {
+        // Request only — Vehicle::setFlightMode() returns void and warns itself if
+        // the firmware plugin cannot command modes, so this must not claim success.
         m_vehicle->setFlightMode(QStringLiteral("MANUAL"));
-        qCWarning(controlSurfaceTestLog) << "Re-forcing MANUAL flight mode during surface sweep (current:" << m_vehicle->flightMode() << ")";
+        qCWarning(controlSurfaceTestLog) << "Requested MANUAL flight mode during surface sweep (current:" << m_vehicle->flightMode() << ")";
     }
     if (m_activeSurface == -1) {
         m_forceManualTimer.stop();
@@ -1072,8 +1075,11 @@ void ControlSurfaceTestController::stopAllSurfaces()
 void ControlSurfaceTestController::switchToManual()
 {
     if (m_vehicle) {
+        const QString previousMode = m_vehicle->flightMode();
+        // Request only: Vehicle::setFlightMode() returns void, so the log must not
+        // claim the switch landed. The live flightMode readout is the confirmation.
         m_vehicle->setFlightMode(QStringLiteral("MANUAL"));
-        qCWarning(controlSurfaceTestLog) << "Manually switching flight mode to MANUAL";
+        qCWarning(controlSurfaceTestLog) << "Requested MANUAL flight mode (previous:" << previousMode << ")";
     }
 }
 

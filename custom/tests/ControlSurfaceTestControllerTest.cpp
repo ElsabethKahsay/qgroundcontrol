@@ -123,9 +123,9 @@ void ControlSurfaceTestControllerTest::testAllSurfaceTypesLoadCorrectly()
 // External STABILIZE (ArduPilot plane mode 2, NOT autopilot-commanded) arrives
 // with the sweep active.  It must not trigger the auto-stop.
 //
-// Mode comparison is NUMERIC on purpose: the flight-mode string differs by
-// build flavor (the ArduPilot firmware plugin renders "Stabilize", the generic
-// plugin used when QGC_DISABLE_APM_PLUGIN is set renders "Custom:0x2"), so
+// Mode comparison is NUMERIC on purpose: the flight-mode string depends on the
+// firmware plugin in play (the ArduPilot plugin renders "Stabilize", the
+// generic base plugin renders "Custom:0x2"), so
 // FlightModeUtil::planeModeNumber() is the only stable identity.
 void ControlSurfaceTestControllerTest::testManualModeForcedAndReasserted()
 {
@@ -172,16 +172,11 @@ void ControlSurfaceTestControllerTest::testManualModeForcedAndReasserted()
 }
 
 // The 1 s re-assert sends MAV_CMD_DO_SET_MODE and the autopilot must honour it.
-// Requires a Vehicle whose firmware plugin can SET flight modes, i.e. the
-// ArduPilot firmware plugin.  This build flavor compiles with
-// QGC_DISABLE_APM_PLUGIN / QGC_DISABLE_APM_PLUGIN_FACTORY
-// (custom/cmake/CustomOverrides.cmake), so every Vehicle gets the generic
-// FirmwarePlugin: flight modes decode to "Custom:0x<n>" and
-// Vehicle::setFlightMode() bails out with "called on base class, not
-// supported", leaving the mode unchanged.  That is a build-configuration
-// finding, not a controller defect — the controller's re-assert path is
-// exercised for the non-stop behaviour in
-// testManualModeForcedAndReasserted().
+// Capability probe: this only works when the vehicle resolves to a firmware
+// plugin that can set modes (custom/cmake/CustomOverrides.cmake forces
+// QGC_DISABLE_APM_PLUGIN / QGC_DISABLE_APM_PLUGIN_FACTORY OFF so it does), not
+// the generic FirmwarePlugin base, whose setFlightMode() returns false with
+// "called on base class, not supported".
 void ControlSurfaceTestControllerTest::testManualModeReassertReachesAutopilot()
 {
     QVERIFY(_connectPlane());
@@ -216,10 +211,10 @@ void ControlSurfaceTestControllerTest::testManualModeReassertReachesAutopilot()
     }, _mockLink, 4000);
 
     if (!canCommandModes) {
-        QSKIP("Vehicle cannot command flight modes: this build flavor compiles with "
-              "QGC_DISABLE_APM_PLUGIN / QGC_DISABLE_APM_PLUGIN_FACTORY "
-              "(custom/cmake/CustomOverrides.cmake), so Vehicle::setFlightMode() fails on the generic "
-              "FirmwarePlugin base class and the MANUAL re-assert never reaches the autopilot");
+        QSKIP("Vehicle cannot command flight modes: Vehicle::setFlightMode() failed on the "
+              "generic FirmwarePlugin base class, so the MANUAL re-assert never reaches the "
+              "autopilot (check QGC_DISABLE_APM_PLUGIN / QGC_DISABLE_APM_PLUGIN_FACTORY in "
+              "custom/cmake/CustomOverrides.cmake)");
     }
 
     QCOMPARE(_mockLink->lastDoSetModeParam2(), 0.0f);    // APMPlaneMode::MANUAL

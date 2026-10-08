@@ -123,7 +123,7 @@ Key CMake options:
 |---|---|---|
 | `QGC_CUSTOM_DIR` | `custom` | Path to custom plugin root |
 | `QGC_BUILD_TESTING` | ON (Debug), OFF (Release) | Enables unit tests |
-| `QGC_DISABLE_APM_PLUGIN` | ON | ArduPilot disabled |
+| `QGC_DISABLE_APM_PLUGIN` | OFF | ArduPilot plugin enabled (see `docs/test-flakiness.md`) |
 | `QGC_DISABLE_PX4_PLUGIN_FACTORY` | ON | PX4 factory disabled |
 | `QGC_ENABLE_GST_VIDEOSTREAMING` | OFF | GStreamer disabled (avoids QtLocation issues) |
 
