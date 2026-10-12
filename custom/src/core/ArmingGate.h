@@ -82,6 +82,10 @@ public:
     /// Test-only: set a custom override duration in milliseconds for testing override
     /// expiry. Mints and returns a fresh one-shot caller token like forceArm().
     quint32 setOverrideDuration(int timeoutMs);
+    /// Test-only: override the ALLOW_WITH_ACK unused-acknowledgment expiry window.
+    /// Production uses kAckExpirySec (see Config.h); tests set a short window here
+    /// so expiry can be exercised without waiting the operational timeout.
+    void setAckExpiryMs(int ms) { if (ms > 0) m_ackExpiryMs = ms; }
     /// Reset the gate to normal evaluation mode.
     Q_INVOKABLE void resetGate();
     /// Force arming regardless of gate state. Opens a bounded, logged window and
@@ -91,6 +95,10 @@ public:
     /// The window is NOT ambient — no other arm passes during it. Auto-closes
     /// after kForceArmOverrideSec even if the token was never presented.
     Q_INVOKABLE quint32 forceArm();
+    Q_INVOKABLE quint32 ackTokenForArm() const {
+        if (m_ackReceived) return m_ackToken;
+        return 0;
+    }
 
     /// Build a vehicle-level arm interceptor consulting this gate. The returned
     /// callable takes a QString& denial-reason slot plus the caller-scoped arm
@@ -160,7 +168,10 @@ private:
     QString m_denialReason;
     QTimer *m_overrideTimer = nullptr;
     QTimer *m_gateTimer = nullptr;
+    QTimer *m_ackTimer = nullptr;
     Acknowledgment m_lastAck;
+    quint32 m_ackToken = 0;
+    int m_ackExpiryMs = kAckExpirySec * 1000;
 
     // One-shot override token model. forceArm()/setOverrideDuration() mint a fresh
     // token (m_overrideTokenSeq counter) and return it to the caller, who attaches

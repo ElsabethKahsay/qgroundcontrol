@@ -12,6 +12,7 @@
 
 #include <QDebug>
 #include <QTimer>
+#include <QRandomGenerator>
 
 #include "AbstractCheck.h"
 #include "PreflightManager.h"
@@ -45,6 +46,12 @@ ArmingGate::ArmingGate(QObject *parent)
     m_gateTimer->setInterval(EVAL_INTERVAL_MS);
     connect(m_gateTimer, &QTimer::timeout, this, &ArmingGate::updateArmingState);
 
+    m_ackTimer = new QTimer(this);
+    m_ackTimer->setSingleShot(true);
+    connect(m_ackTimer, &QTimer::timeout, this, [this]() {
+        m_ackReceived = false;
+        m_ackToken = 0;
+    });
     // After any disarm, close the gate so the next arm request is re-checked.
     // Without this, a prior force-arm/override would let arm commands through
     // indefinitely regardless of current check results.
@@ -72,10 +79,12 @@ void ArmingGate::setPreflightManager(PreflightManager *manager)
                 this, [this](uint8_t) {
                     onAllChecksPassed();
                 });
-        connect(m_manager, &PreflightManager::progressChanged,
-                this, [this]() {
-                    m_lastTickTime = QDateTime::currentDateTime();
-                });
+        // NOTE: the gate's telemetry-freshness clock is NOT fed from
+        // PreflightManager::progressChanged. That signal fires on check-status
+        // changes / evaluation ticks, so it stays alive on a dead link (the
+        // manager timer keeps ticking) and it falsely expires on a live link
+        // whose checks are simply stable. The clock is fed by actual telemetry
+        // arrival instead — see setTelemetryBridge().
         connect(this, &ArmingGate::gateOverrideLogged,
                 m_manager, [this](const QString &reason, int) {
                     Q_UNUSED(reason)
@@ -87,10 +96,26 @@ void ArmingGate::setPreflightManager(PreflightManager *manager)
     updateArmingState();
 }
 
-// Store the telemetry bridge reference for vehicle state queries during gate evaluation.
+// Store the telemetry bridge and drive the freshness clock from real telemetry
+// arrival. Every received HEARTBEAT stamps m_lastTickTime, so:
+//   * a live link keeps the gate fresh regardless of whether any check status
+//     changed (no progressChanged required), and
+//   * a dead link stops stamping, so the gate closes with a staleness reason
+//     after kTelemetryStalenessSec.
 void ArmingGate::setTelemetryBridge(TelemetryBridge *bridge)
 {
+    if (m_telemetry == bridge)
+        return;
+    if (m_telemetry)
+        disconnect(m_telemetry, nullptr, this, nullptr);
     m_telemetry = bridge;
+    if (m_telemetry) {
+        connect(m_telemetry, &TelemetryBridge::heartbeatTick, this, [this]() {
+            m_lastTickTime = QDateTime::currentDateTime();
+            updateArmingState();
+        });
+    }
+    updateArmingState();
 }
 
 // Update the gate operating mode (Passive/Active/Hybrid) and re-evaluate.
@@ -129,6 +154,8 @@ bool ArmingGate::interceptCommandLong(uint16_t command, const QMap<int, float> &
 
     if (m_ackReceived) {
         m_ackReceived = false;
+        m_ackToken = 0;
+        if (m_ackTimer) m_ackTimer->stop();
         qWarning().noquote() << QStringLiteral("ArmingGate: ALLOW_WITH_ACK bypass for pilot %1")
                                     .arg(m_lastAck.pilotName);
         m_denialReason.clear();
@@ -176,10 +203,12 @@ ArmingGate::GateDecision ArmingGate::processArmRequest(int criticalFailCount, in
     if (m_overrideActive || m_mode == Passive)
         return GATE_OPEN;
 
-    // ALLOW_WITH_ACK: if ack received, allow one-time bypass
+    // ALLOW_WITH_ACK: if ack received, allow one-time bypass (non-interceptor path)
     if (m_overridePolicy == ALLOW_WITH_ACK && m_ackReceived &&
         (criticalFailCount > 0 || manualFailCount > 0)) {
         m_ackReceived = false;
+        m_ackToken = 0;
+        if (m_ackTimer) m_ackTimer->stop();
         qWarning().noquote() << QStringLiteral("ArmingGate: ALLOW_WITH_ACK bypass for pilot %1")
                                     .arg(m_lastAck.pilotName);
         return GATE_OPEN;
@@ -216,6 +245,14 @@ bool ArmingGate::acknowledgeOverride(const QString &pilotName, const QString &re
     m_lastAck.pilotName = pilotName.trimmed();
     m_lastAck.reason = reason;
     m_lastAck.timestamp = QDateTime::currentDateTime();
+    // Mint token bound to this ack; only the dialog's arm may consume it
+    m_ackToken = QRandomGenerator::global()->generate();
+    if (m_ackToken == 0) {
+        m_ackToken = 1;
+    }
+    // Start expiry timer
+    m_ackTimer->setInterval(m_ackExpiryMs);
+    m_ackTimer->start();
 
     qWarning().noquote() << QStringLiteral("ArmingGate: ALLOW_WITH_ACK acknowledged by %1 — %2")
                                 .arg(pilotName, reason);
@@ -253,6 +290,8 @@ void ArmingGate::resetGate()
 {
     m_overrideActive = false;
     m_ackReceived = false;
+    m_ackToken = 0;
+    if (m_ackTimer) m_ackTimer->stop();
     m_overrideTimer->stop();
     m_overrideToken = 0;
     m_overrideTokenSeq = 0;
@@ -331,8 +370,13 @@ quint32 ArmingGate::forceArm()
 //     passes, and it is consumed on success. An open force-arm window whose token
 //     is spent or never presented authorizes NOTHING else until its exhaust —
 //     this window is not ambient.
-//   * acknowledged override (overrideGate()): permissive by design — the
-//     operator acknowledged responsibility, normal arming passes for the window.
+//   * acknowledged override (acknowledgeOverride(), ArmGateDialog.qml): ONE-SHOT.
+//     The first arm to reach this interceptor is authorized and consumes the
+//     acknowledgment. This is the LOCAL UI arm path (TelemetryBridge::arm());
+//     interceptCommandLong() only sees INBOUND peer commands, so honoring the ack
+//     there alone left the dialog's "Acknowledge & Arm" vetoed by the very checks
+//     the operator had just acknowledged.
+//   * gate override (overrideGate()): permissive for the window by design.
 std::function<bool(QString&, quint32)> ArmingGate::makeArmInterceptor() const
 {
     QPointer<const ArmingGate> guard(this);
@@ -353,6 +397,29 @@ std::function<bool(QString&, quint32)> ArmingGate::makeArmInterceptor() const
             }
             denialReason = QStringLiteral("Force-arm override is one-shot and caller-scoped; "
                                           "this arm command does not hold the minted token");
+            return false;
+        }
+        // Acknowledged override (ALLOW_WITH_ACK): authorize exactly one arm, then
+        // consume the acknowledgment. Guarded by the policy so a NONE policy
+        // cannot be bypassed by a stray acknowledgment. The ack is bound to the
+        // token minted at acknowledgment time; only the command presenting that
+        // token (e.g. the dialog's TelemetryBridge::arm()) may consume it.
+        if (guard->m_overridePolicy == OverridePolicy::ALLOW_WITH_ACK && guard->m_ackReceived) {
+            ArmingGate *that = const_cast<ArmingGate*>(guard.data());
+            if (callToken != 0 && callToken == that->m_ackToken) {
+                that->m_ackReceived = false;
+                that->m_ackToken = 0;
+                if (that->m_ackTimer) that->m_ackTimer->stop();
+                that->m_denialReason.clear();
+                denialReason.clear();
+                qWarning().noquote() << QStringLiteral("ArmingGate: ALLOW_WITH_ACK bypass consumed by pilot %1")
+                                            .arg(that->m_lastAck.pilotName);
+                return true;
+            }
+            // Token mismatch means another arm attempt consumed the window, or this
+            // is not the originating call; reject as caller-scoped.
+            denialReason = QStringLiteral("Acknowledged override is one-shot and caller-scoped; "
+                                          "this arm command does not hold the acknowledged token");
             return false;
         }
         if (guard->isArmingAllowed()) {

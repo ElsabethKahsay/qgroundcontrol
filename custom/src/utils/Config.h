@@ -157,6 +157,14 @@ constexpr int kTelemetryStalenessSec   = 10;
 // and re-evaluates checks. Keeps force-arm an emergency bypass, not a permanent
 // mode change. Re-gated on expiry AND on disarm.
 constexpr int kForceArmOverrideSec     = 60;
+// ALLOW_WITH_ACK unused-acknowledgment expiry window (seconds). Acknowledging in
+// ArmGateDialog is a TWO-STEP operator flow: the dialog closes on acknowledgment,
+// then the operator clicks Arm in the toolbar/status UI, which is what actually
+// calls TelemetryBridge::arm(). The window must comfortably cover that gap plus
+// human reaction time, otherwise a legitimate acknowledged arm is denied as if
+// the acknowledgment had been unused. 15s is a deliberate operational choice,
+// not a test-fitting value; tests override it via ArmingGate::setAckExpiryMs().
+constexpr int kAckExpirySec             = 15;
 
 // ── Telemetry polling ────────────────────────────────────────────────────────
 // Interval for the telemetry update timer that polls vehicle state.

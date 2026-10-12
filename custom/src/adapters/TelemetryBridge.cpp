@@ -977,6 +977,11 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message) {
             mavlink_heartbeat_t hb;
             mavlink_msg_heartbeat_decode(&message, &hb);
 
+            // Liveness edge for telemetry-arrival-driven consumers (e.g. the
+            // ArmingGate freshness clock). Fires on EVERY heartbeat, before any
+            // change-gated emits below, so a steady link still produces ticks.
+            emit heartbeatTick();
+
             // Track the MAVLink protocol version.
             uint8_t ver = hb.mavlink_version;
             if (ver != _mavlinkVersion) {
@@ -1207,6 +1212,24 @@ void TelemetryBridge::arm()
         return;
     }
 
+    // If ArmingGate has a pending ALLOW_WITH_ACK token, attach it so the
+    // interceptor can authorize exactly this dialog's arm call.
+    bool attachedAckToken = false;
+    if (_armingGate) {
+        auto *gate = qobject_cast<ArmingGate*>(_armingGate);
+        if (gate) {
+            const quint32 ackToken = gate->ackTokenForArm();
+            if (ackToken != 0) {
+                _vehicle->setArmOverrideToken(ackToken);
+                attachedAckToken = true;
+            }
+        } else {
+            // dynamic invoke not straightforward; skip if not castable
+        }
+    }
+    if (!attachedAckToken) {
+        _vehicle->setArmOverrideToken(0);
+    }
     qCWarning(telemetryBridgeLog) << "arm(): sending MAV_CMD_COMPONENT_ARM_DISARM";
     _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
                              true,   // showError

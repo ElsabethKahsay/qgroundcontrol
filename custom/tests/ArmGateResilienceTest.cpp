@@ -10,10 +10,13 @@
 //     lets any arm through;
 //   * losing the gate mid-override must deny, not crash and not allow.
 //
-// The staleness tests below were written after finding that ArmingGate's
-// "telemetry stale" clock is fed by PreflightManager::progressChanged, which is
-// emitted on check-status changes rather than on vehicle telemetry. See the
-// comments on the individual cases for what that implies.
+// The staleness tests below pin the fix for a finding that ArmingGate's
+// "telemetry stale" clock used to be fed by PreflightManager::progressChanged,
+// which is emitted on check-status changes / evaluation ticks rather than on
+// vehicle telemetry. That made the guard both useless on a dead link (the
+// manager keeps ticking) and prone to false-trips on a live link whose checks
+// were simply stable. The clock is now fed by TelemetryBridge::heartbeatTick
+// (actual telemetry arrival). See _deliverHeartbeat() and the cases below.
 
 #include <QSignalSpy>
 #include <QTest>
@@ -33,6 +36,7 @@ private slots:
     void cleanup() override;
 
     void testStaleAfterSilenceFollowingRealTelemetry();
+    void testHeartbeatKeepsGateFreshDespiteStableChecks();
     void testNeverSawTelemetryIsFailClosed();
     void testForceArmTokenIsOneShot();
     void testForceArmWindowIsNotCallerAmbient();
@@ -48,8 +52,9 @@ private:
     /// Marks every check in the manager as Passed.
     void _passAllChecks();
 
-    /// Provokes exactly one PreflightManager::progressChanged emission.
-    void _deliverTick();
+    /// Delivers one telemetry-arrival edge (a heartbeat). This is what now
+    /// stamps the gate's freshness clock; a PreflightManager tick no longer does.
+    void _deliverHeartbeat();
 
     /// Waits for ArmingGate's evaluation timer to run at least twice.
     /// ArmingGate only recomputes armingAllowed from check results and telemetry
@@ -100,16 +105,12 @@ void ArmGateResilienceTest::_settle()
     }
 }
 
-// ArmingGate's freshness clock is driven by PreflightManager::progressChanged,
-// so a "telemetry tick" for this gate means a check changing state. That is a
-// narrower thing than vehicle telemetry: mutating MockTelemetryBridge does not
-// move this clock at all. Modelling the tick explicitly is what lets the two
-// cases below be distinguished - a gate that has seen one tick, and a gate that
-// has never seen any.
-void ArmGateResilienceTest::_deliverTick()
+// ArmingGate's freshness clock is driven by telemetry arrival. A live link is
+// modelled by delivering a heartbeatTick; check-status changes (progressChanged)
+// deliberately do NOT move this clock any more.
+void ArmGateResilienceTest::_deliverHeartbeat()
 {
-    _check->forceStatus(CheckStatus::Failed, QStringLiteral("tick"));
-    _check->forceStatus(CheckStatus::Passed, QString());
+    _bridge->emitHeartbeat();
 }
 
 void ArmGateResilienceTest::_buildArmableGate(bool withTelemetry)
@@ -147,29 +148,29 @@ void ArmGateResilienceTest::_buildArmableGate(bool withTelemetry)
     _gate->setTelemetryBridge(_bridge);
 
     if (withTelemetry) {
-        _deliverTick();
+        _deliverHeartbeat();
     }
 }
 
 void ArmGateResilienceTest::testStaleAfterSilenceFollowingRealTelemetry()
 {
-    // One real tick, so the gate has evidence of a live link.
+    // One real heartbeat, so the gate has evidence of a live link.
     _buildArmableGate();
     _settle();
 
     QVERIFY2(_manager->allMandatoryPassed(),
              qPrintable(QStringLiteral("baseline is not armable: %1").arg(_manager->armingBlocker())));
     QVERIFY2(_gate->isArmingAllowed(),
-             qPrintable(QStringLiteral("gate blocked despite a fresh tick: %1").arg(_gate->denialReason())));
+             qPrintable(QStringLiteral("gate blocked despite fresh telemetry: %1").arg(_gate->denialReason())));
 
-    // Now go silent: no further progressChanged, so the staleness clock runs out.
+    // Now go silent: no further heartbeatTick, so the staleness clock runs out.
     // Config.h sets kTelemetryStalenessSec = 10 and ArmingGate re-evaluates on a
     // timer, so the gate must flip to denied on its own.
     const int quietSecs = 14;
     for (int i = 0; i < quietSecs; ++i) {
         QTest::qWait(1000);
-        // Bridge updates are NOT ticks for this clock. They are made here
-        // deliberately, to pin down that only progressChanged moves the gate.
+        // Bridge updates are NOT telemetry arrival for this clock. They are made
+        // here deliberately, to pin down that only a heartbeat moves the gate.
         _bridge->setBatteryPercent(50 + (i % 5));
         _bridge->setConnectionQuality(95);
     }
@@ -181,7 +182,7 @@ void ArmGateResilienceTest::testStaleAfterSilenceFollowingRealTelemetry()
 
     QVERIFY2(!allowed,
              qPrintable(QStringLiteral(
-                 "Gate stayed open %1s after the last telemetry tick. The staleness "
+                 "Gate stayed open %1s after the last telemetry arrival. The staleness "
                  "guard stopped working. reason=\\\"%2\\\"")
                             .arg(quietSecs)
                             .arg(reason)));
@@ -193,9 +194,38 @@ void ArmGateResilienceTest::testStaleAfterSilenceFollowingRealTelemetry()
                             .arg(reason)));
 }
 
+// The mirror of the case above, and the actual defect being fixed: with a LIVE
+// link that keeps delivering heartbeats but whose checks never change state, the
+// gate must stay open. Under the old progressChanged-fed clock this case was
+// indistinguishable from silence once the manager stopped emitting.
+void ArmGateResilienceTest::testHeartbeatKeepsGateFreshDespiteStableChecks()
+{
+    _buildArmableGate();   // delivers one heartbeat
+    _settle();
+
+    const int liveSecs = 14;   // > kTelemetryStalenessSec (10)
+    for (int i = 0; i < liveSecs; ++i) {
+        QTest::qWait(1000);
+        _deliverHeartbeat();   // telemetry keeps arriving; checks never change
+    }
+
+    const bool allowed = _gate->isArmingAllowed();
+    const QString reason = _gate->denialReason();
+    qInfo() << "ArmGateResilience: after" << liveSecs
+            << "s of live heartbeats with stable checks, armingAllowed =" << allowed
+            << "reason =" << reason;
+
+    QVERIFY2(allowed,
+             qPrintable(QStringLiteral(
+                 "Gate false-tripped to stale on a LIVE link: %1 heartbeat(s) were "
+                 "delivered and no check changed. reason=\\\"%2\\\"")
+                            .arg(liveSecs)
+                            .arg(reason)));
+}
+
 void ArmGateResilienceTest::testNeverSawTelemetryIsFailClosed()
 {
-    // Build the same healthy, all-checks-passing gate, but never deliver a tick.
+    // Build the same healthy, all-checks-passing gate, but never deliver a heartbeat.
     _buildArmableGate(false);
     _settle();
 

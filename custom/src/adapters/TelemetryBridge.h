@@ -815,6 +815,12 @@ signals:
     void armedChanged();
     void flightModeChanged();
     void heartbeatReceivedChanged();
+    /// Emitted on every received HEARTBEAT message (the ~1 Hz liveness pulse).
+    /// This is the "telemetry arrival" edge consumers must use to prove the link
+    /// is live; unlike connectionQualityChanged it fires even when the quality
+    /// value does not change, so a watchdog sees every pulse and can detect the
+    /// absence of them.
+    void heartbeatTick();
     void vibrationChanged();
     void estimatorStatusChanged();
     void ahrsHealthChanged();

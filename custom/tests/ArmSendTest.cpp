@@ -73,6 +73,11 @@ private slots:
     void testForceArmRefusalTextIsSubstituted();
     void testStockChainDeniedInsideBenchOverrideWindow();
     void testSameTokenSecondArmDeniedThenFreshMintArms();
+    void testAcknowledgedOverrideAllowsExactlyOneArm();
+    void testAckBindingDeniesStockExecuteAction();
+    void testUnusedAckExpiresAndDenies();
+    void testDisarmDoesNotLeaveGateOpen();
+    void testUnspentAckDeniesStockArmThenAllowsBoundArm();
 
 private:
     bool _pumpUntil(bool (*cond)(void* ctx), void* ctx, int timeoutMs);
@@ -135,6 +140,11 @@ void ArmSendTest::_makeBlockedGate(ArmingGate &gate, MockTelemetryBridge &bridge
 
     QVERIFY(!gate.isArmingAllowed());
     QVERIFY(!gate.isOverrideActive());
+
+    // Keep telemetry fresh for heartbeat-driven staleness
+    bridge.emitHeartbeat();
+    QTest::qWait(10);
+    bridge.emitHeartbeat();
 
     _vehicle->setArmCommandInterceptor(gate.makeArmInterceptor());
 }
@@ -678,6 +688,231 @@ void ArmSendTest::testSameTokenSecondArmDeniedThenFreshMintArms()
     QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 1);
     QVERIFY(_pumpUntil([](void* ctx) { return static_cast<Vehicle*>(ctx)->armed(); }, _vehicle, 10000));
     QVERIFY(_vehicle->armed());
+}
+
+// (l) ALLOW_WITH_ACK is the dialog's path. ArmGateDialog.qml's
+//     "Acknowledge & Arm" calls ArmingGate.acknowledgeOverride(name, reason);
+//     the toolbar then calls TelemetryBridge::arm(), which reaches the SAME
+//     Vehicle interceptor installed by setArmingGate(). The acknowledgment must
+//     therefore be honored BY THE INTERCEPTOR as a ONE-SHOT bypass: exactly one
+//     arm goes out and the vehicle arms, then the gate is closed again and a
+//     second arm (no fresh acknowledgment) is denied locally, nothing on the wire.
+//     Before the fix the acknowledgment was consulted only by
+//     interceptCommandLong() (the inbound peer-command path), so the local UI
+//     arm was denied by the very checks the operator had just acknowledged.
+void ArmSendTest::testAcknowledgedOverrideAllowsExactlyOneArm()
+{
+    QVERIFY(_connectPlane());
+    QVERIFY(!_vehicle->armed());
+
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    bridge.setVehicle(_vehicle);
+
+    ArmingGate gate;
+    _makeBlockedGate(gate, bridge);
+    bridge.setArmingGate(&gate);            // installs the real interceptor
+    QVERIFY(!gate.isArmingAllowed());       // gate genuinely closed
+    QVERIFY(!gate.isOverrideActive());
+
+    _mockLink->clearReceivedMavCommandCounts();
+
+    // Exactly what ArmGateDialog.qml does when the operator acknowledges.
+    QVERIFY(gate.acknowledgeOverride(QStringLiteral("Test Pilot"),
+                                     QStringLiteral("acknowledged failing checks")));
+
+    // FIRST arm: the acknowledged override must let exactly this one through.
+    bridge.arm();
+    QVERIFY2(_pumpUntil([](void* ctx) {
+        MockLink* link = static_cast<MockLink*>(ctx);
+        return link->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM) >= 1;
+    }, _mockLink, 10000),
+             "acknowledged override did not send the arm command (interceptor ignored m_ackReceived)");
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 1);
+    QCOMPARE(_mockLink->lastArmDisarmParam1(), 1.0f);
+
+    QVERIFY(_pumpUntil([](void* ctx) {
+        return static_cast<Vehicle*>(ctx)->armed();
+    }, _vehicle, 10000));
+    QVERIFY(_vehicle->armed());
+
+    // SECOND arm with NO new acknowledgment: the one-shot is spent -> vetoed.
+    _mockLink->clearReceivedMavCommandCounts();
+    QSignalSpy denySpy(_vehicle, &Vehicle::mavCommandResult);
+    bridge.arm();
+
+    QTest::qWait(500);   // give an (incorrect) second send time to reach the link
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 0);
+
+    bool sawDenied = false;
+    const QList<QList<QVariant>> deny = denySpy;
+    for (const QList<QVariant> &args : deny) {
+        if (args.size() >= 4 && args.at(2).toInt() == MAV_CMD_COMPONENT_ARM_DISARM &&
+            args.at(3).toInt() == MAV_RESULT_DENIED) {
+            sawDenied = true;
+            break;
+        }
+    }
+    QVERIFY2(sawDenied, "second arm after the one-shot acknowledgment was NOT denied");
+}
+
+
+// Ack scoping: the acknowledgement is bound to the originating local arm path.
+// A stock arm attempt issued WITHOUT the minted ack token must be denied even
+// though an acknowledgement was present. The stock funnel for
+// executeAction(actionArm) is Vehicle::setArmed(true), which bears no ack token,
+// so the interceptor must veto it locally and nothing reaches the wire.
+void ArmSendTest::testAckBindingDeniesStockExecuteAction()
+{
+    QVERIFY(_connectPlane());
+    QVERIFY(!_vehicle->armed());
+
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    bridge.setVehicle(_vehicle);
+
+    ArmingGate gate;
+    _makeBlockedGate(gate, bridge);
+    bridge.setArmingGate(&gate); // installs interceptor
+    QVERIFY(!gate.isArmingAllowed());
+    QVERIFY(!gate.isOverrideActive());
+
+    _mockLink->clearReceivedMavCommandCounts();
+    QVERIFY(gate.acknowledgeOverride(QStringLiteral("Test Pilot"), QStringLiteral("ack")));
+
+    // FIRST arm via the bound bridge.arm() path consumes the one-shot ack.
+    bridge.arm();
+    QVERIFY(_pumpUntil([](void* ctx){ return static_cast<Vehicle*>(ctx)->armed(); }, _vehicle, 8000));
+    QVERIFY(_vehicle->armed());
+
+    // Disarm and wait for the disarm to actually land on the link BEFORE clearing
+    // the counter. setArmed() is asynchronous; clearing immediately lets the
+    // disarm arrive afterwards and be miscounted as an arm command because
+    // MockLink counts by MAV_CMD id, not by param1.
+    _vehicle->setArmed(false, false);
+    QVERIFY(_pumpUntil([](void* ctx){ return !static_cast<Vehicle*>(ctx)->armed(); }, _vehicle, 8000));
+    _mockLink->clearReceivedMavCommandCounts();
+
+    // Model the stock executeAction(actionArm) path: a direct Vehicle arm that
+    // does not clear or present the ack token. The acknowledgement is already
+    // spent, so this must be vetoed even if a stale token lingers on the vehicle.
+    _vehicle->setArmed(true, false);
+    QTest::qWait(400);
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 0);
+}
+
+
+// After an acknowledged one-shot arm, disarming must NOT leave the gate open.
+// The mandatory check is still Failed, so a further arm (with no fresh ack) must
+// be denied locally and never reach the wire — a disarm must not re-open the gate.
+void ArmSendTest::testDisarmDoesNotLeaveGateOpen()
+{
+    QVERIFY(_connectPlane());
+    QVERIFY(!_vehicle->armed());
+
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    bridge.setVehicle(_vehicle);
+
+    ArmingGate gate;
+    _makeBlockedGate(gate, bridge);
+    bridge.setArmingGate(&gate);
+    QVERIFY(!gate.isArmingAllowed());
+    QVERIFY(!gate.isOverrideActive());
+
+    _mockLink->clearReceivedMavCommandCounts();
+    QVERIFY(gate.acknowledgeOverride(QStringLiteral("Test Pilot"), QStringLiteral("ack")));
+
+    bridge.arm();
+    QVERIFY(_pumpUntil([](void* ctx){ return static_cast<Vehicle*>(ctx)->armed(); }, _vehicle, 8000));
+    QVERIFY(_vehicle->armed());
+
+    _vehicle->setArmed(false, false);
+    QVERIFY(_pumpUntil([](void* ctx){ return !static_cast<Vehicle*>(ctx)->armed(); }, _vehicle, 8000));
+    _mockLink->clearReceivedMavCommandCounts();
+
+    QVERIFY2(!gate.isArmingAllowed(),
+             "gate reopened after a disarm while a mandatory check is still Failed");
+
+    bridge.arm(); // no fresh ack -> must be denied
+    QTest::qWait(400);
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 0);
+}
+
+
+// The unspent ALLOW_WITH_ACK is bound to the bridge.arm() call, not ambient. A
+// stock arm attempt (no token) while the ack is still unspent must be denied, and
+// only the bound bridge.arm() may then consume it and send exactly one arm.
+void ArmSendTest::testUnspentAckDeniesStockArmThenAllowsBoundArm()
+{
+    QVERIFY(_connectPlane());
+    QVERIFY(!_vehicle->armed());
+
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    bridge.setVehicle(_vehicle);
+
+    ArmingGate gate;
+    _makeBlockedGate(gate, bridge);
+    bridge.setArmingGate(&gate);
+    QVERIFY(!gate.isArmingAllowed());
+    QVERIFY(!gate.isOverrideActive());
+
+    _mockLink->clearReceivedMavCommandCounts();
+    QVERIFY(gate.acknowledgeOverride(QStringLiteral("Test Pilot"), QStringLiteral("ack")));
+
+    // Stock arm with NO token (deliberately do NOT call setArmOverrideToken): the
+    // unspent ack must not authorize it, so nothing reaches the wire.
+    _vehicle->setArmed(true, false);
+    QTest::qWait(400);
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 0);
+    QVERIFY(!_vehicle->armed());
+
+    // Only the bound bridge.arm() may consume the still-unspent ack: exactly one
+    // arm goes out and the vehicle arms.
+    bridge.arm();
+    QVERIFY(_pumpUntil([](void* ctx){ return static_cast<Vehicle*>(ctx)->armed(); }, _vehicle, 8000));
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 1);
+    QVERIFY(_vehicle->armed());
+}
+
+
+// Ack scoping: an unused acknowledgment must expire/clear appropriately.
+// If no arm is attempted after acking, a subsequent arm attempt is denied
+// (ack is one-time use and does not remain active indefinitely).
+void ArmSendTest::testUnusedAckExpiresAndDenies()
+{
+    QVERIFY(_connectPlane());
+    QVERIFY(!_vehicle->armed());
+
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    bridge.setVehicle(_vehicle);
+
+    ArmingGate gate;
+    _makeBlockedGate(gate, bridge);
+    bridge.setArmingGate(&gate);
+    QVERIFY(!gate.isArmingAllowed());
+
+    // Use a short test-only expiry so this does not depend on the operational
+    // kAckExpirySec window (two-step operator flow, see Config.h).
+    gate.setAckExpiryMs(300);
+
+    _mockLink->clearReceivedMavCommandCounts();
+    QVERIFY(gate.acknowledgeOverride(QStringLiteral("Test Pilot"), QStringLiteral("ack")));
+    // Do NOT arm - ack goes unused. Attempt arm later - must be denied.
+    QSignalSpy denySpy(_vehicle, &Vehicle::mavCommandResult);
+    QTest::qWait(700); // wait past the 300 ms test-configured expiry
+    bridge.arm();
+    QTest::qWait(400);
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 0);
+    // also check gate state
+    QVERIFY(!gate.isArmingAllowed());
 }
 
 UT_REGISTER_TEST(ArmSendTest)
