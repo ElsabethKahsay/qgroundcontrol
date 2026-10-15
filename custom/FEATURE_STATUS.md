@@ -1,5 +1,11 @@
 # Feature Status Report — `custom/` UAV Preflight Plugin
 
+## Removed from roster
+
+Removed per product owner: not important for Phase 1. Vehicle-side pre-arm checks remain.
+
+BaroTemperatureCheck, BatteryHealthCheck, CellConfigCheck, CellVoltageBalanceCheck, CompassCalCheck, CompassYawConsistencyCheck, DualGpsConsistencyCheck, EkfStatusFlagsCheck, EkfVarianceCheck, GpsSpeedAccuracyCheck, GyroBiasCheck, ImuTemperatureCheck, LevelCalibrationCheck, MagFieldStrengthCheck, MagInterferenceCheck, OpticalFlowCheck, PowerModuleHealthCheck, RedundantPowerCheck, VibrationCheck.
+
 > Generated: 2026-08-23 · Evidence base: full source read of `custom/` (C++/QML/CMake/docs), git log, unit-test inventory.
 > Every status below is backed by a file + symbol reference. Nothing is claimed without evidence on disk.
 

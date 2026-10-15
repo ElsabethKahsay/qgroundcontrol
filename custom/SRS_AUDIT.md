@@ -1,5 +1,11 @@
 # SRS v1.0 Audit: QGC Custom Preflight Plugin
 
+## Removed from roster
+
+Removed per product owner: not important for Phase 1. Vehicle-side pre-arm checks remain.
+
+BaroTemperatureCheck, BatteryHealthCheck, CellConfigCheck, CellVoltageBalanceCheck, CompassCalCheck, CompassYawConsistencyCheck, DualGpsConsistencyCheck, EkfStatusFlagsCheck, EkfVarianceCheck, GpsSpeedAccuracyCheck, GyroBiasCheck, ImuTemperatureCheck, LevelCalibrationCheck, MagFieldStrengthCheck, MagInterferenceCheck, OpticalFlowCheck, PowerModuleHealthCheck, RedundantPowerCheck, VibrationCheck.
+
 **Date**: 2026-06-14  
 **Target**: `~/qgroundcontrol/custom/` — QGC custom build plugin  
 **Scope**: Quadcopter (MAV_TYPE_QUADROTOR), ArduPilot/PX4  
