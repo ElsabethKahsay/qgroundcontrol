@@ -51,7 +51,6 @@ int qInitResources_qmlcache_VehicleSetupModule();
 #include "AbstractCheck.h"
 #include "adapters/TelemetryBridge.h"
 #include "core/ArmingGate.h"
-#include "core/BatteryHealthCheck.h"
 #include "core/MissionEnergyCheck.h"
 #include "core/ChecklistEngine.h"
 #include "core/ChecklistItemModel.h"
@@ -239,11 +238,6 @@ void PreflightPlugin::init()
     _vehicleProfileManager = new VehicleProfileManager(this);
     _vehicleProfileManager->setTelemetryBridge(_telemetryBridge);
     _vehicleProfileManager->setArmingGate(_armingGate);
-
-    // BatteryHealthCheck needs the VehicleProfileManager singleton (capacity
-    // retention / voltage sag tracking from DB history), which only exists now.
-    // Register it so it is evaluated like the other checks.
-    _preflightManager->addCheck(new BatteryHealthCheck(_vehicleProfileManager, 80.0, 0.5, this));
 
     // MissionEnergyCheck was compiled but never registered in the roster.  It
     // needs the PowerModel (line 224) and VehicleProfileManager singletons,

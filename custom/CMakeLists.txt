@@ -47,6 +47,7 @@ set(QML_IMPORT_PATH ${QML_IMPORT_PATH}
     CACHE STRING "Extra qml import paths" FORCE
 )
 
+
 # ============================================================================
 # Custom Plugin Sources (listed explicitly to avoid VerifyGlobs loop)
 # ============================================================================
@@ -55,64 +56,98 @@ set(CUSTOM_SOURCE_REL
     src/PreflightPlugin.cpp
     src/PreflightPlugin.h
     src/QmlModuleInit.cpp
+    src/adapters/QgcParameterAdapter.cpp
+    src/adapters/QgcParameterAdapter.h
+    src/adapters/QgcVehicleAdapter.cpp
+    src/adapters/QgcVehicleAdapter.h
     src/adapters/TelemetryBridge.cpp
     src/adapters/TelemetryBridge.h
     src/controllers/HardwareTestController.cpp
     src/controllers/HardwareTestController.h
-    src/controllers/ControlSurfaceTestController.cpp
-    src/controllers/ControlSurfaceTestController.h
     src/controllers/HardwareTestProfile.cpp
     src/controllers/HardwareTestProfile.h
     src/core/AbstractCheck.cpp
     src/core/AbstractCheck.h
     src/core/AccelConsistencyCheck.cpp
     src/core/AccelConsistencyCheck.h
+    src/core/AhrsHealthCheck.cpp
+    src/core/AhrsHealthCheck.h
     src/core/AirspeedCheck.cpp
     src/core/AirspeedCheck.h
+    src/core/AmbientTemperatureCheck.cpp
+    src/core/AmbientTemperatureCheck.h
     src/core/ArmingGate.cpp
     src/core/ArmingGate.h
     src/core/AttitudeCheck.cpp
     src/core/AttitudeCheck.h
+    src/core/BaroAltConsistencyCheck.cpp
+    src/core/BaroAltConsistencyCheck.h
+    src/core/BaroHealthCheck.cpp
+    src/core/BaroHealthCheck.h
     src/core/BatteryFailsafeCheck.cpp
     src/core/BatteryFailsafeCheck.h
-    src/core/BatteryFailsafeParamCheck.cpp
-    src/core/BatteryFailsafeParamCheck.h
     src/core/BatteryTemperatureCheck.cpp
     src/core/BatteryTemperatureCheck.h
     src/core/BatteryVoltageCheck.cpp
     src/core/BatteryVoltageCheck.h
-    src/core/CellConfigCheck.cpp
-    src/core/CellConfigCheck.h
     src/core/ChecklistEngine.cpp
     src/core/ChecklistEngine.h
     src/core/ChecklistItemModel.cpp
     src/core/ChecklistItemModel.h
+    src/core/CompanionLinkCheck.cpp
+    src/core/CompanionLinkCheck.h
+    src/core/CompassOrientationCheck.cpp
+    src/core/CompassOrientationCheck.h
+    src/core/CurrentSensorCheck.cpp
+    src/core/CurrentSensorCheck.h
     src/core/EkfFailsafeCheck.cpp
     src/core/EkfFailsafeCheck.h
+    src/core/EscCurrentSymmetryCheck.cpp
+    src/core/EscCurrentSymmetryCheck.h
+    src/core/EscFirmwareCheck.cpp
+    src/core/EscFirmwareCheck.h
+    src/core/EscResponsivenessCheck.cpp
+    src/core/EscResponsivenessCheck.h
+    src/core/EscVoltageConsistencyCheck.cpp
+    src/core/EscVoltageConsistencyCheck.h
     src/core/GcsFailsafeCheck.cpp
     src/core/GcsFailsafeCheck.h
+    src/core/GeofenceMaxAltCheck.cpp
+    src/core/GeofenceMaxAltCheck.h
+    src/core/GeofenceMaxRadiusCheck.cpp
+    src/core/GeofenceMaxRadiusCheck.h
+    src/core/GeofenceParamCheck.cpp
+    src/core/GeofenceParamCheck.h
     src/core/GimbalLinkCheck.cpp
     src/core/GimbalLinkCheck.h
+    src/core/GpsBaroAltConsistencyCheck.cpp
+    src/core/GpsBaroAltConsistencyCheck.h
     src/core/GpsFixCheck.cpp
     src/core/GpsFixCheck.h
-    src/core/GpsSpeedAccuracyCheck.cpp
-    src/core/GpsSpeedAccuracyCheck.h
     src/core/HeartbeatCheck.cpp
     src/core/HeartbeatCheck.h
     src/core/HomePositionCheck.cpp
     src/core/HomePositionCheck.h
-    src/core/ImuTemperatureCheck.cpp
-    src/core/ImuTemperatureCheck.h
-    src/core/LevelCalibrationCheck.cpp
-    src/core/LevelCalibrationCheck.h
-    src/core/LiveArmDriver.cpp
-    src/core/LiveArmDriver.h
+    src/core/ImuCalCheck.cpp
+    src/core/ImuCalCheck.h
     src/core/ManualConfirmCheck.cpp
     src/core/ManualConfirmCheck.h
     src/core/MavlinkProtocolCheck.cpp
     src/core/MavlinkProtocolCheck.h
+    src/core/MetarCeilingCheck.cpp
+    src/core/MetarCeilingCheck.h
+    src/core/MetarPrecipitationCheck.cpp
+    src/core/MetarPrecipitationCheck.h
+    src/core/MetarTemperatureCheck.cpp
+    src/core/MetarTemperatureCheck.h
+    src/core/MetarVisibilityCheck.cpp
+    src/core/MetarVisibilityCheck.h
+    src/core/MissionCountCheck.cpp
+    src/core/MissionCountCheck.h
     src/core/MissionEnergyCheck.cpp
     src/core/MissionEnergyCheck.h
+    src/core/MissionItemCheck.cpp
+    src/core/MissionItemCheck.h
     src/core/MotorCountCheck.cpp
     src/core/MotorCountCheck.h
     src/core/MotorSpinCheck.cpp
@@ -122,110 +157,61 @@ set(CUSTOM_SOURCE_REL
     src/core/ParameterWatchlist.h
     src/core/PowerModel.cpp
     src/core/PowerModel.h
+    src/core/PreArmOkCheck.cpp
+    src/core/PreArmOkCheck.h
     src/core/PreflightManager.cpp
     src/core/PreflightManager.h
     src/core/PreflightStateMachine.cpp
     src/core/PreflightStateMachine.h
+    src/core/RadioBufferCheck.cpp
+    src/core/RadioBufferCheck.h
     src/core/RadioFailsafeCheck.cpp
     src/core/RadioFailsafeCheck.h
     src/core/RcArmingSwitchCheck.cpp
     src/core/RcArmingSwitchCheck.h
     src/core/RcCalibrationCheck.cpp
     src/core/RcCalibrationCheck.h
+    src/core/RcChannelCountCheck.cpp
+    src/core/RcChannelCountCheck.h
     src/core/RcFailsafeCheck.cpp
     src/core/RcFailsafeCheck.h
     src/core/RcModeSwitchCheck.cpp
     src/core/RcModeSwitchCheck.h
-    src/core/RcThrottleMinCheck.cpp
-    src/core/RcThrottleMinCheck.h
-    src/core/RtlAltParamCheck.cpp
-    src/core/RtlAltParamCheck.h
-    src/core/TelemetryDropRateCheck.cpp
-    src/core/TelemetryDropRateCheck.h
-    src/core/UavParameterManager.cpp
-    src/core/UavParameterManager.h
-    src/core/VehicleProfileManager.cpp
-    src/core/VehicleProfileManager.h
-    src/core/ZoneComplianceCheck.cpp
-    src/core/ZoneComplianceCheck.h
-    src/core/VideoFeedCheck.cpp
-    src/core/VideoFeedCheck.h
-    src/core/AmbientTemperatureCheck.cpp
-    src/core/AmbientTemperatureCheck.h
-    src/core/BaroHealthCheck.cpp
-    src/core/BaroHealthCheck.h
-    src/core/BaroTemperatureCheck.cpp
-    src/core/BaroTemperatureCheck.h
-    src/core/BatteryHealthCheck.cpp
-    src/core/BatteryHealthCheck.h
-    src/core/CellVoltageBalanceCheck.cpp
-    src/core/CellVoltageBalanceCheck.h
-    src/core/CompanionLinkCheck.cpp
-    src/core/CompanionLinkCheck.h
-    src/core/CompassCalCheck.cpp
-    src/core/CompassCalCheck.h
-    src/core/CompassYawConsistencyCheck.cpp
-    src/core/CompassYawConsistencyCheck.h
-    src/core/DualGpsConsistencyCheck.cpp
-    src/core/DualGpsConsistencyCheck.h
-    src/core/EkfStatusFlagsCheck.cpp
-    src/core/EkfStatusFlagsCheck.h
-    src/core/EkfVarianceCheck.cpp
-    src/core/EkfVarianceCheck.h
-    src/core/EscCurrentSymmetryCheck.cpp
-    src/core/EscCurrentSymmetryCheck.h
-    src/core/EscFirmwareCheck.cpp
-    src/core/EscFirmwareCheck.h
-    src/core/EscResponsivenessCheck.cpp
-    src/core/EscResponsivenessCheck.h
-    src/core/EscVoltageConsistencyCheck.cpp
-    src/core/EscVoltageConsistencyCheck.h
-    src/core/GeofenceMaxAltCheck.cpp
-    src/core/GeofenceMaxAltCheck.h
-    src/core/GeofenceMaxRadiusCheck.cpp
-    src/core/GeofenceMaxRadiusCheck.h
-    src/core/GeofenceParamCheck.cpp
-    src/core/GeofenceParamCheck.h
-    src/core/GyroBiasCheck.cpp
-    src/core/GyroBiasCheck.h
-    src/core/ImuCalCheck.cpp
-    src/core/ImuCalCheck.h
-    src/core/MagFieldStrengthCheck.cpp
-    src/core/MagFieldStrengthCheck.h
-    src/core/MagInterferenceCheck.cpp
-    src/core/MagInterferenceCheck.h
-    src/core/MetarTemperatureCheck.cpp
-    src/core/MetarTemperatureCheck.h
-    src/core/MissionItemCheck.cpp
-    src/core/MissionItemCheck.h
-    src/core/OpticalFlowCheck.cpp
-    src/core/OpticalFlowCheck.h
-    src/core/PowerModuleHealthCheck.cpp
-    src/core/PowerModuleHealthCheck.h
-    src/core/PreArmOkCheck.cpp
-    src/core/PreArmOkCheck.h
-    src/core/RadioBufferCheck.cpp
-    src/core/RadioBufferCheck.h
-    src/core/RcChannelCountCheck.cpp
-    src/core/RcChannelCountCheck.h
     src/core/RcRssiCheck.cpp
     src/core/RcRssiCheck.h
+    src/core/RcThrottleMinCheck.cpp
+    src/core/RcThrottleMinCheck.h
     src/core/RcTrimCheck.cpp
     src/core/RcTrimCheck.h
-    src/core/RedundantPowerCheck.cpp
-    src/core/RedundantPowerCheck.h
+    src/core/RtlAltParamCheck.cpp
+    src/core/RtlAltParamCheck.h
     src/core/RtlTerrainCheck.cpp
     src/core/RtlTerrainCheck.h
     src/core/TafDeteriorationCheck.cpp
     src/core/TafDeteriorationCheck.h
     src/core/TakeoffCommandCheck.cpp
     src/core/TakeoffCommandCheck.h
+    src/core/TelemetryDropRateCheck.cpp
+    src/core/TelemetryDropRateCheck.h
     src/core/TerrainClearanceCheck.cpp
     src/core/TerrainClearanceCheck.h
-    src/core/VibrationCheck.cpp
-    src/core/VibrationCheck.h
+    src/core/UavParameterManager.cpp
+    src/core/UavParameterManager.h
+    src/core/VehicleProfileManager.cpp
+    src/core/VehicleProfileManager.h
+    src/core/VibrationFailsafeCheck.cpp
+    src/core/VibrationFailsafeCheck.h
+    src/core/VideoFeedCheck.cpp
+    src/core/VideoFeedCheck.h
+    src/core/WeatherWindCheck.cpp
+    src/core/WeatherWindCheck.h
     src/core/WeatherWindGustCheck.cpp
     src/core/WeatherWindGustCheck.h
+    src/core/WindSpeedCheck.cpp
+    src/core/WindSpeedCheck.h
+    src/detection/VehicleDetector.cpp
+    src/detection/VehicleDetector.h
+    src/detection/D
     src/mission/WaypointMath.cpp
     src/mission/WaypointMath.h
     src/mission/WaypointMathHelper.cpp
@@ -236,6 +222,8 @@ set(CUSTOM_SOURCE_REL
     src/ui/PreflightChecklistModel.h
     src/utils/AlertManager.cpp
     src/utils/AlertManager.h
+    src/utils/AutopilotDetector.cpp
+    src/utils/AutopilotDetector.h
     src/utils/AutopilotInfoDetector.cpp
     src/utils/AutopilotInfoDetector.h
     src/utils/ClipboardHelper.cpp
@@ -252,25 +240,13 @@ set(CUSTOM_SOURCE_REL
     src/utils/PreflightSettingsManager.h
     src/utils/TemplateManager.cpp
     src/utils/TemplateManager.h
+    src/utils/VideoManager.cpp
+    src/utils/VideoManager.h
     src/utils/WeatherProvider.cpp
     src/utils/WeatherProvider.h
     src/detection/VehicleRegistry.cpp
     src/detection/VehicleRegistry.h
-    src/managers/OperatorManager.cpp
-    src/managers/OperatorManager.h
-    src/managers/FlightSession.cpp
-    src/managers/FlightSession.h
-    src/managers/TelemetryEventLogger.cpp
-    src/managers/TelemetryEventLogger.h
-    src/models/FlightHistoryModel.cpp
-    src/models/FlightHistoryModel.h
-    src/models/NoFlyZoneModel.cpp
-    src/models/NoFlyZoneModel.h
-    src/models/VehicleListModel.cpp
-    src/models/VehicleListModel.h
 )
-
-set(CUSTOM_SOURCES "")
 
 foreach(_src IN LISTS CUSTOM_SOURCE_REL)
     list(APPEND CUSTOM_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/${_src}")
@@ -291,8 +267,6 @@ set(CUSTOM_INCLUDE_DIRECTORIES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/controllers
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mission
     ${CMAKE_CURRENT_SOURCE_DIR}/src/detection
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/managers
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/models
     CACHE INTERNAL "" FORCE
 )
 
@@ -322,8 +296,6 @@ if(QGC_BUILD_TESTING)
     file(GLOB_RECURSE _custom_test_src
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/*.h
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mocks/*.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/mocks/*.h
     )
     if(_custom_test_src)
         list(APPEND CUSTOM_SOURCES ${_custom_test_src})
