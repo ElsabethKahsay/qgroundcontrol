@@ -97,3 +97,8 @@ cpm_modules
 
 # local scratch/work files (never committed)
 custom/scratch/
+eeprom.bin
+logs/
+manifest.json
+t3_raw.txt
+terrain/
