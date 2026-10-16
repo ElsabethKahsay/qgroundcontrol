@@ -3,9 +3,8 @@
  * @brief Energy consumption prediction from flight history and airframe defaults.
  *
  * Provides per-airframe Wh/km defaults and supports per-vehicle calibration
- * using linear regression on payload vs. consumption data. Used by
- * MissionEnergyCheck to estimate whether the battery has sufficient charge
- * for a planned mission distance.
+ * using linear regression on payload vs. consumption data. Used to estimate
+ * whether the battery has sufficient charge for a planned mission distance.
  */
 
 #include "PowerModel.h"
@@ -170,7 +169,7 @@ PowerEstimate PowerModel::estimate(const QString &deviceUid, double payloadKg,
         hoverWhPerMin = hoverWhPerMin * (1.0 + kPayloadWhSurchargePerKg * qMax(0.0, payloadKg));
     }
 
-    // Full battery capacity — safety margin applied by caller (MissionEnergyCheck)
+    // Full battery capacity — any safety margin is applied by the caller
     double usableWh = batteryCapacityWh;
 
     // Cruise consumption

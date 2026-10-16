@@ -23,17 +23,11 @@
 #include "BatteryFailsafeParamCheck.h"
 #include "BatteryTemperatureCheck.h"
 #include "BatteryVoltageCheck.h"
-#include "CompanionLinkCheck.h"
 #include "DatabaseManager.h"
 #include "EkfFailsafeCheck.h"
-#include "EscCurrentSymmetryCheck.h"
 #include "EscFirmwareCheck.h"
 #include "EscResponsivenessCheck.h"
-#include "EscVoltageConsistencyCheck.h"
 #include "GcsFailsafeCheck.h"
-#include "GeofenceMaxAltCheck.h"
-#include "GeofenceMaxRadiusCheck.h"
-#include "GeofenceParamCheck.h"
 #include "GimbalLinkCheck.h"
 #include "GpsFixCheck.h"
 #include "HeartbeatCheck.h"
@@ -42,31 +36,19 @@
 #include "ManualConfirmCheck.h"
 #include "MavlinkProtocolCheck.h"
 #include "MetarTemperatureCheck.h"
-#include "MissionEnergyCheck.h"
-#include "MissionItemCheck.h"
 #include "MotorCountCheck.h"
 #include "MotorSpinCheck.h"
 #include "MotorTemperatureCheck.h"
 #include "ParameterWatchlist.h"
-#include "PreArmOkCheck.h"
-#include "RadioBufferCheck.h"
 #include "RadioFailsafeCheck.h"
-#include "RcArmingSwitchCheck.h"
-#include "RcCalibrationCheck.h"
-#include "RcChannelCountCheck.h"
+#include "RcCheck.h"
 #include "RcFailsafeCheck.h"
 #include "RcModeSwitchCheck.h"
 #include "RcRssiCheck.h"
-#include "RcThrottleMinCheck.h"
-#include "RcTrimCheck.h"
 #include "RtlAltParamCheck.h"
-#include "RtlTerrainCheck.h"
 #include "TafDeteriorationCheck.h"
-#include "TakeoffCommandCheck.h"
 #include "TelemetryBridge.h"
 #include "TelemetryDropRateCheck.h"
-#include "TerrainClearanceCheck.h"
-#include "VideoFeedCheck.h"
 #include "WeatherWindGustCheck.h"
 #include "ZoneComplianceCheck.h"
 
@@ -842,13 +824,10 @@ void PreflightManager::createPhase1Checks() {
 
   // Tier 1 — Communication
   m_checks.append(new TelemetryDropRateCheck(m_telemetry, 10, 5, this));
-  m_checks.append(new RcThrottleMinCheck(m_telemetry, this));
-  m_checks.append(new CompanionLinkCheck(m_telemetry, this));
+  m_checks.append(new RcCheck(m_telemetry, this));
 
   // Tier 2 — rc communication
   m_checks.append(new RcModeSwitchCheck(m_telemetry, this));
-  m_checks.append(new RcArmingSwitchCheck(m_telemetry, this));
-  m_checks.append(new RcCalibrationCheck(m_telemetry, this));
   m_checks.append(new RcFailsafeCheck(m_telemetry, 50, this));
 
   // Tier 3 — Warning / non-blocking auto-checks/ side bar info
@@ -862,30 +841,16 @@ void PreflightManager::createPhase1Checks() {
   m_checks.append(new MotorTemperatureCheck(m_telemetry, 80.0, this));
   m_checks.append(new BaroHealthCheck(m_telemetry, this));
   m_checks.append(new RcRssiCheck(m_telemetry, 50, 50, this));
-  m_checks.append(new RcTrimCheck(m_telemetry, 50, this));
-  m_checks.append(new RcChannelCountCheck(m_telemetry, this));
-  m_checks.append(new RadioBufferCheck(m_telemetry, 20, this));
 
   // Tier 5 — Failsafe / Safety checks
   m_checks.append(new BatteryFailsafeCheck(m_telemetry, this));
   m_checks.append(new BatteryFailsafeParamCheck(m_telemetry, this));
-  m_checks.append(new PreArmOkCheck(m_telemetry, this));
   m_checks.append(new EkfFailsafeCheck(m_telemetry, this));
   m_checks.append(new GcsFailsafeCheck(m_telemetry, this));
   m_checks.append(new ImuCalCheck(m_telemetry, this));
-  m_checks.append(new RtlTerrainCheck(m_telemetry, this));
-  m_checks.append(new TerrainClearanceCheck(m_telemetry, 5.0, this));
-  m_checks.append(new GeofenceMaxAltCheck(m_telemetry, 10.0, this));
-  m_checks.append(new GeofenceMaxRadiusCheck(m_telemetry, 10.0, this));
-  m_checks.append(new GeofenceParamCheck(m_telemetry, this));
-  m_checks.append(new EscCurrentSymmetryCheck(m_telemetry, 0.20, this));
-  m_checks.append(new EscVoltageConsistencyCheck(m_telemetry, 0.5, this));
   m_checks.append(new EscFirmwareCheck(m_telemetry, this));
   m_checks.append(new EscResponsivenessCheck(m_telemetry, 800, 2200, this));
   m_checks.append(new RadioFailsafeCheck(m_telemetry, this));
-  m_checks.append(new TakeoffCommandCheck(m_telemetry, this));
-  m_checks.append(new VideoFeedCheck(m_telemetry, this));
-  m_checks.append(new MissionItemCheck(m_telemetry, 10000.0, this));
 
   // Tier 6 — Environmental / Weather
   m_checks.append(new AmbientTemperatureCheck(m_telemetry, 50.0, -10.0, this));
@@ -907,21 +872,6 @@ void PreflightManager::createPhase1Checks() {
         QStringLiteral("Fasteners, screws, and linkages tight"),
         QStringLiteral("Wiring and connectors secure"),
         QStringLiteral("Propeller/motor mounts undamaged")},
-      {}, this));
-
-  // Propulsion (1 remaining)
-  m_checks.append(new ManualConfirmCheck(
-      QStringLiteral("propulsion.propeller.direction"),
-      QStringLiteral("Propeller Direction"), CheckCategory::Propulsion,
-      QStringLiteral("Confirm propeller direction correct"),
-      {}, {QStringLiteral("MOT_SPIN_DIRECTION"), QStringLiteral("FRAME_TYPE")},
-      this));
-
-  // Navigation (1)
-  m_checks.append(new ManualConfirmCheck(
-      QStringLiteral("sensors.compass.orientation"),
-      QStringLiteral("Compass Orientation"), CheckCategory::Navigation,
-      QStringLiteral("Confirm compass orientation setting matches installed direction"), {},
       {}, this));
 
   // Sort by category for deterministic order

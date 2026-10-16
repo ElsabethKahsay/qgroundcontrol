@@ -10,7 +10,6 @@
 #include <QTimer>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QRegularExpression>
 #include <QtCore/QApplicationStatic>
 
 #include "MultiVehicleManager.h"
@@ -51,7 +50,6 @@ int qInitResources_qmlcache_VehicleSetupModule();
 #include "AbstractCheck.h"
 #include "adapters/TelemetryBridge.h"
 #include "core/ArmingGate.h"
-#include "core/MissionEnergyCheck.h"
 #include "core/ChecklistEngine.h"
 #include "core/ChecklistItemModel.h"
 #include "core/PowerModel.h"
@@ -239,13 +237,6 @@ void PreflightPlugin::init()
     _vehicleProfileManager->setTelemetryBridge(_telemetryBridge);
     _vehicleProfileManager->setArmingGate(_armingGate);
 
-    // MissionEnergyCheck was compiled but never registered in the roster.  It
-    // needs the PowerModel (line 224) and VehicleProfileManager singletons,
-    // both of which exist now, so register it as a real evaluated check.
-    MissionEnergyCheck *energyCheck = new MissionEnergyCheck(_powerModel, 0.60, this);
-    energyCheck->setVehicleProfileManager(_vehicleProfileManager);
-    _preflightManager->addCheck(energyCheck);
-
     // Keep blocking rules in sync with the resolved vehicle kind (quad vs
     // fixed wing). Fires on connect and whenever the type re-resolves.
     connect(_vehicleProfileManager, &VehicleProfileManager::vehicleTypeResolved,
@@ -267,12 +258,9 @@ void PreflightPlugin::init()
 
     // --- Vehicle registry signals ---
     // knownVehicleConnected: a previously-seen vehicle reconnected; load its saved config.
-    // newVehicleRegistered:  a never-seen vehicle appeared; save its initial config (compass, etc.)
     auto *registry = VehicleRegistry::instance();
     connect(registry, &VehicleRegistry::knownVehicleConnected,
             this, &PreflightPlugin::_onKnownVehicleConnected);
-    connect(registry, &VehicleRegistry::newVehicleRegistered,
-            this, &PreflightPlugin::_onNewVehicleRegistered);
 
     // Gate open/close tracks the flight session lifecycle for compliance logging.
     connect(_armingGate, &ArmingGate::gateOpened,
@@ -510,7 +498,7 @@ void PreflightPlugin::_onActiveVehicleChanged(Vehicle *vehicle)
 // ---------------------------------------------------------------------------
 // _onKnownVehicleConnected() — A previously-configured vehicle reconnected.
 // Loads its saved per-vehicle check configuration from the database and
-// applies it to override default check thresholds (e.g., compass orientation).
+// applies it to override default check thresholds.
 // ---------------------------------------------------------------------------
 void PreflightPlugin::_onKnownVehicleConnected(int vehicleId)
 {
@@ -537,48 +525,6 @@ void PreflightPlugin::_onKnownVehicleConnected(int vehicleId)
         }
     }
     qCDebug(preflightPluginLog) << "Vehicle config loaded for fingerprint" << fingerprint.left(16);
-}
-
-// ---------------------------------------------------------------------------
-// _onNewVehicleRegistered() — First-time vehicle detected. Records its initial
-// configuration (currently just compass orientation) to the database so future
-// reconnections can detect config drift.
-// ---------------------------------------------------------------------------
-void PreflightPlugin::_onNewVehicleRegistered(int vehicleId)
-{
-    Q_UNUSED(vehicleId)
-    qCDebug(preflightPluginLog) << "New vehicle registered:" << vehicleId;
-
-    // Save initial vehicle config with known compass orientation
-    QString fingerprint = VehicleRegistry::instance()->currentFingerprint();
-    if (fingerprint.isEmpty()) return;
-
-    AbstractCheck *compassCheck = _preflightManager
-        ? _preflightManager->checkById(QStringLiteral("nav.compass.orientation"))
-        : nullptr;
-    if (!compassCheck) return;
-
-    QJsonObject config;
-    QJsonObject compassConfig;
-
-    // Determine the current actual orientation from the check's current value
-    // Format: "CAL_MAG0_ROT=Yaw180 (4)" → extract rotation value (4)
-    QString cv = compassCheck->getCurrentValueString();
-    QRegularExpression re(QStringLiteral("\\((\\d+)\\)$"));
-    auto match = re.match(cv);
-    if (match.hasMatch()) {
-        int rot = match.captured(1).toInt();
-        if (rot > 0) {
-            compassConfig[QStringLiteral("expectedRotation")] = rot;
-            config[QStringLiteral("nav.compass.orientation")] = compassConfig;
-            DatabaseManager::instance().saveVehicleConfig(
-                fingerprint,
-                QString::fromUtf8(QJsonDocument(config).toJson(QJsonDocument::Compact)));
-            qCDebug(preflightPluginLog)
-                << "Saved initial compass config for" << fingerprint.left(16)
-                << "expectedRotation =" << rot;
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------

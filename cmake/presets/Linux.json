@@ -23,12 +23,14 @@
     {
       "name": "Linux",
       "displayName": "Linux build using Qt6",
-      "configurePreset": "Linux"
+      "configurePreset": "Linux",
+      "jobs": 2
     },
     {
       "name": "Linux-ccache",
       "displayName": "Linux build using Qt6 and ccache",
-      "configurePreset": "Linux-ccache"
+      "configurePreset": "Linux-ccache",
+      "jobs": 2
     }
   ],
   "testPresets": [

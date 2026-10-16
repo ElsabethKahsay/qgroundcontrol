@@ -73,7 +73,6 @@ public:
 private slots:
     void _onActiveVehicleChanged(Vehicle *vehicle);
     void _onKnownVehicleConnected(int vehicleId);
-    void _onNewVehicleRegistered(int vehicleId);
     void _onGateOpened();
     void _onGateClosed(const QString &reason);
     void _refreshWeather();

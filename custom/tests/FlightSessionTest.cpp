@@ -198,9 +198,9 @@ void FlightSessionTest::testVehicleConfigPersistence()
                           QStringLiteral("HARDWARE_UID"));
 
     QJsonObject config;
-    QJsonObject compassConfig;
-    compassConfig[QStringLiteral("expectedRotation")] = 4;
-    config[QStringLiteral("nav.compass.orientation")] = compassConfig;
+    QJsonObject sampleConfig;
+    sampleConfig[QStringLiteral("expectedValue")] = 4;
+    config[QStringLiteral("sample.check.config")] = sampleConfig;
 
     QString json = QString::fromUtf8(QJsonDocument(config).toJson(QJsonDocument::Compact));
 
@@ -212,8 +212,8 @@ void FlightSessionTest::testVehicleConfigPersistence()
 
     QJsonDocument doc = QJsonDocument::fromJson(loaded.toUtf8());
     QVERIFY(doc.isObject());
-    QCOMPARE(doc.object().value(QStringLiteral("nav.compass.orientation"))
-             .toObject().value(QStringLiteral("expectedRotation")).toInt(), 4);
+    QCOMPARE(doc.object().value(QStringLiteral("sample.check.config"))
+             .toObject().value(QStringLiteral("expectedValue")).toInt(), 4);
 }
 
 UT_REGISTER_TEST(FlightSessionTest)

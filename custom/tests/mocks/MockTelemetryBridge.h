@@ -174,6 +174,11 @@ public:
     void setCompassDataQuality(int v) { m_compassDataQuality = v; emit compassDataQualityChanged(); }
     void setRcDataQuality(int v) { m_rcDataQuality = v; emit rcDataQualityChanged(); }
     void setHardwareSetupRequired(bool v) { m_hardwareSetupRequired = v; emit hardwareSetupRequiredChanged(); }
+    void setSkipArmInterceptorInstall(bool v) { m_skipArmInterceptorInstall = v; }
+    void setHeartbeatReceived(bool v) { m_heartbeatReceived = v; emit heartbeatReceivedChanged(); }
+    void setLastBatteryStatusTime(const QDateTime &t) { m_lastBatteryStatusTime = t; }
+    void forceBatteryDataInvalid() { m_batteryDataValid = false; emit batteryDataValidChanged(); }
+    void forceBatteryDataValid() { m_batteryDataValid = true; emit batteryDataValidChanged(); }
 
     // -- Override TelemetryBridge virtuals --
     bool isConnected() const override { return m_connected; }
@@ -182,7 +187,6 @@ public:
     // Opt this mock into (or out of) the PRODUCTION interceptor-install path.
     // Default mimics the unit-test harness (skip install); set false to exercise
     // the real setVehicle()/setArmingGate() side-effect wiring in a test.
-    void setSkipArmInterceptorInstall(bool v) { m_skipArmInterceptorInstall = v; }
     bool _skipArmInterceptorInstall() const override { return m_skipArmInterceptorInstall; }
 
     // -- Getters (return mock values) --
@@ -258,6 +262,7 @@ public:
     int gpsDataQuality() const { return m_gpsDataQuality; }
     QString gpsStatusString() const { return m_gpsStatusString; }
     int batteryDataQuality() const { return m_batteryDataQuality; }
+    bool batteryDataValid() const { return m_batteryDataValid; }
     QString batteryStatusString() const { return m_batteryStatusString; }
     QString servoOutputsString() const { return m_servoOutputsString; }
     double gimbalPitch() const { return m_gimbalPitch; }
@@ -427,4 +432,7 @@ private:
     int m_compassDataQuality = 3;
     int m_rcDataQuality = 2;
     bool m_hardwareSetupRequired = false;
+    bool m_heartbeatReceived = false;
+    bool m_batteryDataValid = false;
+    QDateTime m_lastBatteryStatusTime;
 };

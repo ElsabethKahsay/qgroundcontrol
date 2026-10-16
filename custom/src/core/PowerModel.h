@@ -7,8 +7,7 @@
  * uses linear regression on payload vs. consumption, falling back to defaults
  * when insufficient flight data is available.
  *
- * Used by MissionEnergyCheck to determine whether the battery has enough charge
- * for a planned mission distance.
+ * Estimates whether the battery has enough charge for a planned mission distance.
  */
 
 #pragma once

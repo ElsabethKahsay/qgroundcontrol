@@ -27,6 +27,7 @@
 #include "AbstractCheck.h"
 #include "mocks/MockTelemetryBridge.h"
 #include "mocks/TestBlockingCheck.h"
+#include "HeartbeatCheck.h"
 
 class ArmGateResilienceTest : public UnitTest {
     Q_OBJECT
@@ -44,6 +45,8 @@ private slots:
     void testTokenDeniedWhenGateDestroyed();
     void testSpentTokenCannotBeReplayedAfterWindowCloses();
     void testZeroTokenNeverAuthorizes();
+    void testCommHeartbeatStalenessDoesNotMakeCheckStaleButGateCloses();
+    void testHeartbeatFreshnessDoesNotKeepGateOpenWhenBatteryStreamStops();
 
 private:
     /// Builds a gate with one mandatory passing check and a healthy bridge.
@@ -117,6 +120,7 @@ void ArmGateResilienceTest::_buildArmableGate(bool withTelemetry)
 {
     _bridge  = new MockTelemetryBridge(this);
     _manager = new PreflightManager(1, this);
+    _manager->setStalenessThresholdMs(3000); // speed up staleness in test
     _gate    = new ArmingGate(this);
     _check   = new TestBlockingCheck(QStringLiteral("resilience.check"));
 
@@ -380,6 +384,88 @@ void ArmGateResilienceTest::testZeroTokenNeverAuthorizes()
     _gate->forceArm();
     QVERIFY(!interceptor(reason, 0));
     QVERIFY(!reason.isEmpty());
+}
+
+// (a) Deliver heartbeats so every check passes; stop heartbeats; advance past the staleness
+//     window; assert comm.heartbeat leaves PENDING/PASS and the gate closes with a staleness
+//     reason.
+void ArmGateResilienceTest::testCommHeartbeatStalenessDoesNotMakeCheckStaleButGateCloses()
+{
+    _buildArmableGate(); // delivers one heartbeat; all checks pass
+    _settle();
+
+    QVERIFY2(_manager->allMandatoryPassed(),
+             qPrintable(QStringLiteral("baseline armable expected: %1").arg(_manager->armingBlocker())));
+    QVERIFY2(_gate->isArmingAllowed(),
+             qPrintable(QStringLiteral("gate open expected: %1").arg(_gate->denialReason())));
+
+    // Find comm.heartbeat check
+    HeartbeatCheck* hb = nullptr;
+    for (AbstractCheck* c : _manager->checks()) {
+        if (c && c->id() == QStringLiteral("comm.heartbeat")) { hb = qobject_cast<HeartbeatCheck*>(c); break; }
+    }
+    QVERIFY2(hb != nullptr, "comm.heartbeat check not found");
+
+    hb->evaluate();
+    const CheckStatus preStatus = hb->status();
+    Q_UNUSED(preStatus);
+
+    // Stop heartbeats past staleness window
+    const int quietSecs = 14;
+    for (int i = 0; i < quietSecs; ++i) {
+        QTest::qWait(1000);
+        hb->evaluate();
+    }
+
+    const CheckStatus postStatus = hb->status();
+    QVERIFY2(postStatus != CheckStatus::Stale,
+             qPrintable(QStringLiteral("comm.heartbeat check should not become Stale from gate silence (was %1)").arg(static_cast<int>(postStatus))));
+
+    QVERIFY2(!_gate->isArmingAllowed(),
+             qPrintable(QStringLiteral("gate must close after silence: %1").arg(_gate->denialReason())));
+    QVERIFY2(_gate->denialReason().contains(QStringLiteral("stale"), Qt::CaseInsensitive),
+             qPrintable(QStringLiteral("staleness reason expected: %1").arg(_gate->denialReason())));
+}
+
+// (b) keep heartbeats flowing but stop the battery stream; assert the battery check goes Stale
+//     and the gate closes (heartbeat freshness alone must not keep it open).
+void ArmGateResilienceTest::testHeartbeatFreshnessDoesNotKeepGateOpenWhenBatteryStreamStops()
+{
+    _buildArmableGate(); // healthy
+    _settle();
+
+    QVERIFY2(_gate->isArmingAllowed(), qPrintable(_gate->denialReason()));
+
+    AbstractCheck* batt = nullptr;
+    for (AbstractCheck* c : _manager->checks()) {
+        const QString id = c ? c->id() : QString();
+        if (id.startsWith("power.battery.") || id.startsWith("battery.") || id.contains("battery") || (id.contains("voltage") && id.contains("battery"))) {
+            batt = c; break;
+        }
+    }
+    QVERIFY2(batt != nullptr, "battery-related check not found");
+
+    batt->evaluate();
+    // Force battery to block while heartbeats keep flowing (heartbeat freshness alone must not keep gate open)
+    _bridge->forceBatteryDataInvalid();
+    if (_manager) {
+        _manager->evaluateAll();
+    }
+    _settle();
+
+    // Keep heartbeats flowing, do not refresh battery stream behavior
+    const int secs = 14;
+    for (int i = 0; i < secs; ++i) {
+        QTest::qWait(1000);
+        _deliverHeartbeat();
+        // Let PM run its evaluation/staleness logic via timers
+        _settle();
+    }
+
+    const bool allowed = _gate->isArmingAllowed();
+    const QString reason = _gate->denialReason();
+    QVERIFY2(!allowed,
+             qPrintable(QStringLiteral("gate must close when battery check blocks even if heartbeats flow: %1").arg(reason)));
 }
 
 UT_REGISTER_TEST(ArmGateResilienceTest)

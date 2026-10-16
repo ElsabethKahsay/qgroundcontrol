@@ -218,7 +218,6 @@ protected:
     void clearConfigCache() const;
 
     friend class PreflightManager;
-    friend class MissionEnergyCheckTest;
 
     // --- Core identity ---
     QString m_id;          ///< Unique string identifier (e.g. "battery_voltage")
