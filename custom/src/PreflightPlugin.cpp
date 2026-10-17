@@ -932,10 +932,20 @@ bool PreflightPlugin::mavlinkMessage(Vehicle *vehicle, LinkInterface *link, cons
                     vehicle->_updateArmed(newArmedState);
                 }
                 if (_armingGate) {
-                    if (newArmedState)
+                    // gateOpened/gateClosed drive the flight_sessions compliance
+                    // record via _onGateOpened()/_onGateClosed(): open on a
+                    // confirmed arm, close on the matching disarm. These are
+                    // emitted from the ACCEPTED ack rather than the arm *request*
+                    // so a session is only ever created for a flight that really
+                    // armed (the intercepted request can still be rejected by the
+                    // autopilot, which would otherwise leak a phantom session).
+                    if (newArmedState) {
                         emit _armingGate->vehicleArmed();
-                    else
+                        emit _armingGate->gateOpened();
+                    } else {
                         emit _armingGate->vehicleDisarmed();
+                        emit _armingGate->gateClosed(QStringLiteral("Vehicle disarmed"));
+                    }
                 }
             } else {
                 QString reason = _mavResultToString(ack.result);

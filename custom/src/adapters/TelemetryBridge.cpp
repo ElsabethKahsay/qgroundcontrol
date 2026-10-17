@@ -698,6 +698,42 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message) {
                 emit rcFailsafeChanged();
             }
 
+            // Populate the channel list read by the preflight RC checks
+            // (RcCheck, RcTrimCheck, RcModeSwitchCheck, RcCalibrationCheck).
+            // This property was previously never assigned, which left every
+            // channel-based RC check stuck in Pending forever.
+            const uint16_t raw[18] = {
+                rc.chan1_raw,  rc.chan2_raw,  rc.chan3_raw,  rc.chan4_raw,
+                rc.chan5_raw,  rc.chan6_raw,  rc.chan7_raw,  rc.chan8_raw,
+                rc.chan9_raw,  rc.chan10_raw, rc.chan11_raw, rc.chan12_raw,
+                rc.chan13_raw, rc.chan14_raw, rc.chan15_raw, rc.chan16_raw,
+                rc.chan17_raw, rc.chan18_raw
+            };
+
+            // chancount may exceed 18: the message only carries the first 18.
+            const int count = qBound(0, static_cast<int>(rc.chancount),
+                                     static_cast<int>(sizeof(raw) / sizeof(raw[0])));
+
+            QVariantList channels;
+            channels.reserve(count);
+            for (int i = 0; i < count; ++i)
+                channels.append(raw[i]);
+
+            if (_rcChannelValues != channels) {
+                _rcChannelValues = channels;
+                emit rcChannelValuesChanged();
+            }
+
+            // RC link present == the autopilot reports RC channels in use.
+            // RSSI is deliberately not consulted here: 0 / UINT8_MAX mean
+            // "unknown" on many autopilots and would mask a live link. Signal
+            // quality stays reported separately through _rcFailsafe/_rcRssi.
+            const bool connected = count > 0;
+            if (_rcConnected != connected) {
+                _rcConnected = connected;
+                emit rcConnectedChanged();
+            }
+
             // Record the timestamp of this RC update (local clock, microseconds).
             qint64 nowUsec = QDateTime::currentMSecsSinceEpoch() * 1000;
             if (nowUsec != _rcLastUpdateUsec) {
@@ -952,6 +988,18 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message) {
             if (_opticalFlowQuality != static_cast<int>(of.quality)) {
                 _opticalFlowQuality = of.quality;
                 emit opticalFlowQualityChanged();
+            }
+            break;
+        }
+        case MAVLINK_MSG_ID_MOUNT_ORIENTATION:
+        case MAVLINK_MSG_ID_GIMBAL_DEVICE_ATTITUDE_STATUS: {
+            // Presence of either message means a mount/gimbal is configured and
+            // publishing on the bus. Detection is latched for the session — the
+            // protocol has no "gimbal removed" message. Neither message carries
+            // the control mode, so _gimbalMode keeps its MAVLink default.
+            if (!_gimbalDetected) {
+                _gimbalDetected = true;
+                emit gimbalDetectedChanged();
             }
             break;
         }

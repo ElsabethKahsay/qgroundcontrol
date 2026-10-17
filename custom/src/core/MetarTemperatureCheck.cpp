@@ -42,6 +42,7 @@ void MetarTemperatureCheck::evaluate()
     if (!wp->metarFresh()) {
         if (!m_fetchTriggered) {
             m_fetchTriggered = true;
+            m_fetchStart = QDateTime::currentDateTime();
             if (settings && !settings->defaultIcao().isEmpty()) {
                 wp->fetchMetar(settings->defaultIcao());
             } else if (m_telemetry) {
@@ -53,7 +54,7 @@ void MetarTemperatureCheck::evaluate()
             setStatus(CheckStatus::Pending, QStringLiteral("Fetching METAR data\u2026"));
         }
 
-        if (m_lastEvalTime.isValid() && m_lastEvalTime.secsTo(QDateTime::currentDateTime()) > 10) {
+        if (m_fetchStart.isValid() && m_fetchStart.secsTo(QDateTime::currentDateTime()) > 10) {
             // Timeout: check for cached data
             if (wp->temperature() > -100.0) {
                 double temp = wp->temperature();
@@ -69,7 +70,6 @@ void MetarTemperatureCheck::evaluate()
                               QStringLiteral("Temperature %1 \u00B0C — STALE data").arg(temp, 0, 'f', 1));
                 }
             } else {
-                m_fetchTriggered = false;
                 QString err = wp->lastError();
                 if (!err.isEmpty())
                     setStatus(CheckStatus::Skipped, QStringLiteral("Weather fetch failed: ") + err);
@@ -83,6 +83,7 @@ void MetarTemperatureCheck::evaluate()
     }
 
     m_fetchTriggered = false;
+    m_fetchStart = QDateTime();
 
     double temp = wp->temperature();
     double tMin = configDouble(kCfgTempMin, -10.0);

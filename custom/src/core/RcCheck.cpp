@@ -10,6 +10,11 @@
 namespace {
 
 // Ordering used to surface the most severe sub-check status.
+//
+// Skipped ranks as the weakest result, level with Passed. "Not applicable" is
+// not a problem, so a composite whose applicable sub-checks all pass must read
+// as Passed. The all-skipped case is decided explicitly in evaluate(), never by
+// this ranking, so an RC-less vehicle cannot report a false Passed.
 int statusRank(CheckStatus s)
 {
     switch (s) {
@@ -18,7 +23,7 @@ int statusRank(CheckStatus s)
     case CheckStatus::Warning: return 3;
     case CheckStatus::Pending:
     case CheckStatus::Stale:   return 2;
-    case CheckStatus::Skipped: return 1;
+    case CheckStatus::Skipped:
     case CheckStatus::Passed:  return 0;
     }
     return 0;
@@ -49,45 +54,62 @@ void RcCheck::evaluate()
     CheckStatus worst = CheckStatus::Passed;
     QStringList issues;
     int passed = 0;
-    bool anyEvaluated = false;
+    int evaluated = 0;
 
     for (AbstractCheck *sub : m_subChecks) {
         sub->evaluate();
         const CheckStatus s = sub->status();
 
         if (s != CheckStatus::Pending)
-            anyEvaluated = true;
+            ++evaluated;
 
         if (s == CheckStatus::Passed) {
             ++passed;
             continue;
         }
 
-        if (s == CheckStatus::Failed || s == CheckStatus::Error ||
-            s == CheckStatus::Warning) {
-            issues << QStringLiteral("%1: %2").arg(sub->label(), sub->message());
-        }
-
-        if (statusRank(s) > statusRank(worst))
+        // Skipped never competes for worst: it means "does not apply", which is
+        // weaker than any verified result.
+        if (s != CheckStatus::Skipped && statusRank(s) > statusRank(worst))
             worst = s;
+
+        // Retain the reason for every non-passing sub-check, including Pending
+        // and Skipped, so the aggregate always names the sub-check that needs
+        // attention instead of discarding the detail.
+        issues << QStringLiteral("%1: %2").arg(sub->label(), sub->message());
     }
 
-    if (!anyEvaluated) {
-        setStatus(CheckStatus::Pending, QStringLiteral("Waiting for RC telemetry"));
-        return;
-    }
+    const int total = m_subChecks.size();
 
-    if (worst == CheckStatus::Passed) {
-        setStatus(CheckStatus::Passed,
-                  QStringLiteral("All RC checks passed (%1/%2)")
-                      .arg(passed).arg(m_subChecks.size()));
-    } else if (worst == CheckStatus::Skipped) {
-        setStatus(CheckStatus::Skipped, QStringLiteral("RC checks skipped"));
-    } else if (worst == CheckStatus::Pending || worst == CheckStatus::Stale) {
-        setStatus(worst, QStringLiteral("Waiting for RC telemetry"));
+    CheckStatus aggregate = CheckStatus::Pending;
+    QString detail;
+
+    if (evaluated == 0) {
+        // No sub-check has produced a result yet.
+        aggregate = CheckStatus::Pending;
+        detail = QStringLiteral("Waiting for RC telemetry");
+    } else if (worst != CheckStatus::Passed) {
+        // Highest severity dominates: Failed / Error / Warning / Pending /
+        // Stale, reported with the specific sub-check reasons.
+        aggregate = worst;
+        detail = issues.join(QStringLiteral("; "));
+        if (detail.isEmpty())
+            detail = QStringLiteral("RC check incomplete");
+    } else if (passed > 0) {
+        // Every applicable sub-check passed; skipped ones do not apply here.
+        aggregate = CheckStatus::Passed;
+        detail = QStringLiteral("All applicable RC checks passed (%1/%2)")
+                     .arg(passed).arg(total);
     } else {
-        setStatus(worst, issues.join(QStringLiteral("; ")));
+        // Nothing applies to this vehicle at all.
+        aggregate = CheckStatus::Skipped;
+        detail = issues.join(QStringLiteral("; "));
+        if (detail.isEmpty())
+            detail = QStringLiteral("No RC checks apply to this vehicle");
     }
+
+    setCurrentValue(passed);
+    setStatus(aggregate, detail);
 }
 
 QString RcCheck::getRationale() const

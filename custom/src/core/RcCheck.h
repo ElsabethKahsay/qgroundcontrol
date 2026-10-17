@@ -5,8 +5,11 @@
  * Aggregates the individual RC detail checks (arming switch configuration,
  * calibration, throttle minimum, trim centering and channel count) behind a
  * single "RC Check" so the Communication section presents one summary row.
- * Each sub-check is evaluated unchanged and the aggregate status is the most
- * severe sub-check status, which preserves the original arming semantics.
+ * Each sub-check is evaluated unchanged and the results are rolled up as
+ * follows: a Failed, Error or Warning result dominates; otherwise an
+ * incomplete (Pending/Stale) sub-check keeps the composite pending; otherwise
+ * the composite passes once every sub-check that applies has passed, and is
+ * reported as Skipped only when none of them apply to the vehicle.
  */
 
 #pragma once

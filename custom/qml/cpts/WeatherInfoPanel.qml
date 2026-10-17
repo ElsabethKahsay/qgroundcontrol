@@ -19,6 +19,7 @@ Rectangle {
     readonly property var _videoFeed: typeof PreflightManager !== "undefined" ? PreflightManager.checkById("video.feed") : null
     readonly property var _homePosition: typeof PreflightManager !== "undefined" ? PreflightManager.checkById("nav.home") : null
     readonly property var _attitude: typeof PreflightManager !== "undefined" ? PreflightManager.checkById("nav.attitude") : null
+    readonly property var _escFirmware: typeof PreflightManager !== "undefined" ? PreflightManager.checkById("propulsion.esc.firmware") : null
 
     function _statusColor(check) {
         if (!check) return Colors.textSecondary
@@ -82,11 +83,46 @@ Rectangle {
             width: parent.width
             spacing: 16
 
-            // Title
-            Label {
-                text: qsTr("Weather")
-                font.bold: true
-                font.pixelSize: Config.fontSizeH3
+            // Title row: weather heading (left) + ESC firmware status (right)
+            RowLayout {
+                width: parent.width
+                spacing: 8
+
+                Label {
+                    text: qsTr("Weather")
+                    font.bold: true
+                    font.pixelSize: Config.fontSizeH3
+                }
+
+                Item { Layout.fillWidth: true }
+
+                ColumnLayout {
+                    Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                    Layout.maximumWidth: root.width * 0.55
+                    spacing: 0
+
+                    Label {
+                        Layout.alignment: Qt.AlignRight
+                        text: qsTr("ESC Firmware")
+                        font.pixelSize: 11
+                        color: Colors.textSecondary
+                    }
+                    Label {
+                        Layout.alignment: Qt.AlignRight
+                        Layout.fillWidth: true
+                        text: {
+                            if (!root._escFirmware) return "\u2014"
+                            if (root._escFirmware.currentValueString.length > 0) return root._escFirmware.currentValueString
+                            if (root._escFirmware.message.length > 0) return root._escFirmware.message
+                            return "\u2014"
+                        }
+                        font.pixelSize: 9
+                        font.bold: true
+                        color: root._statusColor(root._escFirmware)
+                        elide: Text.ElideRight
+                        horizontalAlignment: Text.AlignRight
+                    }
+                }
             }
 
             // Last updated

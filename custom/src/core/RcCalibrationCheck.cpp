@@ -63,15 +63,7 @@ void RcCalibrationCheck::evaluate()
 
         // ── Factory-default detection ─────────────────────────────────
         if (_isFactoryDefault(cal)) {
-            double fm = 1100.0, fM = 1900.0;
-            if (hasTelemetry()) {
-                double r1 = getTelemetryDouble(QStringLiteral("RC1_MIN"));
-                double r2 = getTelemetryDouble(QStringLiteral("RC1_MAX"));
-                if (!qIsNaN(r1)) fm = r1;
-                if (!qIsNaN(r2)) fM = r2;
-            }
-            failures << QStringLiteral("All endpoints at factory defaults (min=%1, max=%2) \u2014 calibration required")
-                            .arg(fm, 0, 'f', 0).arg(fM, 0, 'f', 0);
+            failures << QStringLiteral("All endpoints at factory defaults (min=1100, max=1900) \u2014 calibration required");
         }
 
         if (failures.isEmpty()) {
@@ -88,8 +80,9 @@ void RcCalibrationCheck::evaluate()
         return;
     }
 
-    // Phase 2: Fallback — channel responsiveness check (no params available)
-    if (channels.isEmpty()) {
+    // Phase 2: Fallback — channel responsiveness check (no params available).
+    // Four channels are required below, so a short list must not fall through.
+    if (channels.size() < 4) {
         setStatus(CheckStatus::Pending, QStringLiteral("No RC channel data"));
         return;
     }
@@ -140,23 +133,17 @@ RcCalibrationCheck::RcCalData RcCalibrationCheck::_readCalParams() const
 
 bool RcCalibrationCheck::_isFactoryDefault(const RcCalData &cal) const
 {
-    // Read RC1_MIN/RC1_MAX from vehicle params as the reference for factory defaults.
-    // On an uncalibrated system all channels share the same min/max. If params are
-    // unavailable, fall back to standard ArduPilot/PX4 defaults (1100/1900).
-    double factoryMin = 1100.0;
-    double factoryMax = 1900.0;
-    if (hasTelemetry()) {
-        double rcMin = getTelemetryDouble(QStringLiteral("RC1_MIN"));
-        double rcMax = getTelemetryDouble(QStringLiteral("RC1_MAX"));
-        if (!qIsNaN(rcMin) && !qIsNaN(rcMax)) {
-            factoryMin = rcMin;
-            factoryMax = rcMax;
-        }
-    }
+    // A freshly-flashed autopilot reports the standard ArduPilot/PX4 RC
+    // endpoint defaults (1100/1900) on every channel until RC calibration is
+    // run. Compare against those fixed defaults — NOT against channel 1's
+    // values, which may themselves already have been calibrated and would then
+    // mask an uncalibrated channel 2-4.
+    static constexpr double kFactoryMin = 1100.0;
+    static constexpr double kFactoryMax = 1900.0;
 
     for (int i = 0; i < 4; ++i) {
-        if (qFuzzyCompare(cal.min[i], factoryMin) &&
-            qFuzzyCompare(cal.max[i], factoryMax)) {
+        if (qFuzzyCompare(cal.min[i], kFactoryMin) &&
+            qFuzzyCompare(cal.max[i], kFactoryMax)) {
             continue;
         }
         return false;

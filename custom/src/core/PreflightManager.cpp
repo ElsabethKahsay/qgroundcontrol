@@ -191,6 +191,12 @@ void PreflightManager::setAlertManager(AlertManager *alertManager) {
 void PreflightManager::setDatabaseManager(DatabaseManager *db) {
   m_db = db;
   loadOverrides();
+  // Each check's config cache mirrors reads of the check_config table against
+  // the previous database. A (re)assigned database invalidates every cached
+  // value, otherwise the checks keep serving thresholds read from the old DB
+  // (the cache is otherwise never invalidated at runtime).
+  for (auto *check : m_checks)
+    check->clearConfigCache();
 }
 
 AbstractCheck *PreflightManager::checkById(const QString &checkId) const {
@@ -361,9 +367,22 @@ bool PreflightManager::allMandatoryPassed() const {
     return false;
 
   for (auto *c : m_checks) {
-    auto s = c->status();
-    if (c->mandatory() && s != CheckStatus::Passed)
-      return false;
+    if (!c->mandatory())
+      continue;
+    const CheckStatus s = c->status();
+    // Advisory and non-applicable results must not gate arming:
+    //  - Warning is documented as a "non-blocking warning condition"
+    //    (see CheckStatus in AbstractCheck.h).
+    //  - Skipped means the check cannot apply to this airframe (hardware not
+    //    fitted, or the parameter is not reported), which applyVehicleKind()
+    //    already promises "arming never blocks on".
+    // Pending, Failed, Error and Stale keep arming blocked: the condition has
+    // either not been verified yet or is known to be unsafe.
+    if (s == CheckStatus::Passed ||
+        s == CheckStatus::Warning ||
+        s == CheckStatus::Skipped)
+      continue;
+    return false;
   }
   return true;
 }
@@ -383,7 +402,10 @@ double PreflightManager::progress() const {
 // Find the most urgent arming blocker message.
 // Priority order: Stale > Error > Failed (first mandatory match wins).
 QString PreflightManager::armingBlocker() const {
-  // Prioritize: stale → error → failed
+  // Prioritize: stale → error → failed → pending. Pending is included because
+  // a mandatory check that has not been evaluated yet still blocks arming
+  // (see allMandatoryPassed); naming it here avoids leaving the operator with
+  // a generic denial reason and no way to tell what is holding the gate shut.
   for (auto *c : m_checks) {
     if (c->mandatory() && c->status() == CheckStatus::Stale)
       return c->label() + QStringLiteral(": ") + c->message();
@@ -394,6 +416,10 @@ QString PreflightManager::armingBlocker() const {
   }
   for (auto *c : m_checks) {
     if (c->mandatory() && c->status() == CheckStatus::Failed)
+      return c->label() + QStringLiteral(": ") + c->message();
+  }
+  for (auto *c : m_checks) {
+    if (c->mandatory() && c->status() == CheckStatus::Pending)
       return c->label() + QStringLiteral(": ") + c->message();
   }
   return {};
@@ -499,6 +525,14 @@ void PreflightManager::attemptStateTransition() {
 }
 
 void PreflightManager::markArmed() {
+  // Arming again means a new flight is starting: leave post-flight mode and
+  // restore every check (the pre-flight set was Skipped) so it re-evaluates.
+  if (m_postFlightMode) {
+    m_postFlightMode = false;
+    emit postFlightChanged(false);
+    for (auto *check : m_checks)
+      check->reset();
+  }
   m_stateMachine.transitionTo(PreflightStateMachine::Armed);
 }
 
@@ -511,6 +545,10 @@ void PreflightManager::markDisarmed() {
 }
 
 void PreflightManager::resetAll() {
+  if (m_postFlightMode) {
+    m_postFlightMode = false;
+    emit postFlightChanged(false);
+  }
   for (auto *check : m_checks) {
     check->reset();
   }
@@ -522,11 +560,20 @@ void PreflightManager::resetAll() {
 }
 
 void PreflightManager::activatePostFlightChecks() {
+  if (!m_postFlightMode) {
+    m_postFlightMode = true;
+    emit postFlightChanged(true);
+  }
   for (auto *check : m_checks) {
     if (check->isPostFlight()) {
+      // Post-flight items re-run fresh after landing.
       check->reset();
     } else {
-      check->overrideStatus(QStringLiteral("Skipped"), QStringLiteral("Post-flight checklist"));
+      // Pre-flight items are not applicable now. Set the status directly
+      // (overrideStatus refuses Auto checks, and PreflightManager is a friend
+      // of AbstractCheck) so the periodic tick cannot revive them — tick()
+      // skips non-post-flight checks while m_postFlightMode is set.
+      check->setStatus(CheckStatus::Skipped, QStringLiteral("Post-flight checklist"));
     }
   }
   emit modelChanged();
@@ -604,6 +651,10 @@ void PreflightManager::tick() {
 
   // ── Evaluate checks that need reevaluation ──
   for (auto *check : m_checks) {
+    // In post-flight mode only the post-flight items are live; everything else
+    // was set Skipped by activatePostFlightChecks() and must stay that way.
+    if (m_postFlightMode && !check->isPostFlight())
+      continue;
     if (check->requiresReevaluation()) {
       try {
         check->evaluate();
@@ -665,6 +716,9 @@ void PreflightManager::tick() {
   // Stale checks count as failed for arming decisions.
   for (auto *check : m_checks) {
     if (!check->mandatory())
+      continue;
+    // Skipped post-flight placeholders must not be promoted to Stale.
+    if (m_postFlightMode && !check->isPostFlight())
       continue;
     auto s = check->status();
     if (s == CheckStatus::Passed || s == CheckStatus::Warning) {
@@ -818,7 +872,12 @@ void PreflightManager::createPhase1Checks() {
   m_checks.append(new GpsFixCheck(m_telemetry, 8, 2.0, this));
 
   // Tier 1 — Power
-  m_checks.append(new BatteryTemperatureCheck(m_telemetry, 45.0, 0.0, this));
+  auto *batteryTemp = new BatteryTemperatureCheck(m_telemetry, 45.0, 0.0, this);
+  // Pack temperature is a post-flight item (it heats during the flight). The
+  // flag only matters while post-flight mode is active; pre-flight evaluation
+  // is unchanged.
+  batteryTemp->setIsPostFlight(true);
+  m_checks.append(batteryTemp);
 
   // VehicleProfileManager singleton exists (it needs the profile manager).
 
@@ -838,7 +897,10 @@ void PreflightManager::createPhase1Checks() {
 
   // Tier 4 — Enhancement / Niche checks
   m_checks.append(new GimbalLinkCheck(m_telemetry, this));
-  m_checks.append(new MotorTemperatureCheck(m_telemetry, 80.0, this));
+  auto *motorTemp = new MotorTemperatureCheck(m_telemetry, 80.0, this);
+  // Motors heat in flight; motor temperature is a post-flight item (design doc).
+  motorTemp->setIsPostFlight(true);
+  m_checks.append(motorTemp);
   m_checks.append(new BaroHealthCheck(m_telemetry, this));
   m_checks.append(new RcRssiCheck(m_telemetry, 50, 50, this));
 

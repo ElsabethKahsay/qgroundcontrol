@@ -69,6 +69,9 @@ class PreflightManager : public QObject {
     Q_PROPERTY(int blockingCount READ blockingCount NOTIFY modelChanged)
     /// Current state machine state.
     Q_PROPERTY(PreflightStateMachine::State state READ state NOTIFY stateChanged)
+    /// Whether the post-flight checklist is active (only post-flight checks run;
+    /// pre-flight checks report Skipped).
+    Q_PROPERTY(bool postFlight READ postFlight NOTIFY postFlightChanged)
 
 public:
     /// Construct a preflight manager for the given vehicle system ID.
@@ -133,6 +136,8 @@ public:
     QString armingBlocker() const;
     bool isActive() const { return m_active; }
     PreflightStateMachine::State state() const { return m_stateMachine.state(); }
+    /// Whether the post-flight checklist is currently active.
+    bool postFlight() const { return m_postFlightMode; }
 
     /// Staleness threshold in milliseconds (default 10000 ms).
     int stalenessThresholdMs() const { return m_stalenessThresholdMs; }
@@ -189,6 +194,8 @@ signals:
     void armingBlockerChanged(const QString &reason);
     /// Emitted when the state machine transitions.
     void stateChanged();
+    /// Emitted when the post-flight mode toggles.
+    void postFlightChanged(bool postFlight);
 
 private:
     /// Attempt to advance or retreat the state machine based on current check results.
@@ -219,4 +226,7 @@ private:
     /// VTOL_CONVENTIONAL). Until then the applicable mandatory set is undefined
     /// and the arming gate stays closed (R16).
     bool m_kindResolved = false;
+    /// True while the post-flight checklist is active: only checks flagged
+    /// isPostFlight() are re-evaluated; the rest report Skipped.
+    bool m_postFlightMode = false;
 };

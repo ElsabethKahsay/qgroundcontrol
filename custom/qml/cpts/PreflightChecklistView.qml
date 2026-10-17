@@ -70,8 +70,8 @@ Rectangle {
             RowLayout {
                 anchors.fill: parent
                 anchors.leftMargin: 16; anchors.rightMargin: 16
-                Text { text: "\u26A0 Critical / Blocking Issues"; font.pixelSize: 15; font.bold: true; color: "#F8BBD0"; Layout.fillWidth: true }
-                Text { text: _issueCount + " issue" + (_issueCount !== 1 ? "s" : ""); font.pixelSize: 12; color: "#CE93D8" }
+                Text { text: "\u26A0 Critical / Blocking Issues"; font.pixelSize: Config.fontSizeBody; font.bold: true; color: "#F8BBD0"; Layout.fillWidth: true }
+                Text { text: _issueCount + " issue" + (_issueCount !== 1 ? "s" : ""); font.pixelSize: Config.fontSizeSmall; color: "#CE93D8" }
             }
         }
 
@@ -114,14 +114,14 @@ Rectangle {
 
                             ColumnLayout {
                                 Layout.fillWidth: true; spacing: 1
-                                Text { text: chk ? chk.label : ""; font.pixelSize: 13; font.bold: true; color: Colors.textPrimary; elide: Text.ElideRight; Layout.fillWidth: true }
-                                Text { text: chk ? chk.message : ""; font.pixelSize: 11; color: Colors.textSecondary; elide: Text.ElideRight; maximumLineCount: 1; Layout.fillWidth: true }
+                                Text { text: chk ? chk.label : ""; font.pixelSize: Config.fontSizeBody; font.bold: true; color: Colors.textPrimary; elide: Text.ElideRight; Layout.fillWidth: true }
+                                Text { text: chk ? chk.message : ""; font.pixelSize: Config.fontSizeSmall; color: Colors.textSecondary; elide: Text.ElideRight; maximumLineCount: 1; Layout.fillWidth: true }
                             }
 
                             Rectangle {
                                 width: 72; height: 26; radius: 6
                                 color: "#9333ea"
-                                Text { anchors.centerIn: parent; text: "Go to Check"; font.pixelSize: 9; font.bold: true; color: "#fff" }
+                                Text { anchors.centerIn: parent; text: "Go to Check"; font.pixelSize: 10; font.bold: true; color: "#fff" }
                                 MouseArea {
                                     anchors.fill: parent
                                     cursorShape: Qt.PointingHandCursor
@@ -149,7 +149,7 @@ Rectangle {
                 Text {
                     visible: _issueCount === 0
                     text: "\u2713 No critical issues"
-                    font.pixelSize: 14; color: Colors.success
+                    font.pixelSize: Config.fontSizeBody; color: Colors.success
                     Layout.alignment: Qt.AlignHCenter
                     Layout.topMargin: 20
                 }
@@ -167,7 +167,7 @@ Rectangle {
                 Rectangle {
                     width: 80; height: 28; radius: 6
                     color: "#9333ea"
-                    Text { anchors.centerIn: parent; text: "Close"; font.pixelSize: 12; font.bold: true; color: "#fff" }
+                    Text { anchors.centerIn: parent; text: "Close"; font.pixelSize: Config.fontSizeSmall; font.bold: true; color: "#fff" }
                     MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: criticalIssuesDialog.close() }
                 }
             }
@@ -178,10 +178,10 @@ Rectangle {
         anchors.fill: parent
         spacing: 0
 
-        // ── Top-level summary box (pink/purple themed) ──
+        // ── Combined summary bar (checks passed + blocking issues) ──
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 46
+            Layout.preferredHeight: 52
             Layout.leftMargin: Config.spacingMedium
             Layout.rightMargin: Config.spacingMedium
             Layout.topMargin: Config.spacingSmall
@@ -205,85 +205,25 @@ Rectangle {
                     spacing: 1
                     Text {
                         text: _passed + "/" + _total + " checks passed"
-                        font.pixelSize: 15; font.bold: true; color: "#F8BBD0"
+                        font.pixelSize: Config.fontSizeBody; font.bold: true; color: "#F8BBD0"
                     }
                     Text {
-                        text: _issueCount > 0 ? _issueCount + " critical issue" + (_issueCount !== 1 ? "s" : "") : "No critical issues"
-                        font.pixelSize: 12
+                        text: _blockers > 0
+                              ? "\u26A0 Arming blocked: " + _blockers + " critical " + (_blockers === 1 ? "item must" : "items must") + " be fixed"
+                              : _issueCount > 0 ? _issueCount + " critical issue" + (_issueCount !== 1 ? "s" : "") : "No critical issues"
+                        font.pixelSize: Config.fontSizeSmall
                         color: _issueCount > 0 ? "#EF9A9A" : "#A5D6A7"
                     }
                 }
 
-                Item { Layout.fillWidth: true }
-
-                // Circular progress indicator
-                Rectangle {
-                    width: 36; height: 36; radius: 18
-                    color: "transparent"
-                    border.color: "#CE93D8"; border.width: 2
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: _pct + "%"
-                        font.pixelSize: 10; font.bold: true; color: "#CE93D8"
-                    }
-                }
-
-                // Show button
-                Rectangle {
-                    width: 64; height: 30; radius: 8
-                    color: _issueCount > 0 ? "#E91E63" : "#9333ea"
-                    opacity: showBtnMa.containsMouse ? 0.9 : 1.0
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "Show"
-                        font.pixelSize: 12; font.bold: true; color: "#fff"
-                    }
-
-                    MouseArea {
-                        id: showBtnMa
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: criticalIssuesDialog.open()
-                    }
-                }
-            }
-        }
-
-        // Blocking banner with integrated issue list toggle
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: visible ? 48 : 0
-            Layout.topMargin: 6
-            Layout.leftMargin: Config.spacingMedium
-            Layout.rightMargin: Config.spacingMedium
-            color: Colors.errorDim
-            radius: Config.radiusSmall
-            visible: _blockers > 0
-
-            RowLayout {
-                anchors.fill: parent
-                anchors.margins: Config.spacingSmall
-                spacing: Config.spacingMedium
-
-                Text {
-                    text: "\u26A0 Arming blocked: " + _blockers + " critical " + (_blockers === 1 ? "item must" : "items must") + " be fixed"
-                    font.pixelSize: Config.fontSizeSmall
-                    color: Colors.error
-                    Layout.preferredWidth: Math.max(220, parent.width * 0.35)
-                    wrapMode: Text.WordWrap
-                    maximumLineCount: 2
-                }
-
+                // First / next fix hint (fills the middle)
                 ColumnLayout {
-                    spacing: 0
                     Layout.fillWidth: true
+                    spacing: 0
                     Text {
                         text: nextBlocker(0).length > 0 ? "First: Fix " + nextBlocker(0) : ""
                         font.pixelSize: Config.fontSizeSmall
-                        color: Colors.error
+                        color: "#EF9A9A"
                         font.bold: true
                         elide: Text.ElideRight
                         Layout.fillWidth: true
@@ -299,31 +239,58 @@ Rectangle {
                     }
                 }
 
-                Text {
-                    text: _issueCount + " issue(s)"
-                    font.pixelSize: Config.fontSizeSmall
-                    color: Colors.error
-                    font.bold: true
-                    visible: _issueCount > 0
+                // Circular progress indicator
+                Rectangle {
+                    width: 36; height: 36; radius: 18
+                    color: "transparent"
+                    border.color: "#CE93D8"; border.width: 2
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: _pct + "%"
+                        font.pixelSize: 11; font.bold: true; color: "#CE93D8"
+                    }
                 }
 
+                // Show / hide priority fix list
                 Rectangle {
                     Layout.preferredHeight: 22
                     Layout.preferredWidth: 52
                     radius: 3
-                    color: Colors.error
+                    color: "#E91E63"
                     visible: _issueCount > 0
                     Text {
                         anchors.centerIn: parent
                         text: root._priorityListVisible ? "HIDE" : "SHOW"
-                        font.pixelSize: 9
+                        font.pixelSize: 10
                         font.bold: true
-                        color: Colors.background
+                        color: "#fff"
                     }
                     MouseArea {
                         anchors.fill: parent
                         onClicked: root._priorityListVisible = !root._priorityListVisible
                         cursorShape: Qt.PointingHandCursor
+                    }
+                }
+
+                // Show button
+                Rectangle {
+                    width: 64; height: 30; radius: 8
+                    color: _issueCount > 0 ? "#E91E63" : "#9333ea"
+                    opacity: showBtnMa.containsMouse ? 0.9 : 1.0
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "Show"
+                        font.pixelSize: Config.fontSizeSmall; font.bold: true; color: "#fff"
+                    }
+
+                    MouseArea {
+                        id: showBtnMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: criticalIssuesDialog.open()
                     }
                 }
             }
@@ -375,69 +342,56 @@ Rectangle {
             Column {
                 id: operatorCol
                 anchors.fill: parent
-                spacing: 10
-                padding: 16
+                spacing: 8
+                padding: 12
 
                 Label {
                     text: qsTr("Who is conducting this preflight?")
-                    font.pixelSize: Config.fontSizeH2
+                    font.pixelSize: Config.fontSizeH3
                     font.bold: true
                 }
 
-                // Pilot / trainee and instructor names in a single row
+                // Pilot / trainee and instructor names + role + Confirm on a single row
                 Row {
                     spacing: 8
                     TextField {
                         id: operatorFirstField
                         placeholderText: qsTr("First name")
-                        width: 150
-                        font.pixelSize: Config.fontSizeBody + 2
+                        width: 130
+                        font.pixelSize: Config.fontSizeBody
                     }
                     TextField {
                         id: operatorLastField
                         placeholderText: qsTr("Last name")
-                        width: 150
-                        font.pixelSize: Config.fontSizeBody + 2
+                        width: 130
+                        font.pixelSize: Config.fontSizeBody
                     }
                     TextField {
                         id: instructorFirstField
                         placeholderText: qsTr("Instructor first")
-                        width: 150
+                        width: 130
                         visible: FlightSession.isTraining
-                        font.pixelSize: Config.fontSizeBody + 2
+                        font.pixelSize: Config.fontSizeBody
                     }
                     TextField {
                         id: instructorLastField
                         placeholderText: qsTr("Instructor last")
-                        width: 150
+                        width: 130
                         visible: FlightSession.isTraining
-                        font.pixelSize: Config.fontSizeBody + 2
+                        font.pixelSize: Config.fontSizeBody
                     }
                     ComboBox {
                         id: operatorRoleBox
                         model: ["Pilot", "Trainee", "Supervisor", "Inspector"]
-                        width: 140
+                        width: 120
                         currentIndex: FlightSession.isTraining ? 1 : 0
-                        font.pixelSize: Config.fontSizeBody + 2
+                        font.pixelSize: Config.fontSizeBody
                     }
-                }
-
-                Row {
-                    visible: OperatorManager.operators.length > 0
-                    spacing: 8
-                    Label { text: qsTr("or returning operator:"); anchors.verticalCenter: parent.verticalCenter }
-                    ComboBox {
-                        id: returningPicker
-                        model: OperatorManager.operators
-                        textRole: "name"
-                        onActivated: OperatorManager.selectOperator(model[currentIndex].id)
-                    }
-                }
-
-                Row {
-                    spacing: 8
                     Button {
+                        id: confirmOperatorButton
                         text: qsTr("Confirm")
+                        anchors.verticalCenter: parent.verticalCenter
+                        font.pixelSize: Config.fontSizeBody
                         enabled: operatorFirstField.text.trim().length > 0
                             && operatorLastField.text.trim().length > 0
                             && (!FlightSession.isTraining
@@ -468,6 +422,23 @@ Rectangle {
                                 if (iid > 0) FlightSession.setInstructor(iid)
                             }
                         }
+                    }
+                }
+
+                Row {
+                    visible: OperatorManager.operators.length > 0
+                    spacing: 8
+                    Label {
+                        text: qsTr("or returning operator:")
+                        font.pixelSize: Config.fontSizeBody
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                    ComboBox {
+                        id: returningPicker
+                        model: OperatorManager.operators
+                        textRole: "name"
+                        font.pixelSize: Config.fontSizeBody
+                        onActivated: OperatorManager.selectOperator(model[currentIndex].id)
                     }
                 }
             }
@@ -620,7 +591,7 @@ Rectangle {
 
                                         readonly property bool isMotorSpinCheck: checkId === "propulsion.motors.spin"
                                         property bool expanded: root._expandedChecks[checkId] === true
-                                        readonly property int collapsedH: isManual || isAction ? 72 : 56
+                                        readonly property int collapsedH: isManual || isAction ? 84 : 64
                                         property string _checkTime: ""
                                         height: isMotorSpinCheck ? (motorPanelLoader.item ? motorPanelLoader.item.implicitHeight + 10 : collapsedH) : (expanded ? expandedCol.implicitHeight + 10 : collapsedH)
                                     ToolTip {
@@ -677,7 +648,7 @@ Rectangle {
                                                     : status === 2 ? "\u2717"
                                                     : status === 3 ? "\u26A0"
                                                     : "\u25CF"
-                                                font.pixelSize: 14
+                                                font.pixelSize: Config.fontSizeBody
                                                 color: status === 1 ? Colors.success
                                                      : status === 2 ? Colors.error
                                                      : status === 3 ? Colors.checkWarn
@@ -686,7 +657,7 @@ Rectangle {
 
                                             Text {
                                                 text: label
-                                                font.pixelSize: Config.fontSizeSmall
+                                                font.pixelSize: Config.fontSizeBody
                                                 font.bold: true
                                                 color: Colors.textPrimary
                                                 Layout.fillWidth: true
@@ -698,13 +669,13 @@ Rectangle {
                                                 visible: status === 1
                                                 color: Colors.success
                                                 radius: Config.radiusSmall
-                                                Layout.preferredHeight: 18
-                                                Layout.preferredWidth: 40
+                                                Layout.preferredHeight: 20
+                                                Layout.preferredWidth: 44
                                                 Text {
                                                     anchors.centerIn: parent
                                                     text: "PASS"
                                                     color: Colors.background
-                                                    font.pixelSize: 9
+                                                    font.pixelSize: 11
                                                     font.bold: true
                                                 }
                                             }
@@ -712,13 +683,13 @@ Rectangle {
                                                 visible: status === 2
                                                 color: Colors.error
                                                 radius: Config.radiusSmall
-                                                Layout.preferredHeight: 18
-                                                Layout.preferredWidth: 40
+                                                Layout.preferredHeight: 20
+                                                Layout.preferredWidth: 44
                                                 Text {
                                                     anchors.centerIn: parent
                                                     text: "FAIL"
                                                     color: Colors.background
-                                                    font.pixelSize: 9
+                                                    font.pixelSize: 11
                                                     font.bold: true
                                                 }
                                             }
@@ -726,20 +697,20 @@ Rectangle {
                                                 visible: status === 3
                                                 color: Colors.checkWarn
                                                 radius: Config.radiusSmall
-                                                Layout.preferredHeight: 18
-                                                Layout.preferredWidth: 40
+                                                Layout.preferredHeight: 20
+                                                Layout.preferredWidth: 44
                                                 Text {
                                                     anchors.centerIn: parent
                                                     text: "WARN"
                                                     color: Colors.background
-                                                    font.pixelSize: 9
+                                                    font.pixelSize: 11
                                                     font.bold: true
                                                 }
                                             }
 
                                             Text {
                                                 text: checkItem.expanded ? "\u25B2" : "\u25BC"
-                                                font.pixelSize: 8
+                                                font.pixelSize: 9
                                                 color: Colors.textSecondary
                                             }
                                         }
@@ -749,7 +720,7 @@ Rectangle {
                                             Layout.fillWidth: true
                                             visible: message.length > 0 && !checkItem.expanded && !isManual
                                             text: message
-                                            font.pixelSize: Config.fontSizeSmall
+                                            font.pixelSize: Config.fontSizeBody
                                             color: Colors.textSecondary
                                             elide: Text.ElideRight
                                             maximumLineCount: 1
@@ -771,7 +742,7 @@ Rectangle {
                                                     Layout.fillWidth: true
                                                     visible: isManual && message.length > 0 && status !== 1
                                                     text: message
-                                                    font.pixelSize: Config.fontSizeSmall
+                                                    font.pixelSize: Config.fontSizeBody
                                                     color: Colors.textSecondary
                                                     elide: Text.ElideRight
                                                     maximumLineCount: 1
@@ -782,7 +753,7 @@ Rectangle {
                                                     id: manualBtn
                                                     visible: isManual
                                                     Layout.fillWidth: true
-                                                    Layout.preferredHeight: 28
+                                                    Layout.preferredHeight: 32
                                                     Layout.leftMargin: 12
                                                     Layout.rightMargin: 12
                                                     radius: Config.radiusSmall
@@ -793,7 +764,7 @@ Rectangle {
                                                     Text {
                                                         anchors.centerIn: parent
                                                         text: actionButtonText.length > 0 ? actionButtonText : "Mark as Checked"
-                                                        font.pixelSize: Config.fontSizeSmall
+                                                        font.pixelSize: Config.fontSizeBody
                                                         font.bold: status === 1
                                                         color: status === 1 ? Colors.background : Colors.textPrimary
                                                     }

@@ -30,7 +30,11 @@ void AccelConsistencyCheck::evaluate()
     double ay2 = getTelemetryDouble(QStringLiteral("accelerometer2Y"));
     double az2 = getTelemetryDouble(QStringLiteral("accelerometer2Z"));
 
-    if (qIsNaN(ax1) || qIsNaN(ax2)) {
+    // Guard every axis, not just X: a NaN on any axis would propagate through
+    // qMax() into maxDiffVal and be reported as a Failed check (this check is
+    // mandatory), i.e. a false arming block rather than the intended Pending.
+    if (qIsNaN(ax1) || qIsNaN(ax2) || qIsNaN(ay1) || qIsNaN(ay2) ||
+        qIsNaN(az1) || qIsNaN(az2)) {
         setStatus(CheckStatus::Pending, QStringLiteral("Waiting for both IMUs"));
         return;
     }

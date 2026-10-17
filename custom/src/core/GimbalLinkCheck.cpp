@@ -20,9 +20,10 @@ static bool _isVideoStreaming()
     return vm && vm->hasVideo() && vm->streaming() && vm->decoding();
 }
 
+// Advisory check (design: gimbal link is not safety critical).
 // Pass: gimbal detected with known mode and active video stream.
-// Warning: gimbal detected but mode unknown, or video-only without gimbal heartbeat.
-// Fail: gimbal detected but no video. Skipped: no gimbal fitted.
+// Warning: gimbal detected but no video stream or unknown mode, or video-only
+//          without a gimbal heartbeat. Skipped: no gimbal fitted.
 void GimbalLinkCheck::evaluate()
 {
     if (!hasTelemetry()) {
@@ -42,7 +43,11 @@ void GimbalLinkCheck::evaluate()
 
     if (detected) {
         if (!videoStreaming) {
-            setStatus(CheckStatus::Failed,
+            // Advisory, not safety critical: a gimbal present without a live
+            // video feed is a payload warning, never an arming blocker. It is
+            // reported as Warning because updateCriticalChecks marks every auto
+            // check mandatory, which would otherwise turn a Failed into a gate.
+            setStatus(CheckStatus::Warning,
                       QStringLiteral("Gimbal detected but no video stream"));
             return;
         }

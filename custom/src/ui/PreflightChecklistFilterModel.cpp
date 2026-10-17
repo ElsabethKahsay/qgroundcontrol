@@ -38,6 +38,7 @@ bool PreflightChecklistFilterModel::filterAcceptsRow(int sourceRow, const QModel
         QStringLiteral("comm.heartbeat"),
         QStringLiteral("nav.home"),
         QStringLiteral("nav.attitude"),
+        QStringLiteral("propulsion.esc.firmware"),
     };
     QString id = sourceModel()->data(idx, PreflightChecklistModel::IdRole).toString();
     if (kHiddenFromChecklist.contains(id))

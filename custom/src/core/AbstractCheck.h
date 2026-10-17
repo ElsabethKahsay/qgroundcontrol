@@ -170,7 +170,10 @@ public:
     /// Override the check status (e.g. force Passed).
     /// Returns true if the override was applied.
     Q_INVOKABLE bool overrideStatus(const QString &newStatus, const QString &reason = {});
-    /// Confirm the check as passed (shortcut for overrideStatus("Passed")).
+    /// Confirm a Manual/Action check as passed once the operator has completed
+    /// it. Unlike overrideStatus(), this stays available for Action checks built
+    /// with canOverride = false (e.g. MotorSpinCheck, whose only pass path is
+    /// confirm()). Auto checks are refused so their result cannot be forced.
     /// Returns true if the confirmation was applied.
     Q_INVOKABLE bool confirm(const QString &reason = {});
     /// Reset the check to Pending status.

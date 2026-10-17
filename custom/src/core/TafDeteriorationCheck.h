@@ -10,4 +10,5 @@ public:
     void evaluate() override;
 private:
     bool m_fetchTriggered = false;
+    QDateTime m_fetchStart;
 };

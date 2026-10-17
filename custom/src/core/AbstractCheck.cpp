@@ -94,6 +94,15 @@ bool AbstractCheck::overrideStatus(const QString &newStatus, const QString &reas
 
 bool AbstractCheck::confirm(const QString &reason)
 {
+    // confirm() is the completion path for Manual/Action checks: an Action
+    // check (e.g. MotorSpinCheck, which is built with canOverride = false)
+    // becomes Passed ONLY through confirm(), so this must stay available
+    // regardless of canOverride. overrideStatus() already refuses Auto checks,
+    // and confirm() must too: an Auto check's result is owned by evaluate(), so
+    // letting a confirmation force it Passed would bypass the arming gate.
+    if (m_type == CheckType::Auto)
+        return false;
+
     if (m_status == CheckStatus::Passed)
         return false;
 
@@ -117,7 +126,7 @@ void AbstractCheck::reset()
     m_message.clear();
     m_lastEvalTime = QDateTime();
     m_overrideHistory.clear();
-    m_configCache.clear();
+    clearConfigCache();
     emit statusChanged(m_id, static_cast<int>(m_status));
     emit messageChanged(m_id, m_message);
 }

@@ -1,5 +1,6 @@
 // Checks gimbal presence, mode, and associated video stream status.
-// Fails when gimbal is detected but no video stream is active.
+// Advisory: warns (never blocks arming) when a gimbal is detected without a
+// live video stream.
 #pragma once
 #include "AbstractCheck.h"
 
