@@ -1,6 +1,7 @@
 #include "AirspeedCheck.h"
 
 #include "TelemetryBridge.h"
+#include "Vehicle/Vehicle.h"
 
 AirspeedCheck::AirspeedCheck(TelemetryBridge *telemetry, double minAirspeed,
                              QObject *parent)
@@ -16,6 +17,17 @@ void AirspeedCheck::evaluate()
 {
     if (!hasTelemetry()) {
         setStatus(CheckStatus::Pending, QStringLiteral("Waiting for telemetry"));
+        return;
+    }
+
+    // Multirotors carry no airspeed sensor, so the measurement cannot apply.
+    // Skip rather than fail — a stalled/zero reading would otherwise become a
+    // false mandatory blocker. Fixed-wing and VTOL (which do fit a pitot tube)
+    // keep the full check below.
+    Vehicle *v = m_telemetry ? m_telemetry->vehicle() : nullptr;
+    if (v && v->multiRotor()) {
+        setStatus(CheckStatus::Skipped,
+                  QStringLiteral("Not applicable — multirotor has no airspeed sensor"));
         return;
     }
 

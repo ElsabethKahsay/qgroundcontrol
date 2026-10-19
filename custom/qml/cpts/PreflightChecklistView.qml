@@ -41,6 +41,29 @@ Rectangle {
     property var _expandedChecks: ({})
     property bool _priorityListVisible: false
 
+    // ── Vehicle-type aware "Next → Gimbal Test" flow ───────────────────────
+    // The Gimbal test page is hosted inline (see gimbalOverlay at the bottom of
+    // this file) rather than pushed on a page stack: Config.navigatePush() is a
+    // no-op in this build because the root window exposes no mainStackView.
+    property string _leftView: "checklist"   // "checklist" | "gimbal"
+
+    // Mirrors GimbalTest.qml: multirotors carry no servos / control surfaces.
+    readonly property bool _isMultirotor: {
+        var vt = (typeof VehicleProfileManager !== "undefined") ? VehicleProfileManager.vehicleType : ""
+        return vt === "QUAD" || vt === "HEX" || vt === "OCTA" || vt === "TRI"
+    }
+
+    // Explicit airframe enumeration for the Next button. Every profile-manager
+    // type plus the unresolved state keeps it, so a real vehicle can never lose
+    // the button. GimbalTest hides its own Control Surface sweep for
+    // multirotors; the Restricted Zones airspace panel stays for all vehicles.
+    readonly property bool _showNextBtn: {
+        var vt = (typeof VehicleProfileManager !== "undefined") ? VehicleProfileManager.vehicleType : "UNKNOWN"
+        return vt === "" || vt === "UNKNOWN"
+                || vt === "FIXED_WING" || vt === "VTOL" || vt === "ROVER"
+                || vt === "QUAD" || vt === "HEX" || vt === "OCTA" || vt === "TRI" || vt === "HELI"
+    }
+
     function nextBlocker(index) {
         if (typeof PreflightManager === "undefined") return ""
         var b = PreflightManager.blockingChecks
@@ -942,8 +965,117 @@ Rectangle {
                 }
 
                 Item { width: 1; height: Config.spacingSmall }
+
+                // ── Next → Gimbal Test (bottom of the checks, after the last
+                // category). Navigation only — not an arming action — so it is
+                // never gated on pending/failed checks. Arming stays blocked by
+                // ArmingGate / the ArmGatePanel footer. GimbalTest hides its own
+                // Control Surface sweep for multirotors; Restricted Zones stays.
+                Rectangle {
+                    id: nextGimbalBtn
+                    width: scrollCol.width - Config.spacingMedium * 2
+                    x: Config.spacingMedium
+                    height: 40
+                    radius: 8
+                    visible: root._showNextBtn
+                    color: "#9333ea"
+                    opacity: nextBtnMa.containsMouse ? 0.9 : 1.0
+
+                    Text {
+                        id: nextBtnLbl
+                        anchors.centerIn: parent
+                        text: "Next: Gimbal Test  →"
+                        font.pixelSize: Config.fontSizeBody; font.bold: true; color: "#fff"
+                    }
+
+                    MouseArea {
+                        id: nextBtnMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root._leftView = "gimbal"
+                    }
+                }
             }
         }
+                }
+                // ── Gimbal test overlay (inline; replaces the checklist when active) ────
+                // Hosted inline rather than pushed on a page stack — Config.navigatePush()
+                // is a no-op here (no mainStackView). This mirrors how PreFlightChecklist.qml
+                // hosts the same page. GimbalTest hides its own Control Surface sweep for
+                // multirotors and keeps the Restricted Zones airspace panel for all vehicles.
+                Rectangle {
+                    id: gimbalOverlay
+                    anchors.fill: parent
+                    z: 50
+                    visible: root._leftView === "gimbal"
+                    color: "#0a0a1a"
+
+                    // Title bar (top)
+                    Rectangle {
+                        id: gimbalTitleBar
+                        anchors.top: parent.top
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        height: 44
+                        z: 1
+                        color: Colors.surface
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "🎯  Gimbal Test"
+                            font.pixelSize: Config.fontSizeBody; font.bold: true; color: Colors.textPrimary
+                        }
+                    }
+
+                    Loader {
+                        id: gimbalLoader
+                        anchors.top: gimbalTitleBar.bottom
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.bottom: gimbalBackBar.top
+                        source: gimbalOverlay.visible ? "qrc:/qml/pages/GimbalTest.qml" : ""
+                        onStatusChanged: {
+                            if (status === Loader.Error)
+                                console.warn("[PreflightChecklistView] failed to load GimbalTest.qml")
+                        }
+                    }
+
+                    // Back bar (footer, at the bottom — matches the Next button position)
+                    Rectangle {
+                        id: gimbalBackBar
+                        anchors.bottom: parent.bottom
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        height: 44
+                        z: 1
+                        color: Colors.surface
+
+                        Rectangle {
+                            width: backBtnLbl.implicitWidth + 28
+                            height: 30
+                            radius: 8
+                            anchors.left: parent.left
+                            anchors.leftMargin: Config.spacingMedium
+                            anchors.verticalCenter: parent.verticalCenter
+                            color: "#2a2a3a"
+                            border.color: Colors.border
+                            border.width: 1
+
+                            Text {
+                                id: backBtnLbl
+                                anchors.centerIn: parent
+                                text: "←  Back to Checklist"
+                                font.pixelSize: Config.fontSizeSmall; font.bold: true; color: Colors.textPrimary
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root._leftView = "checklist"
+                            }
+                        }
+                    }
                 }
             }
 

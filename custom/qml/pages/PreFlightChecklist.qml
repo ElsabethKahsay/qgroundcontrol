@@ -30,6 +30,21 @@ Page {
         viewMode: "standalone"
     }
 
+    // ── Vehicle-type gate for the checklist "Next" flow ─────────────────────
+    // Explicit enumeration of the airframes that take Next → Gimbal Test.
+    // Fixed-wing and multirotor both keep the button: GimbalTest.qml hides its
+    // own Control Surface sweep for multirotors (_isMultirotor), and the
+    // Restricted Zones airspace panel stays visible for every vehicle.
+    // "UNKNOWN"/"" (no vehicle resolved yet) keeps the button so the empty state
+    // is unchanged; every airframe string the profile manager can emit is listed
+    // so a real vehicle can never lose the button.
+    readonly property bool _showNextBtn: {
+        var vt = (typeof VehicleProfileManager !== "undefined") ? VehicleProfileManager.vehicleType : "UNKNOWN"
+        return vt === "" || vt === "UNKNOWN"
+                || vt === "FIXED_WING" || vt === "VTOL" || vt === "ROVER"
+                || vt === "QUAD" || vt === "HEX" || vt === "OCTA" || vt === "TRI" || vt === "HELI"
+    }
+
     // ── Weather fetch on load ────────────────────────────────────────────────
     // Cached GPS fix + timestamp so refetches are throttled and de-duplicated.
     property real _lastFetchLat: 0
@@ -792,8 +807,13 @@ Page {
                                 // Next → Gimbal Test button
                                 Rectangle {
                                     id: _nextBtn
-                                    // Next gate: zero critical checks, or unconditional in Testing mode.
-                                    readonly property bool _allowed: FlightSession.isTesting || _engine.criticalChecks === 0
+                                    // Vehicle-type visibility (see root._showNextBtn): offered to
+                                    // fixed-wing, VTOL, multirotor and rovers, plus the unresolved state.
+                                    visible: root._showNextBtn
+                                    // The Next button only navigates to the Gimbal test page — it is not
+                                    // an arming action, so it is never blocked by pending/failed checks.
+                                    // Arming remains gated by ArmingGate / criticalChecks.
+                                    readonly property bool _allowed: true
                                     Layout.preferredWidth: 190
                                     height: 32
                                     radius: Config.radiusMedium
