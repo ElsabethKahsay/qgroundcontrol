@@ -352,28 +352,15 @@ if (typeof TelemetryProvider !== 'undefined' && TelemetryProvider) {
                                 return
                             }
                             
-                            var criticalFails = typeof PreflightManager !== 'undefined' && PreflightManager ? PreflightManager.failedChecks : 0
-                            var manualFails = typeof PreflightManager !== 'undefined' && PreflightManager ? PreflightManager.pendingChecks : 0
-                            // If the gate is genuinely closed (critical fails present and no
-                            // override), offer the acknowledge-override flow. Every arm that
-                            // proceeds routes through the single gate-checked TelemetryProvider.arm().
-                            var gateBlocked = typeof ArmingGate !== 'undefined' && ArmingGate
-                                ? !ArmingGate.armingAllowed && !ArmingGate.overrideActive
-                                : false
-                            if (criticalFails > 0 && gateBlocked) {
-                                _root._gateCriticalFails = criticalFails
-                                _root._gateManualFails = manualFails
+                            // G11 (Step 2.5): one gate decision for every Arm button.
+                            // allow → requestArm() already sent the arm; needsAck → the
+                            // acknowledge dialog; deny → the gate shows the reason.
+                            var d = typeof ArmingGate !== 'undefined' && ArmingGate ? ArmingGate.requestArm() : ({ verdict: "deny" })
+                            if (d.verdict === "needsAck") {
+                                _root._gateCriticalFails = typeof PreflightManager !== 'undefined' && PreflightManager ? PreflightManager.failedChecks : 0
+                                _root._gateManualFails = typeof PreflightManager !== 'undefined' && PreflightManager ? PreflightManager.pendingChecks : 0
                                 armGateDialogLoader.active = true
                             } else {
-                                if (typeof TelemetryProvider !== 'undefined' && TelemetryProvider) {
-                                    TelemetryProvider.arm()
-                                } else {
-                                    // No TelemetryProvider available — cannot arm through gate.
-                                    // Do NOT fall back to mainWindow.armVehicleRequest() as that
-                                    // bypasses the ArmingGate entirely. The gate is the single
-                                    // source of truth; if the provider is unavailable, arm is denied.
-                                    qCWarning("surfacetest") << "Arm requested but TelemetryProvider unavailable — arm denied by gate"
-                                }
                                 mainWindow.hideIndicatorPopup()
                             }
                         }

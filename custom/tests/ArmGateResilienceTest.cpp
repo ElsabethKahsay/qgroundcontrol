@@ -263,8 +263,12 @@ void ArmGateResilienceTest::testForceArmTokenIsOneShot()
 {
     _buildArmableGate();
     _gate->setMode(ArmingGate::Active);
+    // Close the gate: the token is what authorizes the arm, not open checks.
+    // (Since Step 2.5 the force window closes on use; with the gate OPEN a
+    // second arm would pass as an ordinary arm, which proves nothing here.)
+    _check->forceStatus(CheckStatus::Failed, QStringLiteral("Simulated failure"));
 
-    const auto interceptor = _gate->makeArmInterceptor();
+    auto interceptor = _gate->makeArmInterceptor();
 
     QString reason;
     const quint32 token = _gate->forceArm();

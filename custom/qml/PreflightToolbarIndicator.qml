@@ -111,7 +111,12 @@ Item {
         anchors.fill: parent
         cursorShape: Qt.PointingHandCursor
         onClicked: {
-            if (_gateBlocked()) {
+            // G5/G11 (Step 2.5): offer Acknowledge & Arm only when an
+            // acknowledgment can actually allow the arm. Hard blocks (no or
+            // stale telemetry, Training, stale data) go to the checklist instead.
+            var v = QGroundControl.multiVehicleManager.activeVehicle
+            var d = (_gate && !(v && v.armed)) ? _gate.previewArm() : null
+            if (d && d.verdict === "needsAck") {
                 armGateDialogLoader.active = true
             } else {
                 mainWindow.showAnalyzeTool()

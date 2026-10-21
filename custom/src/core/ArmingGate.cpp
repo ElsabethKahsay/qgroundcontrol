@@ -35,6 +35,7 @@ ArmingGate::ArmingGate(QObject *parent)
         m_overrideToken = 0;
         m_forceArmOverride = false;
         emit overrideActiveChanged(false);
+        emit overrideKindChanged();
         emit armingOverrideExpired();
         // Re-evaluate checks now that the override window is closed; if checks
         // are failing the gate re-closes immediately instead of waiting for the
@@ -58,7 +59,10 @@ ArmingGate::ArmingGate(QObject *parent)
         }
         m_ackReceived = false;
         m_ackToken = 0;
+        m_ackCheckIds.clear();
+        emit overrideKindChanged();
         qWarning().noquote() << QStringLiteral("ArmingGate: ALLOW_WITH_ACK expired before use");
+        updateArmingState();
     });
 
     // After any disarm, close the gate so the next arm request is re-checked.
@@ -136,112 +140,27 @@ void ArmingGate::setMode(Mode mode)
     updateArmingState();
 }
 
-// Intercept a MAVLink COMMAND_LONG for arm/disarm.
-// Returns true to allow the command through, false to block it.
-// Only the arm command (param1=1) is intercepted; disarm passes through.
+// INBOUND arm/disarm COMMAND_LONG from a link peer (companion, another GCS).
+// G7 (user decision 2026-10-21: deny, never mutate): the peer's arm is judged
+// by decide() with token 0, so it can never spend the operator's
+// acknowledgment or a force token, and this path never changes gate state.
+// It is denied when the gate is closed (matters when QGC forwards between
+// links) and every peer arm is logged. Disarm always passes.
+// (processArmRequest(), which production never called, is removed — G12.)
 bool ArmingGate::interceptCommandLong(uint16_t command, const QMap<int, float> &params)
 {
-    float armParam = params.value(1, 0.0f);
-    bool isArm = qFuzzyCompare(armParam, 1.0f);
+    const bool isArm = qFuzzyCompare(params.value(1, 0.0f), 1.0f);
     if (!isArm)
         return true;
 
-    if (m_overrideActive)
-        return true;
-
-    // Training mode hard block — cannot be overridden unless force arm / gate override is active
-    FlightSession *session = FlightSession::instance();
-    if (session && session->isTraining()) {
-        qWarning().noquote() << QStringLiteral("ArmingGate: Arm blocked — training mode active");
-        m_denialReason = QStringLiteral("Arming is disabled in training mode");
-        m_armingAllowed = false;
-        emit armingAllowedChanged(false);
-        emit denialReasonChanged(m_denialReason);
-        emit armingDenied(command, m_denialReason);
-        return false;
-    }
-
-    if (m_ackReceived) {
-        m_ackReceived = false;
-        m_ackToken = 0;
-        if (m_ackTimer) m_ackTimer->stop();
-        qWarning().noquote() << QStringLiteral("ArmingGate: ALLOW_WITH_ACK bypass for pilot %1")
-                                    .arg(m_lastAck.pilotName);
-        m_denialReason.clear();
-        m_armingAllowed = true;
-        emit armingAllowedChanged(true);
-        emit denialReasonChanged({});
+    const ArmDecision d = decide(currentRequest(0, true), snapshot());
+    if (d.verdict == ArmDecision::Allow) {
+        qWarning().noquote() << QStringLiteral("ArmingGate: inbound ARM from a link peer allowed (gate open)");
         return true;
     }
-
-    if (m_mode == Passive)
-        return true;
-
-    if (!m_manager) {
-        qWarning() << "ArmingGate: no PreflightManager set";
-        return true;
-    }
-
-    bool allPassed = m_manager->allMandatoryPassed();
-
-    if ((m_mode == Hybrid || m_mode == Active) && !allPassed) {
-        QString reason = m_manager->armingBlocker();
-        if (reason.isEmpty())
-            reason = QStringLiteral("Preflight checks not complete");
-        m_denialReason = reason;
-        m_armingAllowed = false;
-        emit armingAllowedChanged(false);
-        emit denialReasonChanged(reason);
-        emit armingDenied(command, reason);
-        qWarning().noquote() << QStringLiteral("Arming blocked: %1").arg(reason);
-        return false;
-    }
-
-    m_denialReason.clear();
-    m_armingAllowed = true;
-    emit armingAllowedChanged(true);
-    emit denialReasonChanged({});
-    return true;
-}
-
-// Evaluate an arm request against current check failure counts.
-// In Passive mode or with an active override, the gate is always open.
-// In Active/Hybrid mode, any critical failure closes the gate.
-ArmingGate::GateDecision ArmingGate::processArmRequest(int criticalFailCount, int manualFailCount)
-{
-    if (m_overrideActive || m_mode == Passive)
-        return GATE_OPEN;
-
-    // ALLOW_WITH_ACK: if ack received, allow one-time bypass
-    if (m_overridePolicy == ALLOW_WITH_ACK && m_ackReceived &&
-        (criticalFailCount > 0 || manualFailCount > 0)) {
-        m_ackReceived = false;
-        m_ackToken = 0;
-        if (m_ackTimer) m_ackTimer->stop();
-        qWarning().noquote() << QStringLiteral("ArmingGate: ALLOW_WITH_ACK bypass for pilot %1")
-                                    .arg(m_lastAck.pilotName);
-        return GATE_OPEN;
-    }
-
-    // ACTIVE or HYBRID + any blocking fail = suppress
-    if ((m_mode == Active || m_mode == Hybrid) && criticalFailCount > 0) {
-        QString reason = buildDenialReason(criticalFailCount, manualFailCount);
-        m_denialReason = reason;
-        m_armingAllowed = false;
-        emit armingAllowedChanged(false);
-        emit denialReasonChanged(reason);
-        emit gateClosed(reason);
-        return GATE_CLOSED;
-    }
-
-    // Allow pass-through
-    m_denialReason.clear();
-    m_armingAllowed = true;
-    emit armingAllowedChanged(true);
-    emit denialReasonChanged({});
-    emit gateOpened();
-    return GATE_OPEN;
-    
+    qWarning().noquote() << QStringLiteral("ArmingGate: inbound ARM from a link peer denied: %1").arg(d.reason);
+    emit armingDenied(command, d.reason);
+    return false;
 }
 
 // Record a pilot's acknowledgment of override responsibility.
@@ -266,6 +185,9 @@ bool ArmingGate::acknowledgeOverride(const QString &pilotName, const QString &re
     // Single-shot expiry: an unused ack does not survive the operator's window.
     m_ackTimer->setInterval(m_ackExpiryMs);
     m_ackTimer->start();
+    // G5: the ack covers exactly the checks failing now; a new failure voids it.
+    m_ackCheckIds = currentRequest(0).failingMandatoryIds;
+    emit overrideKindChanged();
 
     qWarning().noquote() << QStringLiteral("ArmingGate: ALLOW_WITH_ACK acknowledged by %1 — %2")
                                 .arg(pilotName, reason);
@@ -287,9 +209,11 @@ void ArmingGate::resetGate()
     if (m_ackTimer) m_ackTimer->stop();
     m_overrideTimer->stop();
     m_overrideToken = 0;
-    m_overrideTokenSeq = 0;
+    // G9: m_overrideTokenSeq is never reset, so a token value is never reused.
     m_forceArmOverride = false;
+    m_ackCheckIds.clear();
     emit overrideActiveChanged(false);
+    emit overrideKindChanged();
     updateArmingState();
 }
 
@@ -304,11 +228,6 @@ quint32 ArmingGate::setOverrideDuration(int timeoutMs)
     emit overrideActiveChanged(true);
     emit armingOverrideActivated(QStringLiteral("Test override"), timeoutMs);
 
-    m_denialReason.clear();
-    m_armingAllowed = true;
-    emit armingAllowedChanged(true);
-    emit denialReasonChanged({});
-
     // Mint a one-shot caller-scoped token for the sanctioned caller.
     m_forceArmOverride = true;
     const quint32 token = ++m_overrideTokenSeq;
@@ -316,6 +235,8 @@ quint32 ArmingGate::setOverrideDuration(int timeoutMs)
 
     // Close the window automatically so the gate does not stay open forever.
     m_overrideTimer->start(timeoutMs);
+    emit overrideKindChanged();
+    updateArmingState();   // G8: a plain arm is still denied during the window
     return token;
 }
 
@@ -332,11 +253,6 @@ quint32 ArmingGate::forceArm()
     emit overrideActiveChanged(true);
     emit armingOverrideActivated(QStringLiteral("Operator force arm"), kForceArmOverrideSec);
 
-    m_denialReason.clear();
-    m_armingAllowed = true;
-    emit armingAllowedChanged(true);
-    emit denialReasonChanged({});
-
     // Mint a one-shot caller-scoped token for the pending command about to be
     // issued by the sanctioned caller.
     m_forceArmOverride = true;
@@ -346,8 +262,11 @@ quint32 ArmingGate::forceArm()
     emit gateOverrideLogged(QStringLiteral("Operator force arm"), kForceArmOverrideSec);
     qWarning().noquote() << QStringLiteral("Arming overridden: Operator force arm (%1s window)").arg(kForceArmOverrideSec);
 
-    // Close the window automatically so the gate does not stay open forever.
+    // Close the window automatically so the gate does not stay open forever;
+    // it also closes as soon as the token is used (consumeForceToken).
     m_overrideTimer->start(kForceArmOverrideSec * 1000);
+    emit overrideKindChanged();
+    updateArmingState();   // G8: a plain arm is still denied during the window
     return token;
 }
 
@@ -369,77 +288,35 @@ quint32 ArmingGate::forceArm()
 //     interceptCommandLong() only sees INBOUND peer commands, so honoring the ack
 //     there alone left the dialog's "Acknowledge & Arm" vetoed by the very checks
 //     the operator had just acknowledged.
-std::function<bool(QString&, quint32)> ArmingGate::makeArmInterceptor() const
+std::function<bool(QString&, quint32)> ArmingGate::makeArmInterceptor()
 {
-    QPointer<const ArmingGate> guard(this);
+    QPointer<ArmingGate> guard(this);
     return [guard](QString &denialReason, quint32 callToken) -> bool {
         if (!guard) {
             denialReason = QStringLiteral("Arming gate unavailable (fail-closed)");
             return false;
         }
-        if (guard->isOverrideActive() && guard->m_forceArmOverride) {
-            // One-shot, caller-scoped force-arm window: authorize exactly the
-            // command holding the current unconsumed token, then consume it.
-            // Any other arm inside the window is denied — including after this
-            // token is spent (it stays exclusive until the window closes).
-            if (guard->m_overrideToken != 0 && callToken == guard->m_overrideToken) {
-                const_cast<ArmingGate*>(guard.data())->m_overrideToken = 0;
-                denialReason.clear();
-                return true;
-            }
-            denialReason = QStringLiteral("Force-arm override is one-shot and caller-scoped; "
-                                          "this arm command does not hold the minted token");
-            return false;
-        }
-        // Acknowledged override (ALLOW_WITH_ACK): authorize exactly one arm, then
-        // consume the acknowledgment. Guarded by the policy so a NONE policy
-        // cannot be bypassed by a stray acknowledgment. The ack is bound to the
-        // token minted at acknowledgment time; only the command presenting that
-        // token (e.g. the dialog's TelemetryBridge::arm()) may consume it.
-        if (guard->m_overridePolicy == OverridePolicy::ALLOW_WITH_ACK && guard->m_ackReceived) {
-            ArmingGate *that = const_cast<ArmingGate*>(guard.data());
-            if (callToken != 0 && callToken == that->m_ackToken) {
-                that->m_ackReceived = false;
-                that->m_ackToken = 0;
-                if (that->m_ackTimer) that->m_ackTimer->stop();
-                that->m_denialReason.clear();
-                denialReason.clear();
-                qWarning().noquote() << QStringLiteral("ArmingGate: ALLOW_WITH_ACK bypass consumed by pilot %1")
-                                            .arg(that->m_lastAck.pilotName);
-                return true;
-            }
-            // Token mismatch: this is not the originating call (a stock arm
-            // presents token 0). Reject without spending the acknowledgment.
-            denialReason = QStringLiteral("Acknowledged override is one-shot and caller-scoped; "
-                                          "this arm command does not hold the acknowledged token");
-            return false;
-        }
-        if (guard->isArmingAllowed()) {
+        const ArmDecision d = decide(guard->currentRequest(callToken), guard->snapshot());
+        if (d.verdict == ArmDecision::Allow) {
+            if (d.kind == ArmDecision::Force)
+                guard->consumeForceToken();
+            else if (d.kind == ArmDecision::Ack)
+                guard->consumeAck();
             denialReason.clear();
             return true;
         }
-        denialReason = guard->denialReason();
-        if (denialReason.isEmpty()) {
-            denialReason = QStringLiteral("Arming denied by preflight gate");
-        }
+        denialReason = d.reason.isEmpty() ? QStringLiteral("Arming denied by preflight gate") : d.reason;
         return false;
     };
 }
 
-// React to a check failure signal from PreflightManager.
-// In Passive mode, failures are logged but do not block arming.
+// G12: a check failure re-runs the single evaluation path instead of writing
+// gate state directly.
 void ArmingGate::onCheckFailed(const QString &checkId, const QString &reason)
 {
     Q_UNUSED(checkId)
-    if (m_mode == Passive)
-        return;
-
-    if (m_manager && !m_manager->allMandatoryPassed()) {
-        m_armingAllowed = false;
-        m_denialReason = reason;
-        emit armingAllowedChanged(false);
-        emit denialReasonChanged(reason);
-    }
+    Q_UNUSED(reason)
+    updateArmingState();
 }
 
 // Re-evaluate arming state when all checks pass.
@@ -448,87 +325,212 @@ void ArmingGate::onAllChecksPassed()
     updateArmingState();
 }
 
-// Core evaluation: determines whether arming is allowed based on current state.
-// Priority: override active > passive mode > telemetry staleness > check results.
+// armingAllowed answers "would a plain arm (token 0) pass now" (G8).
 // Persists the arming status to the database for dashboard display.
 void ArmingGate::updateArmingState()
 {
-    if (m_overrideActive) {
-        if (!m_armingAllowed) {
-            m_armingAllowed = true;
-            emit armingAllowedChanged(true);
-        }
+    const ArmDecision d = decide(currentRequest(0), snapshot());
+    const bool allowed = (d.verdict == ArmDecision::Allow);
+    const QString reason = allowed ? QString() : d.reason;
+    if (allowed == m_armingAllowed && reason == m_denialReason)
         return;
+    const bool allowedChanged = (allowed != m_armingAllowed);
+    m_armingAllowed = allowed;
+    m_denialReason = reason;
+    if (allowedChanged)
+        emit armingAllowedChanged(allowed);
+    emit denialReasonChanged(reason);
+
+    if (allowedChanged && m_telemetry && m_telemetry->vehicle()) {
+        const QString deviceUid = QString::number(m_telemetry->vehicle()->id());
+        DatabaseManager::instance().updatePreflightStatus(deviceUid, allowed ? QStringLiteral("Ready")
+                                                                             : QStringLiteral("Blocked"));
+    }
+}
+
+ArmingGate::ArmDecision ArmingGate::decide(const ArmRequest &request, const GateSnapshot &gate)
+{
+    ArmDecision d;
+    d.failingIds = request.failingMandatoryIds;
+    auto deny = [&d](const QString &reason) {
+        d.verdict = ArmDecision::Deny;
+        d.reason = reason;
+        return d;
+    };
+    auto allow = [&d](ArmDecision::Kind kind) {
+        d.verdict = ArmDecision::Allow;
+        d.kind = kind;
+        d.reason.clear();
+        return d;
+    };
+
+    // 1. Disarm is never blocked.
+    if (!request.isArm)
+        return allow(ArmDecision::Normal);
+
+    // 2. Training: no GCS arm at all, including the GCS's own buttons (G6).
+    if (request.training)
+        return deny(QStringLiteral("Arming is disabled in training mode"));
+
+    // 3. Force window: exactly the minted token, once; nothing else passes (G8).
+    if (gate.forceWindowOpen) {
+        if (request.callToken != 0 && request.callToken == gate.forceToken)
+            return allow(ArmDecision::Force);
+        return deny(QStringLiteral("Force-arm override is one-shot and caller-scoped; "
+                                   "this arm command does not hold the minted token"));
     }
 
-    if (m_mode == Passive) {
-        if (!m_armingAllowed) {
-            m_armingAllowed = true;
-            emit armingAllowedChanged(true);
+    // 4. Passive mode: test-only (QML cannot set the mode, G2).
+    if (gate.mode == Passive)
+        return allow(ArmDecision::Normal);
+
+    // 5. Hard blocks — never overridable (G5).
+    if (request.heartbeatAgeMs < 0)
+        return deny(QStringLiteral("No telemetry received from the vehicle yet"));
+    if (request.heartbeatAgeMs > qint64(kTelemetryStalenessSec) * 1000)
+        return deny(QStringLiteral("Telemetry stale — last update %1s ago").arg(request.heartbeatAgeMs / 1000));
+    if (request.anyMandatoryStale)
+        return deny(request.blocker.isEmpty() ? QStringLiteral("Telemetry data stale") : request.blocker);
+    if (!request.batteryPackSelected)
+        return deny(QStringLiteral("Select the battery pack before arming"));
+
+    // 6. Everything required passes.
+    if (request.allMandatoryPassed)
+        return allow(ArmDecision::Normal);
+
+    const QString blocker = request.blocker.isEmpty() ? QStringLiteral("Preflight checks not complete")
+                                                      : request.blocker;
+    // 7. Overridable failures: the operator's bound, expiring acknowledgment.
+    //    (User decision 2026-10-21: any failing check except the hard blocks.)
+    if (gate.policy == ALLOW_WITH_ACK) {
+        if (gate.ackValid && request.callToken != 0 && request.callToken == gate.ackToken) {
+            QStringList newFailures;
+            for (const QString &id : request.failingMandatoryIds) {
+                if (!gate.ackCheckIds.contains(id))
+                    newFailures << id;
+            }
+            if (newFailures.isEmpty())
+                return allow(ArmDecision::Ack);
+            return deny(QStringLiteral("New failure since the acknowledgment (%1) — acknowledge again")
+                            .arg(newFailures.join(QStringLiteral(", "))));
         }
-        return;
+        d.verdict = ArmDecision::NeedsAck;
+        d.reason = blocker;
+        return d;
     }
 
-    // An absent timestamp means "no telemetry has ever been seen", which is
-    // treated as stale rather than fresh. Requiring isValid() to declare the
-    // link stale made "nothing has ever arrived" the single state that always
-    // looked healthy, so a freshly built gate reported itself armable on the
-    // strength of checks that had run against no vehicle at all.
-    const bool noTickEver = (m_lastTickMs < 0);
-    const qint64 tickAgeMs = MonotonicClock::ageMs(m_lastTickMs);
-    const bool telemetryStale = (noTickEver ||
-        tickAgeMs > qint64(kTelemetryStalenessSec) * 1000) &&
-        !m_overrideActive;
-    if (telemetryStale) {
-        QString msg = noTickEver
-            ? QStringLiteral("No telemetry received from the vehicle yet")
-            : QStringLiteral("Telemetry stale — last update %1s ago")
-                .arg(tickAgeMs / 1000);
-        if (m_armingAllowed || m_denialReason != msg) {
-            m_armingAllowed = false;
-            m_denialReason = msg;
-            emit armingAllowedChanged(false);
-            emit denialReasonChanged(msg);
+    // 8. Everything else.
+    return deny(blocker);
+}
+
+ArmingGate::ArmRequest ArmingGate::currentRequest(quint32 callToken, bool isArm) const
+{
+    ArmRequest r;
+    r.isArm = isArm;
+    r.callToken = callToken;
+    r.heartbeatAgeMs = MonotonicClock::ageMs(m_lastTickMs);
+    if (m_manager) {
+        r.allMandatoryPassed = m_manager->allMandatoryPassed();
+        r.blocker = m_manager->armingBlocker();
+        for (const AbstractCheck *c : m_manager->checks()) {
+            if (!c || !c->mandatory() || c->isInformational())
+                continue;
+            const CheckStatus st = c->status();
+            if (st == CheckStatus::Passed || st == CheckStatus::Warning || st == CheckStatus::Skipped)
+                continue;
+            r.failingMandatoryIds << c->id();
+            if (st == CheckStatus::Stale)
+                r.anyMandatoryStale = true;
         }
-        return;
+    } else {
+        r.blocker = QStringLiteral("No preflight manager");
     }
+    FlightSession *session = FlightSession::instance();
+    r.training = session && session->isTraining();
+    return r;
+}
 
-    bool allOk = m_manager && m_manager->allMandatoryPassed();
-    QString failure = allOk ? QString() : (m_manager ? m_manager->armingBlocker() : QStringLiteral("No manager"));
+ArmingGate::GateSnapshot ArmingGate::snapshot() const
+{
+    GateSnapshot g;
+    g.mode = m_mode;
+    g.policy = m_overridePolicy;
+    g.forceWindowOpen = m_overrideActive && m_forceArmOverride;
+    g.forceToken = m_overrideToken;
+    g.ackValid = m_ackReceived && m_ackToken != 0;
+    g.ackToken = m_ackToken;
+    g.ackCheckIds = m_ackCheckIds;
+    return g;
+}
 
-    if (allOk != m_armingAllowed || failure != m_denialReason) {
-        m_armingAllowed = allOk;
-        m_denialReason = failure;
-        emit armingAllowedChanged(allOk);
-        emit denialReasonChanged(failure);
+ArmingGate::OverrideKind ArmingGate::overrideKind() const
+{
+    if (m_overrideActive && m_forceArmOverride)
+        return ForceOverride;
+    if (m_ackReceived && m_ackToken != 0)
+        return AckOverride;
+    return NoOverride;
+}
 
-        // Persist preflight status to DB
+QVariantMap ArmingGate::requestArm()
+{
+    // The bridge's arm() attaches the acknowledgment token itself; decide with
+    // it here so the reply matches what the interceptor will decide.
+    const quint32 token = (m_ackReceived ? m_ackToken : 0);
+    ArmDecision d = decide(currentRequest(token), snapshot());
+    if (d.verdict == ArmDecision::Allow) {
         if (m_telemetry && m_telemetry->vehicle()) {
-            QString deviceUid = QString::number(m_telemetry->vehicle()->id());
-            QString status = allOk ? QStringLiteral("Ready") : QStringLiteral("Blocked");
-            DatabaseManager::instance().updatePreflightStatus(deviceUid, status);
+            m_telemetry->arm();
+        } else {
+            d.verdict = ArmDecision::Deny;
+            d.reason = QStringLiteral("No vehicle connected");
         }
     }
+    if (d.verdict == ArmDecision::Deny)
+        emit commandRejected(d.reason);
+    return toVariantMap(d);
 }
 
-bool ArmingGate::evaluateGate()
+QVariantMap ArmingGate::previewArm() const
 {
-    if (m_overrideActive || m_mode == Passive)
-        return true;
-    return m_manager && m_manager->allMandatoryPassed();
+    const quint32 token = (m_ackReceived ? m_ackToken : 0);
+    return toVariantMap(decide(currentRequest(token), snapshot()));
 }
 
-QString ArmingGate::buildDenialReason(int criticalFailCount, int manualFailCount) const
+void ArmingGate::consumeAck()
 {
-    QStringList parts;
-    if (criticalFailCount > 0) {
-        parts << QStringLiteral("%1 blocking check(s) failed").arg(criticalFailCount);
-    }
-    if (manualFailCount > 0) {
-        parts << QStringLiteral("%1 manual check(s) pending/failed").arg(manualFailCount);
-    }
-    if (parts.isEmpty()) {
-        return QStringLiteral("Preflight checks not complete");
-    }
-    return parts.join(QStringLiteral("; "));
+    qWarning().noquote() << QStringLiteral("ArmingGate: acknowledged override used by pilot %1 (reason: %2; checks: %3)")
+                                .arg(m_lastAck.pilotName, m_lastAck.reason,
+                                     m_ackCheckIds.join(QStringLiteral(", ")));
+    m_ackReceived = false;
+    m_ackToken = 0;
+    m_ackCheckIds.clear();
+    if (m_ackTimer)
+        m_ackTimer->stop();
+    emit overrideKindChanged();
+    updateArmingState();
+}
+
+void ArmingGate::consumeForceToken()
+{
+    m_overrideToken = 0;
+    m_overrideActive = false;
+    m_forceArmOverride = false;
+    if (m_overrideTimer)
+        m_overrideTimer->stop();
+    emit overrideActiveChanged(false);
+    emit overrideKindChanged();
+    updateArmingState();
+}
+
+QVariantMap ArmingGate::toVariantMap(const ArmDecision &d)
+{
+    static const char *verdicts[] = {"allow", "needsAck", "deny"};
+    static const char *kinds[] = {"normal", "ack", "force"};
+    QVariantMap m;
+    m.insert(QStringLiteral("verdict"), QString::fromLatin1(verdicts[d.verdict]));
+    m.insert(QStringLiteral("kind"), QString::fromLatin1(kinds[d.kind]));
+    m.insert(QStringLiteral("reason"), d.reason);
+    m.insert(QStringLiteral("failing"), d.failingIds);
+    return m;
 }

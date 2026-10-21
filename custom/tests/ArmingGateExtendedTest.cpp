@@ -34,10 +34,12 @@ void ArmingGateExtendedTest::testForceArmNonExpiring()
 
     gate.forceArm();
 
-    QVERIFY(gate.isArmingAllowed());
+    // G8 (Step 2.5): the window is open for the minted token only, so a plain
+    // arm — which is what armingAllowed answers — is still denied.
+    QVERIFY(!gate.isArmingAllowed());
     QVERIFY(gate.isOverrideActive());
-    QVERIFY(gate.denialReason().isEmpty());
-    QVERIFY(allowedSpy.count() >= 1);
+    QCOMPARE(gate.overrideKind(), ArmingGate::ForceOverride);
+    QVERIFY(!gate.denialReason().isEmpty());
     QVERIFY(overrideSpy.count() >= 1);
 }
 
@@ -70,11 +72,12 @@ void ArmingGateExtendedTest::testInterceptCommandLongActiveBlocks()
     ArmingGate gate;
     gate.setMode(ArmingGate::Active);
 
-    // Without a PreflightManager, should allow (safety fallback)
+    // G7 (Step 2.5): without a PreflightManager the inbound path used to ALLOW
+    // every arm ("safety fallback"). It now fails closed like every other path.
     QMap<int, float> params;
     params[1] = 1.0f;
     bool allowed = gate.interceptCommandLong(400, params);
-    QVERIFY(allowed);
+    QVERIFY(!allowed);
 }
 
 void ArmingGateExtendedTest::testInterceptCommandLongActiveAllowsWhenPassed()
@@ -84,6 +87,10 @@ void ArmingGateExtendedTest::testInterceptCommandLongActiveAllowsWhenPassed()
 
     PreflightManager *mgr = new PreflightManager(1, &gate);
     gate.setPreflightManager(mgr);
+    // A live autopilot link: no heartbeat is a hard block (Step 2.5).
+    MockTelemetryBridge bridge;
+    gate.setTelemetryBridge(&bridge);
+    bridge.emitHeartbeat();
 
     // Resolve the airframe kind so the mandatory set is configured (R16);
     // the gate is fail-closed until the kind is known.
@@ -112,7 +119,9 @@ void ArmingGateExtendedTest::testDenialReasonSignal()
 
     QSignalSpy denialSpy(&gate, &ArmingGate::denialReasonChanged);
 
-    gate.processArmRequest(2, 1);
+    // Any evaluation of a gate with no telemetry denies with a reason
+    // (processArmRequest() was removed — G12).
+    gate.resetGate();
     QVERIFY(!gate.denialReason().isEmpty());
     QVERIFY(denialSpy.count() >= 1);
 }

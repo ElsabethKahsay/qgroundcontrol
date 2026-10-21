@@ -39,8 +39,8 @@ private slots:
     void testPassiveModeAllowsAll();
     void testActiveModeBlocksOnFail();
     void testActiveModeAllowsWhenPassed();
-    void testHybridModeBlocksThenAllowsAfterAck();
-    void testForceArmBypassesGate();
+    void testPeerArmCannotUseOperatorAck();
+    void testForceWindowDoesNotOpenGateForPeers();
     void testNonArmCommandPassesThrough();
     void testDisarmCommandPassesThrough();
     void testAckIsOneTimeUse();
@@ -115,6 +115,10 @@ void MavLinkInterceptTest::testActiveModeAllowsWhenPassed()
     TestBlockingCheck *passCheck = new TestBlockingCheck(QStringLiteral("test.passing"));
     passCheck->forceStatus(CheckStatus::Passed, QStringLiteral("Healthy"));
     mgr->addCheck(passCheck);
+    // A live autopilot link: no heartbeat is a hard block (Step 2.5).
+    MockTelemetryBridge bridge;
+    gate.setTelemetryBridge(&bridge);
+    bridge.emitHeartbeat();
 
     QMap<int, float> armParams;
     armParams[1] = 1.0f;
@@ -123,16 +127,21 @@ void MavLinkInterceptTest::testActiveModeAllowsWhenPassed()
     QVERIFY(gate.isArmingAllowed());
 }
 
-// Hybrid mode: blocks on fail, then allows after acknowledgeOverride
-void MavLinkInterceptTest::testHybridModeBlocksThenAllowsAfterAck()
+// G7 (Step 2.5, user decision 2026-10-21): the operator's acknowledgment is
+// for this GCS's own arm. A peer's inbound arm is judged with token 0, stays
+// denied, and leaves the acknowledgment unspent. (Was: Hybrid mode let the
+// first inbound arm after an acknowledgment through.)
+void MavLinkInterceptTest::testPeerArmCannotUseOperatorAck()
 {
     ArmingGate gate;
-    gate.setMode(ArmingGate::Hybrid);
+    gate.setMode(ArmingGate::Hybrid);   // Hybrid behaves as Active (G12)
 
     PreflightManager *mgr = new PreflightManager(1, &gate);
     gate.setPreflightManager(mgr);
+    MockTelemetryBridge bridge;
+    gate.setTelemetryBridge(&bridge);
+    bridge.emitHeartbeat();
 
-    // Force a mandatory check to failed so the first attempt is blocked.
     TestBlockingCheck *failCheck = new TestBlockingCheck(QStringLiteral("test.hybrid"));
     failCheck->forceStatus(CheckStatus::Failed, QStringLiteral("Simulated failure"));
     mgr->addCheck(failCheck);
@@ -140,20 +149,20 @@ void MavLinkInterceptTest::testHybridModeBlocksThenAllowsAfterAck()
     QMap<int, float> armParams;
     armParams[1] = 1.0f;
 
-    // First attempt: blocked
     QVERIFY(!gate.interceptCommandLong(MAV_CMD_COMPONENT_ARM_DISARM, armParams));
-
-    // Acknowledge override
     QVERIFY(gate.acknowledgeOverride(QStringLiteral("TestPilot"), QStringLiteral("Test reason")));
+    const quint32 ack = gate.ackTokenForArm();
 
-    // Second attempt: allowed (one-time ACK bypass)
-    QVERIFY(gate.interceptCommandLong(MAV_CMD_COMPONENT_ARM_DISARM, armParams));
+    QVERIFY(!gate.interceptCommandLong(MAV_CMD_COMPONENT_ARM_DISARM, armParams));
+    QCOMPARE(gate.ackTokenForArm(), ack);   // unspent: still the operator's
 
     delete mgr;
 }
 
-// Force arm: bypasses gate entirely, sets override active
-void MavLinkInterceptTest::testForceArmBypassesGate()
+// G7/G8 (Step 2.5): a force window authorizes exactly the minted token on
+// this GCS's own command. armingAllowed (a plain arm) stays false and a
+// peer's inbound arm is denied. (Was: the window let every arm through.)
+void MavLinkInterceptTest::testForceWindowDoesNotOpenGateForPeers()
 {
     ArmingGate gate;
     gate.setMode(ArmingGate::Active);
@@ -161,21 +170,18 @@ void MavLinkInterceptTest::testForceArmBypassesGate()
     PreflightManager *mgr = new PreflightManager(1, &gate);
     gate.setPreflightManager(mgr);
 
-    QSignalSpy allowedSpy(&gate, &ArmingGate::armingAllowedChanged);
     QSignalSpy overrideSpy(&gate, &ArmingGate::overrideActiveChanged);
 
     gate.forceArm();
 
-    QVERIFY(gate.isArmingAllowed());
     QVERIFY(gate.isOverrideActive());
-    QVERIFY(gate.denialReason().isEmpty());
-    QVERIFY(allowedSpy.count() >= 1);
+    QCOMPARE(gate.overrideKind(), ArmingGate::ForceOverride);
+    QVERIFY(!gate.isArmingAllowed());
     QVERIFY(overrideSpy.count() >= 1);
 
-    // Arm command should now pass through because override is active
     QMap<int, float> armParams;
     armParams[1] = 1.0f;
-    QVERIFY(gate.interceptCommandLong(MAV_CMD_COMPONENT_ARM_DISARM, armParams));
+    QVERIFY(!gate.interceptCommandLong(MAV_CMD_COMPONENT_ARM_DISARM, armParams));
 }
 
 // Non-arm commands (param1 != 1) should always pass through
@@ -205,7 +211,9 @@ void MavLinkInterceptTest::testDisarmCommandPassesThrough()
     QVERIFY(gate.interceptCommandLong(MAV_CMD_COMPONENT_ARM_DISARM, params));
 }
 
-// ACK should only work once — second attempt after ACK consumed should block again
+// ACK should only work once. Since Step 2.5 the acknowledgment is spent only
+// by this GCS's own arm carrying its token (the outbound interceptor); the
+// inbound peer path can never spend it (testPeerArmCannotUseOperatorAck).
 void MavLinkInterceptTest::testAckIsOneTimeUse()
 {
     ArmingGate gate;
@@ -213,23 +221,22 @@ void MavLinkInterceptTest::testAckIsOneTimeUse()
 
     PreflightManager *mgr = new PreflightManager(1, &gate);
     gate.setPreflightManager(mgr);
+    MockTelemetryBridge bridge;
+    gate.setTelemetryBridge(&bridge);
+    bridge.emitHeartbeat();
 
     // Mandatory failing check keeps the gate closed after the one-time ACK is used.
     TestBlockingCheck *failCheck = new TestBlockingCheck(QStringLiteral("test.ack.once"));
     failCheck->forceStatus(CheckStatus::Failed, QStringLiteral("Simulated failure"));
     mgr->addCheck(failCheck);
 
-    QMap<int, float> armParams;
-    armParams[1] = 1.0f;
+    QVERIFY(gate.acknowledgeOverride(QStringLiteral("Pilot"), QStringLiteral("Reason")));
+    const quint32 token = gate.ackTokenForArm();
+    auto interceptor = gate.makeArmInterceptor();
+    QString reason;
 
-    // Acknowledge
-    gate.acknowledgeOverride(QStringLiteral("Pilot"), QStringLiteral("Reason"));
-
-    // First arm: allowed (ACK consumed)
-    QVERIFY(gate.interceptCommandLong(MAV_CMD_COMPONENT_ARM_DISARM, armParams));
-
-    // Second arm: should block again (ACK was one-time)
-    QVERIFY(!gate.interceptCommandLong(MAV_CMD_COMPONENT_ARM_DISARM, armParams));
+    QVERIFY2(interceptor(reason, token), qPrintable(reason));   // first arm: ACK consumed
+    QVERIFY(!interceptor(reason, token));                        // second: blocked again
 
     delete mgr;
 }
@@ -326,14 +333,12 @@ void MavLinkInterceptTest::testLocalForceArmOpensOverrideWindow()
     // TelemetryBridge::forceArm() does via QMetaObject::invokeMethod).
     gate.forceArm();
 
-    // Override window opened — arm should now be allowed for the window duration
-    QVERIFY(gate.isArmingAllowed());
+    // Override window opened for the minted token only (G8): a plain arm is
+    // still denied, and so is a peer's inbound force-arm (G7).
+    QVERIFY(!gate.isArmingAllowed());
     QVERIFY(gate.isOverrideActive());
-    QVERIFY(gate.denialReason().isEmpty());
-
-    // With the override window open, ArmingGate::interceptCommandLong gates the
-    // command through (this is the INBOUND link-peer path, not the outbound one)
-    QVERIFY(gate.interceptCommandLong(MAV_CMD_COMPONENT_ARM_DISARM, armParams));
+    QCOMPARE(gate.overrideKind(), ArmingGate::ForceOverride);
+    QVERIFY(!gate.interceptCommandLong(MAV_CMD_COMPONENT_ARM_DISARM, armParams));
 
     delete mgr;
 }

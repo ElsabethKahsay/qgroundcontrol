@@ -273,6 +273,12 @@ void PreflightPlugin::init()
             this, &PreflightPlugin::_onKnownVehicleConnected);
 
     // Gate open/close tracks the flight session lifecycle for compliance logging.
+    // Item 11: a refusal is never silent. Gate denials from requestArm() and
+    // autopilot rejections (_surfaceCommandRejection) both arrive here.
+    connect(_armingGate, &ArmingGate::commandRejected, this, [](const QString &reason) {
+        qgcApp()->showAppMessage(reason);
+    });
+
     connect(_armingGate, &ArmingGate::gateOpened,
             this, &PreflightPlugin::_onGateOpened);
     connect(_armingGate, &ArmingGate::gateClosed,

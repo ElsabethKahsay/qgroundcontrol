@@ -207,8 +207,10 @@ void ArmSendTest::testForceArmThenArmSendsOne()
 
     // forceArm() opens the override window then sends.
     bridge.forceArm(QStringLiteral("TestPilot"), QStringLiteral("Unit test bench force arm"));
-    QVERIFY(gate.isOverrideActive());
-    QVERIFY(gate.isArmingAllowed());
+    // Step 2.5: the force window closes as soon as its token is used, and a
+    // plain arm is never "allowed" by it (G8).
+    QVERIFY(!gate.isOverrideActive());
+    QCOMPARE(gate.overrideKind(), ArmingGate::NoOverride);
 
     // arm() while override active -> command must go out.
     bridge.arm();
@@ -245,8 +247,10 @@ void ArmSendTest::testForceArmExpiresThenArmBlocked()
     _mockLink->clearReceivedMavCommandCounts();
 
     bridge.forceArm(QStringLiteral("TestPilot"), QStringLiteral("Unit test bench force arm"));
-    QVERIFY(gate.isOverrideActive());
-    QVERIFY(gate.isArmingAllowed());
+    // Step 2.5: the force window closes as soon as its token is used, and a
+    // plain arm is never "allowed" by it (G8).
+    QVERIFY(!gate.isOverrideActive());
+    QCOMPARE(gate.overrideKind(), ArmingGate::NoOverride);
 
     bridge.arm();
     QVERIFY(_pumpUntil([](void* ctx) {
@@ -431,7 +435,10 @@ void ArmSendTest::testProductionWiringInstallsInterceptor()
     // The sanctioned path (forceArm opens the override window, arm() sends) must
     // still go through exactly once under the same side-effect-installed veto.
     bridge.forceArm(QStringLiteral("TestPilot"), QStringLiteral("Unit test bench force arm"));
-    QVERIFY(gate.isOverrideActive());
+    // Step 2.5: the force window closes as soon as its token is used, and a
+    // plain arm is never "allowed" by it (G8).
+    QVERIFY(!gate.isOverrideActive());
+    QCOMPARE(gate.overrideKind(), ArmingGate::NoOverride);
     bridge.arm();
     QVERIFY(_pumpUntil([](void* ctx) {
         MockLink* link = static_cast<MockLink*>(ctx);
@@ -469,8 +476,10 @@ void ArmSendTest::testBenchForceArmFunnelSingle2989Command()
     const QString refusal = bridge.forceArm(QStringLiteral("TestPilot"), QStringLiteral("Unit test bench force arm"));   // funnel: override + one send
 
     QVERIFY2(refusal.isEmpty(), qPrintable(QStringLiteral("funnel refused on the ground: %1").arg(refusal)));
-    QVERIFY(gate.isOverrideActive());            // bounded override opened
-    QVERIFY(gate.isArmingAllowed());
+    // Step 2.5: the force window closes as soon as its token is used, and a
+    // plain arm is never "allowed" by it (G8).
+    QVERIFY(!gate.isOverrideActive());
+    QCOMPARE(gate.overrideKind(), ArmingGate::NoOverride);
     QVERIFY(_pumpUntil(&ArmSendTest::_wireCount, &probe, 10000));
 
     QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 1);
@@ -597,8 +606,10 @@ void ArmSendTest::testStockChainDeniedInsideBenchOverrideWindow()
     // for its own command.
     const QString refusal = bridge.forceArm(QStringLiteral("TestPilot"), QStringLiteral("Unit test bench force arm"));
     QVERIFY2(refusal.isEmpty(), qPrintable(QStringLiteral("funnel refused on the ground: %1").arg(refusal)));
-    QVERIFY(gate.isOverrideActive());        // window open
-    QVERIFY(gate.isArmingAllowed());
+    // Step 2.5: the force window closes as soon as its token is used, and a
+    // plain arm is never "allowed" by it (G8).
+    QVERIFY(!gate.isOverrideActive());
+    QCOMPARE(gate.overrideKind(), ArmingGate::NoOverride);
 
     // The sanctioned command arms through its own token; pump until its ACK
     // lands so the Vehicle duplicate-command guard is clear and a later zero

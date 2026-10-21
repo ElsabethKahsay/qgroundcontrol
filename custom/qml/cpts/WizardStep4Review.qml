@@ -21,6 +21,26 @@ Item {
 
     signal backClicked()
 
+    // G11 (Step 2.5): every Arm button asks the gate. allow → requestArm()
+    // already sent the arm; needsAck → the acknowledge dialog, which arms on
+    // accept; deny → the gate shows the reason (no silent no-op).
+    function requestArm() {
+        if (typeof ArmingGate === "undefined" || !ArmingGate) return
+        var d = ArmingGate.requestArm()
+        if (d.verdict === "needsAck")
+            armGateDialogLoader.active = true
+    }
+
+    CE.ArmGateDialogLoader {
+        id: armGateDialogLoader
+        criticalFailCount: typeof PreflightManager !== "undefined" ? PreflightManager.failedChecks : 0
+        manualFailCount: typeof PreflightManager !== "undefined" ? PreflightManager.pendingChecks : 0
+        onAccepted: {
+            if (typeof TelemetryProvider !== "undefined" && TelemetryProvider)
+                TelemetryProvider.arm()
+        }
+    }
+
     // ── Inputs from previous steps ───────────────────────────────────────────
     property bool cameraOk: false
     property bool gimbalOk: false
@@ -96,7 +116,7 @@ Item {
                         anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             weatherWarningDialog.close()
-                            TelemetryProvider.arm()
+                            root.requestArm()
                         }
                     }
                 }
@@ -345,7 +365,7 @@ Item {
                         if (root._weatherMarginal) {
                             weatherWarningDialog.open()
                         } else {
-                            TelemetryProvider.arm()
+                            root.requestArm()
                         }
                     }
                 }
