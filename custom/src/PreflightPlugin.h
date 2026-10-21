@@ -4,6 +4,7 @@
 #include "QGCPalette.h"
 #include "Vehicle/Vehicle.h"
 #include <QTimer>
+#include <QPointer>
 
 /// @file PreflightPlugin.h
 ///
@@ -39,6 +40,47 @@ class VehicleRegistry;
 class NoFlyZoneModel;
 class VehicleListModel;
 class MissionController;
+
+/// Step 2.4 (F5, F6, G10): the single source of the vehicle's armed
+/// transitions for the preflight side. Armed state comes only from
+/// Vehicle::armedChanged (the autopilot's HEARTBEAT); COMMAND_ACKs only label
+/// WHO armed (arm source) and never change armed state. On every transition
+/// it emits ArmingGate::vehicleArmed/vehicleDisarmed (gate and FSM resets, so
+/// an RC disarm clears an unspent acknowledgment) and gateOpened/gateClosed
+/// (session bookkeeping, until Step 3's SessionRecorder).
+class ArmStateTracker : public QObject
+{
+    Q_OBJECT
+public:
+    enum class ArmSource { External = 0, Gcs, ForceToken };
+    Q_ENUM(ArmSource)
+
+    /// Window in which an accepted arm ACK attributes the next arm to this GCS.
+    static constexpr qint64 kGcsAckWindowMs = 3000;
+
+    explicit ArmStateTracker(ArmingGate *gate, QObject *parent = nullptr);
+
+    /// Follow @p vehicle's armedChanged (nullptr stops following).
+    void setVehicle(Vehicle *vehicle);
+    /// An ARM_DISARM COMMAND_ACK arrived. Labels the arm source only.
+    void onArmDisarmAck(bool accepted);
+    /// Vehicle armed state changed (from the HEARTBEAT). Public for tests.
+    void onArmedChanged(bool armed);
+
+    ArmSource lastArmSource() const { return m_lastArmSource; }
+    /// Pure rule: force window open → ForceToken; an accepted ack no older
+    /// than kGcsAckWindowMs → Gcs; otherwise External (RC or another peer).
+    static ArmSource sourceFor(qint64 gcsAckAgeMs, bool forceWindowOpen);
+
+private:
+    ArmingGate *m_gate = nullptr;
+    QPointer<Vehicle> m_vehicle;
+    QMetaObject::Connection m_armedConn;
+    bool m_armed = false;
+    qint64 m_lastGcsAckMs = -1;   ///< MonotonicClock ms of the last accepted ack while disarmed
+    qint64 m_armedAtMs = -1;      ///< MonotonicClock ms of the last arm transition
+    ArmSource m_lastArmSource = ArmSource::External;
+};
 
 class PreflightPlugin : public QGCCorePlugin
 {
@@ -112,5 +154,5 @@ private:
     QString _currentSessionDeviceUid; // Canonical key (device_uid) of the active session
     QDateTime _sessionStartTime;      // Timestamp when gateOpened started the session
     QTimer _weatherRefreshTimer;      // Periodic timer that triggers weather data refresh
-    int _lastArmDisarmParam = -1;     // 1=arm, 0=disarm, -1=unknown from last COMMAND_LONG
+    ArmStateTracker *_armStateTracker = nullptr; // Armed transitions from HEARTBEAT only (Step 2.4)
 };

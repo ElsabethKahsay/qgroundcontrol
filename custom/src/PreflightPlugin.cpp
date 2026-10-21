@@ -75,6 +75,7 @@ int qInitResources_qmlcache_VehicleSetupModule();
 #include "core/ZoneComplianceCheck.h"
 #include "MissionManager/MissionController.h"
 #include "MissionManager/PlanMasterController.h"
+#include "utils/MonotonicClock.h"
 
 Q_LOGGING_CATEGORY(preflightPluginLog, "preflight.plugin")
 
@@ -159,6 +160,7 @@ void PreflightPlugin::init()
     // to them (TelemetryEventLogger::setDependencies and the FlightSession
     // connects take real pointers, not nullptr).
     _armingGate = new ArmingGate(this);
+    _armStateTracker = new ArmStateTracker(_armingGate, this);
     _armingGate->setPreflightManager(_preflightManager);
     _armingGate->setTelemetryBridge(_telemetryBridge);
     _telemetryBridge->setArmingGate(_armingGate);
@@ -493,6 +495,8 @@ void PreflightPlugin::_onActiveVehicleChanged(Vehicle *vehicle)
     qCDebug(preflightPluginLog) << "PreflightPlugin: Active vehicle changed"
                                 << (vehicle ? vehicle->id() : -1);
 
+    if (_armStateTracker)
+        _armStateTracker->setVehicle(vehicle);
     if (vehicle) {
         _setupForVehicle(vehicle);
     } else {
@@ -912,7 +916,6 @@ bool PreflightPlugin::mavlinkMessage(Vehicle *vehicle, LinkInterface *link, cons
         mavlink_msg_command_long_decode(&message, &cmd);
 
         if (cmd.command == MAV_CMD_COMPONENT_ARM_DISARM) {
-            _lastArmDisarmParam = static_cast<int>(cmd.param1);
             // Single source of truth for arm gating: ArmingGate::interceptCommandLong.
             // All inbound arm commands (force-arm included) are evaluated there; an
             // inbound force-arm (param2 == kForceArmParam2/kForceDisarmParam2) must
@@ -935,34 +938,18 @@ bool PreflightPlugin::mavlinkMessage(Vehicle *vehicle, LinkInterface *link, cons
         mavlink_msg_command_ack_decode(&message, &ack);
 
         if (ack.command == MAV_CMD_COMPONENT_ARM_DISARM) {
+            // Step 2.4 (F5): an ACK never changes armed state; Vehicle::armedChanged
+            // (HEARTBEAT) is the only source (ArmStateTracker). The ACK only labels
+            // the arm source and surfaces rejections.
+            if (_armStateTracker)
+                _armStateTracker->onArmDisarmAck(ack.result == MAV_RESULT_ACCEPTED);
             if (ack.result == MAV_RESULT_ACCEPTED) {
-                qCWarning(preflightPluginLog) << "Vehicle arm/disarm command ACCEPTED by autopilot";
-                bool newArmedState = (_lastArmDisarmParam == -1) ? (vehicle ? !vehicle->armed() : true) : (_lastArmDisarmParam == 1);
-                if (vehicle) {
-                    vehicle->_updateArmed(newArmedState);
-                }
-                if (_armingGate) {
-                    // gateOpened/gateClosed drive the flight_sessions compliance
-                    // record via _onGateOpened()/_onGateClosed(): open on a
-                    // confirmed arm, close on the matching disarm. These are
-                    // emitted from the ACCEPTED ack rather than the arm *request*
-                    // so a session is only ever created for a flight that really
-                    // armed (the intercepted request can still be rejected by the
-                    // autopilot, which would otherwise leak a phantom session).
-                    if (newArmedState) {
-                        emit _armingGate->vehicleArmed();
-                        emit _armingGate->gateOpened();
-                    } else {
-                        emit _armingGate->vehicleDisarmed();
-                        emit _armingGate->gateClosed(QStringLiteral("Vehicle disarmed"));
-                    }
-                }
+                qCInfo(preflightPluginLog) << "Vehicle arm/disarm command ACCEPTED by autopilot";
             } else {
                 QString reason = _mavResultToString(ack.result);
                 qCWarning(preflightPluginLog) << QStringLiteral("Vehicle arm DENIED (result=%1: %2)").arg(ack.result).arg(reason);
                 _surfaceCommandRejection(QStringLiteral("Arm"), reason);
             }
-            _lastArmDisarmParam = -1;
         }
 
         // Surface rejections for takeoff and mode-change commands (not just arm).
@@ -1022,4 +1009,76 @@ const QVariantList &PreflightPlugin::toolBarIndicators()
         });
     }
     return _toolBarIndicators;
+}
+
+// ---------------------------------------------------------------------------
+// ArmStateTracker (Step 2.4) — see PreflightPlugin.h.
+// ---------------------------------------------------------------------------
+ArmStateTracker::ArmStateTracker(ArmingGate *gate, QObject *parent)
+    : QObject(parent), m_gate(gate)
+{
+}
+
+void ArmStateTracker::setVehicle(Vehicle *vehicle)
+{
+    if (m_vehicle == vehicle)
+        return;
+    QObject::disconnect(m_armedConn);
+    m_vehicle = vehicle;
+    m_armed = vehicle ? vehicle->armed() : false;
+    m_lastGcsAckMs = -1;
+    if (vehicle)
+        m_armedConn = connect(vehicle, &Vehicle::armedChanged, this, &ArmStateTracker::onArmedChanged);
+}
+
+ArmStateTracker::ArmSource ArmStateTracker::sourceFor(qint64 gcsAckAgeMs, bool forceWindowOpen)
+{
+    if (forceWindowOpen)
+        return ArmSource::ForceToken;
+    if (gcsAckAgeMs >= 0 && gcsAckAgeMs <= kGcsAckWindowMs)
+        return ArmSource::Gcs;
+    return ArmSource::External;
+}
+
+void ArmStateTracker::onArmDisarmAck(bool accepted)
+{
+    if (!accepted)
+        return;
+    if (!m_armed) {
+        // Disarmed: an accepted ARM_DISARM is (almost certainly) this GCS's arm.
+        m_lastGcsAckMs = MonotonicClock::nowMs();
+        return;
+    }
+    // Already armed: the HEARTBEAT beat the ACK. If the arm was just labelled
+    // External, this late ACK means it was ours.
+    if (m_lastArmSource == ArmSource::External && m_armedAtMs >= 0
+        && MonotonicClock::ageMs(m_armedAtMs) <= kGcsAckWindowMs) {
+        m_lastArmSource = ArmSource::Gcs;
+        qCInfo(preflightPluginLog) << "Arm source corrected to GCS (ACK after HEARTBEAT)";
+    }
+}
+
+void ArmStateTracker::onArmedChanged(bool armed)
+{
+    if (armed == m_armed)
+        return;   // duplicate notification
+    m_armed = armed;
+    if (armed) {
+        const bool forceWindow = m_gate && m_gate->isOverrideActive();
+        m_lastArmSource = sourceFor(MonotonicClock::ageMs(m_lastGcsAckMs), forceWindow);
+        m_armedAtMs = MonotonicClock::nowMs();
+        m_lastGcsAckMs = -1;
+        qCInfo(preflightPluginLog) << "Vehicle ARMED (heartbeat), source:" << m_lastArmSource;
+        // TODO(step3): SessionRecorder stores the arm source with the flight.
+        if (m_gate) {
+            emit m_gate->vehicleArmed();
+            emit m_gate->gateOpened();
+        }
+    } else {
+        qCInfo(preflightPluginLog) << "Vehicle DISARMED (heartbeat)";
+        if (m_gate) {
+            emit m_gate->vehicleDisarmed();
+            emit m_gate->gateClosed(QStringLiteral("Vehicle disarmed"));
+        }
+    }
 }

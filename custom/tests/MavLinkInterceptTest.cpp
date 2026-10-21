@@ -26,6 +26,8 @@
 #include "mocks/MockTelemetryBridge.h"
 #include "mocks/TestBlockingCheck.h"
 #include "utils/Config.h"
+#include "utils/MonotonicClock.h"
+#include "PreflightPlugin.h"
 
 class MavLinkInterceptTest : public UnitTest {
     Q_OBJECT
@@ -47,6 +49,10 @@ private slots:
     void testInboundForceArmDoesNotBypassGate();
     void testLayer2InboundOnlyArmGate();
     void testLocalForceArmOpensOverrideWindow();
+    void testAckNeverChangesArmedState();
+    void testArmTransitionsComeFromHeartbeatOnly();
+    void testArmSourceLabels();
+    void testRcDisarmClearsUnspentAck();
 };
 
 // Passive mode: all arm commands should pass through regardless of check state
@@ -363,6 +369,96 @@ void MavLinkInterceptTest::testLayer2InboundOnlyArmGate()
     // but serves as a documented architectural constraint. If this test ever
     // needs modification, it signals a potential architecture regression.
     QVERIFY(true);  // Architectural invariant documented
+}
+
+// Step 2.4 (F5): an accepted ARM_DISARM ACK alone never produces an arm
+// transition; it used to be guessed from the ACK and forced into the vehicle.
+void MavLinkInterceptTest::testAckNeverChangesArmedState()
+{
+    ArmingGate gate;
+    ArmStateTracker tracker(&gate);
+    QSignalSpy armed(&gate, &ArmingGate::vehicleArmed);
+    QSignalSpy opened(&gate, &ArmingGate::gateOpened);
+
+    tracker.onArmDisarmAck(true);
+    tracker.onArmDisarmAck(true);   // retried ACK
+
+    QCOMPARE(armed.count(), 0);
+    QCOMPARE(opened.count(), 0);
+}
+
+// Step 2.4 (F5, F6): transitions come from armedChanged (HEARTBEAT) only, once
+// each; a duplicate notification or a late duplicate ACK adds nothing.
+void MavLinkInterceptTest::testArmTransitionsComeFromHeartbeatOnly()
+{
+    ArmingGate gate;
+    ArmStateTracker tracker(&gate);
+    QSignalSpy armed(&gate, &ArmingGate::vehicleArmed);
+    QSignalSpy disarmed(&gate, &ArmingGate::vehicleDisarmed);
+    QSignalSpy opened(&gate, &ArmingGate::gateOpened);
+    QSignalSpy closed(&gate, &ArmingGate::gateClosed);
+
+    tracker.onArmedChanged(true);    // RC arm: no ACK at all
+    tracker.onArmedChanged(true);    // duplicate notification
+    tracker.onArmDisarmAck(true);    // duplicate / late ACK
+    QCOMPARE(armed.count(), 1);
+    QCOMPARE(opened.count(), 1);
+
+    tracker.onArmedChanged(false);   // RC disarm
+    QCOMPARE(disarmed.count(), 1);
+    QCOMPARE(closed.count(), 1);
+}
+
+// Step 2.4: the ACK labels who armed. ACK then HEARTBEAT → GCS; HEARTBEAT
+// with no ACK → External (RC / another peer); HEARTBEAT then a late ACK →
+// corrected to GCS; an ACK older than the window → External.
+void MavLinkInterceptTest::testArmSourceLabels()
+{
+    TestClock clock;
+    MonotonicClock::setForTesting(&clock);
+    struct Restore { ~Restore() { MonotonicClock::setForTesting(nullptr); } } restore;
+    using S = ArmStateTracker::ArmSource;
+
+    QCOMPARE(ArmStateTracker::sourceFor(500, false), S::Gcs);
+    QCOMPARE(ArmStateTracker::sourceFor(-1, false), S::External);
+    QCOMPARE(ArmStateTracker::sourceFor(5000, false), S::External);
+    QCOMPARE(ArmStateTracker::sourceFor(500, true), S::ForceToken);
+
+    ArmingGate gate;
+    ArmStateTracker tracker(&gate);
+
+    tracker.onArmDisarmAck(true);
+    clock.advance(400);
+    tracker.onArmedChanged(true);
+    QCOMPARE(tracker.lastArmSource(), S::Gcs);
+    tracker.onArmedChanged(false);
+
+    clock.advance(10000);
+    tracker.onArmedChanged(true);
+    QCOMPARE(tracker.lastArmSource(), S::External);
+    clock.advance(300);
+    tracker.onArmDisarmAck(true);    // heartbeat beat the ACK
+    QCOMPARE(tracker.lastArmSource(), S::Gcs);
+    tracker.onArmedChanged(false);
+
+    tracker.onArmDisarmAck(true);
+    clock.advance(4000);             // ACK outside the window
+    tracker.onArmedChanged(true);
+    QCOMPARE(tracker.lastArmSource(), S::External);
+}
+
+// Step 2.4 (G10): any disarm — including an RC disarm the GCS never commanded —
+// clears an unspent acknowledgment.
+void MavLinkInterceptTest::testRcDisarmClearsUnspentAck()
+{
+    ArmingGate gate;
+    ArmStateTracker tracker(&gate);
+    tracker.onArmedChanged(true);
+    QVERIFY(gate.acknowledgeOverride(QStringLiteral("Pilot"), QStringLiteral("Test")));
+    QVERIFY(gate.ackTokenForArm() != 0);
+
+    tracker.onArmedChanged(false);   // RC disarm: no GCS command, no ACK
+    QCOMPARE(gate.ackTokenForArm(), quint32(0));
 }
 
 UT_REGISTER_TEST(MavLinkInterceptTest)
