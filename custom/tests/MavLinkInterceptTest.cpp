@@ -39,7 +39,6 @@ private slots:
     void testActiveModeAllowsWhenPassed();
     void testHybridModeBlocksThenAllowsAfterAck();
     void testForceArmBypassesGate();
-    void testOverrideActiveBypassesGate();
     void testNonArmCommandPassesThrough();
     void testDisarmCommandPassesThrough();
     void testAckIsOneTimeUse();
@@ -102,10 +101,14 @@ void MavLinkInterceptTest::testActiveModeAllowsWhenPassed()
     // the gate is fail-closed until the kind is known.
     mgr->applyVehicleKind(QStringLiteral("MULTIROTOR"));
 
-    // Confirm all mandatory checks
+    // Built-in Auto checks need live telemetry and refuse confirm(); exercise
+    // the allow path with one explicit mandatory check instead.
     for (auto *c : mgr->checks()) {
-        c->confirm();
+        c->setMandatory(false);
     }
+    TestBlockingCheck *passCheck = new TestBlockingCheck(QStringLiteral("test.passing"));
+    passCheck->forceStatus(CheckStatus::Passed, QStringLiteral("Healthy"));
+    mgr->addCheck(passCheck);
 
     QMap<int, float> armParams;
     armParams[1] = 1.0f;
@@ -164,24 +167,6 @@ void MavLinkInterceptTest::testForceArmBypassesGate()
     QVERIFY(overrideSpy.count() >= 1);
 
     // Arm command should now pass through because override is active
-    QMap<int, float> armParams;
-    armParams[1] = 1.0f;
-    QVERIFY(gate.interceptCommandLong(MAV_CMD_COMPONENT_ARM_DISARM, armParams));
-}
-
-// Override active: arm command passes through regardless of check state
-void MavLinkInterceptTest::testOverrideActiveBypassesGate()
-{
-    ArmingGate gate;
-    gate.setMode(ArmingGate::Active);
-
-    PreflightManager *mgr = new PreflightManager(1, &gate);
-    gate.setPreflightManager(mgr);
-
-    // Activate timed override
-    gate.overrideGate(QStringLiteral("Test override"), 60);
-    QVERIFY(gate.isOverrideActive());
-
     QMap<int, float> armParams;
     armParams[1] = 1.0f;
     QVERIFY(gate.interceptCommandLong(MAV_CMD_COMPONENT_ARM_DISARM, armParams));

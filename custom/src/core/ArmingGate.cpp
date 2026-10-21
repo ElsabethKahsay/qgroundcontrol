@@ -277,26 +277,6 @@ void ArmingGate::setOverridePolicy(OverridePolicy policy)
     m_overridePolicy = policy;
 }
 
-// Temporarily override the gate, allowing arming for a limited duration.
-// Logs the override for audit trail and emits signals for UI notification.
-void ArmingGate::overrideGate(const QString &reason, int timeoutSec)
-{
-    m_overrideActive = true;
-    m_overrideTimer->start(timeoutSec * 1000);
-    emit overrideActiveChanged(true);
-    emit armingOverrideActivated(reason, timeoutSec);
-
-    m_denialReason.clear();
-    m_armingAllowed = true;
-    emit armingAllowedChanged(true);
-    emit denialReasonChanged({});
-
-    emit gateOverrideLogged(reason, timeoutSec);
-
-    qWarning().noquote() << QStringLiteral("Arming overridden: %1 (timeout %2s)")
-                                .arg(reason).arg(timeoutSec);
-}
-
 // Reset the gate to normal evaluation mode, clearing any active override.
 void ArmingGate::resetGate()
 {
@@ -388,7 +368,6 @@ quint32 ArmingGate::forceArm()
 //     interceptCommandLong() only sees INBOUND peer commands, so honoring the ack
 //     there alone left the dialog's "Acknowledge & Arm" vetoed by the very checks
 //     the operator had just acknowledged.
-//   * gate override (overrideGate()): permissive for the window by design.
 std::function<bool(QString&, quint32)> ArmingGate::makeArmInterceptor() const
 {
     QPointer<const ArmingGate> guard(this);

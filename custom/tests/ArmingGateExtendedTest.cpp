@@ -6,6 +6,7 @@
 #include "PreflightManager.h"
 #include "AbstractCheck.h"
 #include "mocks/MockTelemetryBridge.h"
+#include "mocks/TestBlockingCheck.h"
 
 class ArmingGateExtendedTest : public UnitTest {
     Q_OBJECT
@@ -16,7 +17,6 @@ private slots:
 
     void testForceArmNonExpiring();
     void testForceArmResetsCorrectly();
-    void testOverrideGateTimed();
     void testInterceptCommandLongPassive();
     void testInterceptCommandLongActiveBlocks();
     void testInterceptCommandLongActiveAllowsWhenPassed();
@@ -50,16 +50,6 @@ void ArmingGateExtendedTest::testForceArmResetsCorrectly()
 
     gate.resetGate();
     QVERIFY(!gate.isOverrideActive());
-}
-
-void ArmingGateExtendedTest::testOverrideGateTimed()
-{
-    ArmingGate gate;
-    gate.setMode(ArmingGate::Hybrid);
-
-    gate.overrideGate(QStringLiteral("Manual override"), 1);
-    QVERIFY(gate.isOverrideActive());
-    QVERIFY(gate.isArmingAllowed());
 }
 
 void ArmingGateExtendedTest::testInterceptCommandLongPassive()
@@ -99,10 +89,14 @@ void ArmingGateExtendedTest::testInterceptCommandLongActiveAllowsWhenPassed()
     // the gate is fail-closed until the kind is known.
     mgr->applyVehicleKind(QStringLiteral("MULTIROTOR"));
 
-    // Every mandatory check must pass before the gate opens in Active mode
+    // Built-in Auto checks need live telemetry and refuse confirm(); exercise
+    // the allow path with one explicit mandatory check instead.
     for (auto *c : mgr->checks()) {
-        c->confirm();
+        c->setMandatory(false);
     }
+    TestBlockingCheck *passCheck = new TestBlockingCheck(QStringLiteral("test.passing"));
+    passCheck->forceStatus(CheckStatus::Passed, QStringLiteral("Healthy"));
+    mgr->addCheck(passCheck);
     QMap<int, float> params;
     params[1] = 1.0f;
     bool allowed = gate.interceptCommandLong(400, params);

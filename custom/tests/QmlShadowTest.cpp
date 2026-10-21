@@ -133,6 +133,7 @@ private slots:
     void testCustomQrcAliasesResolveToDeclaredSource();
     void testShadowedOverridesCarryCustomContent();
     void testNoUndeclaredQmlShadow();
+    void testArmControlsCannotOpenGateInOneTap();
 };
 
 // Core invariant: whatever custom.qrc declares at a resource path is what the
@@ -263,6 +264,56 @@ void QmlShadowTest::testNoUndeclaredQmlShadow()
     QVERIFY2(undeclared.isEmpty(),
              qPrintable(QStringLiteral("undeclared QML shadows (custom copy never loads): %1")
                             .arg(undeclared.join(QStringLiteral("; ")))));
+}
+
+// Phase 1 arm-gate guard (G2/G3/G4): the gate must never be opened from a
+// single tap. The mode badge is display-only, the old one-tap Override /
+// Override Gate controls are gone, and Force Arm may only be reached through
+// the confirmation dialog. This is a source-text audit of the QML that ships in
+// custom.qrc; QmlSmokeTest separately proves the pages still load.
+void QmlShadowTest::testArmControlsCannotOpenGateInOneTap()
+{
+    if (_sourceDir().isEmpty()) {
+        QSKIP("no source tree next to the executable (packaged run); arm-control audit skipped");
+    }
+
+    struct FileCheck {
+        const char *path;
+        QStringList forbidden;
+        QStringList required;
+    };
+    const QList<FileCheck> checks = {
+        { "custom/qml/cpts/ArmGatePanel.qml",
+          { QStringLiteral("overrideGate"),
+            QStringLiteral("onClicked: ArmingGate.mode"),
+            QStringLiteral("onClicked: root.requestForceArm()") },
+          { QStringLiteral("forceArmConfirm.open()") } },
+        { "custom/qml/cpts/PriorityFixPanel.qml",
+          { QStringLiteral("overrideGate") },
+          {} },
+    };
+
+    for (const FileCheck &check : checks) {
+        const QString absolute = _sourceDir() + QLatin1Char('/') + QLatin1String(check.path);
+        const QByteArray text = _readFile(absolute);
+        QVERIFY2(!text.isEmpty(), qPrintable(QStringLiteral("cannot read %1").arg(absolute)));
+        for (const QString &needle : check.forbidden) {
+            QVERIFY2(!text.contains(needle.toUtf8()),
+                     qPrintable(QStringLiteral("%1 still contains one-tap gate control %2")
+                                    .arg(QLatin1String(check.path), needle)));
+        }
+        for (const QString &needle : check.required) {
+            QVERIFY2(text.contains(needle.toUtf8()),
+                     qPrintable(QStringLiteral("%1 is missing required guarded path %2")
+                                    .arg(QLatin1String(check.path), needle)));
+        }
+    }
+
+    // The mode property must not be writable from QML.
+    const QByteArray gateHeader = _readFile(_sourceDir() + QStringLiteral("/custom/src/core/ArmingGate.h"));
+    QVERIFY2(!gateHeader.isEmpty(), "cannot read ArmingGate.h");
+    QVERIFY2(!gateHeader.contains("Q_PROPERTY(Mode mode READ mode WRITE"),
+             "ArmingGate.mode is still writable from QML");
 }
 
 UT_REGISTER_TEST(QmlShadowTest)

@@ -29,7 +29,6 @@ private slots:
     void testActiveModeBlocksOnFail();
     void testActiveModeAllowsOnPass();
     void testHybridModeOverride();
-    void testHybridModeOverrideLogged();
     void testDisconnectResetsGate();
 };
 
@@ -78,18 +77,6 @@ void ArmingGateTest::testHybridModeOverride()
     QVERIFY(gate.acknowledgeOverride(QStringLiteral("TestPilot"), QStringLiteral("Test override")));
     QCOMPARE(gate.processArmRequest(1, 0), ArmingGate::GATE_OPEN);
     QCOMPARE(gate.processArmRequest(1, 0), ArmingGate::GATE_CLOSED);
-}
-
-void ArmingGateTest::testHybridModeOverrideLogged()
-{
-    ArmingGate gate;
-    gate.setMode(ArmingGate::Hybrid);
-    gate.processArmRequest(1, 0);
-
-    // overrideGate activates + logs a timed override for the audit trail
-    QSignalSpy overrideSpy(&gate, &ArmingGate::gateOverrideLogged);
-    gate.overrideGate(QStringLiteral("Test"), 30);
-    QCOMPARE(overrideSpy.count(), 1);
 }
 
 void ArmingGateTest::testDisconnectResetsGate()

@@ -21,8 +21,9 @@ class ArmingGate : public QObject {
     Q_PROPERTY(bool armingAllowed READ isArmingAllowed NOTIFY armingAllowedChanged)
     /// Human-readable reason why arming is denied.
     Q_PROPERTY(QString denialReason READ denialReason NOTIFY denialReasonChanged)
-    /// Current gate mode (Passive / Active / Hybrid).
-    Q_PROPERTY(Mode mode READ mode WRITE setMode NOTIFY modeChanged)
+    /// Current gate mode (Passive / Active / Hybrid). Read-only from QML:
+    /// Phase 1 fixes the gate at Active; the badge is display-only (G2).
+    Q_PROPERTY(Mode mode READ mode NOTIFY modeChanged)
     /// Whether an operator override is currently active.
     Q_PROPERTY(bool overrideActive READ isOverrideActive NOTIFY overrideActiveChanged)
 
@@ -77,8 +78,6 @@ public:
 
     /// Acknowledge override with pilot name and reason (one-time bypass).
     Q_INVOKABLE bool acknowledgeOverride(const QString &pilotName, const QString &reason);
-    /// Temporarily override the gate for a given duration.
-    Q_INVOKABLE void overrideGate(const QString &reason, int timeoutSec = 30);
     /// Test-only: set a custom override duration in milliseconds for testing override
     /// expiry. Mints and returns a fresh one-shot caller token like forceArm().
     quint32 setOverrideDuration(int timeoutMs);
@@ -105,9 +104,8 @@ public:
     /// token the vehicle currently bears, and returns true when arming is
     /// allowed or an override is active; false otherwise (fail-closed when the
     /// gate is gone). During a force-arm override only the command presenting
-    /// the current unconsumed minted token passes; overrides opened via
-    /// overrideGate() remain permissive. Installed via
-    /// Vehicle::setArmCommandInterceptor.
+    /// the current unconsumed minted token passes; there is no ambient window.
+    /// Installed via Vehicle::setArmCommandInterceptor.
     std::function<bool(QString&, quint32)> makeArmInterceptor() const;
 
     /// Most recent pilot acknowledgment record.
@@ -177,10 +175,9 @@ private:
     // token (m_overrideTokenSeq counter) and return it to the caller, who attaches
     // it to the vehicle for its specific pending command. The interceptor
     // authorizes exactly the command presenting the CURRENT unconsumed token and
-    // consumes it on success. m_forceArmOverride distinguishes this caller-scoped
-    // window from an acknowledged overrideGate() window (which is permissive by
-    // design and uses no token). A force-arm window whose token is spent or that
-    // expires authorizes no other command: it is not ambient.
+    // consumes it on success. m_forceArmOverride marks the window as
+    // caller-scoped. A force-arm window whose token is spent or that expires
+    // authorizes no other command: it is not ambient.
     mutable quint32 m_overrideToken = 0;
     quint32 m_overrideTokenSeq = 0;
     bool m_forceArmOverride = false;
