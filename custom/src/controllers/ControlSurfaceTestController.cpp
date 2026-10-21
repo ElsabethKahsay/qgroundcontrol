@@ -533,7 +533,9 @@ void ControlSurfaceTestController::_beginSurfaceTest(int idx)
         // Routed through the funnel (TelemetryBridge::forceArm) which opens the
         // bounded override and sends the canonical kForceArmParam2.
         if (m_telemetryBridge) {
-            const QString refusal = m_telemetryBridge->forceArm();
+            const QString refusal = m_telemetryBridge->forceArm(
+                QStringLiteral("Bench test"),
+                QStringLiteral("Control-surface sweep requires the vehicle armed"));
             if (!refusal.isEmpty()) {
                 qCWarning(controlSurfaceTestLog) << "Surface test arm refused:" << refusal;
                 m_pendingSurfaceIndex = -1;

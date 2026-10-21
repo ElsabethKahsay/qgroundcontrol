@@ -41,6 +41,8 @@
 #include "Comms/MAVLinkProtocol.h"
 #include "Comms/MockLink/MockLink.h"
 #include "utils/Config.h"
+#include "utils/DatabaseManager.h"
+#include "managers/FlightSession.h"
 
 // Test helper check used to drive the gate into a blocked state deterministically.
 class ArmSendFlowCheck : public AbstractCheck {
@@ -58,8 +60,14 @@ class ArmSendTest : public UnitTest {
     Q_OBJECT
 
 private slots:
-    void init() override { UnitTest::init(); }
-    void cleanup() override { UnitTest::cleanup(); }
+    void init() override {
+        UnitTest::init();
+        FlightSession::instance()->startTestingSession();
+    }
+    void cleanup() override {
+        FlightSession::instance()->closeSession();
+        UnitTest::cleanup();
+    }
 
     void testArmBlockedSendsNothing();
     void testForceArmThenArmSendsOne();
@@ -78,8 +86,14 @@ private slots:
     void testUnusedAckExpiresAndDenies();
     void testDisarmDoesNotLeaveGateOpen();
     void testUnspentAckDeniesStockArmThenAllowsBoundArm();
+    void testForceArmRefusedOutsideTesting();
+    void testForceArmRequiresPilotAndReason();
+    void testForceArmAuditLogRecordsPilotAndReason();
 
 private:
+    // Unit-test singleton owner: FlightSession::instance() is null until a
+    // session object exists (the app creates it via the QML singleton).
+    FlightSession _session;
     bool _pumpUntil(bool (*cond)(void* ctx), void* ctx, int timeoutMs);
     Vehicle* _connectPlane();
     void _makeBlockedGate(ArmingGate &gate, MockTelemetryBridge &bridge);
@@ -192,7 +206,7 @@ void ArmSendTest::testForceArmThenArmSendsOne()
     _mockLink->clearReceivedMavCommandCounts();
 
     // forceArm() opens the override window then sends.
-    bridge.forceArm();
+    bridge.forceArm(QStringLiteral("TestPilot"), QStringLiteral("Unit test bench force arm"));
     QVERIFY(gate.isOverrideActive());
     QVERIFY(gate.isArmingAllowed());
 
@@ -230,7 +244,7 @@ void ArmSendTest::testForceArmExpiresThenArmBlocked()
 
     _mockLink->clearReceivedMavCommandCounts();
 
-    bridge.forceArm();
+    bridge.forceArm(QStringLiteral("TestPilot"), QStringLiteral("Unit test bench force arm"));
     QVERIFY(gate.isOverrideActive());
     QVERIFY(gate.isArmingAllowed());
 
@@ -416,7 +430,7 @@ void ArmSendTest::testProductionWiringInstallsInterceptor()
 
     // The sanctioned path (forceArm opens the override window, arm() sends) must
     // still go through exactly once under the same side-effect-installed veto.
-    bridge.forceArm();
+    bridge.forceArm(QStringLiteral("TestPilot"), QStringLiteral("Unit test bench force arm"));
     QVERIFY(gate.isOverrideActive());
     bridge.arm();
     QVERIFY(_pumpUntil([](void* ctx) {
@@ -452,7 +466,7 @@ void ArmSendTest::testBenchForceArmFunnelSingle2989Command()
     _mockLink->clearReceivedMavCommandCounts();
 
     FunnelProbe probe{ _mockLink, _vehicle };
-    const QString refusal = bridge.forceArm();   // funnel: override + one send
+    const QString refusal = bridge.forceArm(QStringLiteral("TestPilot"), QStringLiteral("Unit test bench force arm"));   // funnel: override + one send
 
     QVERIFY2(refusal.isEmpty(), qPrintable(QStringLiteral("funnel refused on the ground: %1").arg(refusal)));
     QVERIFY(gate.isOverrideActive());            // bounded override opened
@@ -493,7 +507,7 @@ void ArmSendTest::testForceArmRefusedAirborne()
 
     _mockLink->clearReceivedMavCommandCounts();
 
-    const QString refusal = bridge.forceArm();
+    const QString refusal = bridge.forceArm(QStringLiteral("TestPilot"), QStringLiteral("Unit test bench force arm"));
 
     QVERIFY2(!refusal.isEmpty(), "force-arm accepted an airborne vehicle");
     QVERIFY2(!gate.isOverrideActive(), "override window opened for a refused airborne force-arm");
@@ -504,7 +518,7 @@ void ArmSendTest::testForceArmRefusedAirborne()
 
     // Back on the ground the same funnel accepts (override + one 2989 send).
     bridge.setGroundSpeed(0.0);
-    const QString accepted = bridge.forceArm();
+    const QString accepted = bridge.forceArm(QStringLiteral("TestPilot"), QStringLiteral("Unit test bench force arm"));
     QVERIFY2(accepted.isEmpty(), qPrintable(QStringLiteral("grounded force-arm refused: %1").arg(accepted)));
     QVERIFY(_pumpUntil([](void* ctx) {
         return static_cast<MockLink*>(ctx)->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM) >= 1;
@@ -534,7 +548,7 @@ void ArmSendTest::testForceArmRefusalTextIsSubstituted()
     const double gs = static_cast<double>(kForceArmMaxGroundSpeedMs) + 3.0;
     bridge.setGroundSpeed(gs);
 
-    const QString refusal = bridge.forceArm();
+    const QString refusal = bridge.forceArm(QStringLiteral("TestPilot"), QStringLiteral("Unit test bench force arm"));
     QVERIFY2(!refusal.isEmpty(), "expected an airborne refusal");
 
     // No un-substituted printf placeholder may survive.
@@ -581,7 +595,7 @@ void ArmSendTest::testStockChainDeniedInsideBenchOverrideWindow()
 
     // Sanctioned bench override: opens the window and mints the one-shot token
     // for its own command.
-    const QString refusal = bridge.forceArm();
+    const QString refusal = bridge.forceArm(QStringLiteral("TestPilot"), QStringLiteral("Unit test bench force arm"));
     QVERIFY2(refusal.isEmpty(), qPrintable(QStringLiteral("funnel refused on the ground: %1").arg(refusal)));
     QVERIFY(gate.isOverrideActive());        // window open
     QVERIFY(gate.isArmingAllowed());
@@ -680,7 +694,7 @@ void ArmSendTest::testSameTokenSecondArmDeniedThenFreshMintArms()
     // Recovery path: a second SANCTIONED forceArm() mints a FRESH token and arms
     // again — one deliberate operator confirmation per arm.
     _mockLink->clearReceivedMavCommandCounts();
-    const QString refusal = bridge.forceArm();
+    const QString refusal = bridge.forceArm(QStringLiteral("TestPilot"), QStringLiteral("Unit test bench force arm"));
     QVERIFY2(refusal.isEmpty(), qPrintable(QStringLiteral("fresh force-arm refused on the ground: %1").arg(refusal)));
     QVERIFY(_pumpUntil([](void* ctx) {
         return static_cast<MockLink*>(ctx)->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM) >= 1;
@@ -913,6 +927,107 @@ void ArmSendTest::testUnusedAckExpiresAndDenies()
     QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 0);
     // also check gate state
     QVERIFY(!gate.isArmingAllowed());
+}
+
+
+// (j) Force arm is bench-only: outside a Testing session the funnel refuses
+// before opening the gate window and nothing reaches the wire.
+void ArmSendTest::testForceArmRefusedOutsideTesting()
+{
+    QVERIFY(_connectPlane());
+    FlightSession::instance()->closeSession();
+
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    bridge.setVehicle(_vehicle);
+
+    ArmingGate gate;
+    _makeBlockedGate(gate, bridge);
+    bridge.setArmingGate(&gate);
+
+    _mockLink->clearReceivedMavCommandCounts();
+
+    const QString refusal = bridge.forceArm(QStringLiteral("TestPilot"),
+                                            QStringLiteral("Outside a Testing session"));
+    QVERIFY2(!refusal.isEmpty(), "force-arm accepted outside a Testing session");
+    QVERIFY2(!gate.isOverrideActive(), "override window opened outside a Testing session");
+
+    QTest::qWait(300);
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 0);
+    QVERIFY(!_vehicle->armed());
+}
+
+// (k) The confirmation dialog supplies the pilot and reason; the funnel refuses
+// an empty identity so an unattributed bench override is impossible.
+void ArmSendTest::testForceArmRequiresPilotAndReason()
+{
+    QVERIFY(_connectPlane());
+
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    bridge.setVehicle(_vehicle);
+
+    ArmingGate gate;
+    _makeBlockedGate(gate, bridge);
+    bridge.setArmingGate(&gate);
+
+    _mockLink->clearReceivedMavCommandCounts();
+
+    const QString noPilot = bridge.forceArm(QString(), QStringLiteral("Reason only"));
+    QVERIFY2(!noPilot.isEmpty(), "force-arm accepted an empty pilot name");
+    const QString noReason = bridge.forceArm(QStringLiteral("TestPilot"), QString());
+    QVERIFY2(!noReason.isEmpty(), "force-arm accepted an empty reason");
+    QVERIFY2(!gate.isOverrideActive(), "override window opened without an identity");
+
+    QTest::qWait(300);
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 0);
+    QVERIFY(!_vehicle->armed());
+}
+
+// (l) Both the accepted attempt and a later refusal are written to the
+// compliance log with the operator's pilot name and reason.
+void ArmSendTest::testForceArmAuditLogRecordsPilotAndReason()
+{
+    QVERIFY(_connectPlane());
+
+    DatabaseManager &db = DatabaseManager::instance();
+    db.reset();
+    QVERIFY(db.initialize());
+
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    bridge.setVehicle(_vehicle);
+
+    ArmingGate gate;
+    _makeBlockedGate(gate, bridge);
+    bridge.setArmingGate(&gate);
+
+    const QString accepted = bridge.forceArm(QStringLiteral("Pilot Accepted"),
+                                             QStringLiteral("bench audit success"));
+    QVERIFY2(accepted.isEmpty(), qPrintable(accepted));
+
+    FlightSession::instance()->closeSession();
+    const QString refusal = bridge.forceArm(QStringLiteral("Pilot Refused"),
+                                            QStringLiteral("audit refusal outside testing"));
+    QVERIFY2(!refusal.isEmpty(), "force-arm accepted outside a Testing session");
+
+    const QString vehicleId = QString::number(_vehicle->id());
+    const QStringList logIds = db.listComplianceLogs(vehicleId, 20);
+    QString logs;
+    for (const QString &logId : logIds) {
+        logs += db.loadComplianceLog(logId);
+    }
+    QVERIFY2(logs.contains(QStringLiteral("Pilot Accepted"))
+                 && logs.contains(QStringLiteral("bench audit success"))
+                 && logs.contains(QStringLiteral("force_arm")),
+             "accepted force-arm was not written to the compliance log with pilot and reason");
+    QVERIFY2(logs.contains(QStringLiteral("Pilot Refused"))
+                 && logs.contains(QStringLiteral("audit refusal outside testing"))
+                 && logs.contains(QStringLiteral("force_arm_refused")),
+             "refused force-arm was not written to the compliance log with pilot and reason");
 }
 
 UT_REGISTER_TEST(ArmSendTest)

@@ -720,7 +720,11 @@ public:
     /// force-arming airborne is never permitted.
     /// Returns an empty string when the command was issued, or a non-empty
     /// refusal reason the UI can display.
-    Q_INVOKABLE QString forceArm();
+    /// Force-arm the vehicle for bench use. Requires a Testing session and a
+    /// non-empty pilot name and reason; both are written to the compliance log
+    /// before the gate window opens. Returns an empty string on success or an
+    /// operator-facing refusal reason (nothing is sent on refusal).
+    Q_INVOKABLE QString forceArm(const QString &pilotName, const QString &reason);
 
     /// Return to launch. THE single RTL entry point for the custom layer
     /// (RC-primary quad/FW spec: monitoring/backstop authority, never a duplicate

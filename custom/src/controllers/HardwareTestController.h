@@ -19,6 +19,7 @@
 #pragma once
 
 #include <QObject>
+#include <QPointer>
 #include <QTimer>
 #include <QElapsedTimer>
 #include <QVector>
@@ -379,7 +380,9 @@ private:
     /// _onCommandResult() once a deferred disarm is ACKed.
     void _startMotorTestInternal(int motorIndex);
 
-    Vehicle *_vehicle = nullptr;
+    // QPointer: the vehicle can be destroyed on link loss between tests; a
+    // raw pointer left setVehicle() disconnecting from freed memory.
+    QPointer<Vehicle> _vehicle;
     QObject *_armingGate = nullptr;   /// ArmingGate for arm-command override (set by PreflightPlugin)
     class TelemetryBridge *_telemetryBridge = nullptr; /// Telemetry bridge for funnelled force-arm (set by PreflightPlugin)
 

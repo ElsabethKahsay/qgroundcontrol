@@ -21,6 +21,7 @@
 #include "FactSystem/Fact.h"
 #include "Comms/MAVLinkProtocol.h"
 #include "utils/Config.h"
+#include "managers/FlightSession.h"
 #include "utils/DatabaseManager.h"
 #include "utils/FlightModeUtil.h"
 
@@ -30,8 +31,14 @@ class ControlSurfaceTestControllerTest : public UnitTest {
     Q_OBJECT
 
 private slots:
-    void init() override { UnitTest::init(); }
-    void cleanup() override { UnitTest::cleanup(); }
+    void init() override {
+        UnitTest::init();
+        FlightSession::instance()->startTestingSession();
+    }
+    void cleanup() override {
+        FlightSession::instance()->closeSession();
+        UnitTest::cleanup();
+    }
 
     // Working path tests
     void testAllSurfaceTypesLoadCorrectly();
@@ -51,6 +58,9 @@ private slots:
     void testInterlockWithHardwareTestController();
 
 private:
+    // Unit-test singleton owner: FlightSession::instance() is null until a
+    // session object exists (the app creates it via the QML singleton).
+    FlightSession _session;
     bool _pumpUntil(bool (*cond)(void *ctx), void *ctx, int timeoutMs);
     Vehicle *_connectPlane();
     void _bindController(ControlSurfaceTestController &ctrl);
@@ -306,7 +316,8 @@ void ControlSurfaceTestControllerTest::testPreSweepArmViaFunnelWith2989()
 
     // Airborne: the funnel refuses, so no sweep may be armed from a flying vehicle.
     bridge.setGroundSpeed(static_cast<double>(kForceArmMaxGroundSpeedMs) + 5.0);
-    const QString refusal = bridge.forceArm();
+    const QString refusal = bridge.forceArm(QStringLiteral("TestPilot"),
+                                            QStringLiteral("Airborne refusal test"));
     QVERIFY2(!refusal.isEmpty(), "funnel force-armed an airborne vehicle");
 }
 

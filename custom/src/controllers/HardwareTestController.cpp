@@ -761,7 +761,8 @@ void HardwareTestController::_startFixedWingMotorTest(int idx)
     // respond to the throttle channel. Routed through the funnel (TelemetryBridge::forceArm)
     // which opens the bounded override and sends the canonical kForceArmParam2.
     if (_telemetryBridge) {
-        _telemetryBridge->forceArm();
+        _telemetryBridge->forceArm(QStringLiteral("Bench test"),
+                                    QStringLiteral("Fixed-wing motor test requires the vehicle armed"));
     } else {
         if (_armingGate) {
             QMetaObject::invokeMethod(_armingGate, "forceArm");

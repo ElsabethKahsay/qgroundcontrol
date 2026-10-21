@@ -25,12 +25,12 @@ Rectangle {
     // override window and sent NO command, so this button armed nothing. The
     // funnel opens the override AND sends the one arm command; its returned
     // refusal is surfaced to the operator.
-    function requestForceArm() {
+    function requestForceArm(pilot, reason) {
         if (typeof TelemetryProvider === 'undefined' || !TelemetryProvider) {
             forceArmRefusal = qsTr("Telemetry bridge unavailable")
             return
         }
-        var refusal = TelemetryProvider.forceArm()
+        var refusal = TelemetryProvider.forceArm(pilot, reason)
         forceArmRefusal = refusal ? refusal : ""
     }
 
@@ -215,11 +215,7 @@ Rectangle {
         }
 
         onAccepted: {
-            // TODO(step1.3): pass pilot and reason to TelemetryProvider.forceArm()
-            // once the C++ side accepts and logs them.
-            console.info("ArmGatePanel: force arm confirmed by", pilotField.text.trim(),
-                         "reason:", reasonField.text.trim())
-            root.requestForceArm()
+            root.requestForceArm(pilotField.text.trim(), reasonField.text.trim())
         }
     }
 }

@@ -12,8 +12,11 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QEventLoop>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLoggingCategory>
 #include <QTimer>
+#include <QUuid>
 #include <cmath>
 
 #include "FactSystem/Fact.h"
@@ -31,7 +34,9 @@
 #include "Vehicle/Vehicle.h"
 #include "core/ParameterWatchlist.h"
 #include "core/ArmingGate.h"
+#include "managers/FlightSession.h"
 #include "utils/Config.h"
+#include "utils/DatabaseManager.h"
 #include "utils/GeoUtil.h"
 
 /// Logging category for TelemetryBridge debug/warning output.
@@ -1329,10 +1334,40 @@ void TelemetryBridge::_installArmInterceptor() {
 /// then sending MAV_CMD_COMPONENT_ARM_DISARM with param1=1 (arm) and the
 /// ArduPilot force-arm magic number (param2) accepted by both ArduPilot and PX4.
 /// The override window is bounded (kForceArmOverrideSec) and logged.
-QString TelemetryBridge::forceArm() {
+QString TelemetryBridge::forceArm(const QString &pilotName, const QString &reason) {
+    const QString pilot = pilotName.trimmed();
+    const QString why = reason.trimmed();
+
+    // Every attempt — accepted or refused — is recorded with the operator's
+    // identity so a bench override can always be traced back to a person.
+    auto recordAudit = [this, &pilot, &why](const QString &event, const QString &result) {
+        QJsonObject entry;
+        entry[QStringLiteral("event")] = event;
+        entry[QStringLiteral("pilot")] = pilot;
+        entry[QStringLiteral("reason")] = why;
+        entry[QStringLiteral("result")] = result;
+        entry[QStringLiteral("timestamp")] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+        DatabaseManager::instance().saveComplianceLog(
+            QStringLiteral("force-arm-%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)),
+            _vehicle ? QString::number(_vehicle->id()) : QString(),
+            _vehicle ? _vehicle->vehicleTypeString() : QStringLiteral("unknown"), pilot,
+            QString::fromUtf8(QJsonDocument(entry).toJson(QJsonDocument::Compact)), QString());
+    };
+    auto refuse = [this, &recordAudit](const QString &msg) {
+        qCWarning(telemetryBridgeLog).noquote() << msg;
+        recordAudit(QStringLiteral("force_arm_refused"), msg);
+        return msg;
+    };
+
     if (!_vehicle) {
-        qCWarning(telemetryBridgeLog) << "forceArm(): no vehicle connected";
-        return tr("No vehicle connected");
+        return refuse(tr("No vehicle connected"));
+    }
+    if (pilot.isEmpty() || why.isEmpty()) {
+        return refuse(tr("Force-arm refused: pilot name and reason are required"));
+    }
+    FlightSession *session = FlightSession::instance();
+    if (!session || !session->isTesting()) {
+        return refuse(tr("Force-arm refused: only available in a Testing session"));
     }
 
     const double gs = groundSpeed();
@@ -1343,19 +1378,14 @@ QString TelemetryBridge::forceArm() {
                                "Force-arm refusal — airborne/groundspeed")
                                 .arg(gs, 0, 'f', 1)
                                 .arg(static_cast<double>(kForceArmMaxGroundSpeedMs), 0, 'f', 1);
-        qCWarning(telemetryBridgeLog) << msg;
-        return msg;
+        return refuse(msg);
     }
     if (_vehicle->flying()) {
-        const QString msg = tr("Force-arm refused: vehicle reports flying");
-        qCWarning(telemetryBridgeLog) << msg;
-        return msg;
+        return refuse(tr("Force-arm refused: vehicle reports flying"));
     }
     if (_vehicle->property("takeoffInProgress").toBool() ||
         _vehicle->property("landingInProgress").toBool()) {
-        const QString msg = tr("Force-arm refused: vehicle in takeoff/landing");
-        qCWarning(telemetryBridgeLog) << msg;
-        return msg;
+        return refuse(tr("Force-arm refused: vehicle in takeoff/landing"));
     }
 
     // Open the ArmingGate override window (bounded, logged) and mint the one-shot
@@ -1367,6 +1397,9 @@ QString TelemetryBridge::forceArm() {
     // commands from link peers and does not see this locally-sent command. If no
     // gate is registered, the command is sent unconditionally (legacy behavior
     // for mock testing).
+    // A token left over from an earlier attempt must never authorize this one.
+    _vehicle->setArmOverrideToken(0);
+
     if (_armingGate) {
         auto *gate = qobject_cast<ArmingGate*>(_armingGate);
         if (gate) {
@@ -1379,11 +1412,19 @@ QString TelemetryBridge::forceArm() {
         qCWarning(telemetryBridgeLog) << "forceArm(): no ArmingGate registered — sending unconditionally";
     }
 
-    qCWarning(telemetryBridgeLog) << "forceArm(): sending MAV_CMD_COMPONENT_ARM_DISARM with force flag";
+    qCWarning(telemetryBridgeLog).noquote()
+        << QStringLiteral("forceArm(): sending MAV_CMD_COMPONENT_ARM_DISARM with force flag (pilot %1)")
+               .arg(pilot);
     _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
                               true,  // showError
                               1.0f,  // param1 = 1 (arm)
                               kForceArmParam2);
+
+    // The command has been handed to the link; the token is single-use, so do
+    // not leave it attached to the vehicle.
+    _vehicle->setArmOverrideToken(0);
+
+    recordAudit(QStringLiteral("force_arm"), QStringLiteral("sent"));
     return QString();
 }
 

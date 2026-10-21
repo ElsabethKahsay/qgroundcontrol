@@ -629,7 +629,8 @@ void VehicleProfileManager::forceArm()
 {
     if (m_telemetry) {
         qInfo() << "VehicleProfileManager: Force arming vehicle (funnel)";
-        m_telemetry->forceArm();
+        m_telemetry->forceArm(QStringLiteral("VehicleProfileManager"),
+                              QStringLiteral("Profile force-arm action"));
         return;
     }
     Vehicle *vehicle = MultiVehicleManager::instance() ? MultiVehicleManager::instance()->activeVehicle() : nullptr;

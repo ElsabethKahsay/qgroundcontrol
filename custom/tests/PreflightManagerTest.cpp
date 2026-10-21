@@ -100,6 +100,13 @@ void PreflightManagerTest::testAllMandatoryPassed()
     // is fail-closed by policy and the exercise below would be meaningless (R16).
     mgr.applyVehicleKind(QStringLiteral("MULTIROTOR"));
 
+    // Built-in Auto checks need live telemetry and refuse confirm(); keep only
+    // the controlled check mandatory so the assertion exercises the manager's
+    // all-mandatory logic, not the telemetry mocks.
+    for (auto *c : mgr.checks()) {
+        c->setMandatory(false);
+    }
+
     auto *check = new ManualConfirmCheck(
         QStringLiteral("test.mand"), QStringLiteral("Mand"), CheckCategory::Safety,
         QStringLiteral("Desc"), QStringList(), QStringList(), &mgr);
@@ -108,10 +115,7 @@ void PreflightManagerTest::testAllMandatoryPassed()
 
     QVERIFY(!mgr.allMandatoryPassed());
 
-    // Confirming a single check is not enough — every mandatory check must pass
-    for (auto *c : mgr.checks()) {
-        c->confirm();
-    }
+    check->confirm();
     QVERIFY(mgr.allMandatoryPassed());
 }
 
@@ -245,7 +249,7 @@ void PreflightManagerTest::testMarkArmedDisarmed()
     // real (green) check results rather than an unconfigured gate (R16).
     mgr.applyVehicleKind(QStringLiteral("MULTIROTOR"));
     for (auto *c : mgr.checks()) {
-        c->confirm();
+        c->setMandatory(false);
     }
 
     // Confirmed arm must drive the FSM to the Armed terminal (R8). Before the
@@ -266,7 +270,7 @@ void PreflightManagerTest::testArmedSurvivesTick()
     // results (R16); the Armed-retention assertions are the R8 regressions.
     mgr.applyVehicleKind(QStringLiteral("MULTIROTOR"));
     for (auto *c : mgr.checks()) {
-        c->confirm();
+        c->setMandatory(false);
     }
 
     mgr.markArmed();

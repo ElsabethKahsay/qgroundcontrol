@@ -27,6 +27,7 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QRegularExpression>
 
 #include <QQmlApplicationEngine>
 #include <QQmlComponent>
@@ -939,7 +940,11 @@ void FlyQuickActionsSmokeTest::testNoQmlCallsGateOnlyForceArm()
                     offenders.append(QStringLiteral("%1 -> %2").arg(path).arg(bad));
                 }
             }
-            if (code.contains(QStringLiteral("TelemetryProvider.forceArm()"))) {
+            // Any argument list: the funnel is forceArm(pilot, reason) since
+            // Step 1.3; the stock GuidedActionsController still passes none and
+            // is refused at runtime, which is fine (fails closed).
+            static const QRegularExpression funnelCall(QStringLiteral("TelemetryProvider\\.forceArm\\("));
+            if (code.contains(funnelCall)) {
                 funnelCallers.append(path);
             }
         }

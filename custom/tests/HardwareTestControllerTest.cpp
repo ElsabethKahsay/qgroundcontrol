@@ -13,13 +13,20 @@
 #include "Vehicle/Vehicle.h"
 #include "Comms/MockLink/MockLink.h"
 #include "utils/Config.h"
+#include "managers/FlightSession.h"
 
 class HardwareTestControllerTest : public UnitTest {
     Q_OBJECT
 
 private slots:
-    void init() override { UnitTest::init(); }
-    void cleanup() override { UnitTest::cleanup(); }
+    void init() override {
+        UnitTest::init();
+        FlightSession::instance()->startTestingSession();
+    }
+    void cleanup() override {
+        FlightSession::instance()->closeSession();
+        UnitTest::cleanup();
+    }
 
     void testInitialState();
     void testAbortSequence();
@@ -33,6 +40,9 @@ private slots:
     void testStopAllDisarmsVehicle();
 
 private:
+    // Unit-test singleton owner: FlightSession::instance() is null until a
+    // session object exists (the app creates it via the QML singleton).
+    FlightSession _session;
     bool _pumpUntil(bool (*cond)(void *ctx), void *ctx, int timeoutMs);
 };
 
@@ -252,7 +262,8 @@ void HardwareTestControllerTest::testFixedWingMotorTestArmsViaFunnelWith2989()
     // Airborne force-arm is refused by the funnel, so the same controller path
     // must not arm: stop the run and put the vehicle back on the ground.
     bridge.setGroundSpeed(static_cast<double>(kForceArmMaxGroundSpeedMs) + 5.0);
-    const QString refusal = bridge.forceArm();
+    const QString refusal = bridge.forceArm(QStringLiteral("TestPilot"),
+                                            QStringLiteral("Airborne refusal test"));
     QVERIFY2(!refusal.isEmpty(), "funnel force-armed an airborne vehicle");
     QTest::qWait(400);
 }

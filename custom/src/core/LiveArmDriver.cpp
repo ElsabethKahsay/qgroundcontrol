@@ -603,7 +603,8 @@ void LiveArmDriver::_tick()
         // window and sends exactly one arm command through the interceptor.
         _mockLink->clearReceivedMavCommandCounts();
         _log("-- Phase B -- forceArm() with gate closed (expect 1 wire command, armed)");
-        _bridge->forceArm();
+        _bridge->forceArm(QStringLiteral("LiveArmDriver"),
+                                   QStringLiteral("Live arm wire probe"));
         _setPhase(Phase::PumpPhaseB, 30000);
         return;
     }
@@ -766,7 +767,8 @@ void LiveArmDriver::_tick()
         // Arm the vehicle first: most guided actions are gated on armed/flying.
         if (_probeIndex > 0 && !_vehicle->armed() && !_probeReArmed) {
             _probeReArmed = true;
-            _bridge->forceArm();
+            _bridge->forceArm(QStringLiteral("LiveArmDriver"),
+                                   QStringLiteral("Live arm wire probe"));
             _probeSettleDeadlineMs = _elapsed.elapsed() + 1500;
             return;
         }
@@ -787,7 +789,8 @@ void LiveArmDriver::_tick()
                             _probeResults.append({command, ackResult, failureCode});
                         });
             }
-            _bridge->forceArm();
+            _bridge->forceArm(QStringLiteral("LiveArmDriver"),
+                                   QStringLiteral("Live arm wire probe"));
             _probeSettleDeadlineMs = _elapsed.elapsed() + 1500;
             _log("-- Action wire probe -- arming via TelemetryBridge::forceArm() so "
                  "armed/flying-gated actions are actually eligible --");
@@ -799,7 +802,8 @@ void LiveArmDriver::_tick()
         // Re-arm before the positive control so it has something to disarm.
         if (_probeIndex == kProbeCount - 1 && !_probeReArmed) {
             _probeReArmed = true;
-            _bridge->forceArm();
+            _bridge->forceArm(QStringLiteral("LiveArmDriver"),
+                                   QStringLiteral("Live arm wire probe"));
             _probeSettleDeadlineMs = _elapsed.elapsed() + 1500;
             return;
         }
@@ -986,7 +990,8 @@ void LiveArmDriver::_tick()
                 _log("OVERRIDE TEST: opening the sanctioned bench override once via "
                      "TelemetryBridge::forceArm() (mints the one-shot token; its own "
                      "command consumes it)");
-                _bridge->forceArm();
+                _bridge->forceArm(QStringLiteral("LiveArmDriver"),
+                                   QStringLiteral("Live arm wire probe"));
                 // Long settle: the sanctioned send's ACK must fully clear the
                 // Vehicle duplicate-command guard so the stock-terminal count below
                 // can only be zero because the interceptor vetoed, never because the
