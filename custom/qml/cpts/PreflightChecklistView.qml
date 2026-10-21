@@ -862,30 +862,34 @@ Rectangle {
                         anchors.bottom: parent.bottom
                         anchors.left: parent.left
                         anchors.right: parent.right
-                        height: 44
+                        height: 52
                         z: 1
                         color: Colors.surface
 
+                        // Same look as "Next: Gimbal Test" on the checklist: wide,
+                        // centered, primary colour.
                         Rectangle {
-                            width: backBtnLbl.implicitWidth + 28
-                            height: 30
-                            radius: 8
                             anchors.left: parent.left
+                            anchors.right: parent.right
                             anchors.leftMargin: Config.spacingMedium
+                            anchors.rightMargin: Config.spacingMedium
                             anchors.verticalCenter: parent.verticalCenter
-                            color: Colors.surfaceLight
-                            border.color: Colors.border
-                            border.width: 1
+                            height: 40
+                            radius: 8
+                            color: Colors.primary
+                            opacity: backBtnMa.containsMouse ? 0.9 : 1.0
 
                             Text {
                                 id: backBtnLbl
                                 anchors.centerIn: parent
                                 text: "←  Back to Checklist"
-                                font.pixelSize: Config.fontSizeSmall; font.bold: true; color: Colors.textPrimary
+                                font.pixelSize: Config.fontSizeBody; font.bold: true; color: Colors.textInverse
                             }
 
                             MouseArea {
+                                id: backBtnMa
                                 anchors.fill: parent
+                                hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: root._leftView = "checklist"
                             }

@@ -808,7 +808,10 @@ Page {
                     radius: Config.radiusMedium
                     border.color: Colors.border
                     border.width: 1
-                    height: surfaceCol.implicitHeight + Config.spacingMedium * 2
+                    // implicitHeight, not height: the page's ColumnLayout ignores
+                    // `height`, so the card was laid out ~0 tall, its tests spilled
+                    // past the ScrollView content and the last ones were unreachable.
+                    implicitHeight: surfaceCol.implicitHeight + Config.spacingMedium * 2
 
                     ColumnLayout {
                         id: surfaceCol
