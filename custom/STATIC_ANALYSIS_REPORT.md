@@ -44,11 +44,12 @@ Done in Step 2 (C++, tag phase1-step2, 21 Oct)
 • 57e9ef29c 2.4 F5, F6 (part), G10: ArmStateTracker — armed transitions only from armedChanged; ACKs label GCS / External / ForceToken.
 • 0db57a88f 2.5 G5–G9, G11–G13: one pure ArmingGate::decide() used by armingAllowed, the outbound interceptor, the read-only inbound path and the new requestArm()/previewArm(); acknowledgment bound to the failing checks; force window closes on use; overrideKind; gate refusals and autopilot rejections shown as app messages. User decisions: acknowledgment may override any failing check except the hard blocks; a peer's arm is denied but never mutates the gate.
 • Test state at phase1-step2 (custom/tests/baseline-step2.txt): 18 of 19 classes fully pass; FlightSessionLifecycleTest still segfaults on its third MockLink connection (Step 3 test).
+• After Step 2 (21 Oct): item 10 done (Return without a nested event loop). RC check fixes from bench testing with a real ArduPilot RC link: RSSI 255 ("not reported", RSSI_TYPE = 0) no longer reads as RC failsafe, so RC Failsafe and RC RSSI no longer fail with a working transmitter; RC calibration no longer judges the throttle channel's trim against 1500 (ArduPilot puts it at the stick bottom); the throttle-minimum check was inverted (passed at any position >= 900 µs) and now passes only in the bottom 10 % of the calibrated range, honouring channel reversal. Gimbal page: the control-surface card is now laid out at full height so all five tests scroll into view; "Back to Checklist" matches the wide "Next: Gimbal Test" button.
 • Finding: custom/qml/MainStatusIndicator.qml (same resource path as the AOT-compiled stock file) and custom/qml/ArmedIndicator.qml (nothing references it) never load. QmlShadowTest checks resource content, not what the engine instantiates, so it does not catch this.
 
 Still open (all C++ unless noted)
 • Items 6–8: SessionRecorder, battery pack registry and snapshot (including moving the pack modal into the Power section), database startup and migration fixes.
-• Item 10 (F15 RTL); item 11 for the Return controls.
+• Step 3 addition (21 Oct): trainer (master/slave) handover logging. Master/slave is a transmitter feature (EdgeTX/OpenTX Trainer mode): the aircraft sees only the master's link, so ArduPilot and the GCS cannot tell who is flying. To record it, the instructor's transmitter copies the trainer-switch state onto a spare channel (e.g. CH8); the GCS gets a setting for that channel, logs "control → student / instructor" events (time, altitude, battery) as HANDOVER rows on the current flight, and shows who has control in the Fly view during a Training session. Today the wizard records instructor/trainee names and RC links, and flight history/export have a "Trainer handovers" section, but nothing ever writes a HANDOVER event, so it is always empty. Depends on SessionRecorder (item 6) for the flight row.
 • Item 17 (weather W2–W4, W6, W7), item 18 (real gimbal command and feedback), item 21 lint test.
 • Items 12–14: SITL campaign, Jetson build (F20 start script), real radio and go/no-go.
 
@@ -173,7 +174,7 @@ Reliability
 RTL waits up to 5 s in a nested QEventLoop and then dereferences the raw _vehicle pointer. Link loss, the most likely moment to press Return, can delete the vehicle during that wait. A second press re-enters the loop.
 adapters/TelemetryBridge.cpp:105-131, 1449-1450, adapters/TelemetryBridge.h:916
 V code, U crash
-Must — Status 20 Oct: open.
+Must — Status 21 Oct: done (item 10): asynchronous confirmation on a QPointer<Vehicle>, 5 s timeout, vehicle loss reports failure, second press while pending sends nothing; the outcome is shown as an app message.
 F16
 Safety
 Manual-check confirmations are persisted in QSettings and re-applied at the next startup, before any vehicle connects, so yesterday's "props inspected" can carry into today.
@@ -549,13 +550,13 @@ Commands
 Return without a nested event loop
 F15
 Send DO_SET_MODE, then confirm asynchronously from flightModeChanged with a 5 s single-shot timer; hold the vehicle in a QPointer; ignore a second press while one is pending; show pending, confirmed or failed.
-Test: vehicle deleted during the wait, no crash and a "failed" result; ReturnToLaunchTest still passes — Status 20 Oct: open.
+Test: vehicle deleted during the wait, no crash and a "failed" result; ReturnToLaunchTest still passes — Status 21 Oct: done (21 Oct): see F15. ReturnToLaunchTest 11/11, including vehicle-lost-during-wait and second-press tests.
 11
 Commands
 Disabled-with-reason Arm and Return, and the Acknowledge label
 State analysis items 3 and 5
 Bind enabled and a reason line to the gate's denialReason and to the connection state; never a silent no-op. Keep the one-tap Acknowledge & Arm, which already arms in this copy (see Arm gate review).
-Observed in SITL: every disabled control says why — Status 21 Oct: partial (Step 2.5): Arm refusals are never silent (app message) and the live Arm entry points go through requestArm()/previewArm(). Return (RTL) controls not yet.
+Observed in SITL: every disabled control says why — Status 21 Oct: done for Arm and Return: every refusal and the Return outcome are shown as app messages; Arm entry points use requestArm()/previewArm().
 12
 Field
 SITL campaign, copter and plane
