@@ -39,6 +39,14 @@ void RcFailsafeCheck::evaluate()
         return;
     }
 
+    // rssi < 0: the receiver does not report RSSI (ArduPilot RSSI_TYPE = 0).
+    // The link itself is judged by channels arriving and the failsafe flag.
+    if (rssi < 0) {
+        setStatus(CheckStatus::Passed,
+                  QStringLiteral("RC link OK (RSSI not reported)"));
+        return;
+    }
+
     if (rssi < m_minRssi) {
         setStatus(CheckStatus::Failed,
                   QStringLiteral("RC RSSI %1% — below %2% threshold")

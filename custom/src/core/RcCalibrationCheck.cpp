@@ -35,6 +35,15 @@ void RcCalibrationCheck::evaluate()
         double trimCenter = configDouble(QStringLiteral("rc_trim_center"), 1500.0);
         double trimTol   = configDouble(QStringLiteral("rc_trim_tolerance"), 150.0);
 
+        // The throttle channel's trim sits at the BOTTOM of the stick on
+        // ArduPilot (RC3_TRIM ≈ RC3_MIN after calibration), so the
+        // "trim near 1500" rule applies to roll, pitch and yaw only.
+        int throttleCh = 3;
+        if (isParamAvailable(QStringLiteral("RCMAP_THROTTLE")))
+            throttleCh = static_cast<int>(getTelemetryDouble(QStringLiteral("RCMAP_THROTTLE")));
+        else if (isParamAvailable(QStringLiteral("RC_MAP_THROTTLE")))
+            throttleCh = static_cast<int>(getTelemetryDouble(QStringLiteral("RC_MAP_THROTTLE")));
+
         for (int i = 0; i < 4; ++i) {
             if (cal.min[i] < minLo || cal.min[i] > minHi) {
                 failures << QStringLiteral("Ch%1 min %2 (expected %3\u2013%4)")
@@ -52,7 +61,7 @@ void RcCalibrationCheck::evaluate()
                 failures << QStringLiteral("Ch%1 min \u2265 max (%2 \u2265 %3)")
                                 .arg(i + 1).arg(cal.min[i], 0, 'f', 0).arg(cal.max[i], 0, 'f', 0);
             }
-            if (cal.trim[i] > 0 &&
+            if (i + 1 != throttleCh && cal.trim[i] > 0 &&
                 (cal.trim[i] < trimCenter - trimTol ||
                  cal.trim[i] > trimCenter + trimTol)) {
                 failures << QStringLiteral("Ch%1 trim %2 far from center %3")

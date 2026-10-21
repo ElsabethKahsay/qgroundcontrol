@@ -53,6 +53,12 @@ void RcRssiCheck::evaluate()
         }
     }
 
+    // rcRssi < 0: the receiver does not report RSSI (ArduPilot RSSI_TYPE = 0).
+    if (rcRssi < 0) {
+        setStatus(CheckStatus::Skipped,
+                  QStringLiteral("RC RSSI not reported (set RSSI_TYPE to measure it)"));
+        return;
+    }
     bool rcOk = rcRssi >= m_minRcRssi;
     bool radioOk = (radioRssi <= 0) || (radioRssi >= m_minRadioRssi);
 
