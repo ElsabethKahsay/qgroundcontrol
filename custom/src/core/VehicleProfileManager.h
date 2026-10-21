@@ -142,7 +142,7 @@ public:
 
     /// Force arm vehicle, bypassing pre-arm checks (funnels to TelemetryBridge).
     Q_INVOKABLE void forceArm();
-    /// Disarm vehicle via MAVLink (set force=true to bypass in-flight/pre-disarm checks, sends kForceArmParam2).
+    /// Disarm vehicle via MAVLink (set force=true to bypass in-flight/pre-disarm checks, sends kForceDisarmParam2, 21196).
     Q_INVOKABLE void disarmVehicle(bool force = false);
     /// Set vehicle flight mode (e.g. "MANUAL", "AUTO", "STABILIZE", "GUIDED").
     Q_INVOKABLE void setVehicleFlightMode(const QString &mode);

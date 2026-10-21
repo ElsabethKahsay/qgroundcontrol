@@ -29,9 +29,10 @@ Rectangle {
     // so an arm seen while it is open came from the test itself.
     readonly property var    _vehicle: QGroundControl.multiVehicleManager.activeVehicle
     readonly property bool   _flying: !!_vehicle && _vehicle.armed && _vehicle.flying
-    readonly property bool   _canOpen: !!_vehicle && !_armed
-    readonly property string _blockedReason: !_vehicle ? qsTr("Connect a vehicle to run motor tests")
-                                           : _armed ? qsTr("Vehicle is armed \u2014 disarm before motor tests") : ""
+    // B4/B5: the controller owns the rule (vehicle connected, not armed by
+    // another source, Testing session for the fixed-wing path that arms).
+    readonly property string _blockedReason: HardwareTestController.testBlockedReason
+    readonly property bool   _canOpen: _blockedReason.length === 0
     // Every entry point (button, tile click, openDialog()) goes through the
     // props-off confirmation; nothing opens the test while armed or offline.
     function requestOpen() {

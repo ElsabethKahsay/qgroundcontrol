@@ -56,6 +56,7 @@ private slots:
     void testRcReleaseValueMismatch();
     void testDeadConfigFields();
     void testInterlockWithHardwareTestController();
+    void testSweepRefusedWhileArmedExternally();
 
 private:
     // Unit-test singleton owner: FlightSession::instance() is null until a
@@ -143,7 +144,7 @@ void ControlSurfaceTestControllerTest::testManualModeForcedAndReasserted()
 
     if (_vehicle->armed()) {
         _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
-                                 false, 0.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
+                                 false, 0.0f, kForceDisarmParam2, 0, 0, 0, 0, 0);
         QVERIFY(_pumpUntil([](void *ctx) {
             return !static_cast<Vehicle *>(ctx)->armed();
         }, _vehicle, 10000));
@@ -193,7 +194,7 @@ void ControlSurfaceTestControllerTest::testManualModeReassertReachesAutopilot()
 
     if (_vehicle->armed()) {
         _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
-                                 false, 0.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
+                                 false, 0.0f, kForceDisarmParam2, 0, 0, 0, 0, 0);
         QVERIFY(_pumpUntil([](void *ctx) {
             return !static_cast<Vehicle *>(ctx)->armed();
         }, _vehicle, 10000));
@@ -245,7 +246,7 @@ void ControlSurfaceTestControllerTest::testArmBeforeSweepWithDeferredStart()
     // Ensure vehicle is DISARMED initially
     if (_vehicle->armed()) {
         _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
-                                 false, 0.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
+                                 false, 0.0f, kForceDisarmParam2, 0, 0, 0, 0, 0);
         QVERIFY(_pumpUntil([](void *ctx) {
             return !static_cast<Vehicle *>(ctx)->armed();
         }, _vehicle, 10000));
@@ -280,7 +281,7 @@ void ControlSurfaceTestControllerTest::testPreSweepArmViaFunnelWith2989()
 
     if (_vehicle->armed()) {
         _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
-                                 false, 0.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
+                                 false, 0.0f, kForceDisarmParam2, 0, 0, 0, 0, 0);
         QVERIFY(_pumpUntil([](void *ctx) {
             return !static_cast<Vehicle *>(ctx)->armed();
         }, _vehicle, 10000));
@@ -310,7 +311,7 @@ void ControlSurfaceTestControllerTest::testPreSweepArmViaFunnelWith2989()
     QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 1);
     QCOMPARE(_mockLink->lastArmDisarmParam1(), 1.0f);
     QCOMPARE(_mockLink->lastArmDisarmParam2(), kForceArmParam2);
-    QVERIFY2(_mockLink->lastArmDisarmParam2() != kLegacyForceArmParam2,
+    QVERIFY2(_mockLink->lastArmDisarmParam2() != kForceDisarmParam2,
              "pre-sweep arm still sends the legacy 21196 force-arm magic instead of the funnel's 2989");
     QVERIFY2(gate.isOverrideActive(), "funnel did not open the bounded gate override");
 
@@ -341,7 +342,7 @@ void ControlSurfaceTestControllerTest::testDbResultLoggingFires()
 
     if (_vehicle->armed()) {
         _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
-                                 false, 0.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
+                                 false, 0.0f, kForceDisarmParam2, 0, 0, 0, 0, 0);
         QVERIFY(_pumpUntil([](void *ctx) {
             return !static_cast<Vehicle *>(ctx)->armed();
         }, _vehicle, 10000));
@@ -422,7 +423,7 @@ void ControlSurfaceTestControllerTest::testFlapRcChannelClobber()
 
     if (_vehicle->armed()) {
         _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
-                                 false, 0.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
+                                 false, 0.0f, kForceDisarmParam2, 0, 0, 0, 0, 0);
         QVERIFY(_pumpUntil([](void *ctx) {
             return !static_cast<Vehicle *>(ctx)->armed();
         }, _vehicle, 10000));
@@ -479,11 +480,9 @@ void ControlSurfaceTestControllerTest::testUnverifiedDisarmAck()
 {
     QVERIFY(_connectPlane());
 
-    _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
-                             false, 1.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
-    QVERIFY(_pumpUntil([](void *ctx) {
-        return static_cast<Vehicle *>(ctx)->armed();
-    }, _vehicle, 10000));
+    // B4 (Step 1.4): a sweep never starts on a vehicle armed by someone else,
+    // so the controller arms it itself (Testing session from the fixture).
+    QVERIFY(!_vehicle->armed());
 
     ControlSurfaceTestController ctrl;
     _bindController(ctrl);
@@ -549,7 +548,7 @@ void ControlSurfaceTestControllerTest::testNoAutoStopOnExternalArmOrModeChange()
     // Start disarmed
     if (_vehicle->armed()) {
         _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
-                                 false, 0.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
+                                 false, 0.0f, kForceDisarmParam2, 0, 0, 0, 0, 0);
         QVERIFY(_pumpUntil([](void *ctx) {
             return !static_cast<Vehicle *>(ctx)->armed();
         }, _vehicle, 10000));
@@ -645,11 +644,9 @@ void ControlSurfaceTestControllerTest::testMissingTimeoutVerdict()
 {
     QVERIFY(_connectPlane());
 
-    _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
-                             false, 1.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
-    QVERIFY(_pumpUntil([](void *ctx) {
-        return static_cast<Vehicle *>(ctx)->armed();
-    }, _vehicle, 10000));
+    // B4 (Step 1.4): a sweep never starts on a vehicle armed by someone else,
+    // so the controller arms it itself (Testing session from the fixture).
+    QVERIFY(!_vehicle->armed());
 
     ControlSurfaceTestController ctrl;
     _bindController(ctrl);
@@ -749,7 +746,7 @@ void ControlSurfaceTestControllerTest::testDeadConfigFields()
 
     if (_vehicle->armed()) {
         _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
-                                 false, 0.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
+                                 false, 0.0f, kForceDisarmParam2, 0, 0, 0, 0, 0);
         QVERIFY(_pumpUntil([](void *ctx) {
             return !static_cast<Vehicle *>(ctx)->armed();
         }, _vehicle, 10000));
@@ -911,6 +908,40 @@ void ControlSurfaceTestControllerTest::_sendServoOutputRaw(int ch1, int ch2, int
     _mockLink->respondWithMavlinkMessage(msg);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
     QTest::qWait(100);
+}
+
+// B4 (Step 1.4): a sweep on a vehicle armed by another source is refused with
+// a reason, and the controller sends no disarm (the vehicle may be flying).
+void ControlSurfaceTestControllerTest::testSweepRefusedWhileArmedExternally()
+{
+    QVERIFY(_connectPlane());
+
+    _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
+                             false, 1.0f, 0.0f, 0, 0, 0, 0, 0);
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<Vehicle *>(ctx)->armed();
+    }, _vehicle, 10000));
+
+    ControlSurfaceTestController ctrl;
+    _bindController(ctrl);
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<ControlSurfaceTestController *>(ctx)->isArmed();
+    }, &ctrl, 5000));
+    QVERIFY(!ctrl.testBlockedReason().isEmpty());
+
+    _mockLink->clearReceivedMavCommandCounts();
+    ctrl.testAileron();
+    ctrl.stopAllSurfaces();
+    QTest::qWait(1500);
+
+    QCOMPARE(ctrl.activeSurface(), -1);
+    QVERIFY(!ctrl.lastErrorMessage().isEmpty());
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 0);
+    QVERIFY2(_vehicle->armed(), "surface controller disarmed a vehicle it did not arm");
+
+    _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
+                             false, 0.0f, 0.0f, 0, 0, 0, 0, 0);
+    QVERIFY(_pumpUntil([](void *ctx) { return !static_cast<Vehicle *>(ctx)->armed(); }, _vehicle, 10000));
 }
 
 UT_REGISTER_TEST(ControlSurfaceTestControllerTest)

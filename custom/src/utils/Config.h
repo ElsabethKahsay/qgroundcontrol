@@ -196,12 +196,19 @@ constexpr double kPayloadWhSurchargePerKg = 0.05; // +5% Wh per kg payload above
 constexpr double kTakeoffLandingHoverMin  = 2.0;  // assumed hover min for takeoff/landing
 constexpr double kAssumedGroundSpeedKmph  = 30.0; // assumed cruise ground speed
 
-// ── ArduPilot force-arm magic ────────────────────────────────────────────────
-// MAV_CMD_COMPONENT_ARM_DISARM param2 values that bypass pre-arm checks:
-// 2989 is the current force code, 21196 the legacy value still accepted by
-// test controllers (R11).
-constexpr float kForceArmParam2       = 2989.0f;
-constexpr float kLegacyForceArmParam2 = 21196.0f;
+// ── ArduPilot force-arm / force-disarm magic ─────────────────────────────────
+// MAV_CMD_COMPONENT_ARM_DISARM param2 values (ArduPilot AP_Arming):
+// 2989 forces an ARM past the pre-arm checks; 21196 forces a DISARM (even in
+// flight). Bench tests never send 21196: they use BenchDisarm's plain disarm.
+constexpr float kForceArmParam2    = 2989.0f;
+constexpr float kForceDisarmParam2 = 21196.0f;
+
+// ── Post-flight checklist (parked for Phase 1) ───────────────────────────────
+// false: on disarm every preflight check resets to Pending and the gate closes
+// (PreflightManager::resetForNextFlight); the post-flight checklist, its pages
+// and DB columns stay in the code but are not wired. true restores the
+// post-flight flow.
+constexpr bool kPostFlightEnabled = false;
 
 // ── Force-arm ground-safety precondition ─────────────────────────────────────
 // TelemetryBridge::forceArm() refuses to force-arm when the vehicle is not on

@@ -478,7 +478,7 @@ void ArmSendTest::testBenchForceArmFunnelSingle2989Command()
 
     QVERIFY(_pumpUntil(&ArmSendTest::_sawParam2, &probe, 10000));
     QCOMPARE(_mockLink->lastArmDisarmParam2(), kForceArmParam2);          // 2989
-    QVERIFY(_mockLink->lastArmDisarmParam2() != kLegacyForceArmParam2);   // never 21196
+    QVERIFY(_mockLink->lastArmDisarmParam2() != kForceDisarmParam2);   // never 21196
 
     QVERIFY(_pumpUntil([](void* ctx) {
         return static_cast<Vehicle*>(ctx)->armed();

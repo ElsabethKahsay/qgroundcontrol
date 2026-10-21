@@ -57,6 +57,8 @@ set(CUSTOM_SOURCE_REL
     src/PreflightPlugin.h
     src/adapters/TelemetryBridge.cpp
     src/adapters/TelemetryBridge.h
+    src/controllers/BenchDisarm.cpp
+    src/controllers/BenchDisarm.h
     src/controllers/ControlSurfaceTestController.cpp
     src/controllers/ControlSurfaceTestController.h
     src/controllers/HardwareTestController.cpp

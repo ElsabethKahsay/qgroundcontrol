@@ -653,7 +653,7 @@ void VehicleProfileManager::disarmVehicle(bool force)
                                    MAV_CMD_COMPONENT_ARM_DISARM,
                                    true,    // showError
                                    0.0f,    // 0.0 = disarm
-                                   kForceArmParam2); // force bypass (R11)
+                                   kForceDisarmParam2); // B7: ArduPilot force-DISARM (21196); 2989 is force-arm
         } else {
             // Disarm, not arm. Prior code erroneously passed `true` which
             // requested arming from a "disarm" entry point and, with the new

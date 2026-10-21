@@ -58,6 +58,9 @@ class HardwareTestController : public QObject
     Q_PROPERTY(bool rcOverrideActive READ rcOverrideActive NOTIFY rcOverrideActiveChanged)
     Q_PROPERTY(int durationSec READ durationSec WRITE setDurationSec NOTIFY durationSecChanged)
     Q_PROPERTY(QVariantList motorPwmValues READ motorPwmValues NOTIFY motorPwmValuesChanged)
+    /// Why a motor test cannot start right now ("" = it can). Bound by the
+    /// QML start controls so a disabled control always says why (B4/B5).
+    Q_PROPERTY(QString testBlockedReason READ testBlockedReason NOTIFY testBlockedReasonChanged)
 
 public:
     /// States a single motor can be in during testing.
@@ -207,6 +210,7 @@ public:
     /// QVariant(true) when the sequence finishes, empty QVariant otherwise.
     QVariant sequenceCompleted() const;
     QString lastErrorMessage() const { return _lastError; }
+    QString testBlockedReason() const;
 
     /// Progress of the current profile sequence (0.0 – 1.0).
     qreal stepProgress() const { return _progress; }
@@ -220,6 +224,7 @@ signals:
     void vehicleTypeLabelChanged();
     void firstTestDoneChanged();
     void rcOverrideActiveChanged();
+    void testBlockedReasonChanged();
 
     // Per-motor slider updates
     void targetThrottleChanged(int motorIndex, double pct);
@@ -390,6 +395,7 @@ private:
     QVector<MotorState> _state;     /// Per-motor state array (indexed 0-based; QML uses 1-based)
     int _activeMotor = -1;          /// 1-based index of the motor currently being tested, or -1
     bool _isArmed = false;          /// Cached armed state, kept in sync via _onArmedChanged()
+    bool _weArmed = false;          /// True only while THIS controller's arm request holds the vehicle armed (BenchDisarm)
 
     // Per-motor settings
     QVector<double> _targetThrottle;  /// Throttle percentage (0–kMaxThrottlePct) per motor

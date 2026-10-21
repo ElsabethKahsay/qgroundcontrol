@@ -37,7 +37,8 @@ private slots:
     void testFixedWingTestLabelWithoutVehicle();
     void testFixedWingMotorTestWaitsForArmBeforeSpin();
     void testFixedWingMotorTestArmsViaFunnelWith2989();
-    void testStopAllDisarmsVehicle();
+    void testStopAllLeavesExternallyArmedVehicleArmed();
+    void testMotorTestRefusedWhileArmedExternally();
 
 private:
     // Unit-test singleton owner: FlightSession::instance() is null until a
@@ -184,7 +185,7 @@ void HardwareTestControllerTest::testFixedWingMotorTestWaitsForArmBeforeSpin()
     QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 1);
     QCOMPARE(_mockLink->lastArmDisarmParam1(), 1.0f);
     QCOMPARE(_mockLink->lastArmDisarmParam2(), kForceArmParam2);
-    QVERIFY(_mockLink->lastArmDisarmParam2() != kLegacyForceArmParam2);
+    QVERIFY(_mockLink->lastArmDisarmParam2() != kForceDisarmParam2);
     // The funnel opened the bounded override rather than the controller sending blind.
     QVERIFY(gate.isOverrideActive());
 
@@ -211,6 +212,9 @@ void HardwareTestControllerTest::testFixedWingMotorTestWaitsForArmBeforeSpin()
         Vehicle *v = static_cast<Vehicle *>(ctx);
         return !v->armed();
     }, _vehicle, 10000));
+    // ...and it is a PLAIN disarm from BenchDisarm, never the forced 21196 (B1, B7).
+    QCOMPARE(_mockLink->lastArmDisarmParam1(), 0.0f);
+    QCOMPARE(_mockLink->lastArmDisarmParam2(), 0.0f);
 }
 
 // Phase 3 funnel convergence, isolated from the full motor run: the FW auto-arm
@@ -255,7 +259,7 @@ void HardwareTestControllerTest::testFixedWingMotorTestArmsViaFunnelWith2989()
     QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 1);
     QCOMPARE(_mockLink->lastArmDisarmParam1(), 1.0f);
     QCOMPARE(_mockLink->lastArmDisarmParam2(), kForceArmParam2);
-    QVERIFY2(_mockLink->lastArmDisarmParam2() != kLegacyForceArmParam2,
+    QVERIFY2(_mockLink->lastArmDisarmParam2() != kForceDisarmParam2,
              "FW motor test still sends the legacy 21196 force-arm magic instead of the funnel's 2989");
     QVERIFY2(gate.isOverrideActive(), "funnel did not open the bounded gate override");
 
@@ -268,10 +272,10 @@ void HardwareTestControllerTest::testFixedWingMotorTestArmsViaFunnelWith2989()
     QTest::qWait(400);
 }
 
-// P0.4: stopAll() on the multirotor path must leave the vehicle DISARMED, not
-// just zero-throttled.  Previously the copter path stopped motors but never
-// sent a disarm, leaving the motors idle while the vehicle stayed ARMED.
-void HardwareTestControllerTest::testStopAllDisarmsVehicle()
+// B1/B3: STOP ALL stops outputs but must never disarm a vehicle this test did
+// not arm — it may be flying. (Replaces the old P0.4 test, which asserted the
+// opposite: STOP ALL used to force-disarm any armed vehicle.)
+void HardwareTestControllerTest::testStopAllLeavesExternallyArmedVehicleArmed()
 {
     _connectMockLink(MAV_AUTOPILOT_ARDUPILOTMEGA);
     QVERIFY(_vehicle);
@@ -279,28 +283,59 @@ void HardwareTestControllerTest::testStopAllDisarmsVehicle()
     HardwareTestController ctrl;
     ctrl.setVehicle(_vehicle);
 
-    // Arm the vehicle through the link (outbound arm is not gate-intercepted;
-    // the mock ACKs it and reports armed via HEARTBEAT).
+    // Armed by someone else (RC / another GCS): a plain arm on the link.
     _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
                              false, 1.0f, 0.0f, 0, 0, 0, 0, 0);
     QVERIFY(_pumpUntil([](void *ctx) {
-        Vehicle *v = static_cast<Vehicle *>(ctx);
-        return v->armed();
-    }, _vehicle, 10000));
-
-    // Let the controller's armedChanged handler sync the cached _isArmed.
-    QVERIFY2(_pumpUntil([](void *ctx) {
         return static_cast<HardwareTestController *>(ctx)->isArmed();
-    }, &ctrl, 3000), "controller never observed the armed vehicle before stopAll");
+    }, &ctrl, 10000));
 
+    _mockLink->clearReceivedMavCommandCounts();
     ctrl.stopAll();
+    QTest::qWait(1500);
 
-    // STOP ALL must disarm — wait for the mock to process the disarm command.
-    QVERIFY2(_pumpUntil([](void *ctx) {
-        Vehicle *v = static_cast<Vehicle *>(ctx);
-        return !v->armed();
-    }, _vehicle, 10000), "vehicle still armed after stopAll — P0.4 disarm gate missing");
-    QVERIFY(!ctrl.isArmed());
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 0);
+    QVERIFY2(_vehicle->armed(), "STOP ALL disarmed a vehicle the test did not arm");
+
+    // Clean up: the test harness disarms it.
+    _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
+                             false, 0.0f, 0.0f, 0, 0, 0, 0, 0);
+    QVERIFY(_pumpUntil([](void *ctx) { return !static_cast<Vehicle *>(ctx)->armed(); }, _vehicle, 10000));
+}
+
+// B4: a motor test on an already-armed vehicle is refused with a reason; the
+// controller must not disarm it (it used to force-disarm first).
+void HardwareTestControllerTest::testMotorTestRefusedWhileArmedExternally()
+{
+    _connectMockLink(MAV_AUTOPILOT_ARDUPILOTMEGA);
+    QVERIFY(_vehicle);
+
+    HardwareTestController ctrl;
+    ctrl.setVehicle(_vehicle);
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<HardwareTestController *>(ctx)->motorCount() >= 1;
+    }, &ctrl, 15000));
+
+    _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
+                             false, 1.0f, 0.0f, 0, 0, 0, 0, 0);
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<HardwareTestController *>(ctx)->isArmed();
+    }, &ctrl, 10000));
+    QVERIFY(!ctrl.testBlockedReason().isEmpty());
+
+    _mockLink->clearReceivedMavCommandCounts();
+    ctrl.testMotor(1);
+    QTest::qWait(1500);
+
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 0);
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_DO_MOTOR_TEST), 0);
+    QCOMPARE(ctrl.activeMotor(), -1);
+    QVERIFY(!ctrl.lastErrorMessage().isEmpty());
+    QVERIFY(_vehicle->armed());
+
+    _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
+                             false, 0.0f, 0.0f, 0, 0, 0, 0, 0);
+    QVERIFY(_pumpUntil([](void *ctx) { return !static_cast<Vehicle *>(ctx)->armed(); }, _vehicle, 10000));
 }
 
 UT_REGISTER_TEST(HardwareTestControllerTest)

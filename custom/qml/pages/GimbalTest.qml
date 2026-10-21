@@ -1044,9 +1044,13 @@ Page {
                                             font.bold: true
                                             Layout.preferredHeight: 30
                                             Layout.preferredWidth: 96
-                                            // Never sweep while armed; only one surface sweeps at a time.
-                                            // Sweep only runs when DISARMED and no other surface is sweeping
-                                            enabled: !root._armed && ControlSurfaceTestController.activeSurface === -1
+                                            // B4/B5: the controller says why a sweep cannot start (no
+                                            // vehicle, armed by another source, no Testing session);
+                                            // only one surface sweeps at a time.
+                                            enabled: ControlSurfaceTestController.testBlockedReason.length === 0
+                                                     && ControlSurfaceTestController.activeSurface === -1
+                                            ToolTip.visible: hovered && ControlSurfaceTestController.testBlockedReason.length > 0
+                                            ToolTip.text: ControlSurfaceTestController.testBlockedReason
                                             onClicked: {
                                                 if (typeof ControlSurfaceTestController === "undefined") return
                                                 // Dispatch to the per-surface test method (C++ controller)

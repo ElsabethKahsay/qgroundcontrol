@@ -41,6 +41,9 @@ class ControlSurfaceTestController : public QObject {
     Q_PROPERTY(QString servoOutputsRaw READ servoOutputsRaw NOTIFY servoOutputsRawChanged)
     Q_PROPERTY(QString sweepVerdict READ sweepVerdict NOTIFY sweepVerdictChanged)
     Q_PROPERTY(bool swapElevonLR READ swapElevonLR WRITE setSwapElevonLR NOTIFY swapElevonLRChanged)
+    /// Why a surface sweep cannot start right now ("" = it can). The sweep
+    /// force-arms the vehicle, so it needs a Testing session (B5).
+    Q_PROPERTY(QString testBlockedReason READ testBlockedReason NOTIFY testBlockedReasonChanged)
 
 public:
     enum SurfaceState {
@@ -71,6 +74,7 @@ public:
     QVariantList surfaceStates() const;
     bool isArmed() const { return m_isArmed; }
     QString lastErrorMessage() const { return m_lastErrorMessage; }
+    QString testBlockedReason() const;
     QString flightMode() const { return m_flightMode; }
 
     /// When true, the left/right elevon isolation mapping is swapped so the
@@ -121,6 +125,7 @@ public:
     Q_INVOKABLE void switchToManual();
 
 signals:
+    void testBlockedReasonChanged();
     void surfacesChanged();
     void activeSurfaceChanged();
     void surfaceStatesChanged();
@@ -185,6 +190,7 @@ private:
     bool m_pendingDisarmAck = false;  /// A disarm command is in flight — wait for its ACK
     bool m_feedbackObserved = false;  /// Valid SERVO_OUTPUT_RAW seen during the current sweep
     bool m_isArmed = false;
+    bool m_weArmed = false;           /// True only while THIS controller's arm request holds the vehicle armed (BenchDisarm)
     QString m_lastErrorMessage;
     QString m_lastVehicleType;   /// Last loadSurfacesForVehicle() type, used to re-load on parameters-ready
     int m_lastMotorCount = 0;

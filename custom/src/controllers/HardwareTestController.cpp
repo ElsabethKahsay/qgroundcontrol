@@ -24,6 +24,8 @@
 #include "utils/Config.h"
 #include "utils/RcOverrideInterlock.h"
 #include "adapters/TelemetryBridge.h"
+#include "controllers/BenchDisarm.h"
+#include "managers/FlightSession.h"
 
 Q_LOGGING_CATEGORY(hardwareTestLog, "preflight.hardwaretest")
 
@@ -38,6 +40,11 @@ HardwareTestController::HardwareTestController(QObject *parent)
 {
     _stepTimer.setSingleShot(true);
     connect(&_stepTimer, &QTimer::timeout, this, &HardwareTestController::_advanceStep);
+
+    // testBlockedReason depends on the session mode, the vehicle and its type.
+    if (FlightSession *session = FlightSession::instance())
+        connect(session, &FlightSession::modeChanged, this, &HardwareTestController::testBlockedReasonChanged);
+    connect(this, &HardwareTestController::vehicleTypeLabelChanged, this, &HardwareTestController::testBlockedReasonChanged);
 
     _resultTimer.setSingleShot(true);
     connect(&_resultTimer, &QTimer::timeout, this, &HardwareTestController::_evaluateTestResult);
@@ -145,6 +152,8 @@ void HardwareTestController::setVehicle(Vehicle *vehicle)
         // detection and PWM feedback are available outside of active tests.
         _setServoStreaming(true);
     }
+    _weArmed = false;   // a new (or no) vehicle was never armed by this test
+    emit testBlockedReasonChanged();
 }
 
 /// Resolves the motor/servo count from vehicle parameters.
@@ -760,10 +769,23 @@ void HardwareTestController::_startFixedWingMotorTest(int idx)
     // Force-ARM the vehicle (param1=1.0). Plane bench tests need the ESC to
     // respond to the throttle channel. Routed through the funnel (TelemetryBridge::forceArm)
     // which opens the bounded override and sends the canonical kForceArmParam2.
+    // B5: the funnel refuses outside a Testing session (and when airborne);
+    // a refusal aborts the test instead of waiting for an arm that never comes.
     if (_telemetryBridge) {
-        _telemetryBridge->forceArm(QStringLiteral("Bench test"),
+        const QString refusal = _telemetryBridge->forceArm(QStringLiteral("Bench test"),
                                     QStringLiteral("Fixed-wing motor test requires the vehicle armed"));
+        if (!refusal.isEmpty()) {
+            _fwFinishTest(false, refusal);
+            return;
+        }
+        _weArmed = true;
     } else {
+        FlightSession *session = FlightSession::instance();
+        if (!session || !session->isTesting()) {
+            _fwFinishTest(false, QStringLiteral("Force-arm refused: only available in a Testing session"));
+            return;
+        }
+        _weArmed = true;
         if (_armingGate) {
             QMetaObject::invokeMethod(_armingGate, "forceArm");
         } else {
@@ -838,12 +860,7 @@ void HardwareTestController::_fwAdvancePhase()
                                        << (kFwArmRetries * kFwArmRetryIntervalMs) << "ms — aborting";
             // Safety net: if the autopilot armed despite the polls (delayed ACK),
             // leave nothing armed behind.
-            if (_vehicle && _vehicle->armed()) {
-                _vehicle->sendMavCommand(
-                    _vehicle->defaultComponentId(),
-                    MAV_CMD_COMPONENT_ARM_DISARM, false,
-                    0.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
-            }
+            BenchDisarm::requestDisarm(_vehicle, _weArmed);
             _fwPhaseTimer.stop();
             _fwFinishTest(false,
                 QStringLiteral("No arm confirmation — ESC was never powered on. "
@@ -860,13 +877,9 @@ void HardwareTestController::_fwAdvancePhase()
     case 2: { // spin duration elapsed — idle the override, disarm, and wait for spin-down
         _fwOverrideTimer.stop();
         _fwSendOverride(1000);
-        if (_vehicle) {
-            // Force-disarm vehicle after motor test completes using magic bypass code kLegacyForceArmParam2
-            _vehicle->sendMavCommand(
-                _vehicle->defaultComponentId(),
-                MAV_CMD_COMPONENT_ARM_DISARM, false,
-                0.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
-        }
+        // Normal end of a test that armed the vehicle: plain disarm, only if
+        // landed and slow (BenchDisarm), never a forced one.
+        BenchDisarm::requestDisarm(_vehicle, _weArmed);
         _fwPhase = 3;
         _fwPhaseTimer.start(kFwSpinDownMs);
         break;
@@ -961,17 +974,13 @@ void HardwareTestController::testMotor(int motorIndex)
         return;
     }
 
-    // A bench motor test must never run on a live-armed vehicle.  Request a
-    // forced disarm first and only start the test once the disarm is ACKed
-    // (see _onCommandResult), avoiding the race where the DO_MOTOR_TEST is
-    // rejected because the vehicle is still arming/disarming.
+    // B4: a bench motor test must never run on a live-armed vehicle, and the
+    // GCS must not disarm a vehicle someone else armed (it may be flying).
+    // Refuse with a reason; the operator disarms deliberately.
     if (_isArmed) {
-        qCDebug(hardwareTestLog) << "testMotor: armed — requesting disarm first";
-        _pendingMotorIndex = motorIndex;
-        _vehicle->sendMavCommand(
-            _vehicle->defaultComponentId(),
-            MAV_CMD_COMPONENT_ARM_DISARM, false,
-            0.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
+        qCWarning(hardwareTestLog) << "testMotor: refused — vehicle is armed";
+        _lastError = QStringLiteral("Vehicle is armed — disarm it before running a motor test");
+        emit lastErrorMessageChanged();
         return;
     }
 
@@ -1351,11 +1360,8 @@ void HardwareTestController::stopAll()
         _fwPhaseTimer.stop();
         _fwOverrideTimer.stop();
         _fwSendOverride(1000);
-        if (_isArmed) {
-            _vehicle->sendMavCommand(_vehicle->defaultComponentId(),
-                                     MAV_CMD_COMPONENT_ARM_DISARM, false,
-                                     0.0f, 0, 0, 0, 0, 0, 0);
-        }
+        // Disarm (if this test armed it) is done once, by BenchDisarm, at the
+        // end of stopAll().
         int idx = _fwTestIndex;
         _fwTestIndex = -1;
         _fwPhase = 0;
@@ -1396,17 +1402,11 @@ void HardwareTestController::stopAll()
     _activeMotor = -1;
     emit activeMotorChanged();
 
-    // Bench safety: a stop must leave the vehicle disarmed.  The multirotor
-    // path previously zero-throttled every motor but never disarmed, which left
-    // the motors idling while the vehicle stayed ARMED after a test.  Request a
-    // forced disarm (kLegacyForceArmParam2) so it goes through even if pre-arm
-    // checks would reject a plain disarm.
-    if (_isArmed) {
-        qCDebug(hardwareTestLog) << "STOP ALL — disarming vehicle after motor stop";
-        _vehicle->sendMavCommand(_vehicle->defaultComponentId(),
-                                 MAV_CMD_COMPONENT_ARM_DISARM, false,
-                                 0.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
-    }
+    // B1/B3: STOP ALL stops outputs; it never force-disarms. If THIS test
+    // armed the vehicle (fixed-wing path) and it is landed and slow, BenchDisarm
+    // sends a plain disarm so the bench is not left armed; a vehicle armed by
+    // anyone else, or flying, is left alone.
+    BenchDisarm::requestDisarm(_vehicle, _weArmed);
 
     _setServoStreaming(false);
 
@@ -1424,6 +1424,20 @@ void HardwareTestController::disarmVehicle()
         0.0f,   // no force flag
         0, 0, 0, 0, 0
     );
+}
+
+QString HardwareTestController::testBlockedReason() const
+{
+    if (!_vehicle)
+        return QStringLiteral("Connect a vehicle to run motor tests");
+    if (_isArmed && !_weArmed)
+        return QStringLiteral("Vehicle is armed — disarm it before running a motor test");
+    if (isFixedWing()) {
+        FlightSession *session = FlightSession::instance();
+        if (!session || !session->isTesting())
+            return QStringLiteral("The fixed-wing motor test arms the vehicle: start a Testing session first");
+    }
+    return QString();
 }
 
 void HardwareTestController::resetMotorState(int motorIndex)
@@ -1764,7 +1778,10 @@ void HardwareTestController::_onArmedChanged()
     bool armed = _vehicle ? _vehicle->armed() : false;
     if (_isArmed != armed) {
         _isArmed = armed;
+        if (!armed)
+            _weArmed = false;
         emit isArmedChanged();
+        emit testBlockedReasonChanged();
 
         // Safety: an arm during a copter DO_MOTOR_TEST is unexpected — stop.
         // The FW test (phase 2) is exempt: it requested the arm itself.

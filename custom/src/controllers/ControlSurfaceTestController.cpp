@@ -15,6 +15,8 @@
 #include "../utils/Config.h"
 #include "../utils/RcOverrideInterlock.h"
 #include "../adapters/TelemetryBridge.h"
+#include "BenchDisarm.h"
+#include "../managers/FlightSession.h"
 
 Q_DECLARE_LOGGING_CATEGORY(controlSurfaceTestLog)
 Q_LOGGING_CATEGORY(controlSurfaceTestLog, "preflight.surfacetest")
@@ -53,6 +55,9 @@ ControlSurfaceTestController::ControlSurfaceTestController(QObject *parent)
 {
     QSettings settings;
     m_swapElevonLR = settings.value(QStringLiteral("surfaceTest/swapElevonLR"), false).toBool();
+
+    if (FlightSession *session = FlightSession::instance())
+        connect(session, &FlightSession::modeChanged, this, &ControlSurfaceTestController::testBlockedReasonChanged);
 
     m_stepTimer.setInterval(800);
     connect(&m_stepTimer, &QTimer::timeout, this, &ControlSurfaceTestController::_advanceSweepStep);
@@ -105,6 +110,8 @@ void ControlSurfaceTestController::setVehicle(Vehicle *vehicle)
     }
 
     m_vehicle = vehicle;
+    m_weArmed = false;   // a new (or no) vehicle was never armed by this test
+    emit testBlockedReasonChanged();
 
     if (m_vehicle) {
         connect(m_vehicle, &Vehicle::mavCommandResult, this, &ControlSurfaceTestController::_onCommandResult);
@@ -114,7 +121,10 @@ void ControlSurfaceTestController::setVehicle(Vehicle *vehicle)
                                   && m_states[m_activeSurface] == Sweeping;
             if (m_isArmed != armed) {
                 m_isArmed = armed;
+                if (!armed)
+                    m_weArmed = false;
                 emit isArmedChanged();
+                emit testBlockedReasonChanged();
             }
             // Auto-stop on an unexpected disarm mid-sweep: the operator lost
             // control of the output, so stop driving the surfaces immediately.
@@ -527,6 +537,14 @@ void ControlSurfaceTestController::_beginSurfaceTest(int idx)
     // be armed before the sweep.  Request a force-arm and defer the sweep start
     // until the arm is ACKed (see _onCommandResult), so the first PWM already
     // reaches the servos.  Already armed → sweep immediately.
+    // B4: never sweep on a vehicle someone else armed (it may be flying), and
+    // never disarm it afterwards. Only a vehicle this controller armed may be
+    // swept while armed.
+    if (m_vehicle && m_vehicle->armed() && !m_weArmed) {
+        m_lastErrorMessage = QStringLiteral("Vehicle is armed by another source — disarm it before the surface test");
+        emit lastErrorMessageChanged();
+        return;
+    }
     if (m_vehicle && !m_vehicle->armed()) {
         qCWarning(controlSurfaceTestLog) << "Surface test requesting arm before sweep (mode:" << m_flightMode << ")";
         m_pendingSurfaceIndex = idx;
@@ -539,8 +557,20 @@ void ControlSurfaceTestController::_beginSurfaceTest(int idx)
             if (!refusal.isEmpty()) {
                 qCWarning(controlSurfaceTestLog) << "Surface test arm refused:" << refusal;
                 m_pendingSurfaceIndex = -1;
+                m_lastErrorMessage = refusal;
+                emit lastErrorMessageChanged();
+            } else {
+                m_weArmed = true;
             }
         } else {
+            FlightSession *session = FlightSession::instance();
+            if (!session || !session->isTesting()) {
+                m_pendingSurfaceIndex = -1;
+                m_lastErrorMessage = QStringLiteral("Force-arm refused: only available in a Testing session");
+                emit lastErrorMessageChanged();
+                return;
+            }
+            m_weArmed = true;
             if (m_armingGate) {
                 QMetaObject::invokeMethod(m_armingGate, "forceArm");
             } else {
@@ -1074,6 +1104,18 @@ void ControlSurfaceTestController::stopAllSurfaces()
     _requestDisarm();
 }
 
+QString ControlSurfaceTestController::testBlockedReason() const
+{
+    if (!m_vehicle)
+        return QStringLiteral("Connect a vehicle to run the surface test");
+    if (m_isArmed && !m_weArmed)
+        return QStringLiteral("Vehicle is armed by another source — disarm it before the surface test");
+    FlightSession *session = FlightSession::instance();
+    if (!session || !session->isTesting())
+        return QStringLiteral("The surface test arms the vehicle: start a Testing session first");
+    return QString();
+}
+
 void ControlSurfaceTestController::switchToManual()
 {
     if (m_vehicle) {
@@ -1092,11 +1134,10 @@ void ControlSurfaceTestController::switchToManual()
 void ControlSurfaceTestController::_requestDisarm()
 {
     if (!m_vehicle || !m_vehicle->armed() || m_pendingDisarmAck) return;
-    m_pendingDisarmAck = true;
-    m_vehicle->sendMavCommand(
-        m_vehicle->defaultComponentId(),
-        MAV_CMD_COMPONENT_ARM_DISARM, false,
-        0.0f, kLegacyForceArmParam2, 0, 0, 0, 0, 0);
+    // B2: plain disarm, only if this controller armed the vehicle and it is
+    // landed and slow; never a forced disarm.
+    if (BenchDisarm::requestDisarm(m_vehicle, m_weArmed))
+        m_pendingDisarmAck = true;
 }
 
 /// Safety stop triggered by an unexpected vehicle state change during a sweep
