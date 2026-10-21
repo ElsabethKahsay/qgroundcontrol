@@ -178,6 +178,11 @@ public slots:
     /// Retreat from the Armed terminal after a disarm; check results then
     /// re-drive the FSM on the next tick.
     Q_INVOKABLE void markDisarmed();
+    /// Post-flight parked (kPostFlightEnabled == false): after every disarm,
+    /// leave post-flight mode, put every check back to Pending (manual
+    /// confirmations included) and re-evaluate, so the gate is closed until
+    /// the preflight checklist is run again.
+    Q_INVOKABLE void resetForNextFlight();
 
 signals:
     /// Emitted when the check list model changes (add/remove).

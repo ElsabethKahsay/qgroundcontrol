@@ -25,6 +25,7 @@
 #include "DatabaseManager.h"
 #include "VehicleRegistry.h"
 #include "WeatherProvider.h"
+#include "utils/Config.h"
 
 #include "Vehicle/Vehicle.h"
 
@@ -141,7 +142,8 @@ void FlightSession::_onVehicleArmedChanged(bool armed)
             // snapshot + stats as a GCS disarm. Previously only the GCS ACK
             // path wrote the DISARM row, so failsafe disarms left no event.
             onVehicleDisarmed();
-            qInfo() << "Vehicle disarmed — state → POST_FLIGHT (source: armedChanged)";
+            qInfo() << "Vehicle disarmed — state →" << (kPostFlightEnabled ? "POST_FLIGHT" : "PRE_FLIGHT")
+                    << "(source: armedChanged)";
         }
     }
 }
@@ -411,7 +413,13 @@ void FlightSession::onVehicleDisarmed()
     // the DISARM snapshot; whichever path fires second sees PostFlight and
     // skips. A vehicle that never armed never gets a DISARM row.
     bool wasArmed = (m_state == SessionState::Armed);
-    _setState(SessionState::PostFlight);
+    // Post-flight parked (Config.h kPostFlightEnabled): back to PreFlight so the
+    // session mode is kept and the checklist is run again before the next arm.
+    // A repeated disarm (second notification path) leaves the state alone.
+    if (kPostFlightEnabled)
+        _setState(SessionState::PostFlight);
+    else if (wasArmed)
+        _setState(SessionState::PreFlight);
     QDateTime now = QDateTime::currentDateTimeUtc();
 
     // Only persist to DB for audited Flight sessions.

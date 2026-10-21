@@ -1,5 +1,6 @@
 #include <QTest>
 #include <QSignalSpy>
+#include <QSettings>
 
 #include "UnitTest.h"
 #include "PreflightManager.h"
@@ -27,6 +28,8 @@ private slots:
     void testParamWatchlistSeededOnConnect();
     void testMarkArmedDisarmed();
     void testArmedSurvivesTick();
+    void testResetForNextFlightClosesGate();
+    void testConfirmationNotRestoredAtStartup();
 };
 
 void PreflightManagerTest::testInitialState()
@@ -284,6 +287,60 @@ void PreflightManagerTest::testArmedSurvivesTick()
 
     mgr.markDisarmed();
     QCOMPARE(mgr.state(), PreflightStateMachine::ArmingAllowed);
+}
+
+// Step 1.5 (post-flight bypass): after a disarm with post-flight parked, every
+// check is Pending again and the gate is closed until preflight is re-run.
+// The old path marked every check Skipped, which allMandatoryPassed() counts
+// as passed, so a re-arm needed no checks at all.
+void PreflightManagerTest::testResetForNextFlightClosesGate()
+{
+    PreflightManager mgr;
+    mgr.applyVehicleKind(QStringLiteral("MULTIROTOR"));
+    for (auto *c : mgr.checks())
+        c->setMandatory(false);
+
+    auto *props = new ManualConfirmCheck(
+        QStringLiteral("test.props_removed"), QStringLiteral("Props"), CheckCategory::Safety,
+        QStringLiteral("Desc"), QStringList(), QStringList(), &mgr);
+    props->setMandatory(true);
+    mgr.addCheck(props);
+
+    QVERIFY(props->confirm());
+    QVERIFY(mgr.allMandatoryPassed());
+    mgr.markArmed();
+    QCOMPARE(mgr.state(), PreflightStateMachine::Armed);
+
+    mgr.resetForNextFlight();
+
+    QCOMPARE(props->status(), CheckStatus::Pending);
+    QVERIFY2(!mgr.allMandatoryPassed(), "gate still open after disarm — post-flight bypass");
+    QVERIFY(mgr.state() != PreflightStateMachine::Armed);
+    QVERIFY(mgr.state() != PreflightStateMachine::ArmingAllowed);
+}
+
+// Step 1.6 (F16): a confirmation stored by an earlier run must not be
+// re-applied when the next PreflightManager starts.
+void PreflightManagerTest::testConfirmationNotRestoredAtStartup()
+{
+    const QString id = QStringLiteral("airframe.visual_inspection");
+    {
+        PreflightManager first;
+        AbstractCheck *c = first.checkById(id);
+        QVERIFY(c);
+        QVERIFY(c->confirm(QStringLiteral("inspected yesterday")));
+        first.persistOverrides();
+    }
+    {
+        PreflightManager next;
+        next.setDatabaseManager(nullptr);   // the old startup path re-applied overrides here
+        AbstractCheck *c = next.checkById(id);
+        QVERIFY(c);
+        QVERIFY2(c->status() == CheckStatus::Pending,
+                 "a confirmation from an earlier run was restored at startup");
+    }
+    QSettings settings;
+    settings.remove(QStringLiteral("preflight_overrides"));
 }
 
 UT_REGISTER_TEST(PreflightManagerTest)

@@ -185,7 +185,11 @@ void PreflightManager::setAlertManager(AlertManager *alertManager) {
 
 void PreflightManager::setDatabaseManager(DatabaseManager *db) {
   m_db = db;
-  loadOverrides();
+  // F16: confirmations are NOT re-applied at startup. A stored "props
+  // inspected" from an earlier day must not carry into today, before any
+  // vehicle is connected. persistOverrides() still writes them for history;
+  // loadOverrides() stays available but has no startup caller.
+  // TODO(step3): keep this history in check_results instead of QSettings.
   // Each check's config cache mirrors reads of the check_config table against
   // the previous database. A (re)assigned database invalidates every cached
   // value, otherwise the checks keep serving thresholds read from the old DB
@@ -563,6 +567,25 @@ void PreflightManager::markDisarmed() {
   // ChecklistInProgress).
   m_stateMachine.transitionTo(PreflightStateMachine::ArmingAllowed);
   attemptStateTransition();
+}
+
+void PreflightManager::resetForNextFlight() {
+  if (m_postFlightMode) {
+    m_postFlightMode = false;
+    emit postFlightChanged(false);
+  }
+  // Pending, not Skipped: Skipped counts as passed in allMandatoryPassed(),
+  // which is exactly the re-arm-without-checks bypass this replaces. The
+  // parameter cache is kept (unlike resetAll()); parameters are still valid.
+  for (auto *check : m_checks) {
+    check->reset();
+  }
+  if (m_stateMachine.state() == PreflightStateMachine::Armed)
+    m_stateMachine.transitionTo(PreflightStateMachine::ChecklistInProgress);
+  evaluateAll();
+  attemptStateTransition();
+  emit modelChanged();
+  emit progressChanged();
 }
 
 void PreflightManager::resetAll() {

@@ -189,8 +189,16 @@ void PreflightPlugin::init()
     connect(_armingGate, &ArmingGate::vehicleDisarmed,
             _preflightManager, &PreflightManager::markDisarmed);
 
-    connect(FlightSession::instance(), &FlightSession::postFlightChecklistRequired,
-            _preflightManager, &PreflightManager::activatePostFlightChecks);
+    // Post-flight is parked for Phase 1 (Config.h kPostFlightEnabled): every
+    // disarm re-runs preflight from Pending instead of marking every check
+    // Skipped (which allMandatoryPassed() counted as passed).
+    if (kPostFlightEnabled) {
+        connect(FlightSession::instance(), &FlightSession::postFlightChecklistRequired,
+                _preflightManager, &PreflightManager::activatePostFlightChecks);
+    } else {
+        connect(FlightSession::instance(), &FlightSession::postFlightChecklistRequired,
+                _preflightManager, &PreflightManager::resetForNextFlight);
+    }
 
     // Create one proxy model per checklist category (8 max) so QML can bind
     // each category section to its own filtered view of the source checklist.
@@ -905,7 +913,7 @@ bool PreflightPlugin::mavlinkMessage(Vehicle *vehicle, LinkInterface *link, cons
             _lastArmDisarmParam = static_cast<int>(cmd.param1);
             // Single source of truth for arm gating: ArmingGate::interceptCommandLong.
             // All inbound arm commands (force-arm included) are evaluated there; an
-            // inbound force-arm (param2 == kForceArmParam2/kLegacyForceArmParam2) must
+            // inbound force-arm (param2 == kForceArmParam2/kForceDisarmParam2) must
             // NOT auto-open the gate — ArmingGate only honors a local operator override
             // or one-time ACK, so any link peer keeps being gated exactly like a normal
             // arm command (see the force-arm note on ArmingGate::forceArm()).

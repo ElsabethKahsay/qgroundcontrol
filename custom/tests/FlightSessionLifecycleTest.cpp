@@ -36,6 +36,7 @@
 #include "OperatorManager.h"
 #include "VehicleRegistry.h"
 #include "DatabaseManager.h"
+#include "utils/Config.h"
 #include "MultiVehicleManager.h"
 #include "Vehicle/Vehicle.h"
 #include "Comms/MockLink/MockLink.h"
@@ -112,7 +113,9 @@ void FlightSessionLifecycleTest::testArmWithoutSessionStartCreatesNoRecord()
     QCOMPARE(_flightCount(vid), 0);
     fs->onVehicleDisarmed();
     QCOMPARE(_flightCount(vid), 0);
-    QCOMPARE(fs->state(), FlightSession::SessionState::PostFlight);
+    // Post-flight is parked (Config.h kPostFlightEnabled): a disarm returns to PreFlight.
+    QCOMPARE(fs->state(), kPostFlightEnabled ? FlightSession::SessionState::PostFlight
+                                             : FlightSession::SessionState::PreFlight);
 }
 
 // (d) A bench run (Testing mode) must not leave any audited flight record or
@@ -137,7 +140,9 @@ void FlightSessionLifecycleTest::testBenchModeCreatesNoFlightOrSessionRows()
     fs->onVehicleArmed();
     QCOMPARE(fs->state(), FlightSession::SessionState::Armed);
     fs->onVehicleDisarmed();
-    QCOMPARE(fs->state(), FlightSession::SessionState::PostFlight);
+    // Post-flight is parked (Config.h kPostFlightEnabled): a disarm returns to PreFlight.
+    QCOMPARE(fs->state(), kPostFlightEnabled ? FlightSession::SessionState::PostFlight
+                                             : FlightSession::SessionState::PreFlight);
 
     // A bench run is in-memory only: no audited flight, no compliance session.
     QCOMPARE(_flightCount(vid), 0);
@@ -170,7 +175,9 @@ void FlightSessionLifecycleTest::testSecondFlightRecordAfterDisarm()
     fs->onVehicleArmed();
     QCOMPARE(fs->state(), FlightSession::SessionState::Armed);
     fs->onVehicleDisarmed();
-    QCOMPARE(fs->state(), FlightSession::SessionState::PostFlight);
+    // Post-flight is parked (Config.h kPostFlightEnabled): a disarm returns to PreFlight.
+    QCOMPARE(fs->state(), kPostFlightEnabled ? FlightSession::SessionState::PostFlight
+                                             : FlightSession::SessionState::PreFlight);
 
     // Second arm on the same connection.
     fs->onVehicleArmed();
