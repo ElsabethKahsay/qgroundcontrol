@@ -75,25 +75,25 @@ AnalyzePage {
     function reasonColor(reason) {
         switch (reason) {
         case "Regulatory":
-            return "#ef4444";
+            return Colors.zoneRegulatory;
         case "Obstacle":
-            return "#f97316";
+            return Colors.zoneObstacle;
         case "Restricted":
-            return "#7f1d1d";
+            return Colors.zoneRestricted;
         case "Temporary":
-            return "#eab308";
+            return Colors.zoneTemporary;
         default:
-            return "#9ca3af";
+            return Colors.zoneOther;
         }
     }
 
     function reasonBorderColor(reason) {
         switch (reason) {
-        case "Regulatory": return "#b91c1c";
-        case "Obstacle": return "#c2410c";
-        case "Restricted": return "#991b1b";
-        case "Temporary": return "#a16207";
-        default: return "#6b7280";
+        case "Regulatory": return Colors.zoneRegulatoryBorder;
+        case "Obstacle": return Colors.zoneObstacleBorder;
+        case "Restricted": return Colors.zoneRestrictedBorder;
+        case "Temporary": return Colors.zoneTemporaryBorder;
+        default: return Colors.zoneOtherBorder;
         }
     }
 
@@ -787,7 +787,7 @@ AnalyzePage {
                                             implicitWidth: zoneTagCol.implicitWidth + 14
                                             implicitHeight: zoneTagCol.implicitHeight + 8
                                             radius: 6
-                                            color: "#e20f172a"
+                                            color: Qt.rgba(Colors.background.r, Colors.background.g, Colors.background.b, 0.89)
                                             border.color: root.reasonColor(reason)
                                             border.width: 1.5
 
@@ -807,13 +807,13 @@ AnalyzePage {
                                                         text: name
                                                         font.pixelSize: 11
                                                         font.bold: true
-                                                        color: "#ffffff"
+                                                        color: Colors.textPrimary
                                                     }
                                                 }
                                                 Text {
                                                     text: reason + " • " + (radiusM >= 1000 ? (radiusM/1000).toFixed(1) + " km" : radiusM.toFixed(0) + " m")
                                                     font.pixelSize: 9
-                                                    color: "#cbd5e1"
+                                                    color: Colors.textSecondary
                                                     anchors.horizontalCenter: parent.horizontalCenter
                                                 }
                                             }

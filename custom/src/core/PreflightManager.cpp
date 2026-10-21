@@ -13,22 +13,18 @@
 #include "Vehicle/Vehicle.h"
 
 #include "AbstractCheck.h"
-#include "AccelConsistencyCheck.h"
-#include "AirspeedCheck.h"
 #include "AlertManager.h"
 #include "AmbientTemperatureCheck.h"
 #include "AttitudeCheck.h"
 #include "BaroHealthCheck.h"
 #include "BatteryFailsafeCheck.h"
 #include "BatteryFailsafeParamCheck.h"
-#include "BatteryTemperatureCheck.h"
 #include "BatteryVoltageCheck.h"
 #include "DatabaseManager.h"
 #include "EkfFailsafeCheck.h"
 #include "EscFirmwareCheck.h"
 #include "EscResponsivenessCheck.h"
 #include "GcsFailsafeCheck.h"
-#include "GimbalLinkCheck.h"
 #include "GpsFixCheck.h"
 #include "HeartbeatCheck.h"
 #include "HomePositionCheck.h"
@@ -38,7 +34,6 @@
 #include "MetarTemperatureCheck.h"
 #include "MotorCountCheck.h"
 #include "MotorSpinCheck.h"
-#include "MotorTemperatureCheck.h"
 #include "ParameterWatchlist.h"
 #include "RadioFailsafeCheck.h"
 #include "RcCheck.h"
@@ -291,6 +286,8 @@ QVariantList PreflightManager::blockingChecks() const {
 int PreflightManager::blockingCount() const {
   int count = 0;
   for (auto *c : m_checks) {
+    if (c->isInformational())
+      continue;
     if (c->status() != CheckStatus::Passed)
       count++;
   }
@@ -300,6 +297,8 @@ int PreflightManager::blockingCount() const {
 int PreflightManager::passedChecks() const {
   int count = 0;
   for (auto *c : m_checks) {
+    if (c->isInformational())
+      continue;
     if (c->status() == CheckStatus::Passed)
       count++;
   }
@@ -309,6 +308,8 @@ int PreflightManager::passedChecks() const {
 int PreflightManager::failedChecks() const {
   int count = 0;
   for (auto *c : m_checks) {
+    if (c->isInformational())
+      continue;
     auto s = c->status();
     if (s == CheckStatus::Failed || s == CheckStatus::Stale)
       count++;
@@ -319,6 +320,8 @@ int PreflightManager::failedChecks() const {
 int PreflightManager::pendingChecks() const {
   int count = 0;
   for (auto *c : m_checks) {
+    if (c->isInformational())
+      continue;
     if (c->status() == CheckStatus::Pending ||
         c->status() == CheckStatus::Warning)
       count++;
@@ -345,15 +348,29 @@ QString PreflightManager::firstBlockingFailure() const {
 }
 
 int PreflightManager::completionPercent() const {
-  if (m_checks.isEmpty())
+  const int total = countedChecks();
+  if (total <= 0)
     return 0;
-  return (passedChecks() * 100) / m_checks.size();
+  return (passedChecks() * 100) / total;
 }
 
 int PreflightManager::staleCount() const {
   int count = 0;
   for (auto *c : m_checks) {
+    if (c->isInformational())
+      continue;
     if (c->status() == CheckStatus::Stale)
+      count++;
+  }
+  return count;
+}
+
+// Number of checks that contribute to the checklist count/progress.
+// Informational checks (e.g. Environment/weather) are displayed but excluded.
+int PreflightManager::countedChecks() const {
+  int count = 0;
+  for (auto *c : m_checks) {
+    if (!c->isInformational())
       count++;
   }
   return count;
@@ -387,16 +404,20 @@ bool PreflightManager::allMandatoryPassed() const {
   return true;
 }
 
-// Progress as fraction of checks that have been evaluated (non-Pending).
+// Progress as fraction of counted checks that have been evaluated (non-Pending).
+// Informational checks are excluded from both numerator and denominator.
 double PreflightManager::progress() const {
-  if (m_checks.isEmpty())
+  const int total = countedChecks();
+  if (total <= 0)
     return 0.0;
   int evaluated = 0;
   for (auto *c : m_checks) {
+    if (c->isInformational())
+      continue;
     if (c->status() != CheckStatus::Pending)
       evaluated++;
   }
-  return (double)evaluated / (double)m_checks.size();
+  return (double)evaluated / (double)total;
 }
 
 // Find the most urgent arming blocker message.
@@ -833,10 +854,9 @@ bool PreflightManager::updateCriticalChecks(const QString &kindString) {
       // Wrong motor count / non-responding motor = asymmetric thrust for
       // multirotors (blocks arming). For fixed wing these are advisory.
       check->setMandatory(multirotor);
-    } else if (id == QStringLiteral("sensors.airspeed")
-               || id == QStringLiteral("safety.rtl_alt")) {
-      // Airspeed + RTL altitude are safety-critical for fixed wing; on a
-      // multirotor airspeed must NEVER block arming.
+    } else if (id == QStringLiteral("safety.rtl_alt")) {
+      // RTL altitude is safety-critical for fixed wing; advisory on a
+      // multirotor.
       check->setMandatory(flightVehicle);
     } else if (check->isAuto()) {
       // With an identified airframe, the remaining auto safety checks
@@ -857,7 +877,11 @@ void PreflightManager::createPhase1Checks() {
   // Airspace: planned route vs no-fly zones.  The zone model and mission
   // controller are wired in later by PreflightPlugin (they don't exist yet
   // at this point); until then the check reports "No mission loaded".
-  m_checks.append(new ZoneComplianceCheck(nullptr, this));
+  // Informational only: surfaced in the weather info panel as airspace status,
+  // but excluded from the checklist count/progress.
+  auto *zoneCompliance = new ZoneComplianceCheck(nullptr, this);
+  zoneCompliance->setIsInformational(true);
+  m_checks.append(zoneCompliance);
 
   // Auto checks (evaluated programmatically)
   m_checks.append(new BatteryVoltageCheck(m_telemetry, 0.0, 5.0, this));
@@ -865,19 +889,9 @@ void PreflightManager::createPhase1Checks() {
   m_checks.append(new HeartbeatCheck(m_telemetry, 10, this));
   m_checks.append(new RtlAltParamCheck(m_telemetry, 10.0, 122.0, this));
   m_checks.append(new HomePositionCheck(m_telemetry, 0.005, this));
-  m_checks.append(new AirspeedCheck(m_telemetry, 20.0, this));
 
   // Tier 1 — Navigation
-  m_checks.append(new AccelConsistencyCheck(m_telemetry, 4.0, this));
   m_checks.append(new GpsFixCheck(m_telemetry, 8, 2.0, this));
-
-  // Tier 1 — Power
-  auto *batteryTemp = new BatteryTemperatureCheck(m_telemetry, 45.0, 0.0, this);
-  // Pack temperature is a post-flight item (it heats during the flight). The
-  // flag only matters while post-flight mode is active; pre-flight evaluation
-  // is unchanged.
-  batteryTemp->setIsPostFlight(true);
-  m_checks.append(batteryTemp);
 
   // VehicleProfileManager singleton exists (it needs the profile manager).
 
@@ -896,11 +910,6 @@ void PreflightManager::createPhase1Checks() {
   m_checks.append(new MotorSpinCheck(m_telemetry, this));
 
   // Tier 4 — Enhancement / Niche checks
-  m_checks.append(new GimbalLinkCheck(m_telemetry, this));
-  auto *motorTemp = new MotorTemperatureCheck(m_telemetry, 80.0, this);
-  // Motors heat in flight; motor temperature is a post-flight item (design doc).
-  motorTemp->setIsPostFlight(true);
-  m_checks.append(motorTemp);
   m_checks.append(new BaroHealthCheck(m_telemetry, this));
   m_checks.append(new RcRssiCheck(m_telemetry, 50, 50, this));
 
@@ -915,21 +924,31 @@ void PreflightManager::createPhase1Checks() {
   m_checks.append(new RadioFailsafeCheck(m_telemetry, this));
 
   // Tier 6 — Environmental / Weather
-  m_checks.append(new AmbientTemperatureCheck(m_telemetry, 50.0, -10.0, this));
-  m_checks.append(new MetarTemperatureCheck(m_telemetry, this));
-  m_checks.append(new WeatherWindGustCheck(m_telemetry, this));
-  m_checks.append(new TafDeteriorationCheck(m_telemetry, this));
+  // These are informational only: shown to the operator but excluded from the
+  // checklist count/progress (they never gate arming either, being non-mandatory).
+  auto *ambientTemp = new AmbientTemperatureCheck(m_telemetry, 50.0, -10.0, this);
+  ambientTemp->setIsInformational(true);
+  m_checks.append(ambientTemp);
+  auto *metarTemp = new MetarTemperatureCheck(m_telemetry, this);
+  metarTemp->setIsInformational(true);
+  m_checks.append(metarTemp);
+  auto *windGust = new WeatherWindGustCheck(m_telemetry, this);
+  windGust->setIsInformational(true);
+  m_checks.append(windGust);
+  auto *tafDeterioration = new TafDeteriorationCheck(m_telemetry, this);
+  tafDeterioration->setIsInformational(true);
+  m_checks.append(tafDeterioration);
 
-  // Airframe (2 remaining; antenna placement folded into visual inspection)
-  m_checks.append(new ManualConfirmCheck(
-      QStringLiteral("airframe.weight_balance"),
-      QStringLiteral("Weight & Balance / CG"), CheckCategory::Airframe,
-      QStringLiteral("Confirm CG within limits and payload secure"), {}, {}, this));
+  // Airframe — combined weight/balance + visual inspection (antenna placement
+  // folded in here too).
   m_checks.append(new ManualConfirmCheck(
       QStringLiteral("airframe.visual_inspection"),
-      QStringLiteral("Visual Damage Inspection"), CheckCategory::Airframe,
-      QStringLiteral("Confirm airframe free of cracks and damage"),
-       {QStringLiteral("Antenna placement secure and unobstructed"),
+      QStringLiteral("Weight, Balance & Visual Inspection"),
+      CheckCategory::Airframe,
+      QStringLiteral("Confirm CG within limits, payload secure, and airframe free "
+                     "of cracks and damage"),
+       {QStringLiteral("CG within limits and payload secure"),
+        QStringLiteral("Antenna placement secure and unobstructed"),
         QStringLiteral("Airframe free of cracks, chips, or structural damage"),
         QStringLiteral("Fasteners, screws, and linkages tight"),
         QStringLiteral("Wiring and connectors secure"),

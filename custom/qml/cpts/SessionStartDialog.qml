@@ -186,5 +186,20 @@ Dialog {
                 }
             }
         }
+
+        // Cancel only when a mode is already set: with no mode, one must be chosen.
+        Text {
+            Layout.alignment: Qt.AlignRight
+            visible: FlightSession.mode !== FlightSession.None
+            text: qsTr("Cancel")
+            font.pixelSize: Config.fontSizeBody
+            color: Colors.textSecondary
+            MouseArea {
+                anchors.fill: parent
+                anchors.margins: -Config.spacingSmall
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.close()
+            }
+        }
     }
 }

@@ -99,11 +99,8 @@ Rectangle {
                 color: ArmingGate.mode === 1 ? Colors.background : Colors.textPrimary
             }
 
-            MouseArea {
-                anchors.fill: parent
-                onClicked: ArmingGate.mode = (ArmingGate.mode + 1) % 3
-                cursorShape: Qt.PointingHandCursor
-            }
+            // FORK PATCH (G2): the badge is display-only. One tap used to cycle
+            // the gate to Passive, which allowed every arm with no log.
         }
 
         // Training badge
@@ -125,34 +122,18 @@ Rectangle {
             }
         }
 
-        // Override button
-        Rectangle {
-            Layout.preferredHeight: 32
-            Layout.preferredWidth: 96
-            radius: 16
-            color: Colors.error
-            visible: !gateOpen && !FlightSession.isTraining
-            Text {
-                anchors.centerIn: parent
-                text: qsTr("Override")
-                font.pixelSize: 11
-                font.bold: true
-                color: Colors.background
-            }
-            MouseArea {
-                anchors.fill: parent
-                onClicked: ArmingGate.overrideGate("Override from Arming Gate panel")
-                cursorShape: Qt.PointingHandCursor
-            }
-        }
+        // FORK PATCH (G3): the one-tap "Override" button is removed. It opened a
+        // 30 s window in which every arm from every path passed. Overrides go
+        // through the acknowledge dialog only.
 
-        // Force Arm button
+        // Force Arm button — bench use only (G4): shown in a Testing session
+        // while the gate is denying, and always behind forceArmConfirm.
         Rectangle {
             Layout.preferredHeight: 32
             Layout.preferredWidth: 104
             radius: 16
             color: Colors.warning
-            visible: !FlightSession.isTraining
+            visible: FlightSession.isTesting && !gateOpen
             Text {
                 anchors.centerIn: parent
                 text: qsTr("Force Arm")
@@ -162,7 +143,7 @@ Rectangle {
             }
             MouseArea {
                 anchors.fill: parent
-                onClicked: root.requestForceArm()
+                onClicked: forceArmConfirm.open()
                 cursorShape: Qt.PointingHandCursor
             }
         }
@@ -176,6 +157,69 @@ Rectangle {
             color: Colors.error
             wrapMode: Text.WordWrap
             visible: root.forceArmRefusal.length > 0
+        }
+    }
+
+    // Force-arm confirmation: pilot name and reason are required before the
+    // command is sent. 2989 also bypasses ArduPilot's own pre-arm checks.
+    Dialog {
+        id: forceArmConfirm
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        modal: true
+        title: qsTr("Force Arm (bench only)")
+        standardButtons: Dialog.Ok | Dialog.Cancel
+
+        onAboutToShow: {
+            pilotField.text = ""
+            reasonField.text = ""
+            propsOffBox.checked = false
+        }
+
+        Component.onCompleted: _updateOk()
+        function _updateOk() {
+            var ok = standardButton(Dialog.Ok)
+            if (ok)
+                ok.enabled = pilotField.text.trim().length > 0
+                          && reasonField.text.trim().length > 0
+                          && propsOffBox.checked
+        }
+
+        ColumnLayout {
+            spacing: Config.spacingSmall
+
+            Text {
+                Layout.preferredWidth: 360
+                text: qsTr("Force arm skips the preflight gate and ArduPilot's pre-arm checks. Use it only on the bench with propellers removed.")
+                font.pixelSize: Config.fontSizeSmall
+                color: Colors.warning
+                wrapMode: Text.WordWrap
+            }
+            TextField {
+                id: pilotField
+                Layout.fillWidth: true
+                placeholderText: qsTr("Pilot name")
+                onTextChanged: forceArmConfirm._updateOk()
+            }
+            TextField {
+                id: reasonField
+                Layout.fillWidth: true
+                placeholderText: qsTr("Reason")
+                onTextChanged: forceArmConfirm._updateOk()
+            }
+            CheckBox {
+                id: propsOffBox
+                text: qsTr("Propellers are removed")
+                onCheckedChanged: forceArmConfirm._updateOk()
+            }
+        }
+
+        onAccepted: {
+            // TODO(step1.3): pass pilot and reason to TelemetryProvider.forceArm()
+            // once the C++ side accepts and logs them.
+            console.info("ArmGatePanel: force arm confirmed by", pilotField.text.trim(),
+                         "reason:", reasonField.text.trim())
+            root.requestForceArm()
         }
     }
 }

@@ -31,7 +31,8 @@ void PreflightChecklistFilterModel::setCategoryId(int id)
 bool PreflightChecklistFilterModel::filterAcceptsRow(int sourceRow, const QModelIndex &sourceParent) const
 {
     QModelIndex idx = sourceModel()->index(sourceRow, 0, sourceParent);
-    // Link-health checks are surfaced in the 30% info panel instead of the checklist grid.
+    // Link-health checks and airspace compliance are surfaced in the 30% info
+    // panel instead of the checklist grid.
     static const QSet<QString> kHiddenFromChecklist = {
         QStringLiteral("com.telemetry.drop_rate"),
         QStringLiteral("comm.mavlink.protocol"),
@@ -39,6 +40,7 @@ bool PreflightChecklistFilterModel::filterAcceptsRow(int sourceRow, const QModel
         QStringLiteral("nav.home"),
         QStringLiteral("nav.attitude"),
         QStringLiteral("propulsion.esc.firmware"),
+        QStringLiteral("airspace.zone_compliance"),
     };
     QString id = sourceModel()->data(idx, PreflightChecklistModel::IdRole).toString();
     if (kHiddenFromChecklist.contains(id))

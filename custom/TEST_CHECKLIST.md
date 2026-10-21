@@ -103,9 +103,11 @@ Mark each: **Pass / Fail / N/A** · severity if fail: **Blocker / Major / Minor*
 |----|--------|----------|
 | G1 | Flight time | Same math as chip |
 | G2 | FC status | Armed, mode, battery snapshot |
-| G3 | Events | Hidden default; toggle works |
-| G4 | Takeoff / Return | Clickable when allowed; not dead |
-| G5 | Mode MANUAL↔AUTO | Works or clear FLTMODE warning |
+| G3 | Events | Removed from the quick actions (2026-10-20); no Events button |
+| G4 | Takeoff / Return | No custom Takeoff or Return; Return is the stock FlyViewToolStrip control |
+| G5 | Mode MANUAL↔AUTO | Removed from the quick actions (2026-10-20); mode changes from RC or the stock flight-mode selector |
+| G6 | Checklist | Opens Analyze → Preflight Checklist; asks for a session mode first if none is set |
+| G7 | Toolbar session chip | Shows UAV name (or "Vehicle N") and FLIGHT / TESTING / TRAINING / "Select mode"; click opens the mode dialog only when disarmed |
 
 ---
 

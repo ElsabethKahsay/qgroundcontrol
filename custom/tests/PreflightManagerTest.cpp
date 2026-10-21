@@ -211,34 +211,29 @@ void PreflightManagerTest::testApplyVehicleKindBlocking()
 
     auto *motorCount = mgr.checkById(QStringLiteral("airframe.motor_count"));
     auto *motorSpin  = mgr.checkById(QStringLiteral("propulsion.motors.spin"));
-    auto *airspeed   = mgr.checkById(QStringLiteral("sensors.airspeed"));
     auto *rtlAlt     = mgr.checkById(QStringLiteral("safety.rtl_alt"));
 
-    QVERIFY(motorCount && motorSpin && airspeed && rtlAlt);
+    QVERIFY(motorCount && motorSpin && rtlAlt);
 
     // Defaults before any kind is applied
     QVERIFY(!motorCount->isBlocking());
-    QVERIFY(!airspeed->isBlocking());
     QVERIFY(!rtlAlt->isBlocking());
 
-    // Multirotor: motors block, airspeed/rtl_alt advisory — airspeed must
-    // never block a quad from arming.
+    // Multirotor: motors block, rtl_alt advisory.
     mgr.applyVehicleKind(QStringLiteral("MULTIROTOR"));
     QVERIFY(motorCount->isBlocking());
     QVERIFY(motorSpin->isBlocking());
-    QVERIFY(!airspeed->isBlocking());
     QVERIFY(!rtlAlt->isBlocking());
 
-    // Fixed wing: airspeed + rtl_alt block; motor checks advisory.
+    // Fixed wing: rtl_alt blocks; motor checks advisory.
     mgr.applyVehicleKind(QStringLiteral("FIXED_WING"));
     QVERIFY(!motorCount->isBlocking());
     QVERIFY(!motorSpin->isBlocking());
-    QVERIFY(airspeed->isBlocking());
     QVERIFY(rtlAlt->isBlocking());
 
     // Unknown kind leaves the previous explicit decisions untouched.
     mgr.applyVehicleKind(QStringLiteral("UNKNOWN"));
-    QVERIFY(airspeed->isBlocking());
+    QVERIFY(rtlAlt->isBlocking());
 }
 
 void PreflightManagerTest::testMarkArmedDisarmed()

@@ -53,7 +53,7 @@ Rectangle {
                 }
                 contentItem: Label {
                     text: "Disarm"
-                    color: "white"
+                    color: Colors.textPrimary
                     font.bold: true
                     horizontalAlignment: Text.AlignHCenter
                 }
@@ -76,7 +76,7 @@ Rectangle {
                     v.flightMode = _isManual ? "AUTO" : "MANUAL"
                 }
                 background: Rectangle {
-                    color: parent._isManual ? "#1A3A2A" : Colors.surface2
+                    color: parent._isManual ? Colors.statusPassDim : Colors.surface2
                     border.color: parent._isManual ? Colors.statePass : Colors.accent
                     border.width: 1.5
                     radius: 6
@@ -153,7 +153,7 @@ Rectangle {
                 }
                 background: Rectangle {
                     radius: 6
-                    color: manualModeBtn._inManual ? "#1A3A2A" : Colors.warning
+                    color: manualModeBtn._inManual ? Colors.statusPassDim : Colors.warning
                     border.color: manualModeBtn._inManual ? Colors.statePass : Colors.warning
                     border.width: 1
                 }
@@ -203,9 +203,16 @@ Rectangle {
                 ToolTip.visible: hovered
             }
             Button {
+                // FORK PATCH (B3): stopAll() force-disarms an armed vehicle, so
+                // it is disabled while flying (no bench test can be running then).
+                readonly property var _v: QGroundControl.multiVehicleManager.activeVehicle
+                readonly property bool _flying: !!_v && _v.armed && _v.flying
                 text: qsTr("STOP ALL")
-                enabled: root._vehicleConnected
+                enabled: root._vehicleConnected && !_flying
                 onClicked: HardwareTestController.stopAll()
+                ToolTip.text: _flying ? qsTr("Disabled in flight — it would force-disarm the vehicle")
+                                      : qsTr("Stop all motor and servo outputs")
+                ToolTip.visible: hovered
                 background: Rectangle {
                     radius: 6
                     color: parent.enabled ? Colors.errorDim : Colors.surfaceLight
@@ -255,7 +262,7 @@ Rectangle {
                 background: Rectangle { color: Colors.stateFail; radius: 6 }
                 contentItem: Label {
                     text: "Disarm"
-                    color: "white"
+                    color: Colors.textPrimary
                     font.bold: true
                     horizontalAlignment: Text.AlignHCenter
                 }

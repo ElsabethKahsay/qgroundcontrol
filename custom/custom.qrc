@@ -103,6 +103,7 @@
         <file alias="MotorCheckPanel.qml">qml/cpts/MotorCheckPanel.qml</file>
         <file alias="ChecklistEngine.qml">qml/cpts/ChecklistEngine.qml</file>
         <file alias="SessionStartDialog.qml">qml/cpts/SessionStartDialog.qml</file>
+        <file alias="SessionStatusChip.qml">qml/cpts/SessionStatusChip.qml</file>
         <file alias="FlightFormDialog.qml">qml/cpts/FlightFormDialog.qml</file>
         <file alias="ArmGateDialogLoader.qml">qml/cpts/ArmGateDialogLoader.qml</file>
         <file alias="WizardStepBar.qml">qml/cpts/WizardStepBar.qml</file>

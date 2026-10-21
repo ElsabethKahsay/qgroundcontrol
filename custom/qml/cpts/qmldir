@@ -4,6 +4,7 @@ CollapsibleSection 1.0 CollapsibleSection.qml
 StatBox 1.0 StatBox.qml
 ArmGateDialogLoader 1.0 ArmGateDialogLoader.qml
 SessionStartDialog 1.0 SessionStartDialog.qml
+SessionStatusChip 1.0 SessionStatusChip.qml
 FlightFormDialog 1.0 FlightFormDialog.qml
 WizardStepBar 1.0 WizardStepBar.qml
 WizardStep1Operator 1.0 WizardStep1Operator.qml

@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Window
+import QGroundControl
 import com.uav.preflight 1.0
 import cpts 1.0
 
@@ -31,6 +32,11 @@ Page {
     property string _lastAck: ""
     property bool tiltTestRunning: false
     property bool tiltTestPassed: false
+    // FORK PATCH: TelemetryBridge has no gimbal command yet (no sendMountControl),
+    // so these tests stay disabled until it does, rather than throwing on click
+    // and reporting a pass that was never measured.
+    readonly property bool _gimbalCmdSupported: typeof TelemetryProvider !== "undefined" && TelemetryProvider
+                                                && typeof TelemetryProvider.sendMountControl === "function"
     property bool _targetFromMap: false
 
     // Control surface test state (driven by ControlSurfaceTestController)
@@ -64,10 +70,23 @@ Page {
             root._targetFromMap = (FlightSession.targetSource === qsTr("map center"))
         }
     }
+    // FORK PATCH (B2): stopAllSurfaces() force-disarms an armed vehicle, so it
+    // never runs while flying (no surface sweep can be running then).
+    readonly property var  _vehicle: QGroundControl.multiVehicleManager.activeVehicle
+    readonly property bool _flying: !!_vehicle && _vehicle.armed && _vehicle.flying
+    function _safeStopAllSurfaces() {
+        if (typeof ControlSurfaceTestController === "undefined")
+            return
+        if (root._flying) {
+            console.warn("GimbalTest: stopAllSurfaces skipped — vehicle is flying (would force-disarm)")
+            return
+        }
+        ControlSurfaceTestController.stopAllSurfaces()
+    }
+
     // Teardown: halt surface sweeps and stop every timer so nothing fires once the page closes
     Component.onDestruction: {
-        if (typeof ControlSurfaceTestController !== "undefined")
-            ControlSurfaceTestController.stopAllSurfaces()
+        root._safeStopAllSurfaces()
         ackTimer.stop()
         tiltReturnTimer.stop()
         targetStatusTimer.stop()
@@ -101,10 +120,13 @@ Page {
         interval: 2000
         repeat: false
         onTriggered: {
-            TelemetryProvider.sendMountControl(0, 0, 0, 2);
+            if (root._gimbalCmdSupported)
+                TelemetryProvider.sendMountControl(0, 0, 0, 2);
             root.tiltTestRunning = false;
-            root.tiltTestPassed = true;
-            root._send("Tilt Test Complete (Passed)");
+            // Pass only on measured attitude feedback (onGimbalAttitudeChanged);
+            // no feedback within the window is a failure, never a pass.
+            root._send(root.tiltTestPassed ? "Tilt Test Complete (Passed)"
+                                           : "Tilt Test FAILED (no gimbal attitude feedback)");
         }
     }
 
@@ -138,14 +160,14 @@ Page {
         gradient: Gradient {
             GradientStop {
                 position: 0.0
-                color: "#e879f9"
+                color: Colors.surfaceLight
             }
             GradientStop {
                 position: 1.0
-                color: "#d946ef"
+                color: Colors.surface
             }
         }
-        border.color: "#d946ef"
+        border.color: Colors.border
         border.width: 2
 
         ScrollView {
@@ -301,110 +323,6 @@ Page {
                                 font.bold: true
                                 font.pixelSize: Config.fontSizeBody
                                 color: Colors.textSecondary
-                            }
-                        }
-                    }
-                }
-
-                // ── Camera / Gimbal Link Status Card ──
-                Rectangle {
-                    id: gimbalLinkCard
-                    Layout.fillWidth: true
-                    radius: Config.radiusMedium
-                    border.width: 1
-                    implicitHeight: gimbalLinkRow.implicitHeight + Config.spacingMedium * 2
-
-                    // Live view of the gimbal-link preflight check owned by PreflightManager (C++)
-                    readonly property var _check: (typeof PreflightManager !== "undefined")
-                        ? PreflightManager.checkById("com.gimbal.link") : null
-                    readonly property int  _status: _check ? _check.status : -1
-                    readonly property string _msg:  _check ? _check.message : qsTr("Waiting…")
-
-                    // 0 = Pending, 1 = Passed, 2 = Warning, 3 = Failed, 4 = Skipped
-                    readonly property color _bg: {
-                        if (_status === 1) return "#0D2B1A"        // pass — dark green
-                        if (_status === 2) return "#2B220A"        // warning — amber
-                        if (_status === 3) return "#2B0D0D"        // fail — dark red
-                        return Colors.surface
-                    }
-                    readonly property color _border: {
-                        if (_status === 1) return Colors.statePass
-                        if (_status === 2) return Colors.warning
-                        if (_status === 3) return Colors.error
-                        return Colors.border
-                    }
-                    readonly property string _dot: {
-                        if (_status === 1) return "✓"
-                        if (_status === 2) return "⚠"
-                        if (_status === 3) return "✗"
-                        return "…"
-                    }
-                    readonly property color _dotColor: {
-                        if (_status === 1) return Colors.statePass
-                        if (_status === 2) return Colors.warning
-                        if (_status === 3) return Colors.error
-                        return Colors.textDisabled
-                    }
-
-                    color:        _bg
-                    border.color: _border
-
-                    RowLayout {
-                        id: gimbalLinkRow
-                        anchors { fill: parent; margins: Config.spacingMedium }
-                        spacing: Config.spacingMedium
-
-                        // Status dot
-                        Text {
-                            text: gimbalLinkCard._dot
-                            font.pixelSize: Config.fontSizeH3
-                            font.bold: true
-                            color: gimbalLinkCard._dotColor
-                        }
-
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            spacing: 2
-
-                            Text {
-                                text: qsTr("Camera / Gimbal Link")
-                                font.pixelSize: Config.fontSizeBody
-                                font.bold: true
-                                color: Colors.textPrimary
-                            }
-                            Text {
-                                text: gimbalLinkCard._msg
-                                font.pixelSize: Config.fontSizeSmall
-                                color: gimbalLinkCard._status === 3 ? Colors.error
-                                     : gimbalLinkCard._status === 2 ? Colors.warning
-                                     : Colors.textSecondary
-                                wrapMode: Text.WordWrap
-                                Layout.fillWidth: true
-                            }
-                        }
-
-                        // Re-evaluate button
-                        Button {
-                            visible: gimbalLinkCard._status !== 1
-                            text: qsTr("Re-check")
-                            font.pixelSize: Config.fontSizeSmall
-                            onClicked: {
-                                if (gimbalLinkCard._check &&
-                                        typeof gimbalLinkCard._check.evaluate === "function")
-                                    gimbalLinkCard._check.evaluate()
-                            }
-                            background: Rectangle {
-                                radius: 4
-                                color: parent.enabled ? Colors.surfaceLight : Colors.surface
-                                border.color: Colors.border
-                                border.width: 1
-                            }
-                            contentItem: Text {
-                                text: parent.text
-                                font.pixelSize: Config.fontSizeSmall
-                                color: Colors.textSecondary
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
                             }
                         }
                     }
@@ -814,7 +732,7 @@ Page {
                 // ── Gimbal Test Buttons (no Recalibrate) ──
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 100
+                    Layout.preferredHeight: root._gimbalCmdSupported ? 100 : 130
                     color: Colors.surface
                     radius: Config.radiusMedium
                     border.color: Colors.border
@@ -844,6 +762,7 @@ Page {
                                 font.pixelSize: Config.fontSizeSmall
                                 font.bold: true
                                 highlighted: true
+                                enabled: root._gimbalCmdSupported
                                 onClicked: {
                                     // mode 2 = MAVLINK_TARGETING; zero angles center the gimbal
                                     TelemetryProvider.sendMountControl(0, 0, 0, 2);
@@ -858,7 +777,7 @@ Page {
                                 text: root.tiltTestRunning ? "\u23F3 Tilt Testing..." : "\uD83D\uDCDD Tilt Test (-30\u00B0)"
                                 font.pixelSize: Config.fontSizeSmall
                                 font.bold: true
-                                enabled: !root.tiltTestRunning
+                                enabled: root._gimbalCmdSupported && !root.tiltTestRunning
                                 onClicked: {
                                     root.tiltTestRunning = true;
                                     root.tiltTestPassed = false;
@@ -867,6 +786,15 @@ Page {
                                     tiltReturnTimer.restart();
                                 }
                             }
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            visible: !root._gimbalCmdSupported
+                            text: qsTr("Gimbal test not available yet — needs gimbal command support in the GCS.")
+                            font.pixelSize: Config.fontSizeSmall
+                            color: Colors.statusWarn
+                            wrapMode: Text.WordWrap
                         }
                     }
                 }
@@ -917,10 +845,8 @@ Page {
                                 font.pixelSize: Config.fontSizeSmall
                                 font.bold: true
                                 Layout.preferredHeight: 34
-                                onClicked: {
-                                    if (typeof ControlSurfaceTestController !== "undefined")
-                                        ControlSurfaceTestController.stopAllSurfaces()
-                                }
+                                enabled: !root._flying
+                                onClicked: root._safeStopAllSurfaces()
                             }
                         }
 
@@ -962,8 +888,8 @@ Page {
                                     implicitWidth: manualBtnText.implicitWidth + 16
                                     implicitHeight: 22
                                     radius: 4
-                                    color: manualMa.containsMouse ? "#D32F2F" : Colors.error
-                                    border.color: "#FF8A80"
+                                    color: manualMa.containsMouse ? Colors.danger : Colors.error
+                                    border.color: Colors.statusFail
                                     border.width: 1
 
                                     Text {
@@ -972,7 +898,7 @@ Page {
                                         text: "⚡ Switch to MANUAL"
                                         font.pixelSize: Config.fontSizeSmall
                                         font.bold: true
-                                        color: "#FFFFFF"
+                                        color: Colors.textPrimary
                                     }
 
                                     MouseArea {

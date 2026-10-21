@@ -51,6 +51,13 @@ bool WeatherProvider::metarFresh() const
 
 QString WeatherProvider::weatherDescription() const
 {
+    // W5: METAR data carries a flight category, not a WMO weather code; name it
+    // directly instead of describing a stand-in code (LIFR used to read
+    // "Thunderstorm").
+    if (m_flightCategory == QStringLiteral("VFR"))  return QStringLiteral("VFR");
+    if (m_flightCategory == QStringLiteral("MVFR")) return QStringLiteral("MVFR (marginal VFR)");
+    if (m_flightCategory == QStringLiteral("IFR"))  return QStringLiteral("IFR");
+    if (m_flightCategory == QStringLiteral("LIFR")) return QStringLiteral("LIFR (low IFR)");
     return describeCode(m_weatherCode);
 }
 
@@ -123,6 +130,9 @@ void WeatherProvider::fetchWeather(double latitude, double longitude)
     query.addQueryItem(QStringLiteral("current"),
         QStringLiteral("temperature_2m,relative_humidity_2m,weather_code,"
                        "wind_speed_10m,wind_direction_10m,visibility"));
+    // W1: Open-Meteo defaults to km/h; m_windSpeed is m/s everywhere else
+    // (METAR path converts kt -> m/s, display converts m/s -> kt).
+    query.addQueryItem(QStringLiteral("wind_speed_unit"), QStringLiteral("ms"));
     query.addQueryItem(QStringLiteral("timezone"), QStringLiteral("auto"));
     url.setQuery(query);
 
@@ -159,6 +169,7 @@ void WeatherProvider::fetchWeather(double latitude, double longitude)
         m_temperature = current.value(QStringLiteral("temperature_2m")).toDouble();
         m_humidity = current.value(QStringLiteral("relative_humidity_2m")).toDouble();
         m_weatherCode = current.value(QStringLiteral("weather_code")).toInt();
+        m_flightCategory.clear();
         m_windSpeed = current.value(QStringLiteral("wind_speed_10m")).toDouble();
         m_windDirection = current.value(QStringLiteral("wind_direction_10m")).toDouble();
         m_visibility = current.value(QStringLiteral("visibility")).toDouble();
@@ -274,8 +285,10 @@ void WeatherProvider::handleMetarJson(const QByteArray &data)
     }
 
     // Weather code from flight category
+    m_flightCategory.clear();
     if (metar.contains(QStringLiteral("flightCategory"))) {
         QString cat = metar.value(QStringLiteral("flightCategory")).toString();
+        m_flightCategory = cat;
         if (cat == QStringLiteral("VFR"))
             m_weatherCode = 0;
         else if (cat == QStringLiteral("MVFR"))
@@ -283,7 +296,7 @@ void WeatherProvider::handleMetarJson(const QByteArray &data)
         else if (cat == QStringLiteral("IFR"))
             m_weatherCode = 45;
         else if (cat == QStringLiteral("LIFR"))
-            m_weatherCode = 95;
+            m_weatherCode = 45;   // fog-class code; never 95 (thunderstorm)
     }
 
     // Humidity from dewpoint

@@ -3,6 +3,10 @@ import QtQuick
 import QtQuick.Window
 
 QtObject {
+    // Set true to make the Analyze tool open on its Preflight Checklist page.
+    // AnalyzeView consumes (clears) it, both when it loads and when already open.
+    property bool analyzePreflightRequested: false
+
     // Compact GCS — smaller fonts, tighter grid, unique styling
     readonly property int fontSizeH1: 22
     readonly property int fontSizeH2: 20

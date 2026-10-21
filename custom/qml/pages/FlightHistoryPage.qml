@@ -100,16 +100,17 @@ AnalyzePage {
         if (evt === "BATTERY_CRIT" || evt === "CHECK_DEGRADED") return Colors.stateFail
         return Colors.textSecondary
     }
-    // Flight-mode badge tint for the mode column (FLIGHT / TRAINING / other)
+    // Flight-mode badge tint for the mode column — same colours as the
+    // toolbar SessionStatusChip: FLIGHT green, TRAINING yellow, TESTING blue.
     function modeBadgeColor(m) {
-        if (m === "FLIGHT") return "#1A3A2A"
-        if (m === "TRAINING") return "#1A2A4A"
-        return "#2A2A1A"
+        if (m === "FLIGHT") return Colors.statusPassDim
+        if (m === "TRAINING") return Colors.statusWarnDim
+        return Colors.statusInfoDim
     }
     function modeTextColor(m) {
-        if (m === "FLIGHT") return Colors.statePass
-        if (m === "TRAINING") return Colors.accent
-        return Colors.checkWarn
+        if (m === "FLIGHT") return Colors.statusPass
+        if (m === "TRAINING") return Colors.statusWarn
+        return Colors.statusInfo
     }
 
     function rebuildVehicleFilter() {
@@ -578,7 +579,7 @@ AnalyzePage {
                                         Text {
                                             anchors.centerIn: parent
                                             text: anomalyCount
-                                            color: "white"
+                                            color: Colors.textPrimary
                                             font.pixelSize: Config.fontSizeSmall
                                             font.bold: true
                                         }

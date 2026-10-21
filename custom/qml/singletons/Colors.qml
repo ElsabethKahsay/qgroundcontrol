@@ -26,19 +26,35 @@ QtObject {
     readonly property color textSecondary: "#8B95A8"
     readonly property color textDisabled:  "#4B5263"
 
-    // ── Status — safety colors untouched ──
-    readonly property color success:      "#34d399"
-    readonly property color successDim:   "#0a2e1a"
-    readonly property color warning:      "#fbbf24"
-    readonly property color warningDim:   "#2a200a"
-    readonly property color error:        "#fb7185"
-    readonly property color errorDim:     "#2a1018"
-    readonly property color danger:       "#ef4444"
-    readonly property color info:         "#38bdf8"
+    // ══════════════════════════════════════════════════════════════════
+    //  SEMANTIC STATUS — the only status colours safety screens should use.
+    //  Operators read go/no-go from these, so one meaning = one colour.
+    // ══════════════════════════════════════════════════════════════════
+    readonly property color statusPass:       "#34d399"
+    readonly property color statusPassDim:    "#0a2e1a"
+    readonly property color statusFail:       "#fb7185"
+    readonly property color statusFailDim:    "#2a1018"
+    readonly property color statusWarn:       "#fbbf24"
+    readonly property color statusWarnDim:    "#2a200a"
+    readonly property color statusStale:      "#fbbf24"   // stale data reads as caution
+    readonly property color statusStaleDim:   "#2a200a"
+    readonly property color statusPending:    "#8B95A8"
+    readonly property color statusInfo:       "#38bdf8"
+    readonly property color statusInfoDim:    "#0a2233"
+
+    // ── Status — legacy names, aliases of the semantic tokens ──
+    readonly property color success:      statusPass
+    readonly property color successDim:   statusPassDim
+    readonly property color warning:      statusWarn
+    readonly property color warningDim:   statusWarnDim
+    readonly property color error:        statusFail
+    readonly property color errorDim:     statusFailDim
+    readonly property color danger:       "#ef4444"   // destructive actions, not a check status
+    readonly property color info:         statusInfo
 
     // ── Checklist / gate ──
-    readonly property color checkWarn:    "#fbbf24"     // use yellow for caution, not orange
-    readonly property color checkWarnDim: "#2a200a"
+    readonly property color checkWarn:    statusWarn
+    readonly property color checkWarnDim: statusWarnDim
 
     // ── Telemetry subsystem accent colors ──
     readonly property color pastelPink:   "#fb7185"
@@ -48,21 +64,19 @@ QtObject {
 
     // ── Extended status (real-time indicators) ──
     readonly property color testing:      "#FFD700"   // gold — motor/action testing
-    readonly property color pass:         "#4ADE80"   // bright green — passed
-    readonly property color fail:         "#F87171"   // soft red — failed
-    readonly property color statePass:    "#4ADE80"   // go/no-go pass
-    readonly property color stateFail:    "#F87171"   // go/no-go fail
+    readonly property color pass:         statusPass
+    readonly property color fail:         statusFail
+    readonly property color statePass:    statusPass  // go/no-go pass
+    readonly property color stateFail:    statusFail  // go/no-go fail
 
     // ── Background surfaces (extended) ──
     readonly property color bgPrimary:    "#1F2937"   // card/section header bg
-    readonly property color bgSecondary:  "#F3F4F6"   // light alternate bg
 
     // ── Extended accent ──
     readonly property color accentCyan:   "#00D4FF"   // bright cyan for indicators
 
     // ── Button teal states ──
     readonly property color teal:         "#0891B2"   // default state
-    readonly property color tealLight:    "#0AA8D6"   // hover state
     readonly property color tealDark:     "#065F7C"   // pressed state
 
     // ── Extended text ──
@@ -72,18 +86,26 @@ QtObject {
     // ── Divider ──
     readonly property color divider:      "#374151"   // section/card dividers
 
-    // ── Purple dialog theme ──
-    readonly property color dialogBg:         "#1A0A2E"   // very dark purple bg
-    readonly property color dialogSurface:    "#2D1B4E"   // dialog card surface
-    readonly property color dialogAccent:     "#9B59B6"   // purple borders/icons
-    readonly property color dialogHighlight:  "#F8BBD0"   // light purple label
-    readonly property color dialogFocus:      "#E91E63"   // pink focus ring
-    readonly property color dialogText:       "#FFFFFF"   // white text
+    // ── Dialogs — same surfaces and accent as the rest of the app ──
+    // (formerly a separate purple/pink theme)
+    readonly property color dialogBg:         background
+    readonly property color dialogSurface:    surface
+    readonly property color dialogAccent:     accent
+    readonly property color dialogHighlight:  secondary   // emphasised label
+    readonly property color dialogFocus:      accent      // focus ring
+    readonly property color dialogText:       textPrimary
 
-    // ── Checklist-specific ──
-    readonly property color checkFailLight:   "#EF9A9A"
-    readonly property color checkPassLight:   "#A5D6A7"
-    readonly property color checkAccent:      "#CE93D8"
+    // ── Airspace zone categories (map fill / border) ──
+    readonly property color zoneRegulatory:       "#ef4444"
+    readonly property color zoneRegulatoryBorder: "#b91c1c"
+    readonly property color zoneObstacle:         "#f97316"
+    readonly property color zoneObstacleBorder:   "#c2410c"
+    readonly property color zoneRestricted:       "#7f1d1d"
+    readonly property color zoneRestrictedBorder: "#991b1b"
+    readonly property color zoneTemporary:        "#eab308"
+    readonly property color zoneTemporaryBorder:  "#a16207"
+    readonly property color zoneOther:            "#9ca3af"
+    readonly property color zoneOtherBorder:      "#6b7280"
 
     // ── Footer ──
     readonly property color footerBg:     "#0E1018"

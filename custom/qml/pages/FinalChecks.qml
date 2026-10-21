@@ -280,6 +280,8 @@ Page {
                 text: qsTr("Post-Flight")
                 width: (parent.width - Config.spacingMedium - Config.spacingLarge * 2) / 3
                 baseColor: Colors.surface
+                // FORK PATCH: post-flight is parked for Phase 1 (kPostFlightEnabled).
+                visible: false
                 onClicked: Config.navigatePush("PostFlightSummary.qml")
             }
         }

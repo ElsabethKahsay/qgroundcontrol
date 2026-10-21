@@ -20,7 +20,7 @@ import QGroundControl.ScreenTools
 Item {
     id: root
 
-    /// Currently open action ("", "flightTime", "fcStatus", "events").
+    /// Currently open action ("", "flightTime", "fcStatus").
     property string checkedAction: ""
     /// True while a vehicle is connected; disables non-force-arm buttons.
     property bool hasVehicle: false
@@ -210,14 +210,8 @@ Item {
             enabled:  root.hasVehicle
         }
 
-        // 5. Event log panel
-        QuickButton {
-            action:   "events"
-            glyph:    "\u2630"
-            label:    qsTr("Events")
-            tooltip:  qsTr("Vehicle message / event log")
-            enabled:  root.hasVehicle
-        }
+        // FORK PATCH: the Events button is removed from the Fly view.
+        // EventLogPanel stays in FlyViewCustomLayer, unreachable, for later reuse.
 
         // ── Divider ────────────────────────────────────────────────────
         Rectangle {
@@ -247,28 +241,13 @@ Item {
         // FORK PATCH: the custom Return button was removed. RTL now has exactly
         // one control: the stock FlyViewToolStrip Return button.
 
-        // 8. Mode toggle — MANUAL ↔ AUTO, label shows live FC mode.
-        QuickButton {
-            id:        modeBtn
-            action:    "switchManual"
-            glyph:     "\u2708\uFE0F"
-            label: {
-                var fm = root._activeVehicle ? root._activeVehicle.flightMode : ""
-                if (!fm) return qsTr("Mode: --")
-                return qsTr("Mode: %1").arg(fm)
-            }
-            tooltip:   qsTr("Toggle MANUAL / AUTO flight mode")
-            isDanger:  false
-            isChecked: {
-                var fm = root._activeVehicle ? root._activeVehicle.flightMode : ""
-                return fm === "MANUAL" || fm === "Manual" || fm === "STABILIZE" || fm === "Stabilize"
-            }
-            enabled:   root.hasVehicle
-        }
+        // FORK PATCH: the MANUAL/AUTO mode toggle is removed. Phase 1 is
+        // RC-primary; mode changes come from the transmitter or the stock
+        // flight-mode selector.
     }
 
     // ── Mode-change toast notification ─────────────────────────────────────
-    // Shown for 5 minutes (300 s) after a manual mode switch.
+    // Shown after a battery-config change (10 s).
     property string _lastModeLabel: ""
     property int    _modeToastSecsLeft: 0
 
@@ -331,7 +310,7 @@ Item {
             Text {
                 text:           "\u2708\uFE0F"
                 font.pixelSize: Config.fontSizeBody
-                color:          "white"
+                color:          Colors.textPrimary
                 anchors.verticalCenter: parent.verticalCenter
             }
             Text {
@@ -343,7 +322,7 @@ Item {
                 }
                 font.pixelSize: Config.fontSizeSmall
                 font.weight:    Font.DemiBold
-                color:          "white"
+                color:          Colors.textPrimary
                 anchors.verticalCenter: parent.verticalCenter
             }
         }
@@ -375,14 +354,14 @@ Item {
             Text {
                 text:           root._commandResultConfirmed ? "\u2713" : "\u26A0"
                 font.pixelSize: Config.fontSizeBody
-                color:          "white"
+                color:          Colors.textPrimary
                 anchors.verticalCenter: parent.verticalCenter
             }
             Text {
                 text:           root._commandResultLabel
                 font.pixelSize: Config.fontSizeSmall
                 font.weight:    Font.DemiBold
-                color:          "white"
+                color:          Colors.textPrimary
                 anchors.verticalCenter: parent.verticalCenter
             }
         }
@@ -577,21 +556,6 @@ Item {
                 disarmDialog.open()
             } else if (action === "batConfig") {
                 batteryConfigDialog.open()
-            } else if (action === "switchManual") {
-                var vv = root._activeVehicle
-                if (vv) {
-                    var currentMode = vv.flightMode
-                    var isManualLike = (currentMode === "MANUAL" || currentMode === "Manual" || currentMode === "STABILIZE" || currentMode === "Stabilize" || currentMode === "POSHOLD" || currentMode === "Position")
-                    var targetMode = isManualLike ? "AUTO" : "MANUAL"
-                    if (typeof VehicleProfileManager !== 'undefined' && VehicleProfileManager) {
-                        VehicleProfileManager.setVehicleFlightMode(targetMode)
-                    } else {
-                        vv.flightMode = targetMode
-                    }
-                    root._lastModeLabel = targetMode
-                    root._modeToastSecsLeft = 300
-                    modeToastTimer.restart()
-                }
             }
         }
     }

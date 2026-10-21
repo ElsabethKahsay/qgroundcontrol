@@ -155,7 +155,7 @@ Page {
                                     var pct = JSON.parse(VehicleProfileManager.currentVehicleHistoryJson).batteryHealthTrend.capacityRetainedPct
                                     // 80% retained = end-of-life (red); below 90% = watch (amber)
                                     if (pct < 80) return Colors.danger
-                                    if (pct < 90) return "#e6a817"
+                                    if (pct < 90) return Colors.statusWarn
                                     return Colors.success
                                 } catch(e) { return Colors.textSecondary }
                             }
@@ -383,7 +383,7 @@ Page {
                                         ? modelData.currentHours / modelData.maxHours * 100
                                         : 0
                                     if (pct >= Config.kMaintCriticalPercent) return Colors.danger
-                                    if (pct >= Config.kMaintWarningPercent) return "#e6a817"
+                                    if (pct >= Config.kMaintWarningPercent) return Colors.statusWarn
                                     return Colors.success
                                 }
                             }
@@ -405,7 +405,7 @@ Page {
                                         ? modelData.currentHours / modelData.maxHours * 100
                                         : 0
                                     if (pct >= Config.kMaintCriticalPercent) return Colors.danger
-                                    if (pct >= Config.kMaintWarningPercent) return "#e6a817"
+                                    if (pct >= Config.kMaintWarningPercent) return Colors.statusWarn
                                     return Colors.success
                                 }
                             }
@@ -441,7 +441,7 @@ Page {
                                         ? modelData.currentCycles / modelData.maxCycles * 100
                                         : 0
                                     if (pct >= Config.kMaintCriticalPercent) return Colors.danger
-                                    if (pct >= Config.kMaintWarningPercent) return "#e6a817"
+                                    if (pct >= Config.kMaintWarningPercent) return Colors.statusWarn
                                     return Colors.success
                                 }
                             }
@@ -462,7 +462,7 @@ Page {
                                         ? modelData.currentCycles / modelData.maxCycles * 100
                                         : 0
                                     if (pct >= Config.kMaintCriticalPercent) return Colors.danger
-                                    if (pct >= Config.kMaintWarningPercent) return "#e6a817"
+                                    if (pct >= Config.kMaintWarningPercent) return Colors.statusWarn
                                     return Colors.success
                                 }
                             }

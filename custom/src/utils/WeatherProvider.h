@@ -134,6 +134,7 @@ private:
     double m_windGust = 0.0;
     double m_windDirection = 0.0;
     int m_weatherCode = 0;
+    QString m_flightCategory;   ///< METAR flight category (VFR/MVFR/IFR/LIFR); empty for Open-Meteo data
     double m_visibility = 0.0;
     double m_humidity = 0.0;
     bool m_loading = false;

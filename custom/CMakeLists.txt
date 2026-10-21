@@ -65,10 +65,6 @@ set(CUSTOM_SOURCE_REL
     src/controllers/HardwareTestProfile.h
     src/core/AbstractCheck.cpp
     src/core/AbstractCheck.h
-    src/core/AccelConsistencyCheck.cpp
-    src/core/AccelConsistencyCheck.h
-    src/core/AirspeedCheck.cpp
-    src/core/AirspeedCheck.h
     src/core/AmbientTemperatureCheck.cpp
     src/core/AmbientTemperatureCheck.h
     src/core/ArmingGate.cpp
@@ -81,8 +77,6 @@ set(CUSTOM_SOURCE_REL
     src/core/BatteryFailsafeCheck.h
     src/core/BatteryFailsafeParamCheck.cpp
     src/core/BatteryFailsafeParamCheck.h
-    src/core/BatteryTemperatureCheck.cpp
-    src/core/BatteryTemperatureCheck.h
     src/core/BatteryVoltageCheck.cpp
     src/core/BatteryVoltageCheck.h
     src/core/ChecklistEngine.cpp
@@ -97,8 +91,6 @@ set(CUSTOM_SOURCE_REL
     src/core/EscResponsivenessCheck.h
     src/core/GcsFailsafeCheck.cpp
     src/core/GcsFailsafeCheck.h
-    src/core/GimbalLinkCheck.cpp
-    src/core/GimbalLinkCheck.h
     src/core/GpsFixCheck.cpp
     src/core/GpsFixCheck.h
     src/core/HeartbeatCheck.cpp
@@ -119,8 +111,6 @@ set(CUSTOM_SOURCE_REL
     src/core/MotorCountCheck.h
     src/core/MotorSpinCheck.cpp
     src/core/MotorSpinCheck.h
-    src/core/MotorTemperatureCheck.cpp
-    src/core/MotorTemperatureCheck.h
     src/core/ParameterWatchlist.h
     src/core/PowerModel.cpp
     src/core/PowerModel.h

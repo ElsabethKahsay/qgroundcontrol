@@ -10,7 +10,7 @@ ColumnLayout {
     property string summaryText
     property bool expanded: false
     property color summaryColor: Colors.textSecondary
-    property color headerColor: "#E0E0E0"
+    property color headerColor: Colors.textPrimary
 
     signal toggled()
 

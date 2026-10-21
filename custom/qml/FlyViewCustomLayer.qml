@@ -429,61 +429,14 @@ Item {
 
 
 
-    // The checklist page loads from cpts/ inside the Analyze drawer's panelLoader.
-    property bool _preflightAnalyzePending: false
-    property url  _preflightAnalyzeSource: "qrc:/qml/cpts/PreflightChecklistView.qml"
-    property string _preflightAnalyzeTitle: qsTr("Preflight Checklist")
-
-    function _attemptOpenPreflightAnalyzePage() {
-        if (!mainWindow.toolDrawerLoader || !mainWindow.toolDrawerLoader.item || !mainWindow.toolDrawerLoader.item.panelLoader) {
-            return false
-        }
-
-        // Reuse the drawer's panelLoader: swap its source, then have Analyze select the tab.
-        mainWindow.toolDrawerLoader.item.panelLoader.source = _preflightAnalyzeSource
-        mainWindow.toolDrawerLoader.item.panelLoader.title = _preflightAnalyzeTitle
-        if (typeof mainWindow.toolDrawerLoader.item._selectAnalyzeButton === 'function') {
-            mainWindow.toolDrawerLoader.item._selectAnalyzeButton(_preflightAnalyzeTitle, _preflightAnalyzeSource)
-        }
-        _preflightAnalyzePending = false
-        _openAnalyzeTimer.stop()
-        return true
-    }
-
-    // Opens the preflight checklist from the FlyView button by showing the
-    // Analyze Tools drawer and then directing the Analyze view to load the
-    // checklist page once the loader is ready.
-    Timer {
-        id: _openAnalyzeTimer
-        // Short retry window: the drawer loader may still be resolving when tapped.
-        interval: 300
-        repeat: false
-        running: false
-        onTriggered: {
-            _attemptOpenPreflightAnalyzePage()
-        }
-    }
-
-    // Stop the pending open-dialog timer if the fly layer is torn down (R13).
-    Component.onDestruction: _openAnalyzeTimer.stop()
-
+    // Opens Analyze Tools on its Preflight Checklist page. AnalyzeView reads
+    // Config.analyzePreflightRequested on load (or live, if already open), and
+    // still asks for a session mode first when none is selected. The previous
+    // code reached into mainWindow.toolDrawerLoader.item.panelLoader, which are
+    // ids, not properties, so it always fell through to the first Analyze page.
     function openPreflightDialog() {
-        // Pending flag lets the status handler finish the handoff once the loader is Ready.
-        _preflightAnalyzePending = true
+        Config.analyzePreflightRequested = true
         mainWindow.showAnalyzeTool()
-        _attemptOpenPreflightAnalyzePage()
-        _openAnalyzeTimer.restart()
-    }
-
-    // If the drawer finished loading after the click, retry while the open intent stays pending (R13).
-    Connections {
-        target: mainWindow.toolDrawerLoader
-        ignoreUnknownSignals: true
-        function onStatusChanged() {
-            if (_preflightAnalyzePending && mainWindow.toolDrawerLoader.status === Loader.Ready) {
-                _attemptOpenPreflightAnalyzePage()
-            }
-        }
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -563,7 +516,9 @@ Item {
     // ═══════════════════════════════════════════════════════════════════
     Rectangle {
         id: postFlightBanner
-        visible: FlightSession.state === FlightSession.PostFlight
+        // FORK PATCH: post-flight is parked for Phase 1 (kPostFlightEnabled =
+        // false in Config.h). Restore the binding below when it is re-enabled.
+        visible: false // FlightSession.state === FlightSession.PostFlight
         anchors { top: parent.top; topMargin: _toolInsets.topEdgeCenterInset; left: parent.left; right: parent.right }
         height: 40
         z: QGroundControl.zOrderWidgets + 3

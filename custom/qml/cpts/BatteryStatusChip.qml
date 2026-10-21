@@ -83,27 +83,31 @@ Rectangle {
     property bool detailOpen: false
     function toggleDetail() { detailOpen = !detailOpen }
 
-    // Freshness: dynamic property connected to telemetry & live signals.
-    property bool _fresh: _connected && (_voltage > 0.1 || _soc >= 0 || (_tel && _tel.batteryCurrentAmps > 0))
+    // Freshness. Primary source is the bridge's BATTERY_STATUS age
+    // (VehicleTelemetry.batteryDataValid / batteryStale). When the FC never
+    // reports SOC the bridge cannot say, so fall back to "a battery value
+    // changed in the last 5 s" (_changeFresh).
+    readonly property bool _fresh: _connected && !VehicleTelemetry.batteryStale
+                                   && (VehicleTelemetry.batteryDataValid || _changeFresh)
+    property bool _changeFresh: _connected && (_voltage > 0.1 || _soc >= 0 || (_tel && _tel.batteryCurrentAmps > 0))
     Timer {
         id: freshnessTimer
         interval: 5000
         repeat: false
-        onTriggered: root._fresh = false
+        onTriggered: root._changeFresh = false
     }
     Connections {
         target: root._tel
-        function onBatterySocPctChanged()               { root._fresh = true; freshnessTimer.restart() }
-        function onBatteryCurrentSmoothAmpsChanged()    { root._fresh = true; freshnessTimer.restart() }
-        function onBatteryCurrentAmpsChanged()          { root._fresh = true; freshnessTimer.restart() }
-        function onBatteryDataValidChanged()            { root._fresh = true; freshnessTimer.restart() }
-        function onBatteryVoltageChanged()              { root._fresh = true; freshnessTimer.restart() }
+        function onBatterySocPctChanged()               { root._changeFresh = true; freshnessTimer.restart() }
+        function onBatteryCurrentSmoothAmpsChanged()    { root._changeFresh = true; freshnessTimer.restart() }
+        function onBatteryCurrentAmpsChanged()          { root._changeFresh = true; freshnessTimer.restart() }
+        function onBatteryVoltageChanged()              { root._changeFresh = true; freshnessTimer.restart() }
     }
 
     // ── Label + color per display-state table ──
     readonly property string _label: {
         if (!_connected)            return "— · —"   // no vehicle
-        if (!_fresh)                return "— · —"   // stale / no BATTERY_STATUS
+        if (!_fresh)                return "STALE"   // stale / no BATTERY_STATUS
         if (_soc < 0)               return "? · —"   // FC not configured
         if (!_gateOk || _timeMin < 0) return _soc + "% · —"
         return _soc + "% · ~" + Math.round(_timeMin) + " min"
@@ -120,6 +124,7 @@ Rectangle {
     }
 
     readonly property color _textColor: {
+        if (_connected && !_fresh) return Colors.statusStale
         if (!_socKnown) return Colors.textDisabled
         if (_soc > 30)  return Colors.success
         if (_soc >= 15) return Colors.warning
@@ -249,7 +254,7 @@ Rectangle {
         width: 280
         height: detailCol.implicitHeight + Config.spacingMedium * 2
         radius: Config.radiusLarge
-        color: "#12151C"
+        color: Colors.surface
         border.color: Colors.skywinAccent
         border.width: 1
         z: 1000

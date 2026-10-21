@@ -20,6 +20,7 @@ Rectangle {
     readonly property var _homePosition: typeof PreflightManager !== "undefined" ? PreflightManager.checkById("nav.home") : null
     readonly property var _attitude: typeof PreflightManager !== "undefined" ? PreflightManager.checkById("nav.attitude") : null
     readonly property var _escFirmware: typeof PreflightManager !== "undefined" ? PreflightManager.checkById("propulsion.esc.firmware") : null
+    readonly property var _zoneCompliance: typeof PreflightManager !== "undefined" ? PreflightManager.checkById("airspace.zone_compliance") : null
 
     function _statusColor(check) {
         if (!check) return Colors.textSecondary
@@ -255,7 +256,7 @@ Rectangle {
                 width: parent.width
                 height: 48
                 radius: Config.radiusLarge
-                color: WeatherProvider.windOk ? "#1A3A2A" : "#3A1A1A"
+                color: WeatherProvider.windOk ? Colors.statusPassDim : Colors.statusFailDim
                 border.color: WeatherProvider.windOk ? Colors.statePass : Colors.stateFail
                 Label {
                     anchors.centerIn: parent
@@ -332,6 +333,12 @@ Rectangle {
                     label: qsTr("Attitude")
                     value: _attitude ? _attitude.statusText : "—"
                     valueColor: _statusColor(_attitude)
+                }
+                InfoCell {
+                    icon: "\u{1F6A9}"   // 🚩
+                    label: qsTr("Airspace")
+                    value: _zoneCompliance ? _zoneCompliance.statusText : "—"
+                    valueColor: _statusColor(_zoneCompliance)
                 }
             }
         }

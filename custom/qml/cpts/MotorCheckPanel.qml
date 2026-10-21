@@ -24,6 +24,27 @@ Rectangle {
     readonly property int    _mc:    HardwareTestController.motorCount
     readonly property string _vt:    HardwareTestController.vehicleTypeLabel
     readonly property bool   _armed: HardwareTestController.isArmed
+    // FORK PATCH (B1/B6): stopAll() force-disarms an armed vehicle, so it must
+    // never run while flying. The dialog opens only disarmed with props off,
+    // so an arm seen while it is open came from the test itself.
+    readonly property var    _vehicle: QGroundControl.multiVehicleManager.activeVehicle
+    readonly property bool   _flying: !!_vehicle && _vehicle.armed && _vehicle.flying
+    readonly property bool   _canOpen: !!_vehicle && !_armed
+    readonly property string _blockedReason: !_vehicle ? qsTr("Connect a vehicle to run motor tests")
+                                           : _armed ? qsTr("Vehicle is armed \u2014 disarm before motor tests") : ""
+    // Every entry point (button, tile click, openDialog()) goes through the
+    // props-off confirmation; nothing opens the test while armed or offline.
+    function requestOpen() {
+        if (root._canOpen)
+            propsConfirm.open()
+    }
+    function _safeStopAll() {
+        if (root._flying) {
+            console.warn("MotorCheckPanel: stopAll skipped — vehicle is flying (would force-disarm)")
+            return
+        }
+        HardwareTestController.stopAll()
+    }
 
     // Sentinel: proves which MotorCheckPanel build the running app loaded, and
     // that the motor-test launcher is reachable from the normal pre-flight
@@ -36,7 +57,7 @@ Rectangle {
     Component.onCompleted: console.info("[sentinel] MotorCheckPanel productMark=" + productMark
                                         + " vehicleType=" + _vt + " motorCount=" + _mc)
 
-    function openDialog() { motorDialog.open() }
+    function openDialog() { root.requestOpen() }
     function testLabel(index) {
         if (HardwareTestController.isFixedWing && index === 1) {
             return HardwareTestController.fixedWingTestLabel()
@@ -49,7 +70,7 @@ Rectangle {
         anchors.fill: parent
         z: -1
         cursorShape: Qt.PointingHandCursor
-        onClicked: motorDialog.open()
+        onClicked: root.requestOpen()
     }
 
     // ── Inline launcher row ──────────────────────────────────────────────────
@@ -117,7 +138,7 @@ Rectangle {
             Layout.preferredHeight: 34
             Layout.preferredWidth: Math.max(openBtnTxt.implicitWidth + 24, 120)
             radius: Config.radiusSmall
-            color: Colors.accent
+            color: root._canOpen ? Colors.accent : Colors.surfaceLight
             Behavior on color { ColorAnimation { duration: 150 } }
 
             Text {
@@ -126,13 +147,62 @@ Rectangle {
                 text: qsTr("Open Motor Test")
                 font.pixelSize: Config.fontSizeSmall
                 font.bold: true
-                color: Colors.background
+                color: root._canOpen ? Colors.background : Colors.textDisabled
             }
             MouseArea {
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
-                enabled: true
-                onClicked: motorDialog.open()
+                enabled: root._canOpen
+                onClicked: root.requestOpen()
+            }
+            // Disabled-with-reason: the MouseArea is off, so hover is tracked here.
+            HoverHandler { id: openBtnHover }
+            ToolTip.visible: openBtnHover.hovered && root._blockedReason.length > 0
+            ToolTip.text: root._blockedReason
+            ToolTip.delay: 300
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // PROPS-OFF CONFIRMATION (B6) — required before every motor test session
+    // ════════════════════════════════════════════════════════════════════════
+    Dialog {
+        id: propsConfirm
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        modal: true
+        title: qsTr("Before the motor test")
+        standardButtons: Dialog.Ok | Dialog.Cancel
+
+        function _updateOk() {
+            var ok = standardButton(Dialog.Ok)
+            if (ok) ok.enabled = propsOffBox.checked
+        }
+        onAboutToShow: { propsOffBox.checked = false; _updateOk() }
+        onAccepted: motorDialog.open()
+
+        background: Rectangle {
+            color: Colors.surface
+            radius: Config.radiusMedium
+            border.color: Colors.border
+            border.width: 1
+        }
+
+        ColumnLayout {
+            spacing: Config.spacingSmall
+            Text {
+                Layout.preferredWidth: 340
+                text: HardwareTestController.isFixedWing
+                      ? qsTr("The fixed-wing motor test ARMS the vehicle. Remove the propeller and clear the area.")
+                      : qsTr("Motors will spin. Remove all propellers and clear the area.")
+                font.pixelSize: Config.fontSizeSmall
+                color: Colors.statusWarn
+                wrapMode: Text.WordWrap
+            }
+            CheckBox {
+                id: propsOffBox
+                text: qsTr("Propellers are removed")
+                onCheckedChanged: propsConfirm._updateOk()
             }
         }
     }
@@ -155,8 +225,8 @@ Rectangle {
         closePolicy: Popup.CloseOnEscape
         padding: 0; topPadding: 0; bottomPadding: 0
 
-        // Auto-reset on close
-        onClosed: HardwareTestController.stopAll()
+        // Auto-reset on close; props-off must be re-confirmed for the next test.
+        onClosed: root._safeStopAll()
 
         background: Rectangle {
             color: Colors.surface
@@ -267,7 +337,7 @@ Rectangle {
                         }
                         background: Rectangle {
                             radius: 6
-                            color: manualModeBtn._inManual ? "#1A3A2A" : Colors.warning
+                            color: manualModeBtn._inManual ? Colors.statusPassDim : Colors.warning
                             border.color: manualModeBtn._inManual ? Colors.statePass : Colors.warning
                             border.width: 1
                         }
@@ -352,7 +422,7 @@ Rectangle {
                             Text {
                                 anchors.centerIn: parent
                                 text: qsTr("Disarm")
-                                font.pixelSize: Config.fontSizeSmall; font.bold: true; color: "white"
+                                font.pixelSize: Config.fontSizeSmall; font.bold: true; color: Colors.textPrimary
                             }
                             MouseArea {
                                 anchors.fill: parent
@@ -378,7 +448,10 @@ Rectangle {
                         Text {
                             id: safetyTxt
                             Layout.fillWidth: true
-                            text: qsTr("Vehicle stays disarmed during the motor test.\nRemove propeller or ensure the area is clear before starting.")
+                            // B6: the fixed-wing path arms the vehicle to spin the motor.
+                            text: HardwareTestController.isFixedWing
+                                  ? qsTr("The vehicle is ARMED during the fixed-wing motor test.\nRemove the propeller before starting.")
+                                  : qsTr("Vehicle stays disarmed during the motor test.\nRemove propeller or ensure the area is clear before starting.")
                             font.pixelSize: Config.fontSizeSmall; color: Colors.warning
                             wrapMode: Text.WordWrap
                         }
@@ -713,9 +786,9 @@ Rectangle {
 
                     Text {
                         anchors.centerIn: parent; text: "\u2B1B " + qsTr("STOP ALL")
-                        font.pixelSize: Config.fontSizeSmall; font.bold: true; color: "white"
+                        font.pixelSize: Config.fontSizeSmall; font.bold: true; color: Colors.textPrimary
                     }
-                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: HardwareTestController.stopAll() }
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root._safeStopAll() }
                 }
 
                 Button {

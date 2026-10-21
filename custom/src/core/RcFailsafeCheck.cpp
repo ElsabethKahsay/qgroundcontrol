@@ -5,7 +5,7 @@
 RcFailsafeCheck::RcFailsafeCheck(TelemetryBridge *telemetry, int minRssi, QObject *parent)
     : AbstractCheck(QStringLiteral("com.rc.failsafe"),
                     QStringLiteral("RC Failsafe"),
-                    CheckCategory::Communication, CheckType::Auto, true, false, parent)
+                    CheckCategory::Safety, CheckType::Auto, true, false, parent)
     , m_minRssi(minRssi)
 {
     m_telemetry = telemetry;

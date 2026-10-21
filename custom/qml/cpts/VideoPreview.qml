@@ -11,7 +11,7 @@ Rectangle {
     id: root
     width: parent ? parent.width : 360
     height: 240
-    color: "#1a1a1a"
+    color: Colors.surface
     radius: Config.radiusMedium
     border.color: Colors.border
     border.width: 1
@@ -40,7 +40,7 @@ Rectangle {
 
         Rectangle {
             anchors.fill: parent
-            color: "#0f0f0f"
+            color: Colors.background
             radius: Config.radiusMedium - 2
         }
 
@@ -93,6 +93,11 @@ Rectangle {
         visible: linkActive
 
         Button {
+            // FORK PATCH: hidden. VideoManager.startGimbalTest() does not exist
+            // and Config.navigatePush() has no mainStackView to push onto, so
+            // this button could only throw. The gimbal test lives in the
+            // preflight checklist (PreflightChecklistView -> GimbalTest).
+            visible: false
             text: qsTr("Test Gimbal")
             onClicked: {
                 VideoManager.startGimbalTest()

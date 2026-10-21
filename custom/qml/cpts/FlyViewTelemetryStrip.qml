@@ -72,6 +72,9 @@ Item {
     readonly property real   _batV:     activeVehicle && activeVehicle.batteries && activeVehicle.batteries.count > 0
                                             ? activeVehicle.batteries.get(0).voltage.rawValue : 0
     readonly property real   _batCur:   _batteryCurrentFact()
+    // BATTERY_STATUS stopped after valid data on this connection (F3): the
+    // last values are not current, so the cells say STALE instead.
+    readonly property bool   _batStale: !!activeVehicle && VehicleTelemetry.batteryStale
     readonly property real   _distHome:   activeVehicle && activeVehicle.distanceToHome ? activeVehicle.distanceToHome.rawValue : 0
     readonly property real   _flightDist: activeVehicle && activeVehicle.flightDistance ? activeVehicle.flightDistance.rawValue : 0
     readonly property real   _currLat:    activeVehicle && activeVehicle.gps ? activeVehicle.gps.latitude.rawValue : 0
@@ -293,11 +296,11 @@ Item {
                 header: "SYSTEM"
                 rows: _settings.threeColumns ? [
                     { label: "Bat",
-                      value: activeVehicle && _batPct >= 0 ? _batPct.toFixed(0) : "--",
-                      unit: "%",    vcolor: _battColor(_batPct) },
+                      value: _batStale ? "STALE" : activeVehicle && _batPct >= 0 ? _batPct.toFixed(0) : "--",
+                      unit: _batStale ? "" : "%",    vcolor: _batStale ? Colors.statusStale : _battColor(_batPct) },
                     { label: "Volt",
-                      value: _formatVal(_batV, 1),
-                      unit: "V",    vcolor: _battColor(_batPct) },
+                      value: _batStale ? "STALE" : _formatVal(_batV, 1),
+                      unit: _batStale ? "" : "V",    vcolor: _batStale ? Colors.statusStale : _battColor(_batPct) },
                     { label: "Link",
                       value: activeVehicle && _rssi > 0 && _rssi <= 100 ? _rssi.toString() : "--",
                       unit: activeVehicle && _rssi > 0 && _rssi <= 100 ? "%" : "",
@@ -307,8 +310,8 @@ Item {
                       unit: activeVehicle && _batCur > 0 ? "A" : "",    vcolor: Colors.textPrimary }
                 ] : [
                     { label: "Bat",
-                      value: activeVehicle && _batPct >= 0 ? _batPct.toFixed(0) + "% (" + _formatVal(_batV, 1) + "V)" : "--",
-                      vcolor: _battColor(_batPct) },
+                      value: _batStale ? "STALE" : activeVehicle && _batPct >= 0 ? _batPct.toFixed(0) + "% (" + _formatVal(_batV, 1) + "V)" : "--",
+                      vcolor: _batStale ? Colors.statusStale : _battColor(_batPct) },
                     { label: "GPS",
                       value: activeVehicle ? _sats + " sat (" + _fixStr(_lock) + ")" : "--",
                       vcolor: _gpsColor(_lock) },

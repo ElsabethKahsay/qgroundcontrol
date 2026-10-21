@@ -10,7 +10,7 @@ Item {
     property int barRadius: 3
     property color barIdle: Colors.textDisabled
     property color barNormal: Colors.success
-    property color barWarning: "#e6a817"
+    property color barWarning: Colors.statusWarn
     property color barError: Colors.danger
 
     Column {

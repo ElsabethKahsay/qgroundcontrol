@@ -8,7 +8,6 @@
 //   typeNames (var) — readonly list of check type labels ["Auto", "Manual", "Action"]
 //   _runningChecks (var) — internal tracking of which action checks are running
 //   _expandedChecks (var) — internal tracking of expanded check card IDs
-//   _priorityListVisible (bool) — toggle for the priority fix list panel
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -23,7 +22,7 @@ Rectangle {
         viewMode: "analyze"
     }
     anchors.fill: parent
-    color: "#0a0a1a"
+    color: Colors.background
 
     readonly property var catModels: ({
         0: CatModel0, 1: CatModel1, 2: CatModel2, 3: CatModel3,
@@ -39,7 +38,6 @@ Rectangle {
 
     property var _runningChecks: ({})
     property var _expandedChecks: ({})
-    property bool _priorityListVisible: false
 
     // ── Vehicle-type aware "Next → Gimbal Test" flow ───────────────────────
     // The Gimbal test page is hosted inline (see gimbalOverlay at the bottom of
@@ -72,131 +70,6 @@ Rectangle {
         return item && item.label ? item.label : ""
     }
 
-    // ── Critical issues dialog ──
-    Dialog {
-        id: criticalIssuesDialog
-        title: "Critical Issues"
-        modal: true
-        anchors.centerIn: parent
-        width: Math.min(520, parent.width * 0.9)
-        height: Math.min(420, parent.height * 0.8)
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        background: Rectangle { color: Colors.surface; border.color: "#9333ea"; border.width: 2; radius: 12 }
-        padding: 0
-
-        header: Rectangle {
-            height: 48
-            color: "#2D1B4E"
-            radius: 12
-            // Flatten bottom corners
-            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 12; color: parent.color }
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: 16; anchors.rightMargin: 16
-                Text { text: "\u26A0 Critical / Blocking Issues"; font.pixelSize: Config.fontSizeBody; font.bold: true; color: "#F8BBD0"; Layout.fillWidth: true }
-                Text { text: _issueCount + " issue" + (_issueCount !== 1 ? "s" : ""); font.pixelSize: Config.fontSizeSmall; color: "#CE93D8" }
-            }
-        }
-
-        contentItem: Flickable {
-            clip: true
-            contentHeight: issueCol.implicitHeight + 16
-            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-            boundsBehavior: Flickable.StopAtBounds
-
-            ColumnLayout {
-                id: issueCol
-                width: parent.width
-                spacing: 6
-                anchors.margins: 12
-
-                Repeater {
-                    model: typeof PreflightManager !== "undefined" ? PreflightManager.blockingChecks : []
-
-                    delegate: Rectangle {
-                        required property var modelData
-                        required property int index
-                        readonly property var chk: modelData
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 12; Layout.rightMargin: 12
-                        Layout.topMargin: index === 0 ? 8 : 0
-                        height: 60
-                        radius: 8
-                        color: Colors.errorDim
-                        border.color: Colors.error; border.width: 1
-
-                        RowLayout {
-                            anchors.fill: parent; anchors.margins: 10
-                            spacing: 10
-
-                            Rectangle {
-                                width: 28; height: 28; radius: 14
-                                color: Colors.error
-                                Text { anchors.centerIn: parent; text: (index + 1).toString(); font.pixelSize: 11; font.bold: true; color: "#fff" }
-                            }
-
-                            ColumnLayout {
-                                Layout.fillWidth: true; spacing: 1
-                                Text { text: chk ? chk.label : ""; font.pixelSize: Config.fontSizeBody; font.bold: true; color: Colors.textPrimary; elide: Text.ElideRight; Layout.fillWidth: true }
-                                Text { text: chk ? chk.message : ""; font.pixelSize: Config.fontSizeSmall; color: Colors.textSecondary; elide: Text.ElideRight; maximumLineCount: 1; Layout.fillWidth: true }
-                            }
-
-                            Rectangle {
-                                width: 72; height: 26; radius: 6
-                                color: "#9333ea"
-                                Text { anchors.centerIn: parent; text: "Go to Check"; font.pixelSize: 10; font.bold: true; color: "#fff" }
-                                MouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        criticalIssuesDialog.close()
-                                        // Scroll to category containing this check
-                                        if (chk) {
-                                            var catId = chk.checkCategory
-                                            for (var i = 0; i < _engine.catOrder.length; ++i) {
-                                                if (_engine.catOrder[i] === catId) {
-                                                    var yPos = i * 180
-                                                    checklistFlickable.contentY = Math.min(yPos, checklistFlickable.contentHeight - checklistFlickable.height)
-                                                    break
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Empty state
-                Text {
-                    visible: _issueCount === 0
-                    text: "\u2713 No critical issues"
-                    font.pixelSize: Config.fontSizeBody; color: Colors.success
-                    Layout.alignment: Qt.AlignHCenter
-                    Layout.topMargin: 20
-                }
-            }
-        }
-
-        footer: Rectangle {
-            height: 44
-            color: Colors.surfaceLight
-            radius: 12
-            Rectangle { anchors.top: parent.top; width: parent.width; height: 12; color: parent.color }
-            RowLayout {
-                anchors.fill: parent; anchors.margins: 12
-                Item { Layout.fillWidth: true }
-                Rectangle {
-                    width: 80; height: 28; radius: 6
-                    color: "#9333ea"
-                    Text { anchors.centerIn: parent; text: "Close"; font.pixelSize: Config.fontSizeSmall; font.bold: true; color: "#fff" }
-                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: criticalIssuesDialog.close() }
-                }
-            }
-        }
-    }
-
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
@@ -213,9 +86,9 @@ Rectangle {
 
             gradient: Gradient {
                 orientation: Gradient.Horizontal
-                GradientStop { position: 0.0; color: "#2D1B4E" }
-                GradientStop { position: 0.5; color: "#4A1942" }
-                GradientStop { position: 1.0; color: "#6B1D5E" }
+                GradientStop { position: 0.0; color: Colors.surface }
+                GradientStop { position: 0.5; color: Colors.surfaceLight }
+                GradientStop { position: 1.0; color: Colors.surfaceLight }
             }
 
             RowLayout {
@@ -228,14 +101,14 @@ Rectangle {
                     spacing: 1
                     Text {
                         text: _passed + "/" + _total + " checks passed"
-                        font.pixelSize: Config.fontSizeBody; font.bold: true; color: "#F8BBD0"
+                        font.pixelSize: Config.fontSizeBody; font.bold: true; color: Colors.textPrimary
                     }
                     Text {
                         text: _blockers > 0
                               ? "\u26A0 Arming blocked: " + _blockers + " critical " + (_blockers === 1 ? "item must" : "items must") + " be fixed"
                               : _issueCount > 0 ? _issueCount + " critical issue" + (_issueCount !== 1 ? "s" : "") : "No critical issues"
                         font.pixelSize: Config.fontSizeSmall
-                        color: _issueCount > 0 ? "#EF9A9A" : "#A5D6A7"
+                        color: _issueCount > 0 ? Colors.statusFail : Colors.statusPass
                     }
                 }
 
@@ -246,7 +119,7 @@ Rectangle {
                     Text {
                         text: nextBlocker(0).length > 0 ? "First: Fix " + nextBlocker(0) : ""
                         font.pixelSize: Config.fontSizeSmall
-                        color: "#EF9A9A"
+                        color: Colors.statusFail
                         font.bold: true
                         elide: Text.ElideRight
                         Layout.fillWidth: true
@@ -266,72 +139,14 @@ Rectangle {
                 Rectangle {
                     width: 36; height: 36; radius: 18
                     color: "transparent"
-                    border.color: "#CE93D8"; border.width: 2
+                    border.color: Colors.accent; border.width: 2
 
                     Text {
                         anchors.centerIn: parent
                         text: _pct + "%"
-                        font.pixelSize: 11; font.bold: true; color: "#CE93D8"
+                        font.pixelSize: 11; font.bold: true; color: Colors.accent
                     }
                 }
-
-                // Show / hide priority fix list
-                Rectangle {
-                    Layout.preferredHeight: 22
-                    Layout.preferredWidth: 52
-                    radius: 3
-                    color: "#E91E63"
-                    visible: _issueCount > 0
-                    Text {
-                        anchors.centerIn: parent
-                        text: root._priorityListVisible ? "HIDE" : "SHOW"
-                        font.pixelSize: 10
-                        font.bold: true
-                        color: "#fff"
-                    }
-                    MouseArea {
-                        anchors.fill: parent
-                        onClicked: root._priorityListVisible = !root._priorityListVisible
-                        cursorShape: Qt.PointingHandCursor
-                    }
-                }
-
-                // Show button
-                Rectangle {
-                    width: 64; height: 30; radius: 8
-                    color: _issueCount > 0 ? "#E91E63" : "#9333ea"
-                    opacity: showBtnMa.containsMouse ? 0.9 : 1.0
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "Show"
-                        font.pixelSize: Config.fontSizeSmall; font.bold: true; color: "#fff"
-                    }
-
-                    MouseArea {
-                        id: showBtnMa
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: criticalIssuesDialog.open()
-                    }
-                }
-            }
-        }
-
-        // Priority fix list (collapsible)
-        Item {
-            Layout.fillWidth: true
-            Layout.preferredHeight: root._priorityListVisible && _issueCount > 0 ? priorityPanel.implicitHeight : 0
-            Layout.leftMargin: Config.spacingMedium
-            Layout.rightMargin: Config.spacingMedium
-            clip: true
-            visible: root._priorityListVisible && _issueCount > 0
-            Behavior on Layout.preferredHeight { NumberAnimation { duration: 200 } }
-
-            PriorityFixPanel {
-                id: priorityPanel
-                width: parent.width
             }
         }
 
@@ -872,7 +687,7 @@ Rectangle {
 
                                             Rectangle {
                                                 Layout.fillWidth: true
-                                                color: "#2D1B4E"
+                                                color: Colors.surfaceLight
                                                 radius: Config.radiusSmall
                                                 Layout.preferredHeight: expandedContent.implicitHeight + 8
 
@@ -887,11 +702,11 @@ Rectangle {
                                                         Layout.fillWidth: true
                                                         spacing: 4
                                                         visible: currentValueString.length > 0 && currentValueString !== "0"
-                                                        Text { text: "Current:"; font.pixelSize: Config.fontSizeSmall; color: "#FFFFFF" }
+                                                        Text { text: "Current:"; font.pixelSize: Config.fontSizeSmall; color: Colors.textSecondary }
                                                         Text {
                                                             text: currentValueString
                                                             font.pixelSize: Config.fontSizeSmall
-                                                            color: "#F8BBD0"
+                                                            color: Colors.textPrimary
                                                             Layout.fillWidth: true
                                                             wrapMode: Text.WordWrap
                                                             maximumLineCount: 2
@@ -901,11 +716,11 @@ Rectangle {
                                                         Layout.fillWidth: true
                                                         spacing: 4
                                                         visible: threshold.length > 0
-                                                        Text { text: "Required:"; font.pixelSize: Config.fontSizeSmall; color: "#FFFFFF" }
+                                                        Text { text: "Required:"; font.pixelSize: Config.fontSizeSmall; color: Colors.textSecondary }
                                                         Text {
                                                             text: threshold
                                                             font.pixelSize: Config.fontSizeSmall
-                                                            color: "#F8BBD0"
+                                                            color: Colors.textPrimary
                                                             Layout.fillWidth: true
                                                             wrapMode: Text.WordWrap
                                                             maximumLineCount: 2
@@ -915,11 +730,11 @@ Rectangle {
                                                         Layout.fillWidth: true
                                                         spacing: 4
                                                         visible: rationale.length > 0
-                                                        Text { text: "Why:"; font.pixelSize: Config.fontSizeSmall; color: "#FFFFFF" }
+                                                        Text { text: "Why:"; font.pixelSize: Config.fontSizeSmall; color: Colors.textSecondary }
                                                         Text {
                                                             text: rationale
                                                             font.pixelSize: Config.fontSizeSmall
-                                                            color: "#F8BBD0"
+                                                            color: Colors.textPrimary
                                                             Layout.fillWidth: true
                                                             wrapMode: Text.WordWrap
                                                             maximumLineCount: 4
@@ -929,7 +744,7 @@ Rectangle {
                                                         Layout.fillWidth: true
                                                         spacing: 2
                                                         visible: fixSteps && fixSteps.length > 0
-                                                        Text { text: "How to fix:"; font.pixelSize: Config.fontSizeSmall; color: "#FFFFFF" }
+                                                        Text { text: "How to fix:"; font.pixelSize: Config.fontSizeSmall; color: Colors.textSecondary }
                                                         Repeater {
                                                             model: fixSteps
                                                             delegate: RowLayout {
@@ -940,12 +755,12 @@ Rectangle {
                                                                 Text {
                                                                     text: (index + 1) + "."
                                                                     font.pixelSize: Config.fontSizeSmall
-                                                                    color: "#E91E63"
+                                                                    color: Colors.accent
                                                                 }
                                                                 Text {
                                                                     text: modelData
                                                                     font.pixelSize: Config.fontSizeSmall
-                                                                    color: "#F8BBD0"
+                                                                    color: Colors.textPrimary
                                                                     Layout.fillWidth: true
                                                                     wrapMode: Text.WordWrap
                                                                     maximumLineCount: 2
@@ -978,14 +793,14 @@ Rectangle {
                     height: 40
                     radius: 8
                     visible: root._showNextBtn
-                    color: "#9333ea"
+                    color: Colors.primary
                     opacity: nextBtnMa.containsMouse ? 0.9 : 1.0
 
                     Text {
                         id: nextBtnLbl
                         anchors.centerIn: parent
                         text: "Next: Gimbal Test  →"
-                        font.pixelSize: Config.fontSizeBody; font.bold: true; color: "#fff"
+                        font.pixelSize: Config.fontSizeBody; font.bold: true; color: Colors.textInverse
                     }
 
                     MouseArea {
@@ -1009,7 +824,7 @@ Rectangle {
                     anchors.fill: parent
                     z: 50
                     visible: root._leftView === "gimbal"
-                    color: "#0a0a1a"
+                    color: Colors.background
 
                     // Title bar (top)
                     Rectangle {
@@ -1058,7 +873,7 @@ Rectangle {
                             anchors.left: parent.left
                             anchors.leftMargin: Config.spacingMedium
                             anchors.verticalCenter: parent.verticalCenter
-                            color: "#2a2a3a"
+                            color: Colors.surfaceLight
                             border.color: Colors.border
                             border.width: 1
 

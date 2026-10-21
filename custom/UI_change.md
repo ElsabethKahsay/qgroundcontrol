@@ -109,7 +109,7 @@ UI LAYOUT SPECIFICATIONS:
 - Step 2 layout: flex row, left 70% (scrollable checklist), right 30% (sticky weather box)
 - Weather box: border 3px rgba(255,255,255,0.1), border-radius 8px, padding 16px, background slightly darker than main panel
 - Step transitions: slide left/right animation, 200ms, ease-out
-- All buttons: match pink/purple theme, primary action filled, secondary action outlined
+- All buttons: primary action filled, secondary action outlined. (The pink/purple theme was retired on 2026-10-20; use the Colors.qml surfaces, accent and status* tokens.)
 - Mobile responsive: stack vertically on narrow screens, weather box moves above checklist
 
 AUDIT TRAIL ENHANCEMENTS:

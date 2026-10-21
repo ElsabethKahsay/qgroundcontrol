@@ -1003,7 +1003,11 @@ void PreflightPlugin::_surfaceCommandRejection(const QString &command, const QSt
 const QVariantList &PreflightPlugin::toolBarIndicators()
 {
     if (_toolBarIndicators.isEmpty()) {
+        // Plugin indicators are the supported way into the Fly-view toolbar:
+        // the stock FlyViewToolBar is AOT-compiled into QGroundControl.Controls,
+        // so a custom.qrc copy of it never loads.
         _toolBarIndicators = QVariantList({
+            QVariant::fromValue(QUrl("qrc:/qml/cpts/SessionStatusChip.qml")),
             QVariant::fromValue(QUrl("qrc:/custom/PreflightToolbarIndicator.qml")),
         });
     }

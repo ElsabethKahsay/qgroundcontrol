@@ -4,7 +4,7 @@ import com.uav.preflight 1.0
 Button {
     id: control
     property color baseColor: Colors.secondary
-    property color textColor: "#ffffff"
+    property color textColor: Colors.textPrimary
     property bool rounded: false
 
     contentItem: Text {
@@ -12,7 +12,7 @@ Button {
         font.pixelSize: Config.fontSizeBody
         font.bold: true
         font.letterSpacing: 0.5
-        color: control.enabled ? textColor : "#94a3b8"
+        color: control.enabled ? textColor : Colors.textSecondary
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
     }

@@ -1,0 +1,44 @@
+Skywin GCS Phase 1 — Step 0 baseline
+====================================
+
+Build: Debug, Ninja, QGC_BUILD_TESTING=ON (tests compiled into the main
+binary), binary build/Debug/PreflightQGroundControl built 2026-10-20 16:58.
+
+Run conditions: each class is run in its own process with
+QT_QPA_PLATFORM=offscreen, one class at a time, per the task instructions.
+MainStatusIndicatorSmokeTest is skipped (known unrelated teardown segfault,
+custom doc.md:265).
+
+NOTE: The operator directed that the baseline build/test pass be treated as
+already completed externally, so only ArmSendTest was re-run here. The raw
+result below is from that run. The remaining classes in the Step 0 list are
+re-run and recorded at the end of Step 1 (baseline-step1.txt).
+
+ArmSendTest
+-----------
+PASS   : ArmSendTest::initTestCase()
+PASS   : ArmSendTest::testArmBlockedSendsNothing()
+PASS   : ArmSendTest::testForceArmThenArmSendsOne()
+PASS   : ArmSendTest::testForceArmExpiresThenArmBlocked()
+PASS   : ArmSendTest::testStockSetArmedBypassesGate()
+PASS   : ArmSendTest::testNoInterceptorStockBehaviorUnchanged()
+PASS   : ArmSendTest::testDisarmSendsDisarmNotArm()
+PASS   : ArmSendTest::testProductionWiringInstallsInterceptor()
+PASS   : ArmSendTest::testBenchForceArmFunnelSingle2989Command()
+PASS   : ArmSendTest::testForceArmRefusedAirborne()
+PASS   : ArmSendTest::testForceArmRefusalTextIsSubstituted()
+PASS   : ArmSendTest::testStockChainDeniedInsideBenchOverrideWindow()
+PASS   : ArmSendTest::testSameTokenSecondArmDeniedThenFreshMintArms()
+PASS   : ArmSendTest::testAcknowledgedOverrideAllowsExactlyOneArm()
+PASS   : ArmSendTest::testAckBindingDeniesStockExecuteAction()
+FAIL!  : ArmSendTest::testUnusedAckExpiresAndDenies() Compared values are not the same
+PASS   : ArmSendTest::testDisarmDoesNotLeaveGateOpen()
+FAIL!  : ArmSendTest::testUnspentAckDeniesStockArmThenAllowsBoundArm() Compared values are not the same
+PASS   : ArmSendTest::cleanupTestCase()
+Totals: 17 passed, 2 failed, 0 skipped, 0 blacklisted, 59563ms
+
+Expected baseline failure (G1): the two failing tests are exactly
+testUnusedAckExpiresAndDenies and testUnspentAckDeniesStockArmThenAllowsBoundArm.
+The acknowledgment token/expiry logic is missing from ArmingGate.cpp, as
+described in the report's Arm gate review (G1). Recorded here, not fixed at
+Step 0.

@@ -93,6 +93,9 @@ Rectangle {
                 model:  QGroundControl.corePlugin ? QGroundControl.corePlugin.analyzePages : []
 
                 Component.onCompleted:  {
+                    // Opened from the Fly-view Checklist button: go straight to Preflight.
+                    if (Config.analyzePreflightRequested && _root._openRequestedPreflight())
+                        return
                     // Mark the first button as active and load its page on startup
                     if (buttonRepeater.count > 0) {
                         itemAt(0).checked = true
@@ -119,31 +122,17 @@ Rectangle {
                         text:               NoFlyZoneModel.activeCount
                         font.pixelSize:     9
                         font.bold:          true
-                        color:              "#ffffff"
+                        color:              Colors.textPrimary
                         padding:            3
                         background: Rectangle {
                             radius:     width / 2
-                            color:      "#b91c1c"
-                            border.color: "#ffffff"
+                            color:      Colors.danger
+                            border.color: Colors.textPrimary
                             border.width: 1
                         }
                     }
 
-                    onClicked: {
-                        _clearAnalyzeButtonSelection()
-                        checked = true
-                        var urlString = modelData.url ? modelData.url.toString() : ""
-                        var isPreflight = urlString.indexOf("PreflightChecklistView.qml") !== -1
-                        if (!isPreflight && modelData.title && modelData.title.indexOf("Preflight") !== -1) isPreflight = true
-                        if (isPreflight && FlightSession.mode === FlightSession.None) {
-                            pendingSource = modelData.url
-                            pendingTitle = modelData.title
-                            sessionStartDialog.open()
-                        } else {
-                            panelLoader.source  = urlString
-                            panelLoader.title   = modelData.title
-                        }
-                    }
+                    onClicked: _root._activatePage(index)
                 }
             }
         }
@@ -224,6 +213,52 @@ Rectangle {
         }
         console.warn("[sentinel] AnalyzeView: no Preflight Checklist page in analyzePages()")
         return false
+    }
+
+    function _isPreflightPage(page) {
+        var urlString = page && page.url ? page.url.toString() : ""
+        if (urlString.indexOf("PreflightChecklistView.qml") !== -1) return true
+        return !!(page && page.title && page.title.indexOf("Preflight") !== -1)
+    }
+
+    // Shared by the sidebar buttons and the Fly-view request: the Preflight
+    // page still asks for a session mode first when none is selected.
+    function _activatePage(index) {
+        var item = buttonRepeater.itemAt(index)
+        var page = QGroundControl.corePlugin.analyzePages[index]
+        if (!item || !page) return
+        _clearAnalyzeButtonSelection()
+        item.checked = true
+        if (_isPreflightPage(page) && FlightSession.mode === FlightSession.None) {
+            pendingSource = page.url
+            pendingTitle = page.title
+            sessionStartDialog.open()
+        } else {
+            panelLoader.source  = page.url ? page.url.toString() : ""
+            panelLoader.title   = page.title
+        }
+    }
+
+    function _openRequestedPreflight() {
+        Config.analyzePreflightRequested = false
+        var pages = QGroundControl.corePlugin ? QGroundControl.corePlugin.analyzePages : []
+        for (var i = 0; i < pages.length; i++) {
+            if (_isPreflightPage(pages[i])) {
+                _activatePage(i)
+                return true
+            }
+        }
+        console.warn("AnalyzeView: Preflight Checklist requested but not in analyzePages()")
+        return false
+    }
+
+    // Request made while the Analyze tool is already open.
+    Connections {
+        target: Config
+        function onAnalyzePreflightRequestedChanged() {
+            if (Config.analyzePreflightRequested)
+                _root._openRequestedPreflight()
+        }
     }
 
     function _clearAnalyzeButtonSelection() {

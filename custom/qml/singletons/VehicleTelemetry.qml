@@ -69,6 +69,13 @@ QtObject {
     property string vehicleType: TelemetryProvider ? TelemetryProvider.vehicleType : ""
     property bool heartbeatReceived: TelemetryProvider ? TelemetryProvider.heartbeatReceived : false
     property real batteryVoltage: TelemetryProvider ? TelemetryProvider.batteryVoltage : 0.0
+    // Battery freshness (F3, display side). TelemetryBridge.batteryDataValid is
+    // false both when BATTERY_STATUS stopped for 5 s and when the FC never
+    // reported SOC, so "stale" means: valid data was seen on this connection
+    // and has since been lost. Reset on every connect/disconnect.
+    property bool batteryDataValid: TelemetryProvider ? TelemetryProvider.batteryDataValid : false
+    property bool _batterySeenValid: batteryDataValid
+    readonly property bool batteryStale: _batterySeenValid && !batteryDataValid
     property int satellites: TelemetryProvider ? TelemetryProvider.gpsSatellites : 0
     property real altitude: TelemetryProvider ? TelemetryProvider.altitudeRelative : 0.0
     property real groundSpeed: TelemetryProvider ? TelemetryProvider.groundSpeed : 0.0
@@ -377,8 +384,14 @@ QtObject {
         function onRcRssiChanged() {
             rcRssi = TelemetryProvider.rcRssi
         }
+        function onBatteryDataValidChanged() {
+            batteryDataValid = TelemetryProvider.batteryDataValid
+            if (batteryDataValid)
+                _batterySeenValid = true
+        }
         function onIsConnectedChanged() {
             isConnected = TelemetryProvider.isConnected
+            _batterySeenValid = TelemetryProvider.batteryDataValid
             lastTelemetryUpdate = new Date()
             if (isConnected)
                 deactivateDisconnectGuard()

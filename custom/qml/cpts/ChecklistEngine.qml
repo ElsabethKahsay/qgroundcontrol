@@ -180,7 +180,12 @@ QtObject {
 
     readonly property int totalChecks: {
         var arr = _checks()
-        return arr ? arr.length : 0
+        if (!arr) return 0
+        var n = 0
+        for (var i = 0; i < arr.length; ++i) {
+            if (!arr[i].isInformational) n++
+        }
+        return n
     }
 
     readonly property int criticalChecks: {
@@ -196,6 +201,7 @@ QtObject {
         var n = 0
         var arr = _checks()
         for (var i = 0; i < arr.length; ++i) {
+            if (arr[i].isInformational) continue
             if (arr[i].status === 0 || arr[i].status === 3) n++
         }
         return n
@@ -205,6 +211,7 @@ QtObject {
         var n = 0
         var arr = _checks()
         for (var i = 0; i < arr.length; ++i) {
+            if (arr[i].isInformational) continue
             if (arr[i].status === 1) n++
         }
         return n

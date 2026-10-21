@@ -103,6 +103,9 @@ class AbstractCheck : public QObject {
     Q_PROPERTY(QString threshold READ getThreshold CONSTANT)
     /// Whether this check belongs to the post-flight phase.
     Q_PROPERTY(bool isPostFlight READ isPostFlight CONSTANT)
+    /// Whether this check is informational only (shown to the operator but
+    /// excluded from checklist progress/count).
+    Q_PROPERTY(bool isInformational READ isInformational CONSTANT)
 
 public:
     /// Construct a new check.
@@ -164,6 +167,10 @@ public:
     bool isPostFlight() const { return m_isPostFlight; }
     /// Mark this check as a post-flight check.
     void setIsPostFlight(bool v) { m_isPostFlight = v; }
+    /// Whether this check is informational only (excluded from counts).
+    bool isInformational() const { return m_isInformational; }
+    /// Mark this check as informational only (not counted toward progress).
+    void setIsInformational(bool v) { m_isInformational = v; }
     /// Override whether this check is mandatory (blocks arming on failure).
     void setMandatory(bool v) { m_mandatory = v; }
 
@@ -234,7 +241,8 @@ protected:
     QVariant m_currentValue;       ///< Latest telemetry value being monitored
     bool m_mandatory = true;       ///< If true, failure blocks arming
     bool m_canOverride = true;     ///< If operator may override result
-    bool m_isPostFlight = false;   ///< Whether this check belongs to the post-flight phase
+    bool m_isPostFlight = false;      ///< Whether this check belongs to the post-flight phase
+    bool m_isInformational = false;   ///< If true, informational only: excluded from counts and never blocks arming
     QDateTime m_lastEvalTime;      ///< Timestamp of last evaluate() call
     QList<OverrideRecord> m_overrideHistory; ///< Audit trail of overrides
 

@@ -113,7 +113,9 @@ public:
     /// Number of checks currently blocking arming.
     int blockingCount() const;
 
-    int totalChecks() const { return m_checks.size(); }
+    /// Number of checks that count toward the checklist (excludes informational).
+    int countedChecks() const;
+    int totalChecks() const { return countedChecks(); }
     /// Count of checks with Passed status.
     int passedChecks() const;
     /// Count of checks with Failed status.

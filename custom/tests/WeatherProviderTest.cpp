@@ -32,6 +32,7 @@ private slots:
     void testSingletonInstance();
     void testInitialState();
     void testMetarParsing();
+    void testFlightCategoryDescription();
     void testTafParsing();
     void testIcaoLookup();
 };
@@ -94,6 +95,37 @@ void WeatherProviderTest::testMetarParsing()
     QVERIFY(parsed[0].contains(QStringLiteral("Wind")));
     QVERIFY(parsed[1].contains(QStringLiteral("Vis")));
     QVERIFY(parsed[2].contains(QStringLiteral("Ceiling")));
+}
+
+// W5: a METAR flight category is described by name; LIFR must never read as
+// "Thunderstorm" (it used to be mapped to WMO code 95).
+void WeatherProviderTest::testFlightCategoryDescription()
+{
+    WeatherProvider *wp = WeatherProvider::instance();
+
+    auto feed = [wp](const QString &category) {
+        QJsonObject metar;
+        metar[QStringLiteral("rawOb")] = QStringLiteral("KSFO 012053Z 00000KT 1/4SM FG VV001 12/12 A3001");
+        metar[QStringLiteral("obsTime")] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+        metar[QStringLiteral("temp")] = 12.0;
+        metar[QStringLiteral("dewp")] = 12.0;
+        if (!category.isEmpty())
+            metar[QStringLiteral("flightCategory")] = category;
+        QJsonArray arr;
+        arr.append(metar);
+        wp->handleMetarJson(QJsonDocument(arr).toJson(QJsonDocument::Compact));
+    };
+
+    feed(QStringLiteral("LIFR"));
+    QCOMPARE(wp->weatherDescription(), QStringLiteral("LIFR (low IFR)"));
+    QVERIFY(!wp->weatherDescription().contains(QStringLiteral("Thunderstorm")));
+
+    feed(QStringLiteral("VFR"));
+    QCOMPARE(wp->weatherDescription(), QStringLiteral("VFR"));
+
+    // A METAR without a category must not keep the previous one.
+    feed(QString());
+    QVERIFY(wp->weatherDescription() != QStringLiteral("VFR"));
 }
 
 void WeatherProviderTest::testTafParsing()

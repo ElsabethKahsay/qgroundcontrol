@@ -191,6 +191,8 @@ Page {
             text: qsTr("Post-Flight Summary →")
             anchors.horizontalCenter: parent.horizontalCenter
             baseColor: Colors.surface
+            // FORK PATCH: post-flight is parked for Phase 1 (kPostFlightEnabled).
+            visible: false
             onClicked: Config.navigatePush("PostFlightSummary.qml")
         }
     }

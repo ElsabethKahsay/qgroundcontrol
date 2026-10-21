@@ -195,26 +195,8 @@ ColumnLayout {
                 }
             }
 
-            Rectangle {
-                Layout.preferredHeight: 24
-                Layout.preferredWidth: 100
-                radius: Config.radiusSmall
-                color: Colors.warning
-                border.color: Colors.warning
-                border.width: 1
-                Text {
-                    anchors.centerIn: parent
-                    text: qsTr("Override Gate")
-                    font.pixelSize: 9
-                    font.bold: true
-                    color: Colors.background
-                }
-                MouseArea {
-                    anchors.fill: parent
-                    onClicked: ArmingGate.overrideGate("Operator override from priority fix list")
-                    cursorShape: Qt.PointingHandCursor
-                }
-            }
+            // FORK PATCH (G3): the one-tap "Override Gate" button is removed.
+            // Overrides go through the acknowledge dialog only.
         }
     }
 }
