@@ -39,11 +39,16 @@ Done in Step 1 (C++, committed and tagged phase1-step1, 21 Oct)
 • Test state at phase1-step1 (custom/tests/baseline-step1.txt): 16 of 18 classes fully pass. Known: ArmGateResilienceTest battery-stream freshness test fails until Step 2.2; FlightSessionLifecycleTest segfaults while its third MockLink vehicle connects (stock MockLink lifetime, Step 3 test).
 • Build cost lesson: adding BenchDisarm.{h,cpp} to custom/CMakeLists.txt re-ran CMake, which regenerated the precompiled header and forced 509 recompiles (73 minutes), although the dry run beforehand showed 1 step. Adding or removing a source file is not cheap; prefer adding code to an existing .cpp.
 
+Done in Step 2 (C++, tag phase1-step2, 21 Oct)
+• 637c32446 2.1–2.3 F1–F4, F17: header-only MonotonicClock (TestClock for tests); per-stream arrival stamps in TelemetryBridge; checks declare the streams they read and go Stale when one stops (seen-then-lost only); every Auto check re-evaluated each tick; autopilot-only heartbeat; connection quality decays.
+• 57e9ef29c 2.4 F5, F6 (part), G10: ArmStateTracker — armed transitions only from armedChanged; ACKs label GCS / External / ForceToken.
+• 0db57a88f 2.5 G5–G9, G11–G13: one pure ArmingGate::decide() used by armingAllowed, the outbound interceptor, the read-only inbound path and the new requestArm()/previewArm(); acknowledgment bound to the failing checks; force window closes on use; overrideKind; gate refusals and autopilot rejections shown as app messages. User decisions: acknowledgment may override any failing check except the hard blocks; a peer's arm is denied but never mutates the gate.
+• Test state at phase1-step2 (custom/tests/baseline-step2.txt): 18 of 19 classes fully pass; FlightSessionLifecycleTest still segfaults on its third MockLink connection (Step 3 test).
+• Finding: custom/qml/MainStatusIndicator.qml (same resource path as the AOT-compiled stock file) and custom/qml/ArmedIndicator.qml (nothing references it) never load. QmlShadowTest checks resource content, not what the engine instantiates, so it does not catch this.
+
 Still open (all C++ unless noted)
-• Item 15 (Step 2): G5–G8, G10–G13; one decide() with requestArm()/previewArm(); wiring every Arm button to requestArm() (QML, needs the C++ first).
-• Items 2–5: data-age freshness, autopilot-only heartbeat, monotonic clocks, armed state from heartbeat.
 • Items 6–8: SessionRecorder, battery pack registry and snapshot (including moving the pack modal into the Power section), database startup and migration fixes.
-• Item 10 (F15 RTL), item 11 (disabled-with-reason controls, needs requestArm()).
+• Item 10 (F15 RTL); item 11 for the Return controls.
 • Item 17 (weather W2–W4, W6, W7), item 18 (real gimbal command and feedback), item 21 lint test.
 • Items 12–14: SITL campaign, Jetson build (F20 start script), real radio and go/no-go.
 
@@ -84,37 +89,37 @@ Safety, reliability
 A check's freshness is the time since its status last changed. setStatus returns early when nothing changed, so the timestamp is not refreshed by a re-evaluation that agrees with the last one.
 core/AbstractCheck.cpp:139-144
 V
-Must — Status 20 Oct: open.
+Must — Status 21 Oct: done, commit 637c32446: every evaluation is stamped (MonotonicClock), and freshness is the age of the telemetry stream the check reads.
 F2
 Safety, reliability
 A Passed check is never re-evaluated by the tick, so a value that degrades after passing is not seen until the check is forced Stale. The Stale rule then fires on every passed mandatory check about 10 s after it passed, the check is re-run about 5 s later and passes again. Expected effect: the gate closes for a few seconds on a roughly 15 s cycle, or a degrading value goes unnoticed for up to 15 s. Not yet observed in a run.
 core/AbstractCheck.cpp:59-70, core/PreflightManager.cpp:681, 737-765, core/PreflightManager.h:226
 V code, U effect
-Must — Status 20 Oct: open.
+Must — Status 21 Oct: done, commit 637c32446: every non-informational Auto check is re-evaluated each tick; the 10 s status-age rule is removed.
 F3
 Safety
 batteryDataValid (battery stream stopped for 5 s) is computed but no check and no QML reads it, so the battery check keeps using the last cached voltage.
 adapters/TelemetryBridge.cpp:614-619; no other references in src/ or qml/
 V
-Must — Status 20 Oct: partial. UI shows STALE in the battery chip and telemetry strip (VehicleTelemetry.batteryStale); the gate side is open (item 2).
+Must — Status 21 Oct: done, commit 637c32446: the battery check goes Stale when BATTERY_STATUS stops for 5 s, which closes the gate if it is mandatory (ArmGateResilienceTest).
 F4
 Safety
 The gate's freshness clock ticks on a heartbeat from any component of the vehicle. A companion computer or gimbal heartbeat keeps the gate fresh while the autopilot is silent. Connection quality is computed from the same mixed stream.
 adapters/TelemetryBridge.cpp:1031, 1040-1068
 V
-Must — Status 20 Oct: open.
+Must — Status 21 Oct: done, commit 637c32446: only the autopilot component's HEARTBEAT drives heartbeatTick and quality; quality decays to 0 within 6 s.
 F5
 Consistency
 Armed state is inferred from COMMAND_ACK. For a GCS-sent arm the plugin never sees the outbound COMMAND_LONG, so _lastArmDisarmParam stays -1 and the new armed state is guessed as the opposite of the current one, then forced into the vehicle with _updateArmed. A heartbeat that lands before the ack, or a retried ack, flips it the wrong way.
 PreflightPlugin.cpp:905, 930-932
 V code, U frequency
-Must — Status 20 Oct: open.
+Must — Status 21 Oct: done, commit 57e9ef29c: armed state only from Vehicle::armedChanged (ArmStateTracker); ACKs only label the arm source.
 F6
 Data integrity
 Flight sessions open and close on that ack, not on armed state: RC arms create no session, an RC disarm never closes one, and while one is open _onGateOpened refuses to start another, so every later flight is folded into it.
 PreflightPlugin.cpp:535-555, 585-608, 936-947
 V
-Must — Status 20 Oct: open.
+Must — Status 21 Oct: partial, commit 57e9ef29c: session bookkeeping now follows armedChanged (RC arms and disarms included). SessionRecorder (Step 3) still open.
 F7
 Data integrity
 Battery identity is batt:<sysid>, one fake serial per vehicle, so cycle counts and health trends are per vehicle, not per pack.
@@ -180,7 +185,7 @@ Consistency
 All clocks use QDateTime::currentDateTime() (wall clock, 28 sites) instead of a monotonic timer. An NTP or GPS time jump on the Jetson can mark everything stale or keep stale data looking fresh. SQL rows use UTC CURRENT_TIMESTAMP while app-side durations and compliance logs use local time.
 e.g. core/ArmingGate.cpp:456, core/PreflightManager.cpp:750, PreflightPlugin.cpp:562-578
 V
-Must — Status 20 Oct: open.
+Must — Status 21 Oct: done, commit 637c32446: header-only MonotonicClock for ages and durations; stored timestamps UTC. Plugin session duration still UTC-based until Step 3.
 F18
 Reliability
 ArduPilot force-arm values: 2989 forces arm and 21196 forces disarm, as you suspected. This matches my reading of ArduPilot's AP_Arming source, not a run. The code comment that 2989 is accepted by PX4 is wrong but harmless for Phase 1.
@@ -308,47 +313,47 @@ G5
 High
 The acknowledgment bypasses everything, including "no telemetry" and "telemetry stale". The toolbar opens the acknowledge dialog for any denial, so an operator can acknowledge a dead link and arm.
 qml/PreflightToolbarIndicator.qml:60-64, 115-120; core/ArmingGate.cpp:385-393 runs before the staleness test at :455
-Split blocks into hard and overridable. Hard: no fresh autopilot heartbeat, stale data, Training mode, no battery pack. Bind the ack to the set of failing check IDs at ack time and void it if a new check fails. — Status 20 Oct: open.
+Split blocks into hard and overridable. Hard: no fresh autopilot heartbeat, stale data, Training mode, no battery pack. Bind the ack to the set of failing check IDs at ack time and void it if a new check fails. — Status 21 Oct: done (Step 2.5): hard blocks (no/stale heartbeat, Stale mandatory check, Training) are never overridable; the ack records the failing checks and a new failure voids it. User decision: any other failing check can be acknowledged.
 G6
 High
 Training mode only blocks inbound arms from other peers. The GCS's own Arm buttons still arm in Training mode when checks pass.
 core/ArmingGate.cpp:137-146 (inbound only); no Training test in :360-404 or :431-487
-Make Training a hard block in the one decision function below. — Status 20 Oct: open.
+Make Training a hard block in the one decision function below. — Status 21 Oct: done (Step 2.5): Training blocks every GCS arm in decide().
 G7
 Medium
 The inbound path disagrees with the outbound one: it allows every arm if no manager is set, lets any arm through during a caller-scoped force window, ignores staleness, and lets a peer's arm consume the operator's acknowledgment. It is also not a real barrier.
 core/ArmingGate.cpp:126-187; PreflightPlugin.cpp:902-919
-Make it observe-only: log the peer's arm as an event and raise an alert; never consume the ack or change gate state. — Status 20 Oct: open.
+Make it observe-only: log the peer's arm as an event and raise an alert; never consume the ack or change gate state. — Status 21 Oct: done (Step 2.5), user decision: a peer's inbound arm is still denied when the gate is closed, but judged read-only with token 0: it never spends the ack or a force token and never changes gate state. No manager now fails closed.
 G8
 Medium
 During a force-arm window the gate reports armingAllowed = true, while every normal Arm press is denied by the interceptor. The UI and the decision disagree.
 core/ArmingGate.cpp:318-325, 368-381, 433-438
-Expose the override kind separately; armingAllowed answers "would a plain arm pass now". — Status 20 Oct: open.
+Expose the override kind separately; armingAllowed answers "would a plain arm pass now". — Status 21 Oct: done (Step 2.5): armingAllowed answers 'would a plain arm pass'; overrideKind exposes None/Ack/Force; the force window closes on use.
 G9
 Medium
 resetGate() resets the token counter to 0, so token values repeat across windows, and the force-arm token is left on the vehicle after sending. A stale token can match a later window.
 core/ArmingGate.cpp:277; adapters/TelemetryBridge.cpp:1374
-Never reset the counter (or use a random 32-bit value), and clear the vehicle's token after the command is sent. — Status 21 Oct: partly done, commit a2281c28b: the vehicle's force token is cleared before and after sending. Token counter reset in resetGate() still open (Step 2.5).
+Never reset the counter (or use a random 32-bit value), and clear the vehicle's token after the command is sent. — Status 21 Oct: done: vehicle token cleared around the send (a2281c28b); token counter never reset (Step 2.5).
 G10
 Medium
 The post-disarm reset only runs on vehicleDisarmed, which is emitted from the command-ack handler, so an RC disarm leaves an ack or override in place.
 core/ArmingGate.cpp:51-55; PreflightPlugin.cpp:944-946
-Drive it from Vehicle::armedChanged (work item 5). — Status 20 Oct: open.
+Drive it from Vehicle::armedChanged (work item 5). — Status 21 Oct: done, commit 57e9ef29c: any disarm (RC included) reaches vehicleDisarmed and clears an unspent ack.
 G11
 Low
 Three Arm buttons decide differently when to show the dialog: the status drawer only on critical failures, the toolbar on any denial, the Fly view armed indicator never.
 qml/MainStatusIndicator.qml:353-361, qml/PreflightToolbarIndicator.qml:60-64, qml/ArmedIndicator.qml:24-30
-One ArmingGate.requestArm() that returns arm, needs-acknowledgment or blocked-with-reason, used by every button. — Status 20 Oct: open. All arm call sites are listed in the Agent instructions (Step 2.5 inventory).
+One ArmingGate.requestArm() that returns arm, needs-acknowledgment or blocked-with-reason, used by every button. — Status 21 Oct: done for the live custom entry points (Step 2.5): the toolbar chip uses previewArm(), the wizard's Arm buttons use requestArm(); refusals are shown as app messages. The custom MainStatusIndicator.qml and ArmedIndicator.qml never load (stock AOT-compiled copies win / not referenced); the stock status-drawer Arm button is gated by the interceptor's decide() and shows Vehicle's 'Unable to arm' message.
 G12
 Low
 ArmingGateTest and part of ArmingGateExtendedTest test processArmRequest, which production never calls; Hybrid and Active behave identically; onCheckFailed and interceptCommandLong write gate state outside the main evaluation; the interceptor mutates the gate through const_cast.
 tests/ArmingGateTest.cpp:44-99, tests/ArmingGateExtendedTest.cpp:121; core/ArmingGate.cpp:192-225, 408-420, 374, 386
-Delete processArmRequest and its tests, merge Hybrid into Active, and route everything through one decision function. — Status 20 Oct: open.
+Delete processArmRequest and its tests, merge Hybrid into Active, and route everything through one decision function. — Status 21 Oct: done (Step 2.5): processArmRequest() and its tests removed; Hybrid behaves as Active; onCheckFailed() and the inbound path no longer write gate state; no const_cast.
 G13
 Verify
 QGC resends an unacknowledged command. If a resend passes through the interceptor again, a one-shot token consumed by the first send denies the retry on a lossy link. The Vehicle.cc patch is not in this copy.
 src/Vehicle/Vehicle.cc (fork patch, not reviewed)
-Read the patch; add a test that drops the first arm ack. — Status 20 Oct: open (verify).
+Read the patch; add a test that drops the first arm ack. — Status 21 Oct: verified by reading src/Vehicle/Vehicle.cc: the interceptor runs once in _sendMavCommandWorker before the command is queued; resends from _sendMavCommandFromList do not re-run it, so a consumed one-shot token cannot block a retry. No fix needed. A dropped-ACK test is not possible inside custom/ (MockLink's second-attempt behaviour exists only for its special test commands).
 One-tap Acknowledge & Arm already works in this copy: both dialog loaders call TelemetryProvider.arm() from onAccepted (qml/PreflightToolbarIndicator.qml:127-139, qml/MainStatusIndicator.qml:59-75), so the label is accurate once G1 is fixed. Confirm it in SITL, since the custom MainStatusIndicator may be shadowed by the stock one.
 Correct behavior, as one decision function
 Replace the scattered logic with one pure decide(request) that the interceptor, the armingAllowed property and requestArm() all call:
@@ -496,25 +501,25 @@ Freshness
 Freshness from data age, not status age
 F1, F2, F3
 TelemetryBridge stamps a last-received time per stream (autopilot heartbeat, SYS_STATUS, BATTERY_STATUS, GPS_RAW_INT, EKF_STATUS_REPORT, RC_CHANNELS). Each check declares the streams it reads. The tick re-evaluates every Auto check (29 registered checks, 24 counted in the checklist, at 2 Hz is cheap) and marks it Stale when any of its streams is older than that stream's limit. Drop the "status unchanged for 10 s" rule.
-Test: heartbeats continue, battery stops, battery check goes Stale and the gate closes within 5 s, then recovers. Test: no gate close over a 30-minute steady SITL idle. — Status 20 Oct: open. Display side of F3 done in QML.
+Test: heartbeats continue, battery stops, battery check goes Stale and the gate closes within 5 s, then recovers. Test: no gate close over a 30-minute steady SITL idle. — Status 21 Oct: done, commit 637c32446 (and the rewritten ArmGateResilienceTest battery test now passes).
 3
 Freshness
 Count only the autopilot's heartbeat
 F4
 Feed heartbeatTick and connection quality only from the autopilot component (vehicle->defaultComponentId(), not a GCS or companion type). Decay quality on a timer when heartbeats stop instead of freezing at the last value.
-Test: companion heartbeats alone leave the gate stale; quality falls to 0 within the staleness limit — Status 20 Oct: open.
+Test: companion heartbeats alone leave the gate stale; quality falls to 0 within the staleness limit — Status 21 Oct: done, commit 637c32446.
 4
 Freshness
 Monotonic clocks for every age and duration
 F17
 Replace QDateTime arithmetic in the gate, checks, bridge and session code with QElapsedTimer; keep UTC QDateTime only for stored timestamps. Inject a clock so tests can jump it.
-Test: a +1 h and a -1 h wall-clock jump change no gate decision — Status 20 Oct: open.
+Test: a +1 h and a -1 h wall-clock jump change no gate decision — Status 21 Oct: done, commit 637c32446 (plugin session duration moves to monotonic in Step 3).
 5
 Freshness
 Armed state from the heartbeat only
 F5
 Remove _updateArmed and the gateOpened/gateClosed emits from the COMMAND_ACK handler. Acks only surface rejections and tag the arm source on the next armed transition.
-Tests: heartbeat-before-ack, duplicate ack, RC arm with no ack; each leaves armed state and records correct — Status 20 Oct: open.
+Tests: heartbeat-before-ack, duplicate ack, RC arm with no ack; each leaves armed state and records correct — Status 21 Oct: done, commit 57e9ef29c.
 6
 Records
 SessionRecorder with connection sessions and flights
@@ -550,7 +555,7 @@ Commands
 Disabled-with-reason Arm and Return, and the Acknowledge label
 State analysis items 3 and 5
 Bind enabled and a reason line to the gate's denialReason and to the connection state; never a silent no-op. Keep the one-tap Acknowledge & Arm, which already arms in this copy (see Arm gate review).
-Observed in SITL: every disabled control says why — Status 20 Oct: open; needs requestArm() from item 15.
+Observed in SITL: every disabled control says why — Status 21 Oct: partial (Step 2.5): Arm refusals are never silent (app message) and the live Arm entry points go through requestArm()/previewArm(). Return (RTL) controls not yet.
 12
 Field
 SITL campaign, copter and plane
@@ -574,7 +579,7 @@ Safety
 Arm gate corrections (do right after item 1)
 G1 to G13
 Restore the bound, expiring acknowledgment; remove the mode-cycle, Override and Override Gate buttons; put Force Arm behind a confirmation in Testing sessions only; one decision function with hard and overridable blocks; observe-only inbound path; one requestArm() for every Arm button.
-Every test listed under Arm gate review passes and is mutation-checked; no QML control can open the gate in one tap — Status 21 Oct: partial. G1–G4 done (Step 1); G9 partly; G5–G8, G10–G13, decide()/requestArm() open (Step 2).
+Every test listed under Arm gate review passes and is mutation-checked; no QML control can open the gate in one tap — Status 21 Oct: done (Steps 1 and 2.5): G1–G13 addressed; see each G row.
 16
 Safety
 Park post-flight and re-run preflight after every disarm (do with item 15)
