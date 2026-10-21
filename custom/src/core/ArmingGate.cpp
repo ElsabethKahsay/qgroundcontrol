@@ -11,6 +11,7 @@
 #include "ArmingGate.h"
 
 #include <QDebug>
+#include <QRandomGenerator>
 #include <QTimer>
 
 #include "AbstractCheck.h"
@@ -44,6 +45,20 @@ ArmingGate::ArmingGate(QObject *parent)
     m_gateTimer = new QTimer(this);
     m_gateTimer->setInterval(EVAL_INTERVAL_MS);
     connect(m_gateTimer, &QTimer::timeout, this, &ArmingGate::updateArmingState);
+
+    // Acknowledgment expiry: an unused ALLOW_WITH_ACK is single-use AND
+    // time-bounded. The token minted at acknowledgment time is cleared here, so
+    // an ack made earlier can never authorize a later arm.
+    m_ackTimer = new QTimer(this);
+    m_ackTimer->setSingleShot(true);
+    connect(m_ackTimer, &QTimer::timeout, this, [this]() {
+        if (!m_ackReceived && m_ackToken == 0) {
+            return;
+        }
+        m_ackReceived = false;
+        m_ackToken = 0;
+        qWarning().noquote() << QStringLiteral("ArmingGate: ALLOW_WITH_ACK expired before use");
+    });
 
     // After any disarm, close the gate so the next arm request is re-checked.
     // Without this, a prior force-arm/override would let arm commands through
@@ -147,6 +162,8 @@ bool ArmingGate::interceptCommandLong(uint16_t command, const QMap<int, float> &
 
     if (m_ackReceived) {
         m_ackReceived = false;
+        m_ackToken = 0;
+        if (m_ackTimer) m_ackTimer->stop();
         qWarning().noquote() << QStringLiteral("ArmingGate: ALLOW_WITH_ACK bypass for pilot %1")
                                     .arg(m_lastAck.pilotName);
         m_denialReason.clear();
@@ -198,6 +215,8 @@ ArmingGate::GateDecision ArmingGate::processArmRequest(int criticalFailCount, in
     if (m_overridePolicy == ALLOW_WITH_ACK && m_ackReceived &&
         (criticalFailCount > 0 || manualFailCount > 0)) {
         m_ackReceived = false;
+        m_ackToken = 0;
+        if (m_ackTimer) m_ackTimer->stop();
         qWarning().noquote() << QStringLiteral("ArmingGate: ALLOW_WITH_ACK bypass for pilot %1")
                                     .arg(m_lastAck.pilotName);
         return GATE_OPEN;
@@ -236,6 +255,17 @@ bool ArmingGate::acknowledgeOverride(const QString &pilotName, const QString &re
     m_lastAck.reason = reason;
     m_lastAck.timestamp = QDateTime::currentDateTime();
 
+    // Mint a fresh non-zero token bound to this acknowledgment. Only the arm
+    // command presenting this token (TelemetryBridge::arm() attaches it to the
+    // vehicle) may consume the ack; a stock arm (token 0) never can.
+    m_ackToken = QRandomGenerator::global()->generate();
+    if (m_ackToken == 0) {
+        m_ackToken = 1;
+    }
+    // Single-shot expiry: an unused ack does not survive the operator's window.
+    m_ackTimer->setInterval(m_ackExpiryMs);
+    m_ackTimer->start();
+
     qWarning().noquote() << QStringLiteral("ArmingGate: ALLOW_WITH_ACK acknowledged by %1 — %2")
                                 .arg(pilotName, reason);
     emit overrideAcknowledged(pilotName, reason);
@@ -272,6 +302,8 @@ void ArmingGate::resetGate()
 {
     m_overrideActive = false;
     m_ackReceived = false;
+    m_ackToken = 0;
+    if (m_ackTimer) m_ackTimer->stop();
     m_overrideTimer->stop();
     m_overrideToken = 0;
     m_overrideTokenSeq = 0;
@@ -381,15 +413,26 @@ std::function<bool(QString&, quint32)> ArmingGate::makeArmInterceptor() const
         }
         // Acknowledged override (ALLOW_WITH_ACK): authorize exactly one arm, then
         // consume the acknowledgment. Guarded by the policy so a NONE policy
-        // cannot be bypassed by a stray acknowledgment.
+        // cannot be bypassed by a stray acknowledgment. The ack is bound to the
+        // token minted at acknowledgment time; only the command presenting that
+        // token (e.g. the dialog's TelemetryBridge::arm()) may consume it.
         if (guard->m_overridePolicy == OverridePolicy::ALLOW_WITH_ACK && guard->m_ackReceived) {
             ArmingGate *that = const_cast<ArmingGate*>(guard.data());
-            that->m_ackReceived = false;
-            that->m_denialReason.clear();
-            denialReason.clear();
-            qWarning().noquote() << QStringLiteral("ArmingGate: ALLOW_WITH_ACK bypass consumed by pilot %1")
-                                        .arg(that->m_lastAck.pilotName);
-            return true;
+            if (callToken != 0 && callToken == that->m_ackToken) {
+                that->m_ackReceived = false;
+                that->m_ackToken = 0;
+                if (that->m_ackTimer) that->m_ackTimer->stop();
+                that->m_denialReason.clear();
+                denialReason.clear();
+                qWarning().noquote() << QStringLiteral("ArmingGate: ALLOW_WITH_ACK bypass consumed by pilot %1")
+                                            .arg(that->m_lastAck.pilotName);
+                return true;
+            }
+            // Token mismatch: this is not the originating call (a stock arm
+            // presents token 0). Reject without spending the acknowledgment.
+            denialReason = QStringLiteral("Acknowledged override is one-shot and caller-scoped; "
+                                          "this arm command does not hold the acknowledged token");
+            return false;
         }
         if (guard->isArmingAllowed()) {
             denialReason.clear();
