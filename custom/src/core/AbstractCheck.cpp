@@ -18,6 +18,7 @@
 #include "DatabaseManager.h"
 #include "TelemetryBridge.h"
 #include "utils/Config.h"
+#include "utils/MonotonicClock.h"
 
 #include <cmath>
 
@@ -62,11 +63,17 @@ bool AbstractCheck::requiresReevaluation() const
     if (m_type != CheckType::Auto)
         return false;
 
-    if (!m_lastEvalTime.isValid())
+    // F2: every blocking-capable Auto check is re-evaluated on every tick, so a
+    // value that degrades after passing is seen on the next tick (it used to be
+    // skipped while Passed). Informational checks (weather, zone) keep the
+    // old back-off because some of them start network fetches in evaluate().
+    if (!m_isInformational)
+        return true;
+    if (m_lastEvalMs < 0)
         return true;
     if (m_status == CheckStatus::Passed)
         return false;
-    return m_lastEvalTime.msecsTo(QDateTime::currentDateTime()) > configInt(QStringLiteral("stale_timeout_ms"), kDefaultStaleTimeoutMs);
+    return MonotonicClock::ageMs(m_lastEvalMs) > configInt(QStringLiteral("stale_timeout_ms"), kDefaultStaleTimeoutMs);
 }
 
 bool AbstractCheck::overrideStatus(const QString &newStatus, const QString &reason)
@@ -84,7 +91,7 @@ bool AbstractCheck::overrideStatus(const QString &newStatus, const QString &reas
     rec.previousStatus = statusText();
     rec.newStatus = newStatus;
     rec.reason = reason.isEmpty() ? QStringLiteral("Operator override") : reason;
-    rec.timestamp = QDateTime::currentDateTime();
+    rec.timestamp = QDateTime::currentDateTimeUtc();   // stored: UTC (F17)
     m_overrideHistory.append(rec);
 
     setStatus(s, reason);
@@ -111,7 +118,7 @@ bool AbstractCheck::confirm(const QString &reason)
     rec.previousStatus = statusText();
     rec.newStatus = QStringLiteral("passed");
     rec.reason = reason.isEmpty() ? QStringLiteral("Operator confirmed") : reason;
-    rec.timestamp = QDateTime::currentDateTime();
+    rec.timestamp = QDateTime::currentDateTimeUtc();   // stored: UTC (F17)
     m_overrideHistory.append(rec);
 
     setStatus(CheckStatus::Passed, rec.reason);
@@ -124,7 +131,7 @@ void AbstractCheck::reset()
 {
     m_status = CheckStatus::Pending;
     m_message.clear();
-    m_lastEvalTime = QDateTime();
+    m_lastEvalMs = -1;
     m_overrideHistory.clear();
     clearConfigCache();
     emit statusChanged(m_id, static_cast<int>(m_status));
@@ -136,12 +143,14 @@ void AbstractCheck::reset()
 // (not on repeated same-status sets) to avoid duplicate signal processing.
 void AbstractCheck::setStatus(CheckStatus newStatus, const QString &message)
 {
+    // F1: stamp every evaluation, including one that agrees with the last
+    // result; the stamp used to move only when the status changed.
+    m_lastEvalMs = MonotonicClock::nowMs();
     if (m_status == newStatus && m_message == message)
         return;
 
     CheckStatus oldStatus = m_status;
     m_status = newStatus;
-    m_lastEvalTime = QDateTime::currentDateTime();
 
     if (!message.isEmpty())
         m_message = message;

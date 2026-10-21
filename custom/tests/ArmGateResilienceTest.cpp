@@ -21,6 +21,8 @@
 #include <QSignalSpy>
 #include <QTest>
 
+#include "utils/MonotonicClock.h"
+#include "utils/TelemetryStream.h"
 #include "UnitTest.h"
 #include "ArmingGate.h"
 #include "PreflightManager.h"
@@ -47,6 +49,7 @@ private slots:
     void testZeroTokenNeverAuthorizes();
     void testCommHeartbeatStalenessDoesNotMakeCheckStaleButGateCloses();
     void testHeartbeatFreshnessDoesNotKeepGateOpenWhenBatteryStreamStops();
+    void testGateFreshnessUsesMonotonicClock();
 
 private:
     /// Builds a gate with one mandatory passing check and a healthy bridge.
@@ -429,43 +432,60 @@ void ArmGateResilienceTest::testCommHeartbeatStalenessDoesNotMakeCheckStaleButGa
 
 // (b) keep heartbeats flowing but stop the battery stream; assert the battery check goes Stale
 //     and the gate closes (heartbeat freshness alone must not keep it open).
+// Step 2.2 (F1–F3): heartbeats alone must not keep the gate open when the
+// battery stream stops. The battery check is made mandatory and passing on a
+// fresh BATTERY_STATUS; then only heartbeats keep arriving, so the check goes
+// Stale (no BATTERY_STATUS for > 5 s) and the gate closes.
 void ArmGateResilienceTest::testHeartbeatFreshnessDoesNotKeepGateOpenWhenBatteryStreamStops()
 {
     _buildArmableGate(); // healthy
     _settle();
-
     QVERIFY2(_gate->isArmingAllowed(), qPrintable(_gate->denialReason()));
 
-    AbstractCheck* batt = nullptr;
-    for (AbstractCheck* c : _manager->checks()) {
-        const QString id = c ? c->id() : QString();
-        if (id.startsWith("power.battery.") || id.startsWith("battery.") || id.contains("battery") || (id.contains("voltage") && id.contains("battery"))) {
-            batt = c; break;
-        }
-    }
-    QVERIFY2(batt != nullptr, "battery-related check not found");
+    AbstractCheck *batt = _manager->checkById(QStringLiteral("power.battery.voltage"));
+    QVERIFY2(batt != nullptr, "battery check not found");
+    batt->setMandatory(true);
+    _bridge->setBatteryVoltage(16.8);
+    _bridge->setBatteryPercent(80);
+    _bridge->stampStream(TelemetryStream::BatteryStatus);
+    _manager->tick();
+    _deliverHeartbeat();
+    _settle();
+    QCOMPARE(batt->status(), CheckStatus::Passed);
+    QVERIFY2(_gate->isArmingAllowed(), qPrintable(_gate->denialReason()));
 
-    batt->evaluate();
-    // Force battery to block while heartbeats keep flowing (heartbeat freshness alone must not keep gate open)
-    _bridge->forceBatteryDataInvalid();
-    if (_manager) {
-        _manager->evaluateAll();
+    // Battery stream stops; heartbeats keep flowing.
+    for (int i = 0; i < 7; ++i) {
+        QTest::qWait(1000);
+        _deliverHeartbeat();
+        _manager->tick();
     }
     _settle();
 
-    // Keep heartbeats flowing, do not refresh battery stream behavior
-    const int secs = 14;
-    for (int i = 0; i < secs; ++i) {
-        QTest::qWait(1000);
-        _deliverHeartbeat();
-        // Let PM run its evaluation/staleness logic via timers
-        _settle();
-    }
+    QCOMPARE(batt->status(), CheckStatus::Stale);
+    QVERIFY2(!_gate->isArmingAllowed(),
+             qPrintable(QStringLiteral("gate must close when the battery stream stops even if heartbeats flow: %1")
+                            .arg(_gate->denialReason())));
+}
 
-    const bool allowed = _gate->isArmingAllowed();
-    const QString reason = _gate->denialReason();
-    QVERIFY2(!allowed,
-             qPrintable(QStringLiteral("gate must close when battery check blocks even if heartbeats flow: %1").arg(reason)));
+// Step 2.1 (F17): the gate's freshness clock is monotonic. With an injected
+// TestClock frozen, real time passing does not make the link stale; advancing
+// the injected clock past the 10 s limit does.
+void ArmGateResilienceTest::testGateFreshnessUsesMonotonicClock()
+{
+    TestClock clock;
+    MonotonicClock::setForTesting(&clock);
+    struct Restore { ~Restore() { MonotonicClock::setForTesting(nullptr); } } restore;
+
+    _buildArmableGate();
+    _settle();                                   // ~1.8 s of real time, clock frozen
+    QVERIFY2(_gate->isArmingAllowed(), qPrintable(_gate->denialReason()));
+
+    clock.advance(11000);                        // past kTelemetryStalenessSec
+    _settle();
+    QVERIFY(!_gate->isArmingAllowed());
+    QVERIFY2(_gate->denialReason().contains(QStringLiteral("stale"), Qt::CaseInsensitive),
+             qPrintable(_gate->denialReason()));
 }
 
 UT_REGISTER_TEST(ArmGateResilienceTest)

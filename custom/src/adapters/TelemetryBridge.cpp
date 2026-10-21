@@ -32,6 +32,7 @@
 #include "Vehicle/FactGroups/VehicleVibrationFactGroup.h"
 #include "Vehicle/FactGroups/VehicleWindFactGroup.h"
 #include "Vehicle/Vehicle.h"
+#include "utils/MonotonicClock.h"
 #include "core/ParameterWatchlist.h"
 #include "core/ArmingGate.h"
 #include "managers/FlightSession.h"
@@ -138,9 +139,37 @@ bool waitForArduPilotModeConfirm(Vehicle* vehicle, int modeNumber, int timeoutMs
 }  // namespace
 
 TelemetryBridge::TelemetryBridge(QObject* parent) : QObject(parent) {
+    _streamLastMs.fill(MonotonicClock::kNever);   // no stream has arrived yet
+
     // Fire the polling timer every 200ms to pick up values that aren't pushed via signals.
     _updateTimer.setInterval(kTelemetryUpdateMs);
     connect(&_updateTimer, &QTimer::timeout, this, &TelemetryBridge::_onTelemetryUpdate);
+}
+
+void TelemetryBridge::stampStream(TelemetryStream stream) {
+    const int i = static_cast<int>(stream);
+    if (i >= 0 && i < static_cast<int>(_streamLastMs.size()))
+        _streamLastMs[i] = MonotonicClock::nowMs();
+}
+
+qint64 TelemetryBridge::streamAgeMs(TelemetryStream stream) const {
+    const int i = static_cast<int>(stream);
+    if (i < 0 || i >= static_cast<int>(_streamLastMs.size()))
+        return MonotonicClock::kNever;
+    return MonotonicClock::ageMs(_streamLastMs[i]);
+}
+
+bool TelemetryBridge::isAutopilotMessage(int sysId, int compId, int vehicleId, int autopilotCompId) {
+    return sysId == vehicleId && compId == autopilotCompId;
+}
+
+int TelemetryBridge::connectionQualityForGap(qint64 gapMs, double dropRatePct) {
+    int quality = 100;
+    if (gapMs > 1200)
+        quality = static_cast<int>(qMax<qint64>(0, 100 - (gapMs - 1000) / 50));
+    if (dropRatePct > 0.0)
+        quality = qMin(quality, static_cast<int>(100.0 - dropRatePct));
+    return qBound(0, quality, 100);
 }
 
 void TelemetryBridge::setVehicle(Vehicle* vehicle) {
@@ -162,7 +191,7 @@ void TelemetryBridge::setVehicle(Vehicle* vehicle) {
     _batteryPercent = -1;
     _batteryCurrentSmoothAmps = 0.0;
     _batteryDataValid = false;
-    _lastBatteryStatusTime = QDateTime();
+    _streamLastMs.fill(MonotonicClock::kNever);   // freshness is per vehicle
     emit batterySocPctChanged();
     emit batteryPercentChanged();
     emit batteryCurrentSmoothAmpsChanged();
@@ -362,7 +391,6 @@ void TelemetryBridge::_connectVehicleSignals() {
 
     // Initialize connection quality to 100% on fresh connect.
     _connectionQuality = 100;
-    _lastHeartbeatTime = QDateTime::currentDateTime();
     emit connectionQualityChanged();
 }
 
@@ -616,10 +644,19 @@ void TelemetryBridge::_updateFromVehicle() {
 
     // Stale battery data: no BATTERY_STATUS for > 5 s → invalid. Emit only on
     // the valid→invalid transition; the next BATTERY_STATUS re-arms validity.
-    if (_batteryDataValid && _lastBatteryStatusTime.isValid()) {
-        if (_lastBatteryStatusTime.msecsTo(QDateTime::currentDateTime()) > kBatteryStaleMs) {
-            _batteryDataValid = false;
-            emit batteryDataValidChanged();
+    if (_batteryDataValid && streamAgeMs(TelemetryStream::BatteryStatus) > kBatteryStaleMs) {
+        _batteryDataValid = false;
+        emit batteryDataValidChanged();
+    }
+
+    // F4: connection quality decays while autopilot heartbeats are missing,
+    // instead of freezing at the value of the last heartbeat that arrived.
+    const qint64 hbAge = streamAgeMs(TelemetryStream::Heartbeat);
+    if (hbAge >= 0) {
+        const int decayed = connectionQualityForGap(hbAge, _commDropRate);
+        if (decayed < _connectionQuality) {
+            _connectionQuality = decayed;
+            emit connectionQualityChanged();
         }
     }
 }
@@ -629,6 +666,18 @@ void TelemetryBridge::_updateFromVehicle() {
 /// Only fires an emit when the value actually changes (with a small deadband)
 /// to avoid unnecessary QML re-evaluation.
 void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message) {
+    // Per-stream arrival stamps (F1–F3). HEARTBEAT is stamped in its case below,
+    // and only for the autopilot component (F4).
+    switch (message.msgid) {
+    case MAVLINK_MSG_ID_SYS_STATUS:          stampStream(TelemetryStream::SysStatus); break;
+    case MAVLINK_MSG_ID_BATTERY_STATUS:      stampStream(TelemetryStream::BatteryStatus); break;
+    case MAVLINK_MSG_ID_GPS_RAW_INT:         stampStream(TelemetryStream::GpsRawInt); break;
+    case MAVLINK_MSG_ID_ATTITUDE:            stampStream(TelemetryStream::Attitude); break;
+    case MAVLINK_MSG_ID_RC_CHANNELS:         stampStream(TelemetryStream::RcChannels); break;
+    case MAVLINK_MSG_ID_EKF_STATUS_REPORT:   stampStream(TelemetryStream::EkfStatus); break;
+    case MAVLINK_MSG_ID_GLOBAL_POSITION_INT: stampStream(TelemetryStream::GlobalPosition); break;
+    default: break;
+    }
     switch (message.msgid) {
         case MAVLINK_MSG_ID_GPS_RAW_INT: {
             mavlink_gps_raw_int_t gps;
@@ -1030,9 +1079,25 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message) {
             mavlink_heartbeat_t hb;
             mavlink_msg_heartbeat_decode(&message, &hb);
 
+            // Detect companion computer: any component ID other than 1 (autopilot) or 0.
+            bool wasCompanion = _companionDetected;
+            if (message.compid != 1 && message.compid != 0) _companionDetected = true;
+            if (wasCompanion != _companionDetected) emit companionDetectedChanged();
+
+            // F4: only the autopilot's own heartbeat counts as link liveness. A
+            // companion or gimbal heartbeat must not keep the gate fresh while
+            // the autopilot is silent.
+            if (!_vehicle || !isAutopilotMessage(message.sysid, message.compid,
+                                                 _vehicle->id(), _vehicle->defaultComponentId())) {
+                break;
+            }
+            // Measure the gap before this heartbeat restamps the stream.
+            const qint64 hbGapMs = streamAgeMs(TelemetryStream::Heartbeat);
+            stampStream(TelemetryStream::Heartbeat);
+
             // Liveness edge for telemetry-arrival-driven consumers (e.g. the
-            // ArmingGate freshness clock). Fires on EVERY heartbeat, before any
-            // change-gated emits below, so a steady link still produces ticks.
+            // ArmingGate freshness clock). Fires on EVERY autopilot heartbeat,
+            // before any change-gated emits below, so a steady link still ticks.
             emit heartbeatTick();
 
             // Track the MAVLink protocol version.
@@ -1042,11 +1107,6 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message) {
                 emit mavlinkVersionChanged();
             }
 
-            // Detect companion computer: any component ID other than 1 (autopilot) or 0.
-            bool wasCompanion = _companionDetected;
-            if (message.compid != 1 && message.compid != 0) _companionDetected = true;
-            if (wasCompanion != _companionDetected) emit companionDetectedChanged();
-
             // Connection quality algorithm:
             //   1. Start at 100% on each heartbeat.
             //   2. If the heartbeat arrived late (>1200ms vs expected ~1000ms), degrade
@@ -1054,23 +1114,11 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message) {
             //   3. Factor in the comm drop rate as a hard ceiling.
             //   4. Clamp to [0, 100].
             {
-                QDateTime now = QDateTime::currentDateTime();
-                int newQuality = 100;
-                if (_lastHeartbeatTime.isValid()) {
-                    int elapsedMs = _lastHeartbeatTime.msecsTo(now);
-                    if (elapsedMs > 1200) {
-                        newQuality = qMax(0, 100 - ((elapsedMs - 1000) / 50));
-                    }
-                }
-                if (_commDropRate > 0.0) {
-                    newQuality = qMin(newQuality, static_cast<int>(100.0 - _commDropRate));
-                }
-                newQuality = qBound(0, newQuality, 100);
+                const int newQuality = connectionQualityForGap(hbGapMs < 0 ? 0 : hbGapMs, _commDropRate);
                 if (newQuality != _connectionQuality) {
                     _connectionQuality = newQuality;
                     emit connectionQualityChanged();
                 }
-                _lastHeartbeatTime = now;
             }
             break;
         }
@@ -1153,7 +1201,6 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message) {
                 // drops it to false after 5 s of silence. When the FC does not
                 // report SOC (battery not configured) data stays invalid so callers
                 // can distinguish "SOC unknown" from "battery telemetry stale".
-                _lastBatteryStatusTime = QDateTime::currentDateTime();
                 if (batt.battery_remaining != UINT8_MAX && !_batteryDataValid) {
                     _batteryDataValid = true;
                     emit batteryDataValidChanged();

@@ -9,6 +9,7 @@
  */
 
 #include "ArmingGate.h"
+#include "utils/MonotonicClock.h"
 
 #include <QDebug>
 #include <QRandomGenerator>
@@ -105,7 +106,7 @@ void ArmingGate::setPreflightManager(PreflightManager *manager)
 }
 
 // Store the telemetry bridge and drive the freshness clock from real telemetry
-// arrival. Every received HEARTBEAT stamps m_lastTickTime, so:
+// arrival. Every autopilot HEARTBEAT stamps m_lastTickMs (monotonic), so:
 //   * a live link keeps the gate fresh regardless of whether any check status
 //     changed (no progressChanged required), and
 //   * a dead link stops stamping, so the gate closes with a staleness reason
@@ -119,7 +120,7 @@ void ArmingGate::setTelemetryBridge(TelemetryBridge *bridge)
     m_telemetry = bridge;
     if (m_telemetry) {
         connect(m_telemetry, &TelemetryBridge::heartbeatTick, this, [this]() {
-            m_lastTickTime = QDateTime::currentDateTime();
+            m_lastTickMs = MonotonicClock::nowMs();
             updateArmingState();
         });
     }
@@ -253,7 +254,7 @@ bool ArmingGate::acknowledgeOverride(const QString &pilotName, const QString &re
     m_ackReceived = true;
     m_lastAck.pilotName = pilotName.trimmed();
     m_lastAck.reason = reason;
-    m_lastAck.timestamp = QDateTime::currentDateTime();
+    m_lastAck.timestamp = QDateTime::currentDateTimeUtc();   // stored: UTC (F17)
 
     // Mint a fresh non-zero token bound to this acknowledgment. Only the arm
     // command presenting this token (TelemetryBridge::arm() attaches it to the
@@ -473,15 +474,16 @@ void ArmingGate::updateArmingState()
     // link stale made "nothing has ever arrived" the single state that always
     // looked healthy, so a freshly built gate reported itself armable on the
     // strength of checks that had run against no vehicle at all.
-    const bool noTickEver = !m_lastTickTime.isValid();
+    const bool noTickEver = (m_lastTickMs < 0);
+    const qint64 tickAgeMs = MonotonicClock::ageMs(m_lastTickMs);
     const bool telemetryStale = (noTickEver ||
-        m_lastTickTime.secsTo(QDateTime::currentDateTime()) > kTelemetryStalenessSec) &&
+        tickAgeMs > qint64(kTelemetryStalenessSec) * 1000) &&
         !m_overrideActive;
     if (telemetryStale) {
         QString msg = noTickEver
             ? QStringLiteral("No telemetry received from the vehicle yet")
             : QStringLiteral("Telemetry stale — last update %1s ago")
-                .arg(m_lastTickTime.secsTo(QDateTime::currentDateTime()));
+                .arg(tickAgeMs / 1000);
         if (m_armingAllowed || m_denialReason != msg) {
             m_armingAllowed = false;
             m_denialReason = msg;

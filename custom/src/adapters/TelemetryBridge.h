@@ -33,6 +33,9 @@
 #include <QVariant>
 
 #include "QGCMAVLink.h"
+#include "utils/TelemetryStream.h"
+
+#include <array>
 
 class Vehicle;
 
@@ -541,6 +544,21 @@ public:
     int batterySocPct() const { return _batterySocPct; }
     double batteryCurrentSmoothAmps() const { return _batteryCurrentSmoothAmps; }
     bool batteryDataValid() const { return _batteryDataValid; }
+
+    // ── Per-stream freshness (F1–F4, F17) ──────────────────────────────────
+    /// Record that @p stream just arrived (MonotonicClock). Called by the
+    /// MAVLink dispatcher; public so test doubles can model a live link.
+    void stampStream(TelemetryStream stream);
+    /// Milliseconds since @p stream last arrived, or -1 if it never has.
+    qint64 streamAgeMs(TelemetryStream stream) const;
+    /// True when a message comes from this vehicle's autopilot component.
+    /// Only those heartbeats drive heartbeatTick and connection quality (F4):
+    /// a companion or gimbal heartbeat must not keep the gate fresh.
+    static bool isAutopilotMessage(int sysId, int compId, int vehicleId, int autopilotCompId);
+    /// Connection quality (0–100) for a gap of @p gapMs since the last
+    /// autopilot heartbeat, capped by the link drop rate: 100 up to 1.2 s,
+    /// then 1 point per 50 ms late, 0 from 6 s.
+    static int connectionQualityForGap(qint64 gapMs, double dropRatePct);
     double batteryTemperature() const { return _batteryTemperature; }
     QString batteryChargeState() const { return _batteryChargeState; }
     double batteryTimeRemainingSeconds() const { return _batteryTimeRemainingSeconds; }
@@ -920,7 +938,8 @@ private:
     Vehicle* _vehicle = nullptr;          ///< Currently bridged vehicle (null when disconnected).
     int _connectionQuality = 0;           ///< Link quality 0-100.
     QTimer _updateTimer;                  ///< 200ms poll timer for values without push signals.
-    QDateTime _lastHeartbeatTime;         ///< Timestamp of the most recent heartbeat (for quality calc).
+    /// Monotonic ms of the last arrival of each TelemetryStream, -1 = never.
+    std::array<qint64, static_cast<int>(TelemetryStream::Count)> _streamLastMs{};
 
     // -- Primary battery --
     double _batteryVoltage = 0.0;
@@ -930,7 +949,6 @@ private:
     int _batterySocPct = -1;                    ///< battery_remaining (0-100), -1 = FC not configured.
     double _batteryCurrentSmoothAmps = 0.0;     ///< 10s EMA accumulated per BATTERY_STATUS message.
     bool _batteryDataValid = false;             ///< SOC known AND BATTERY_STATUS < 5 s old.
-    QDateTime _lastBatteryStatusTime;           ///< Timestamp of the most recent BATTERY_STATUS.
     double _batteryTemperature = qQNaN();       ///< NaN = no temperature sensor.
     QString _batteryChargeState = QStringLiteral("OK");
     double _batteryTimeRemainingSeconds = qQNaN();

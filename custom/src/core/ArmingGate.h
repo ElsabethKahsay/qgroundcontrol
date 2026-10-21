@@ -157,7 +157,7 @@ private:
 
     PreflightManager *m_manager = nullptr;
     TelemetryBridge *m_telemetry = nullptr;
-    QDateTime m_lastTickTime;
+    qint64 m_lastTickMs = -1;   ///< MonotonicClock ms of the last autopilot heartbeatTick, -1 = never (F17)
     Mode m_mode = Active;
     OverridePolicy m_overridePolicy = ALLOW_WITH_ACK;
     bool m_armingAllowed = false;

@@ -8,6 +8,9 @@
 #include <QSet>
 #include <QSettings>
 
+#include "utils/MonotonicClock.h"
+#include "utils/TelemetryStream.h"
+
 #include "FactSystem/Fact.h"
 #include "FactSystem/ParameterManager.h"
 #include "Vehicle/Vehicle.h"
@@ -637,11 +640,37 @@ void PreflightManager::setActive(bool active) {
 
 // Main timer tick: drives the periodic evaluation cycle.
 //
+namespace {
+// BATTERY_STATUS limit: matches TelemetryBridge's battery-data validity window.
+constexpr qint64 kBatteryStreamStaleMs = 5000;
+
+// F1–F3: a check is Stale when a stream its evaluate() reads was seen on this
+// connection and has since stopped arriving. A stream that never arrived is
+// left to the check's own evaluate() ("waiting for telemetry"), so an autopilot
+// that simply does not send a stream is not reported as stale.
+QString staleStreamReason(const TelemetryBridge *bridge, const AbstractCheck *check, qint64 defaultLimitMs)
+{
+  if (!bridge)
+    return QString();
+  for (TelemetryStream stream : check->requiredStreams()) {
+    const qint64 age = bridge->streamAgeMs(stream);
+    if (age < 0)
+      continue;
+    const qint64 limit = (stream == TelemetryStream::BatteryStatus) ? kBatteryStreamStaleMs : defaultLimitMs;
+    if (age > limit)
+      return QStringLiteral("Data stale — no %1 for %2 s")
+          .arg(QString::fromLatin1(telemetryStreamName(stream)))
+          .arg(age / 1000.0, 0, 'f', 1);
+  }
+  return QString();
+}
+} // namespace
+
 // Performs four tasks each tick:
 //   1. Manages the parameter-loading state machine (SYS-001)
 //   2. Propagates autopilot type detection to the parameter manager (SYS-002)
-//   3. Re-evaluates stale Auto checks
-//   4. Checks staleness of mandatory checks and marks them Stale if data is too old
+//   3. Re-evaluates every Auto check (F2), or marks it Stale when a stream it
+//      reads has stopped arriving (F1–F3)
 //
 // Emits progressChanged (not modelChanged) to avoid QML delegate destruction.
 void PreflightManager::tick() {
@@ -700,6 +729,13 @@ void PreflightManager::tick() {
     if (m_postFlightMode && !check->isPostFlight())
       continue;
     if (check->requiresReevaluation()) {
+      const QString stale = staleStreamReason(m_telemetry, check, m_stalenessThresholdMs);
+      if (!stale.isEmpty()) {
+        // Do not evaluate against cached values; recovers on the first tick
+        // after the stream resumes.
+        check->setStatus(CheckStatus::Stale, stale);
+        continue;
+      }
       try {
         check->evaluate();
       } catch (const std::exception &e) {
@@ -755,35 +791,11 @@ void PreflightManager::tick() {
   // ── State machine: check-result transitions (single authoritative path) ──
   attemptStateTransition();
 
-  // ── Staleness detection: mark mandatory checks as Stale if their last
-  // evaluation time exceeds the threshold (default 2x expected message rate).
-  // Stale checks count as failed for arming decisions.
-  for (auto *check : m_checks) {
-    if (!check->mandatory())
-      continue;
-    // Skipped post-flight placeholders must not be promoted to Stale.
-    if (m_postFlightMode && !check->isPostFlight())
-      continue;
-    auto s = check->status();
-    if (s == CheckStatus::Passed || s == CheckStatus::Warning) {
-      QDateTime lastEval = check->lastEvaluationTime();
-      if (lastEval.isValid() &&
-          lastEval.msecsTo(QDateTime::currentDateTime()) > m_stalenessThresholdMs) {
-        check->setStatus(CheckStatus::Stale,
-                         QStringLiteral("Data stale — last update %1s ago")
-                             .arg(lastEval.secsTo(QDateTime::currentDateTime())));
-      }
-    } else if (s == CheckStatus::Stale) {
-      QDateTime lastEval = check->lastEvaluationTime();
-      if (lastEval.isValid() &&
-          lastEval.msecsTo(QDateTime::currentDateTime()) <= m_stalenessThresholdMs) {
-        // Data returned: recovery. The next evaluate() cycle will set the
-        // correct real status.
-        check->setStatus(CheckStatus::Pending,
-                         QStringLiteral("Recovering from stale data"));
-      }
-    }
-  }
+  // Staleness is now decided per telemetry stream before each evaluation
+  // (staleStreamReason above). The old rule — "status unchanged for
+  // m_stalenessThresholdMs" — measured the time since a status CHANGE, not the
+  // time since data arrived, and flipped every passed check to Stale on a
+  // ~15 s cycle (F1, F2).
 
   // Only emit progressChanged — this triggers dataChanged() in the model,
   // which updates bindings without destroying delegates.
@@ -977,6 +989,23 @@ void PreflightManager::createPhase1Checks() {
         QStringLiteral("Wiring and connectors secure"),
         QStringLiteral("Propeller/motor mounts undamaged")},
       {}, this));
+
+  // F1–F3: the telemetry streams each live-data check reads. Parameter-based
+  // checks (failsafe settings, mode switch, ...) read no stream.
+  static const QHash<QString, QList<TelemetryStream>> kCheckStreams = {
+    {QStringLiteral("power.battery.voltage"), {TelemetryStream::BatteryStatus}},
+    {QStringLiteral("nav.gps.fix"),           {TelemetryStream::GpsRawInt}},
+    {QStringLiteral("nav.home"),              {TelemetryStream::GpsRawInt}},
+    {QStringLiteral("nav.attitude"),          {TelemetryStream::Attitude}},
+    {QStringLiteral("airframe.imu.cal"),      {TelemetryStream::SysStatus}},
+    {QStringLiteral("comm.rc.rssi"),          {TelemetryStream::RcChannels}},
+    {QStringLiteral("comm.heartbeat"),        {TelemetryStream::Heartbeat}},
+  };
+  for (auto *check : m_checks) {
+    const auto it = kCheckStreams.constFind(check->id());
+    if (it != kCheckStreams.constEnd())
+      check->setRequiredStreams(it.value());
+  }
 
   // Sort by category for deterministic order
   std::sort(m_checks.begin(), m_checks.end(),

@@ -8,6 +8,8 @@
 #include "AbstractCheck.h"
 #include "ManualConfirmCheck.h"
 #include "mocks/MockTelemetryBridge.h"
+#include "utils/MonotonicClock.h"
+#include "utils/TelemetryStream.h"
 
 class PreflightManagerTest : public UnitTest {
     Q_OBJECT
@@ -30,6 +32,9 @@ private slots:
     void testArmedSurvivesTick();
     void testResetForNextFlightClosesGate();
     void testConfirmationNotRestoredAtStartup();
+    void testBatteryStreamStopMarksCheckStale();
+    void testPassedCheckReevaluatedEachTick();
+    void testNeverSeenStreamIsNotStale();
 };
 
 void PreflightManagerTest::testInitialState()
@@ -341,6 +346,98 @@ void PreflightManagerTest::testConfirmationNotRestoredAtStartup()
     }
     QSettings settings;
     settings.remove(QStringLiteral("preflight_overrides"));
+}
+
+namespace {
+// Installs a TestClock for one test and always restores the steady clock.
+struct ScopedTestClock {
+    TestClock clock;
+    ScopedTestClock() { MonotonicClock::setForTesting(&clock); }
+    ~ScopedTestClock() { MonotonicClock::setForTesting(nullptr); }
+};
+}
+
+// Step 2.2 (F1, F3): BATTERY_STATUS stops while everything else is fine → the
+// battery check goes Stale within 5 s instead of passing on the cached voltage,
+// and recovers on the first tick after the stream resumes.
+void PreflightManagerTest::testBatteryStreamStopMarksCheckStale()
+{
+    ScopedTestClock t;
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);   // hasTelemetry() needs quality >= 10
+    bridge.setBatteryVoltage(16.8);
+    bridge.setBatteryPercent(80);
+    PreflightManager mgr;
+    mgr.setTelemetryBridge(&bridge);
+    AbstractCheck *batt = mgr.checkById(QStringLiteral("power.battery.voltage"));
+    QVERIFY(batt);
+
+    bridge.stampStream(TelemetryStream::BatteryStatus);
+    mgr.tick();
+    QCOMPARE(batt->status(), CheckStatus::Passed);
+
+    t.clock.advance(4000);
+    mgr.tick();
+    QCOMPARE(batt->status(), CheckStatus::Passed);   // 4 s: within the 5 s limit
+
+    t.clock.advance(2000);
+    mgr.tick();
+    QCOMPARE(batt->status(), CheckStatus::Stale);    // 6 s without BATTERY_STATUS
+
+    bridge.stampStream(TelemetryStream::BatteryStatus);
+    mgr.tick();
+    QCOMPARE(batt->status(), CheckStatus::Passed);   // stream resumed
+}
+
+// Step 2.2 (F2): a Passed check is re-evaluated on every tick, so a value that
+// degrades after passing fails on the next tick.
+void PreflightManagerTest::testPassedCheckReevaluatedEachTick()
+{
+    ScopedTestClock t;
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);   // hasTelemetry() needs quality >= 10
+    bridge.setBatteryVoltage(16.8);
+    bridge.setBatteryPercent(80);
+    PreflightManager mgr;
+    mgr.setTelemetryBridge(&bridge);
+    AbstractCheck *batt = mgr.checkById(QStringLiteral("power.battery.voltage"));
+    QVERIFY(batt);
+
+    bridge.stampStream(TelemetryStream::BatteryStatus);
+    mgr.tick();
+    QCOMPARE(batt->status(), CheckStatus::Passed);
+
+    QSignalSpy spy(batt, &AbstractCheck::statusChanged);
+    bridge.blockSignals(true);                 // no change notification: only the tick may notice
+    bridge.setBatteryVoltage(9.0);
+    bridge.setBatteryPercent(0);
+    bridge.blockSignals(false);
+    bridge.stampStream(TelemetryStream::BatteryStatus);
+    t.clock.advance(500);
+    mgr.tick();
+    QCOMPARE(batt->status(), CheckStatus::Failed);
+}
+
+// A stream the autopilot never sent is not "stale": the check's own evaluate()
+// reports missing data. Otherwise an unsent stream would block arming forever.
+void PreflightManagerTest::testNeverSeenStreamIsNotStale()
+{
+    ScopedTestClock t;
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);   // hasTelemetry() needs quality >= 10
+    bridge.setBatteryVoltage(16.8);
+    bridge.setBatteryPercent(80);
+    PreflightManager mgr;
+    mgr.setTelemetryBridge(&bridge);
+    AbstractCheck *batt = mgr.checkById(QStringLiteral("power.battery.voltage"));
+    QVERIFY(batt);
+
+    t.clock.advance(60000);
+    mgr.tick();
+    QVERIFY(batt->status() != CheckStatus::Stale);
 }
 
 UT_REGISTER_TEST(PreflightManagerTest)

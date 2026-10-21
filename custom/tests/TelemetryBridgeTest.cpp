@@ -8,6 +8,8 @@ class TelemetryBridgeTest : public UnitTest {
     Q_OBJECT
 
 private slots:
+    void testOnlyAutopilotHeartbeatCounts();
+    void testConnectionQualityDecaysWithHeartbeatGap();
     void init() override { UnitTest::init(); }
     void cleanup() override { UnitTest::cleanup(); }
 
@@ -129,6 +131,28 @@ void TelemetryBridgeTest::testHasParameter()
     bridge.setParameterValue("test_key", 1.0f);
     QVERIFY(bridge.hasParameter("test_key"));
     QVERIFY(!bridge.hasParameter("other_key"));
+}
+
+// Step 2.3 (F4): only the vehicle's own autopilot component counts as link
+// liveness; a companion computer (191) or gimbal (154) heartbeat does not.
+void TelemetryBridgeTest::testOnlyAutopilotHeartbeatCounts()
+{
+    QVERIFY(TelemetryBridge::isAutopilotMessage(1, 1, 1, 1));
+    QVERIFY(!TelemetryBridge::isAutopilotMessage(1, 191, 1, 1));   // companion
+    QVERIFY(!TelemetryBridge::isAutopilotMessage(1, 154, 1, 1));   // gimbal
+    QVERIFY(!TelemetryBridge::isAutopilotMessage(2, 1, 1, 1));     // another vehicle's autopilot
+}
+
+// Step 2.3 (F4): quality falls to 0 within the 10 s staleness limit when
+// autopilot heartbeats stop, instead of freezing at the last value.
+void TelemetryBridgeTest::testConnectionQualityDecaysWithHeartbeatGap()
+{
+    QCOMPARE(TelemetryBridge::connectionQualityForGap(0, 0.0), 100);
+    QCOMPARE(TelemetryBridge::connectionQualityForGap(1200, 0.0), 100);
+    QVERIFY(TelemetryBridge::connectionQualityForGap(3000, 0.0) < 100);
+    QCOMPARE(TelemetryBridge::connectionQualityForGap(6000, 0.0), 0);
+    QCOMPARE(TelemetryBridge::connectionQualityForGap(10000, 0.0), 0);
+    QCOMPARE(TelemetryBridge::connectionQualityForGap(0, 30.0), 70);   // drop-rate cap
 }
 
 UT_REGISTER_TEST(TelemetryBridgeTest)

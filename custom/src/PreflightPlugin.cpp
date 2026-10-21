@@ -557,7 +557,9 @@ void PreflightPlugin::_onGateOpened()
         _vehicleProfileManager->setFlightSessionId(_currentSessionId);
         _currentSessionDeviceUid = key;
     }
-    _sessionStartTime = QDateTime::currentDateTime();
+    // Stored timestamp: UTC (F17). TODO(step3): SessionRecorder takes durations
+    // from a monotonic timer; this gate-driven session code is replaced there.
+    _sessionStartTime = QDateTime::currentDateTimeUtc();
     qCDebug(preflightPluginLog) << "Flight session started:" << _currentSessionId;
 }
 
@@ -571,7 +573,7 @@ void PreflightPlugin::_onGateClosed(const QString &reason)
     Q_UNUSED(reason)
     if (_currentSessionId < 0) return;
     double duration = _sessionStartTime.isValid()
-        ? _sessionStartTime.secsTo(QDateTime::currentDateTime())
+        ? _sessionStartTime.secsTo(QDateTime::currentDateTimeUtc())
         : 0.0;
 
     // Save compliance log for this session
@@ -582,7 +584,7 @@ void PreflightPlugin::_onGateClosed(const QString &reason)
         logEntry[QStringLiteral("deviceUid")] = fp;
         logEntry[QStringLiteral("durationSec")] = duration;
         logEntry[QStringLiteral("startTime")] = _sessionStartTime.toString(Qt::ISODate);
-        logEntry[QStringLiteral("endTime")] = QDateTime::currentDateTime().toString(Qt::ISODate);
+        logEntry[QStringLiteral("endTime")] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
         logEntry[QStringLiteral("gateCloseReason")] = reason;
         QString logJson = QString::fromUtf8(QJsonDocument(logEntry).toJson(QJsonDocument::Compact));
         DatabaseManager::instance().saveComplianceLog(

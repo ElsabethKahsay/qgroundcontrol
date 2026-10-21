@@ -10,5 +10,5 @@ public:
     void evaluate() override;
 private:
     bool m_fetchTriggered = false;
-    QDateTime m_fetchStart;
+    qint64 m_fetchStartMs = -1;   ///< MonotonicClock ms when the fetch started, -1 = none (F17)
 };

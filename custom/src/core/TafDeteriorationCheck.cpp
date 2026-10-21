@@ -1,4 +1,5 @@
 #include "TafDeteriorationCheck.h"
+#include "utils/MonotonicClock.h"
 
 #include "PreflightSettingsManager.h"
 #include "TelemetryBridge.h"
@@ -39,7 +40,7 @@ void TafDeteriorationCheck::evaluate()
     if (taf.isEmpty()) {
         if (!m_fetchTriggered) {
             m_fetchTriggered = true;
-            m_fetchStart = QDateTime::currentDateTime();
+            m_fetchStartMs = MonotonicClock::nowMs();
             if (settings && !settings->defaultIcao().isEmpty()) {
                 wp->fetchTaf(settings->defaultIcao());
             } else if (m_telemetry) {
@@ -51,7 +52,7 @@ void TafDeteriorationCheck::evaluate()
             setStatus(CheckStatus::Pending, QStringLiteral("Fetching TAF data\u2026"));
         }
 
-        if (m_fetchStart.isValid() && m_fetchStart.secsTo(QDateTime::currentDateTime()) > 10) {
+        if (m_fetchStartMs >= 0 && MonotonicClock::ageMs(m_fetchStartMs) > 10000) {
             QString err = wp->lastError();
             if (!err.isEmpty())
                 setStatus(CheckStatus::Skipped, QStringLiteral("Weather fetch failed: ") + err);
@@ -64,7 +65,7 @@ void TafDeteriorationCheck::evaluate()
     }
 
     m_fetchTriggered = false;
-    m_fetchStart = QDateTime();
+    m_fetchStartMs = -1;
 
     if (wp->tafDeteriorating()) {
         QStringList summary = wp->tafSummary();

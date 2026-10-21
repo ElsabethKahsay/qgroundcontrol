@@ -19,6 +19,9 @@
 #include <QHash>
 #include <QDateTime>
 #include <QElapsedTimer>
+#include <QList>
+
+#include "utils/TelemetryStream.h"
 
 class TelemetryBridge;
 
@@ -139,7 +142,16 @@ public:
     bool canOverride() const { return m_canOverride && m_type != CheckType::Auto; }
     QVariant currentValue() const { return m_currentValue; }
 
-    QDateTime lastEvaluationTime() const { return m_lastEvalTime; }
+    /// Monotonic ms (MonotonicClock) of the last evaluation, or -1 if never.
+    /// Refreshed by EVERY setStatus() call, including one that agrees with the
+    /// previous result (F1).
+    qint64 lastEvaluationMs() const { return m_lastEvalMs; }
+
+    /// MAVLink streams this check's evaluate() reads. When one of them was seen
+    /// and then stopped arriving, PreflightManager marks the check Stale instead
+    /// of evaluating it against cached values (F1–F3).
+    QList<TelemetryStream> requiredStreams() const { return m_requiredStreams; }
+    void setRequiredStreams(const QList<TelemetryStream> &streams) { m_requiredStreams = streams; }
     /// Whether the check data is stale and requires re-evaluation.
     bool requiresReevaluation() const;
 
@@ -243,7 +255,8 @@ protected:
     bool m_canOverride = true;     ///< If operator may override result
     bool m_isPostFlight = false;      ///< Whether this check belongs to the post-flight phase
     bool m_isInformational = false;   ///< If true, informational only: excluded from counts and never blocks arming
-    QDateTime m_lastEvalTime;      ///< Timestamp of last evaluate() call
+    qint64 m_lastEvalMs = -1;      ///< Monotonic ms of the last setStatus() (MonotonicClock), -1 = never
+    QList<TelemetryStream> m_requiredStreams; ///< Streams evaluate() depends on (see requiredStreams())
     QList<OverrideRecord> m_overrideHistory; ///< Audit trail of overrides
 
     // --- Telemetry & config ---

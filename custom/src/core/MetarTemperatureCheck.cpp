@@ -1,4 +1,5 @@
 #include "MetarTemperatureCheck.h"
+#include "utils/MonotonicClock.h"
 
 #include "PreflightSettingsManager.h"
 #include "TelemetryBridge.h"
@@ -42,7 +43,7 @@ void MetarTemperatureCheck::evaluate()
     if (!wp->metarFresh()) {
         if (!m_fetchTriggered) {
             m_fetchTriggered = true;
-            m_fetchStart = QDateTime::currentDateTime();
+            m_fetchStartMs = MonotonicClock::nowMs();
             if (settings && !settings->defaultIcao().isEmpty()) {
                 wp->fetchMetar(settings->defaultIcao());
             } else if (m_telemetry) {
@@ -54,7 +55,7 @@ void MetarTemperatureCheck::evaluate()
             setStatus(CheckStatus::Pending, QStringLiteral("Fetching METAR data\u2026"));
         }
 
-        if (m_fetchStart.isValid() && m_fetchStart.secsTo(QDateTime::currentDateTime()) > 10) {
+        if (m_fetchStartMs >= 0 && MonotonicClock::ageMs(m_fetchStartMs) > 10000) {
             // Timeout: check for cached data
             if (wp->temperature() > -100.0) {
                 double temp = wp->temperature();
@@ -83,7 +84,7 @@ void MetarTemperatureCheck::evaluate()
     }
 
     m_fetchTriggered = false;
-    m_fetchStart = QDateTime();
+    m_fetchStartMs = -1;
 
     double temp = wp->temperature();
     double tMin = configDouble(kCfgTempMin, -10.0);

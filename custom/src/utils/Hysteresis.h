@@ -21,6 +21,8 @@
 #include <QElapsedTimer>
 #include <QVector>
 #include <QDateTime>
+
+#include "utils/MonotonicClock.h"
 #include <algorithm>
 #include <cmath>
 
@@ -81,7 +83,7 @@ public:
     void setWindowMs(int ms) { m_windowMs = ms; }
 
     void addSample(T value) {
-        m_samples.append({QDateTime::currentDateTime(), value});
+        m_samples.append({MonotonicClock::nowMs(), value});
         prune();
     }
 
@@ -117,12 +119,12 @@ public:
 private:
     /** Remove samples older than the time window to keep memory bounded. */
     void prune() {
-        QDateTime cutoff = QDateTime::currentDateTime().addMSecs(-m_windowMs);
+        const qint64 cutoff = MonotonicClock::nowMs() - m_windowMs;
         auto it = std::remove_if(m_samples.begin(), m_samples.end(),
             [&cutoff](const auto &s) { return s.first < cutoff; });
         m_samples.erase(it, m_samples.end());
     }
 
-    QVector<QPair<QDateTime, T>> m_samples;
+    QVector<QPair<qint64, T>> m_samples;   // (MonotonicClock ms, value)
     int m_windowMs = 3000;
 };
