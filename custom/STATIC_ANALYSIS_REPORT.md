@@ -29,14 +29,22 @@ Done in the working tree (QML only)
 • Not in the report: AccelConsistencyCheck removed from the preflight checklist (unregistered, removed from CMakeLists.txt, files deleted).
 • Built and partly tested 20 Oct: the incremental build succeeds; QmlShadowTest 5/5, MotorCheckPanelSmokeTest 5/5 and FlyQuickActionsSmokeTest 8/8 pass with no QML runtime errors in the edited files. PreflightManagerTest has 3 failures (testAllMandatoryPassed, testMarkArmedDisarmed, testArmedSurvivesTick) that are not from these changes: they confirm every check and expect arming to be allowed, but confirm() refuses Auto checks and every Auto check becomes mandatory once a vehicle kind is applied. Fix or rewrite them in Step 0/1. Close any running instance of the app before running tests; a second instance hangs at startup.
 
+Done in Step 1 (C++, committed and tagged phase1-step1, 21 Oct)
+• db4e4277b Step 0 baseline (tag phase1-step0). Its baseline-step0.txt only recorded ArmSendTest, not the 18 classes; baseline-step1.txt is the first full run.
+• dc6a42757 1.1 G1: token-bound, 15 s expiring acknowledgment restored.
+• b8d611ff6 1.2 G2, G3: one-tap controls gone, mode read-only, overrideGate() not invokable, QML guard test.
+• a2281c28b 1.3 G4, G9 (part): force arm only in Testing sessions with pilot and reason, logged; HardwareTestController holds the vehicle in a QPointer.
+• 15b93be70 1.4 B1–B5, B7: BenchDisarm helper; no bench path force-disarms; tests refuse on an externally armed vehicle; testBlockedReason in the UI; kForceDisarmParam2.
+• 9449b5a14 1.5 and 1.6: post-flight parked with resetForNextFlight(); confirmations not restored at startup (F16).
+• Test state at phase1-step1 (custom/tests/baseline-step1.txt): 16 of 18 classes fully pass. Known: ArmGateResilienceTest battery-stream freshness test fails until Step 2.2; FlightSessionLifecycleTest segfaults while its third MockLink vehicle connects (stock MockLink lifetime, Step 3 test).
+• Build cost lesson: adding BenchDisarm.{h,cpp} to custom/CMakeLists.txt re-ran CMake, which regenerated the precompiled header and forced 509 recompiles (73 minutes), although the dry run beforehand showed 1 step. Adding or removing a source file is not cheap; prefer adding code to an existing .cpp.
+
 Still open (all C++ unless noted)
-• Item 1: baseline commit, tag and test run.
-• Item 15: G1 restore; G4 C++ side (Testing-only refusal, pilot/reason logging, close window on use); G5–G13; one decide() and requestArm(); wiring every Arm button to requestArm() (QML, needs the C++ first).
-• Item 16: kPostFlightEnabled in Config.h, resetForNextFlight(), FlightSession back to Idle.
+• Item 15 (Step 2): G5–G8, G10–G13; one decide() with requestArm()/previewArm(); wiring every Arm button to requestArm() (QML, needs the C++ first).
 • Items 2–5: data-age freshness, autopilot-only heartbeat, monotonic clocks, armed state from heartbeat.
 • Items 6–8: SessionRecorder, battery pack registry and snapshot (including moving the pack modal into the Power section), database startup and migration fixes.
-• Item 9 (F16), item 10 (F15 RTL), item 11 (disabled-with-reason controls, needs requestArm()).
-• Item 17 (weather W1–W7), item 18 (real gimbal command and feedback), items 19–20 (shared bench disarm helper, Testing-only bench force-arm), item 21 lint test.
+• Item 10 (F15 RTL), item 11 (disabled-with-reason controls, needs requestArm()).
+• Item 17 (weather W2–W4, W6, W7), item 18 (real gimbal command and feedback), item 21 lint test.
 • Items 12–14: SITL campaign, Jetson build (F20 start script), real radio and go/no-go.
 
 Summary
@@ -166,7 +174,7 @@ Safety
 Manual-check confirmations are persisted in QSettings and re-applied at the next startup, before any vehicle connects, so yesterday's "props inspected" can carry into today.
 core/PreflightManager.cpp:190, 1043-1084
 V
-Must — Status 20 Oct: open.
+Must — Status 21 Oct: done, commit 9449b5a14 (overrides no longer restored at startup).
 F17
 Consistency
 All clocks use QDateTime::currentDateTime() (wall clock, 28 sites) instead of a monotonic timer. An NTP or GPS time jump on the Jetson can mark everything stale or keep stale data looking fresh. SQL rows use UTC CURRENT_TIMESTAMP while app-side durations and compliance logs use local time.
@@ -280,22 +288,22 @@ G1
 Critical
 The acknowledgment is not bound to a token and never expires. acknowledgeOverride only sets a flag; m_ackToken is never assigned, so ackTokenForArm() always returns 0; the interceptor's ack branch ignores the call token. Any arm from any path, including stock QGC paths, consumes the ack, and an ack made hours earlier still works. testUnspentAckDeniesStockArmThenAllowsBoundArm and testUnusedAckExpiresAndDenies would fail against this code.
 core/ArmingGate.cpp:229-243, 385-393; core/ArmingGate.h:103-106, 175-181; tests/ArmSendTest.cpp:849-919
-Mint a fresh token on ack, start a single-shot m_ackTimer of m_ackExpiryMs that clears it, and authorize only the call whose token matches. Re-run both tests and mutation-check them. — Status 20 Oct: open. The fix existed in commit 2fd409b49 and was removed by 0a71b8d22; restore those hunks.
+Mint a fresh token on ack, start a single-shot m_ackTimer of m_ackExpiryMs that clears it, and authorize only the call whose token matches. Re-run both tests and mutation-check them. — Status 21 Oct: done, commit dc6a42757: token minted on acknowledge, 15 s single-shot expiry, only the matching call consumes it; ArmSendTest ack tests pass.
 G2
 Critical
 One tap on the mode badge cycles the gate to Passive, which allows every arm. No confirmation, no log, no reason.
 qml/cpts/ArmGatePanel.qml:104; core/ArmingGate.cpp:159-160, 441-447
-Remove the click handler. For Phase 1 fix the mode at Active; if a mode change is ever needed, put it in settings behind a confirmation and log it as an event. — Status 20 Oct: done in QML (badge is display-only). Open: make mode read-only in C++.
+Remove the click handler. For Phase 1 fix the mode at Active; if a mode change is ever needed, put it in settings behind a confirmation and log it as an event. — Status 21 Oct: done: badge display-only (QML) and mode read-only in C++, commit b8d611ff6.
 G3
 High
 "Override" and "Override Gate" call overrideGate(): one tap opens a 30 s window in which every arm from every path passes, ignoring staleness, Training mode and check results, with no pilot name. This undoes the token design.
 qml/cpts/ArmGatePanel.qml:144, qml/cpts/PriorityFixPanel.qml:214; core/ArmingGate.cpp:252-268, 433-438
-Remove both buttons and make overrideGate() non-invokable from QML. Every override goes through the acknowledge dialog. — Status 20 Oct: done in QML (both buttons removed). Open: drop Q_INVOKABLE from overrideGate() or delete it.
+Remove both buttons and make overrideGate() non-invokable from QML. Every override goes through the acknowledge dialog. — Status 21 Oct: done: both buttons removed and overrideGate() no longer invokable from QML, QML guard test, commit b8d611ff6.
 G4
 High
 "Force Arm" is one tap, with no confirmation or pilot name, and is shown even when the gate is open. It sends 2989, which also bypasses ArduPilot's own pre-arm checks.
 qml/cpts/ArmGatePanel.qml:150-168; adapters/TelemetryBridge.cpp:1332-1390
-Show it only in a Testing session (bench), behind a confirmation dialog that requires pilot name and reason, and log each use as a flight event. Close the force window as soon as its token is used, not after 60 s. — Status 20 Oct: partial. QML: Force Arm shows only in a Testing session while the gate denies, behind a pilot/reason/props-off dialog. Open: C++ refusal outside Testing, logging, close window on use.
+Show it only in a Testing session (bench), behind a confirmation dialog that requires pilot name and reason, and log each use as a flight event. Close the force window as soon as its token is used, not after 60 s. — Status 21 Oct: done, commit a2281c28b: forceArm(pilot, reason) refuses outside a Testing session or without pilot/reason, logs every attempt to the compliance log; dialog passes pilot/reason. (Window closes on use: see G9.)
 G5
 High
 The acknowledgment bypasses everything, including "no telemetry" and "telemetry stale". The toolbar opens the acknowledge dialog for any denial, so an operator can acknowledge a dead link and arm.
@@ -320,7 +328,7 @@ G9
 Medium
 resetGate() resets the token counter to 0, so token values repeat across windows, and the force-arm token is left on the vehicle after sending. A stale token can match a later window.
 core/ArmingGate.cpp:277; adapters/TelemetryBridge.cpp:1374
-Never reset the counter (or use a random 32-bit value), and clear the vehicle's token after the command is sent. — Status 20 Oct: open.
+Never reset the counter (or use a random 32-bit value), and clear the vehicle's token after the command is sent. — Status 21 Oct: partly done, commit a2281c28b: the vehicle's force token is cleared before and after sending. Token counter reset in resetGate() still open (Step 2.5).
 G10
 Medium
 The post-disarm reset only runs on vehicleDisarmed, which is emitted from the command-ack handler, so an RC disarm leaves an ack or override in place.
@@ -354,7 +362,7 @@ Tests to add, each mutation-checked: stock arm cannot spend an ack; ack expires;
 Weather, gimbal, flight history and post-flight
 All four of your suspicions are right, and the post-flight feature hides a gate bypass that makes parking it urgent. Reviewed 2026-10-20 from the files, nothing run.
 Post-flight: park it, and close the bypass it causes
-Status 20 Oct: steps 4 (hide entry points) done in QML. Steps 1–3 (kPostFlightEnabled, resetForNextFlight(), FlightSession to Idle) are open, so the bypass still exists.
+Status 21 Oct: done (commit 9449b5a14). Steps 1–4 implemented; FlightSession returns to PreFlight rather than Idle, because Idle here means "no session". The bypass is closed: testResetForNextFlightClosesGate.
 After every disarm, whoever disarmed and in any session mode, FlightSession emits postFlightChecklistRequired (managers/FlightSession.cpp:404-431, called from :136-143). PreflightManager::activatePostFlightChecks then sets every pre-flight check to Skipped (core/PreflightManager.cpp:585-606), and allMandatoryPassed() counts Skipped as passed (:396-403). No check is ever marked post-flight (setIsPostFlight has no caller), so after the first landing every mandatory check reads as passed and nothing re-evaluates them until the next arm (:679, 744). The gate is open for a re-arm with no checks run. [V] code path, [U] until shown in SITL: arm, disarm, then read ArmingGate.armingAllowed.
 How to park post-flight for Phase 1 without breaking anything:
 1. Add one switch, kPostFlightEnabled = false, in utils/Config.h. Keep every post-flight class, column and page in the code; only the wiring is gated.
@@ -422,23 +430,23 @@ Evidence
 B1
 Critical
 Closing the Motor Test dialog calls stopAll(), which force-disarms if armed
-qml/cpts/MotorCheckPanel.qml:159, controllers/HardwareTestController.cpp:1403-1408 — Status 20 Oct: partial, QML stop-gap: the dialog close and its stop button skip stopAll() while the vehicle is armed and flying. C++ stopAll() still force-disarms whenever armed (item 19).
+qml/cpts/MotorCheckPanel.qml:159, controllers/HardwareTestController.cpp:1403-1408 — Status 21 Oct: done, commit 15b93be70: stopAll() only disarms through BenchDisarm (plain disarm, only if this test armed the vehicle, not flying, < 1 m/s). The QML flight guard stays as defence in depth.
 B2
 Critical
 Closing the gimbal/surface page, or its stop button, calls stopAllSurfaces(), which always ends in a forced disarm if armed
-qml/pages/GimbalTest.qml:68-70, 818, controllers/ControlSurfaceTestController.cpp:1072, 1090-1097 — Status 20 Oct: partial, QML stop-gap: page close and Center All skip stopAllSurfaces() while armed and flying. C++ fix open (item 19).
+qml/pages/GimbalTest.qml:68-70, 818, controllers/ControlSurfaceTestController.cpp:1072, 1090-1097 — Status 21 Oct: done, commit 15b93be70: stopAllSurfaces() disarms only through BenchDisarm, only if the controller armed the vehicle.
 B3
 Critical
 STOP ALL on the control-surface panel calls the same stopAll() as B1
-qml/cpts/ControlSurfacePanel.qml:208 — Status 20 Oct: partial, QML stop-gap: STOP ALL is disabled while armed and flying, with a tooltip. C++ fix open (item 19).
+qml/cpts/ControlSurfacePanel.qml:208 — Status 21 Oct: done, commit 15b93be70 (same stopAll() path as B1).
 B4
 High
 Starting a motor test while armed force-disarms first, then runs the test
-controllers/HardwareTestController.cpp:965-974 — Status 20 Oct: open.
+controllers/HardwareTestController.cpp:965-974 — Status 21 Oct: done, commit 15b93be70: a motor test or sweep on a vehicle armed by another source is refused with a reason; nothing is disarmed.
 B5
 High
 The fixed-wing motor test and the surface sweep force-arm with 2989, skipping ArduPilot pre-arm checks, in any session type
-controllers/HardwareTestController.cpp:762-774, controllers/ControlSurfaceTestController.cpp:534-550 — Status 20 Oct: open (item 20).
+controllers/HardwareTestController.cpp:762-774, controllers/ControlSurfaceTestController.cpp:534-550 — Status 21 Oct: done, commits a2281c28b and 15b93be70: force-arm only in a Testing session; a refusal aborts the test; testBlockedReason shown in the UI. (The props-off confirmation is in QML, B6.)
 B6
 Medium
 Props-off is only a text warning, the Open button is always enabled, and the panel says the vehicle stays disarmed, which is wrong for the fixed-wing path
@@ -446,7 +454,7 @@ qml/cpts/MotorCheckPanel.qml:114-135, 381 — Status 20 Oct: done in QML: correc
 B7
 Medium
 The Fly view disarm sends 2989 as param2; ArduPilot's force-disarm value is 21196, so this is probably a plain disarm [U]
-qml/cpts/FlyQuickActions.qml:399-425, core/VehicleProfileManager.cpp:645-664 — Status 20 Oct: open; confirmed (VehicleProfileManager.cpp:651-655 sends kForceArmParam2).
+qml/cpts/FlyQuickActions.qml:399-425, core/VehicleProfileManager.cpp:645-664 — Status 21 Oct: done, commit 15b93be70: the Fly-view force disarm sends kForceDisarmParam2 (21196).
 Fix (must-have items 19 and 20): one disarm helper shared by both test controllers. It sends a plain disarm, only when this test armed the vehicle, and refuses unless the vehicle reports landed and ground speed is under 1 m/s. Closing a dialog or page stops outputs and clears RC overrides but never disarms. Bench force-arm is allowed only in a Testing session, behind a props-off confirmation.
 Other gaps found in the review
 Status 20 Oct: pages and navigatePush unchanged except the hidden Test Gimbal button; MaintenanceTracker and zone compliance open.
@@ -530,7 +538,7 @@ Safety
 Manual confirmations do not survive a restart
 F16
 Stop re-applying QSettings overrides at startup; reset manual and action checks at each new connection session; keep the history in check_results.
-Test: confirm a manual check, restart, reconnect; it is Pending — Status 20 Oct: open.
+Test: confirm a manual check, restart, reconnect; it is Pending — Status 21 Oct: done, commit 9449b5a14.
 10
 Commands
 Return without a nested event loop
@@ -566,13 +574,13 @@ Safety
 Arm gate corrections (do right after item 1)
 G1 to G13
 Restore the bound, expiring acknowledgment; remove the mode-cycle, Override and Override Gate buttons; put Force Arm behind a confirmation in Testing sessions only; one decision function with hard and overridable blocks; observe-only inbound path; one requestArm() for every Arm button.
-Every test listed under Arm gate review passes and is mutation-checked; no QML control can open the gate in one tap — Status 20 Oct: partial. QML done for G2, G3 and the G4 dialog; C++ (G1 restore, decide(), requestArm()) open.
+Every test listed under Arm gate review passes and is mutation-checked; no QML control can open the gate in one tap — Status 21 Oct: partial. G1–G4 done (Step 1); G9 partly; G5–G8, G10–G13, decide()/requestArm() open (Step 2).
 16
 Safety
 Park post-flight and re-run preflight after every disarm (do with item 15)
 Post-flight bypass
 kPostFlightEnabled = false; resetForNextFlight() on disarm; FlightSession returns to Idle; hide the banner and summary buttons; keep code, pages and columns.
-Test: arm, disarm, gate closed and every mandatory check Pending; QML smoke tests still load every page — Status 20 Oct: partial. Banner and both summary buttons hidden in QML; kPostFlightEnabled, resetForNextFlight() and the FlightSession change open.
+Test: arm, disarm, gate closed and every mandatory check Pending; QML smoke tests still load every page — Status 21 Oct: done, commit 9449b5a14: kPostFlightEnabled = false, resetForNextFlight() on disarm, FlightSession back to PreFlight (keeps the session mode), entry points hidden.
 17
 Field
 Reliable weather data
@@ -590,13 +598,13 @@ Safety
 Bench tests never disarm a flying aircraft (do with item 15)
 B1 to B4, B7
 One disarm helper for both test controllers: plain disarm, only when this test armed the vehicle, refused unless landed and ground speed under 1 m/s. Closing a dialog or page stops outputs and RC overrides but never disarms. Check what the Fly view disarm really sends.
-SITL, armed and flying: close Motor Test, close the gimbal page, press STOP ALL; no ARM_DISARM is sent and the vehicle stays armed. Mutation-checked. — Status 20 Oct: partial, QML stop-gap (no stop call while flying); shared C++ disarm helper open.
+SITL, armed and flying: close Motor Test, close the gimbal page, press STOP ALL; no ARM_DISARM is sent and the vehicle stays armed. Mutation-checked. — Status 21 Oct: done, commit 15b93be70 (BenchDisarm; QML flight guard kept).
 20
 Safety
 Bench force-arm only in Testing sessions
 B5, B6
 Allow the fixed-wing motor test and surface sweep only in a Testing session, behind a props-off confirmation; disable test buttons with a reason while armed by anyone else; fix the "stays disarmed" text.
-Test: outside Testing the buttons are disabled with a reason; in Testing no 2989 is sent before the confirmation. — Status 20 Oct: partial. B6 done in QML; Testing-only bench force-arm open.
+Test: outside Testing the buttons are disabled with a reason; in Testing no 2989 is sent before the confirmation. — Status 21 Oct: done, commits a2281c28b, 15b93be70 and the 20 Oct QML props-off confirmation.
 21
 Commands
 One set of status colours on the safety screens
@@ -670,7 +678,7 @@ The system: ArduPilot copters and planes, RC transmitter is primary. The GCS mon
 1. **Order:** Step 0 → Step 1 → Step 2. Commit after each numbered sub-item, with a message naming the finding IDs it fixes (e.g. `gate: restore token-bound expiring ack (G1)`). End each commit message with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 2. **Tests are compiled into the main binary** (Qt Test, registered with `UT_REGISTER_TEST(ClassName)`; test sources in `custom/tests/` are globbed by `custom/CMakeLists.txt`). Build with `cmake --build build -j2` (Debug, Ninja, ccache; an incremental build takes 1–3 minutes, a full one about 2.5 hours, so never clean the build directory). The binary is `build/Debug/PreflightQGroundControl`. Run one class at a time, headless, from the repository root: `QT_QPA_PLATFORM=offscreen timeout 300 build/Debug/PreflightQGroundControl --unittest:ArmSendTest > build/test-logs/ArmSendTest.log 2>&1`. Close any running instance of the app first: a second instance hangs at startup with no output. Run only one build at a time in `build/`. Never run the whole suite in one process: `MainStatusIndicatorSmokeTest` has a known, unrelated teardown segfault (see `custom/doc.md:265`). Skip it, and mention that you skipped it.
 3. **Build budget: no full rebuild in Steps 0 and 1, and none in Step 2 unless a step below says so.** A full build of this tree takes about 2.5 hours on this laptop; the tree was fully built and partly tested on 20 Oct. Rules:
-   - Only ever run the incremental `cmake --build build -j2`. Never delete or clean `build/`, never run `cmake --fresh`, never re-run `cmake -S . -B build` with new `-D` options, never change `CMAKE_BUILD_TYPE`, and never edit the top-level `CMakeLists.txt` or `cmake/`. Editing `custom/CMakeLists.txt` to add or remove a source file is fine: it re-runs CMake configure (about a minute), not a full build.
+   - Only ever run the incremental `cmake --build build -j2`. Never delete or clean `build/`, never run `cmake --fresh`, never re-run `cmake -S . -B build` with new `-D` options, never change `CMAKE_BUILD_TYPE`, and never edit the top-level `CMakeLists.txt` or `cmake/`. Do not add or remove source files in `custom/CMakeLists.txt` unless unavoidable: on 21 Oct adding two files re-ran CMake, regenerated the precompiled header and forced 509 recompiles (73 minutes) while the dry run beforehand showed 1 step. Put new code in an existing `.cpp`/`.h` instead. If you must, say so and get approval first.
    - Before every build, run `ninja -C build -n | grep -c '^\['` (a dry run) and note the step count. If it is above 300, do not build: stop and report what caused it.
    - Do not run git commands that rewrite working-tree files: `git stash`, `git checkout`/`switch` of another branch or commit, `git restore` of source files, `git reset --hard`, `git clean`. They reset file timestamps and make ninja rebuild everything. `git add`, `git commit`, `git tag`, `git diff`, `git log` and `git show` are fine. To look at an old version of a file, use `git show <rev>:<path>` and read the output; never check it out.
    - Expected recompile sizes when a header changes (objects that include it): `TelemetryBridge.h` 64, `AbstractCheck.h` 55, `Config.h` 27, `ArmingGate.h` 17, `PreflightManager.h` 15, `FlightSession.h` 11, `WeatherProvider.h` 9, `HardwareTestController.h` 8, `ControlSurfaceTestController.h` 5. A `.cpp` change recompiles one object plus the link (1–3 minutes). Group the header edits of one sub-item so they share one build, and make mutation-check mutations in a `.cpp` file, not a header, whenever possible.
