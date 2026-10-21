@@ -11,7 +11,7 @@
 
 #include <QDateTime>
 #include <QDebug>
-#include <QEventLoop>
+#include <QPointer>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLoggingCategory>
@@ -106,36 +106,9 @@ bool isArduPilotModeReported(const Vehicle* vehicle, int modeNumber)
     return static_cast<int>(vehicle->customMode()) == modeNumber;
 }
 
-// Bounded wait for the vehicle heartbeat to CONFIRM a mode change. Never claims
-// success from the command send; only the vehicle's reported mode decides.
-bool waitForArduPilotModeConfirm(Vehicle* vehicle, int modeNumber, int timeoutMs)
-{
-    if (isArduPilotModeReported(vehicle, modeNumber)) {
-        return true;
-    }
-    QEventLoop loop;
-    QTimer watchdog;
-    watchdog.setSingleShot(true);
-    watchdog.setInterval(timeoutMs);
-    bool reached = false;
-    QObject::connect(&watchdog, &QTimer::timeout, &loop, &QEventLoop::quit);
-    const QMetaObject::Connection conn = QObject::connect(
-        vehicle, &Vehicle::flightModeChanged, &loop,
-        [&](const QString&) {
-            if (isArduPilotModeReported(vehicle, modeNumber)) {
-                reached = true;
-                loop.quit();
-            }
-        });
-    watchdog.start();
-    if (isArduPilotModeReported(vehicle, modeNumber)) {
-        reached = true;
-    } else {
-        loop.exec();
-    }
-    QObject::disconnect(conn);
-    return reached;
-}
+// Name of the child object that tracks a pending RTL confirmation (item 10).
+const char *const kRtlConfirmWaitName = "rtlConfirmWait";
+constexpr int kRtlConfirmTimeoutMs = 5000;
 }  // namespace
 
 TelemetryBridge::TelemetryBridge(QObject* parent) : QObject(parent) {
@@ -741,11 +714,16 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message) {
             mavlink_rc_channels_t rc;
             mavlink_msg_rc_channels_decode(&message, &rc);
 
-            // Failsafe detection: no channels or RSSI of 0 or 255 (invalid) means RC loss.
+            // Failsafe detection: no channels, or a MEASURED RSSI of 0, means RC
+            // loss. RSSI 255 (UINT8_MAX) is "not reported" in MAVLink — ArduPilot
+            // sends it whenever no RSSI source is configured (RSSI_TYPE = 0) — so
+            // it must not read as a lost link (it used to fail the RC failsafe
+            // and RSSI checks with a working transmitter). Not reported → -1.
             bool wasFailsafe = _rcFailsafe;
-            _rcFailsafe = (rc.chancount == 0 || rc.rssi == 0 || rc.rssi == UINT8_MAX);
-            if (rc.rssi != UINT8_MAX) {
-                _rcRssi = rc.rssi;
+            _rcFailsafe = (rc.chancount == 0 || rc.rssi == 0);
+            const int rssi = (rc.rssi == UINT8_MAX) ? -1 : static_cast<int>(rc.rssi);
+            if (rssi != _rcRssi) {
+                _rcRssi = rssi;
                 emit rcRssiChanged();
             }
             if (wasFailsafe != _rcFailsafe) {
@@ -1503,6 +1481,13 @@ bool TelemetryBridge::returnToLaunch()
         return false;
     }
 
+    // A second press while a confirmation is pending does not start another
+    // command or wait; the pending one reports through rtlCommandCompleted.
+    if (findChild<QObject *>(QString::fromLatin1(kRtlConfirmWaitName), Qt::FindDirectChildrenOnly)) {
+        qCWarning(telemetryBridgeLog) << "returnToLaunch(): RTL already pending confirmation — not resent";
+        return true;
+    }
+
     const double altM = altitudeRelative();
     const double gsMs = groundSpeed();
     const double distM = distanceToHome();
@@ -1532,20 +1517,37 @@ bool TelemetryBridge::returnToLaunch()
                              static_cast<float>(rtlModeId),                         // param2
                              0.0f, 0.0f, 0.0f, 0.0f, 0.0f);                        // param3..7
 
-    // Real feedback: bounded wait for the heartbeat to confirm the RTL mode, and
-    // verify DO_SET_MODE left the armed state alone (ArduPilot contract).
-    const bool modeConfirmed = waitForArduPilotModeConfirm(_vehicle, rtlModeId, 5000);
-    const bool armedPreserved = (_vehicle->armed() == armedBefore);
-
-    qCWarning(telemetryBridgeLog)
-        << "returnToLaunch():"
-        << (modeConfirmed ? "RTL confirmed via heartbeat (custom mode " + QString::number(rtlModeId) + ")"
-                          : "RTL NOT confirmed by vehicle")
-        << "armedPreserved=" << armedPreserved;
-
-    const bool confirmed = modeConfirmed && armedPreserved;
-    emit rtlCommandCompleted(confirmed);
-    return confirmed;
+    // Real feedback, asynchronously (item 10, F15): the heartbeat must report
+    // the RTL mode within 5 s and the armed state must be unchanged. No nested
+    // event loop and no raw Vehicle* across the wait — Return is most likely
+    // pressed during link loss, when the vehicle can be deleted mid-wait.
+    QPointer<Vehicle> vehicle(_vehicle);
+    QObject *wait = new QObject(this);
+    wait->setObjectName(QString::fromLatin1(kRtlConfirmWaitName));
+    auto finish = [this, wait, vehicle, rtlModeId, armedBefore](bool modeConfirmed) {
+        if (wait->property("done").toBool())
+            return;
+        wait->setProperty("done", true);
+        const bool armedPreserved = vehicle && vehicle->armed() == armedBefore;
+        const bool confirmed = vehicle && modeConfirmed && armedPreserved;
+        qCWarning(telemetryBridgeLog)
+            << "returnToLaunch():"
+            << (!vehicle ? QStringLiteral("RTL NOT confirmed — vehicle lost during the wait")
+                : modeConfirmed ? QStringLiteral("RTL confirmed via heartbeat (custom mode %1)").arg(rtlModeId)
+                                : QStringLiteral("RTL NOT confirmed by vehicle within %1 s").arg(kRtlConfirmTimeoutMs / 1000))
+            << "armedPreserved=" << armedPreserved;
+        emit rtlCommandCompleted(confirmed);
+        wait->deleteLater();
+    };
+    connect(_vehicle, &Vehicle::flightModeChanged, wait, [vehicle, rtlModeId, finish](const QString &) {
+        if (vehicle && isArduPilotModeReported(vehicle, rtlModeId))
+            finish(true);
+    });
+    connect(_vehicle, &QObject::destroyed, wait, [finish]() { finish(false); });
+    QTimer::singleShot(kRtlConfirmTimeoutMs, wait, [finish]() { finish(false); });
+    if (isArduPilotModeReported(_vehicle, rtlModeId))
+        QTimer::singleShot(0, wait, [finish]() { finish(true); });   // already in RTL
+    return true;
 }
 
 double TelemetryBridge::distanceToHome() const

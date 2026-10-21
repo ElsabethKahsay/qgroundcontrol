@@ -85,6 +85,8 @@ private slots:
     void testRtlModeIdsPerVehicleType();
     void testRtlSendsRegardlessOfArmGateState();
     void testRtlPreservesArmedState();
+    void testRtlSecondPressWhilePendingNotResent();
+    void testRtlVehicleLostDuringWaitNoCrash();
 
 private:
     bool _pumpUntil(bool (*cond)(void* ctx), void* ctx, int timeoutMs);
@@ -225,6 +227,9 @@ void ReturnToLaunchTest::testRtlPlaneSendsDoSetModeAndConfirms()
     QSignalSpy spyCompleted(&bridge, &TelemetryBridge::rtlCommandCompleted);
 
     const bool result = bridge.returnToLaunch();
+    QVERIFY(result);   // request sent; the outcome is asynchronous (item 10)
+    QVERIFY(_waitForDoSetMode(1));
+    QVERIFY(spyCompleted.count() == 1 || spyCompleted.wait(6000));
 
     // Exactly ONE rtlTriggered with the captured snapshot.
     QCOMPARE(spyTriggered.count(), 1);
@@ -250,7 +255,6 @@ void ReturnToLaunchTest::testRtlPlaneSendsDoSetModeAndConfirms()
     // FlightModeUtil::planeModeNumber() decodes it with the *Plane* table.
     QVERIFY2(static_cast<int>(_vehicle->customMode()) == 11,
              "Mock did not confirm RTL via heartbeat");
-    QCOMPARE(result, true);
     QCOMPARE(spyCompleted.takeFirst().at(0).toBool(), true);
 }
 
@@ -282,13 +286,15 @@ void ReturnToLaunchTest::testRtlModeIdsPerVehicleType()
 
         _mockLink->clearReceivedMavCommandCounts();
         const bool result = bridge.returnToLaunch();
+        QVERIFY(result);
+        QVERIFY(_waitForDoSetMode(1));
 
         QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_DO_SET_MODE), 1);
         QCOMPARE(_mockLink->lastDoSetModeParam2(), c.expectedParam2);
+        QTRY_VERIFY_WITH_TIMEOUT(static_cast<int>(_vehicle->customMode()) == int(c.expectedParam2), 6000);
         QVERIFY2(static_cast<int>(_vehicle->customMode()) == int(c.expectedParam2),
                  qPrintable(QString("RTL %1 not confirmed via heartbeat (custom_mode is %2)")
                                 .arg(c.expectedParam2).arg(_vehicle->customMode())));
-        QVERIFY(result);
     }
 }
 
@@ -352,14 +358,60 @@ void ReturnToLaunchTest::testRtlPreservesArmedState()
     }, &ctx, 5000));
 
     _mockLink->clearReceivedMavCommandCounts();
+    QSignalSpy spyCompleted(&bridge, &TelemetryBridge::rtlCommandCompleted);
     const bool result = bridge.returnToLaunch();
+    QVERIFY(result);
+    QVERIFY(_waitForDoSetMode(1));
 
     QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_DO_SET_MODE), 1);
     QCOMPARE(_mockLink->lastDoSetModeParam2(), 11.0f);
+    QVERIFY(spyCompleted.count() == 1 || spyCompleted.wait(6000));
     QVERIFY2(static_cast<int>(_vehicle->customMode()) == 11,
              "RTL not confirmed via heartbeat");
     QVERIFY2(_vehicle->armed(), "DO_SET_MODE must not disarm the vehicle");
-    QVERIFY(result); // armed-safe + mode-confirmed == success
+    QCOMPARE(spyCompleted.takeFirst().at(0).toBool(), true); // armed-safe + mode-confirmed
+}
+
+// Item 10 (F15): a second Return press while the first is still waiting for
+// its heartbeat confirmation sends nothing new and starts no second wait.
+void ReturnToLaunchTest::testRtlSecondPressWhilePendingNotResent()
+{
+    QVERIFY(_connectMock(&MockLink::startAPMArduPlaneMockLink));
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setVehicle(_vehicle);
+    QSignalSpy spyCompleted(&bridge, &TelemetryBridge::rtlCommandCompleted);
+
+    _mockLink->clearReceivedMavCommandCounts();
+    QVERIFY(bridge.returnToLaunch());
+    QVERIFY(bridge.returnToLaunch());          // pressed again before confirmation
+    QVERIFY(_waitForDoSetMode(1));
+    QVERIFY(spyCompleted.count() == 1 || spyCompleted.wait(6000));
+    QTest::qWait(300);
+
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_DO_SET_MODE), 1);
+    QCOMPARE(spyCompleted.count(), 1);
+}
+
+// Item 10 (F15): the vehicle is deleted (link loss) while Return waits for its
+// confirmation. No crash, and exactly one completion is reported. (The old code
+// ran a nested event loop and then dereferenced the raw vehicle pointer.)
+void ReturnToLaunchTest::testRtlVehicleLostDuringWaitNoCrash()
+{
+    QVERIFY(_connectMock(&MockLink::startAPMArduPlaneMockLink));
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setVehicle(_vehicle);
+    // What the plugin does on vehicle removal: the bridge drops the vehicle.
+    connect(_vehicle, &QObject::destroyed, &bridge, [&bridge]() { bridge.setVehicle(nullptr); });
+    QSignalSpy spyCompleted(&bridge, &TelemetryBridge::rtlCommandCompleted);
+
+    QVERIFY(bridge.returnToLaunch());
+    _disconnectMockLink();                     // vehicle deleted during the wait
+
+    QVERIFY(spyCompleted.count() == 1 || spyCompleted.wait(7000));
+    QTest::qWait(300);
+    QCOMPARE(spyCompleted.count(), 1);
 }
 
 UT_REGISTER_TEST(ReturnToLaunchTest)

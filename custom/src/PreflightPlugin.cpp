@@ -278,6 +278,12 @@ void PreflightPlugin::init()
     connect(_armingGate, &ArmingGate::commandRejected, this, [](const QString &reason) {
         qgcApp()->showAppMessage(reason);
     });
+    // Item 10/11: Return reports its real outcome (heartbeat-confirmed or not).
+    connect(_telemetryBridge, &TelemetryBridge::rtlCommandCompleted, this, [this](bool confirmed) {
+        qgcApp()->showAppMessage(confirmed
+            ? tr("Return confirmed: the vehicle reports RTL mode")
+            : tr("Return NOT confirmed by the vehicle — check its flight mode"));
+    });
 
     connect(_armingGate, &ArmingGate::gateOpened,
             this, &PreflightPlugin::_onGateOpened);

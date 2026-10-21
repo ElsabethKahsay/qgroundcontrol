@@ -756,10 +756,10 @@ public:
     /// MAV_CMD_DO_SET_MODE command-long (the custom-mode form ArduPilot uses
     /// for flight-mode changes: param1 = MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
     /// param2 = the RTL custom-mode number, copter 6 / plane+rover 11), then
-    /// waits (bounded, ~5 s) for the vehicle heartbeat to confirm the mode.
-    /// Returns the REAL outcome — true only once the heartbeat shows the RTL
-    /// custom mode AND the armed state was preserved by the mode change — never
-    /// "command sent" claimed as success. A timestamped RTL_TRIGGERED event is
+    /// confirms ASYNCHRONOUSLY (no nested event loop; item 10): returns true when
+    /// the request was sent (or one is already pending), false when refused.
+    /// The REAL outcome arrives on rtlCommandCompleted(): true only once the
+    /// heartbeat shows the RTL mode within 5 s AND armed state is unchanged. A timestamped RTL_TRIGGERED event is
     /// logged and emitted (compliance).
     /// Requires: vehicle connected (no arming/preflight gating by design).
     Q_INVOKABLE bool returnToLaunch();
