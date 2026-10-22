@@ -314,7 +314,9 @@ bool DatabaseManager::initialize(const QString &dbPath)
 //       flight_sessions becomes the arm-to-disarm flight record (connection,
 //       arm source, gate state, bench flag, end reason, running summary);
 //       check_results keyed to the connection session
-static const int kLatestSchemaVersion = 21;
+//  22 - flight_batteries: a frozen copy of each pack on each flight, plus its
+//       measured start/end voltage and percent, minimum voltage, mAh and Wh
+static const int kLatestSchemaVersion = 22;
 
 bool DatabaseManager::createTables()
 {
@@ -1658,6 +1660,29 @@ bool DatabaseManager::migrateSchema()
             q.exec("CREATE INDEX IF NOT EXISTS idx_flight_sessions_connection ON flight_sessions(connection_session_id)");
             break;
         }
+        case 22: {
+            q.exec("CREATE TABLE IF NOT EXISTS flight_batteries ("
+                   "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                   "flight_session_id INTEGER NOT NULL,"
+                   "slot INTEGER NOT NULL DEFAULT 1,"
+                   "pack_serial TEXT,"
+                   "pack_label TEXT,"
+                   "chemistry TEXT,"
+                   "series_cells INTEGER,"
+                   "parallel_cells INTEGER,"
+                   "cell_mah INTEGER,"
+                   "rated_mah INTEGER,"
+                   "start_voltage REAL,"
+                   "start_percent INTEGER,"
+                   "end_voltage REAL,"
+                   "end_percent INTEGER,"
+                   "min_voltage REAL,"
+                   "mah_used REAL,"
+                   "wh_used REAL,"
+                   "UNIQUE(flight_session_id, slot))");
+            q.exec("CREATE INDEX IF NOT EXISTS idx_flight_batteries_pack ON flight_batteries(pack_serial)");
+            break;
+        }
         default:
             qWarning() << "DatabaseManager: unknown migration version" << v;
             m_db.rollback();
@@ -1893,6 +1918,58 @@ bool DatabaseManager::logSessionEvent(int connectionSessionId, int flightId,
     q.addBindValue(detail.isNull() ? QStringLiteral("") : detail);
     q.addBindValue(utcNowIso());
     return execOrWarn(q, "logSessionEvent");
+}
+
+static QVariant realOrNull(double v, double min = 0.0)
+{
+    return (std::isfinite(v) && v >= min) ? QVariant(v) : QVariant(QMetaType::fromType<double>());
+}
+
+static QVariant percentOrNull(int pct)
+{
+    return (pct >= 0 && pct <= 100) ? QVariant(pct) : QVariant(QMetaType::fromType<int>());
+}
+
+bool DatabaseManager::openFlightBattery(int flightId, int slot, const QVariantMap &pack,
+                                        double startVoltage, int startPercent)
+{
+    assertMainThread();
+    if (!m_initialized || flightId <= 0) return false;
+    QSqlQuery q(m_db);
+    q.prepare("INSERT INTO flight_batteries (flight_session_id, slot, pack_serial, pack_label, chemistry, "
+              "series_cells, parallel_cells, cell_mah, rated_mah, start_voltage, start_percent) "
+              "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    auto val = [&pack](const char *k) { return pack.value(QLatin1String(k)); };
+    q.addBindValue(flightId);
+    q.addBindValue(slot);
+    q.addBindValue(val("serial").toString().isEmpty() ? QVariant(QMetaType::fromType<QString>()) : val("serial"));
+    q.addBindValue(val("label").toString());
+    q.addBindValue(val("chemistry").toString());
+    q.addBindValue(pack.contains(QStringLiteral("series")) ? val("series") : QVariant(QMetaType::fromType<int>()));
+    q.addBindValue(pack.contains(QStringLiteral("parallel")) ? val("parallel") : QVariant(QMetaType::fromType<int>()));
+    q.addBindValue(pack.contains(QStringLiteral("cellMah")) ? val("cellMah") : QVariant(QMetaType::fromType<int>()));
+    q.addBindValue(pack.contains(QStringLiteral("ratedMah")) ? val("ratedMah") : QVariant(QMetaType::fromType<int>()));
+    q.addBindValue(realOrNull(startVoltage, 0.1));
+    q.addBindValue(percentOrNull(startPercent));
+    return execOrWarn(q, "openFlightBattery");
+}
+
+bool DatabaseManager::closeFlightBattery(int flightId, int slot, double endVoltage, int endPercent,
+                                         double minVoltage, double mahUsed, double whUsed)
+{
+    assertMainThread();
+    if (!m_initialized || flightId <= 0) return false;
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE flight_batteries SET end_voltage = ?, end_percent = ?, min_voltage = ?, "
+              "mah_used = ?, wh_used = ? WHERE flight_session_id = ? AND slot = ?");
+    q.addBindValue(realOrNull(endVoltage, 0.1));
+    q.addBindValue(percentOrNull(endPercent));
+    q.addBindValue(realOrNull(minVoltage, 0.1));
+    q.addBindValue(realOrNull(mahUsed));
+    q.addBindValue(realOrNull(whUsed));
+    q.addBindValue(flightId);
+    q.addBindValue(slot);
+    return execOrWarn(q, "closeFlightBattery");
 }
 
 void DatabaseManager::setRecordingContext(int connectionSessionId, int flightId, const QString &deviceUid)

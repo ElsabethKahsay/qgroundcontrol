@@ -26,6 +26,7 @@
 #include <limits>
 
 #include <QDateTime>
+#include <QVariantMap>
 #include <QObject>
 #include <QTimer>
 
@@ -40,6 +41,9 @@ public:
     struct Sample {
         double voltage = std::numeric_limits<double>::quiet_NaN();
         double mahConsumed = -1;   ///< FC counter for the pack; -1 = unknown
+        int percent = -1;          ///< state of charge; -1 = unknown
+        double energyWh = -1;      ///< FC energy counter (BATTERY_STATUS.energy_consumed); -1 = unknown
+        double distanceM = -1;     ///< vehicle's flown-distance counter; -1 = unknown
     };
 
     /// What is known at the arm transition.
@@ -50,6 +54,7 @@ public:
         bool gateAllowed = false;  ///< the arming gate's verdict at that moment
         QString mode;              ///< session mode: Flight, Testing, Training
         bool bench = false;        ///< motor/servo test or Testing mode: no hours, no cycles
+        QVariantMap pack;          ///< DatabaseManager::batteryPack() of the selected pack (F8 snapshot)
     };
 
     /// What a closed flight was, for the caller's follow-up (battery cycle...).
@@ -61,7 +66,19 @@ public:
         QString endReason;
         double durationSec = 0.0;
         double mahUsed = -1;       ///< -1 = unknown
+        double whUsed = -1;        ///< -1 = unknown
     };
+
+    /// F10: energy used. The FC's energy counter when it reports one;
+    /// otherwise mAh used x mean voltage; -1 when neither is known.
+    static double energyUsedWh(double startWh, double endWh, double mahUsed, double startV, double endV)
+    {
+        if (startWh >= 0 && endWh >= startWh)
+            return endWh - startWh;
+        if (mahUsed >= 0 && std::isfinite(startV) && std::isfinite(endV) && startV > 0 && endV > 0)
+            return mahUsed * (startV + endV) / 2.0 / 1000.0;
+        return -1;
+    }
 
     explicit SessionRecorder(DatabaseManager &db, QObject *parent = nullptr)
         : QObject(parent), m_db(db)
@@ -123,8 +140,12 @@ public:
                                            start.armSource, start.gateAllowed, start.mode, start.bench);
         m_flightStartMs = MonotonicClock::nowMs();
         const Sample s = sample();
+        m_startSample = s;
         m_startMah = s.mahConsumed;
         m_minVoltage = s.voltage;
+        // F8: the pack as it was at arm; editing it later changes no flight.
+        if (m_flightId > 0)
+            m_db.openFlightBattery(m_flightId, 1, start.pack, s.voltage, s.percent);
         updateContext();
     }
 
@@ -202,8 +223,15 @@ private:
         end.endReason = reason;
         end.durationSec = elapsedSec(atLinkLoss ? m_linkLostAtMs : MonotonicClock::nowMs());
         end.mahUsed = mahUsed(s.mahConsumed);
+        end.whUsed = energyUsedWh(m_startSample.energyWh, s.energyWh, end.mahUsed, m_startSample.voltage, s.voltage);
         m_db.closeFlightRecord(m_flightId, end.durationSec, reason, atLinkLoss ? m_linkLostAtUtc : QString(),
                                m_minVoltage, end.mahUsed);
+        m_db.closeFlightBattery(m_flightId, 1, s.voltage, s.percent, m_minVoltage, end.mahUsed, end.whUsed);
+        // F10: energy and distance from measurements only; unknown stays unset.
+        const double distM = (m_startSample.distanceM >= 0 && s.distanceM >= m_startSample.distanceM)
+                ? s.distanceM - m_startSample.distanceM : -1;
+        if (end.whUsed >= 0 || distM >= 0)
+            m_db.updateFlightSessionEnergy(m_flightId, qMax(0.0, end.whUsed), qMax(0.0, distM));
         m_flightId = -1;
         m_startMah = -1;
         m_minVoltage = std::numeric_limits<double>::quiet_NaN();
@@ -224,6 +252,7 @@ private:
     QString m_deviceUid;
     int m_flightId = -1;
     FlightStart m_start;
+    Sample m_startSample;
     qint64 m_flightStartMs = MonotonicClock::kNever;
     double m_startMah = -1;
     double m_minVoltage = std::numeric_limits<double>::quiet_NaN();

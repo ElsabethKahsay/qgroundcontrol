@@ -26,6 +26,9 @@
 #include <QVariantList>
 #include <QDateTime>
 #include <QStringList>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QtMath>
 
 class WeatherProvider : public QObject
 {
@@ -61,6 +64,9 @@ class WeatherProvider : public QObject
     Q_PROPERTY(bool windOk READ windOk NOTIFY weatherUpdated)
     Q_PROPERTY(QString lastUpdated READ lastUpdated NOTIFY weatherUpdated)
     Q_PROPERTY(bool isFetching READ isFetching NOTIFY loadingChanged)
+    /// W3: where the shown values come from, e.g. "METAR HAAB, observed 09:00Z"
+    /// or "Forecast (Open-Meteo), fetched 12:00Z"; empty before any data.
+    Q_PROPERTY(QString weatherSource READ weatherSource NOTIFY weatherUpdated)
 
 public:
     static WeatherProvider *instance();
@@ -97,6 +103,7 @@ public:
     bool windOk() const;
     QString lastUpdated() const;
     bool isFetching() const { return m_loading; }
+    QString weatherSource() const;
 
     Q_INVOKABLE void fetchWeather(double latitude, double longitude);
     Q_INVOKABLE void fetchMetar(const QString &icaoCode);
@@ -123,28 +130,40 @@ private:
     void handleTafJson(const QByteArray &data);
     void handleNotamJson(const QByteArray &data);
     void parsePrecipitation(const QString &metar);
+    void handleForecastJson(const QByteArray &data);
+
+    // W4: the current aviationweather.gov METAR JSON format.
+    /// obsTime is Unix seconds (an ISO string is still accepted).
+    static QDateTime parseObsTime(const QJsonObject &metar);
+    /// visib is statute miles as a number or a string such as "10+"; NaN if absent.
+    static double parseVisibilitySm(const QJsonValue &visib);
+    /// Ceiling = base of the lowest BKN / OVC / OVX layer in clouds[]; -1 = none.
+    static int ceilingFromClouds(const QJsonArray &clouds);
 
     static WeatherProvider *s_instance;
 
     QNetworkAccessManager m_nam;
     QNetworkDiskCache *m_cache = nullptr;
 
-    double m_temperature = 0.0;
-    double m_windSpeed = 0.0;
-    double m_windGust = 0.0;
-    double m_windDirection = 0.0;
+    // W6: a value nobody reported is NaN (ceiling -1), never a real-looking 0.
+    double m_temperature = qQNaN();
+    double m_windSpeed = qQNaN();
+    double m_windGust = qQNaN();
+    double m_windDirection = qQNaN();   ///< NaN also for variable (VRB) wind
     int m_weatherCode = 0;
     QString m_flightCategory;   ///< METAR flight category (VFR/MVFR/IFR/LIFR); empty for Open-Meteo data
-    double m_visibility = 0.0;
-    double m_humidity = 0.0;
+    double m_visibility = qQNaN();
+    double m_humidity = qQNaN();
     bool m_loading = false;
     QString m_lastError;
 
     // METAR
-    double m_visibilityKm = 0.0;
-    int m_ceilingFt = 0;
+    double m_visibilityKm = qQNaN();
+    int m_ceilingFt = -1;          ///< -1 = no ceiling reported / unknown
     QString m_metarString;
-    QDateTime m_metarTimestamp;
+    QDateTime m_metarTimestamp;    ///< W2: set ONLY from a METAR's observation time
+    QDateTime m_forecastTimestamp; ///< when the Open-Meteo forecast was fetched
+    bool m_fromMetar = false;      ///< W3: the shown values are the METAR's
     QStringList m_metarParsed;
     QStringList m_precipitation;
     QString m_stationId;

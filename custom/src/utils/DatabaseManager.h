@@ -464,6 +464,11 @@ public:
     bool closeFlightRecord(int flightId, double durationSec, const QString &endReason,
                            const QString &endedAtUtc, double minVoltage, double mahUsed);
     bool logSessionEvent(int connectionSessionId, int flightId, const QString &event, const QString &detail);
+    /// F8: frozen copy of the pack (batteryPack() map) at arm, with start values.
+    bool openFlightBattery(int flightId, int slot, const QVariantMap &pack, double startVoltage, int startPercent);
+    /// End values; unknown ones (NaN / negative) are stored as NULL, not 0.
+    bool closeFlightBattery(int flightId, int slot, double endVoltage, int endPercent,
+                            double minVoltage, double mahUsed, double whUsed);
     /// Where recordCheckResult() files results (set by SessionRecorder).
     void setRecordingContext(int connectionSessionId, int flightId, const QString &deviceUid);
     /// F11: a check result keyed to the current connection session and flight.

@@ -49,6 +49,8 @@ private slots:
     void testRecorderLinkLossClosesAtLossTime();
     void testRecorderCrashRecoveryClosesBothTables();
     void testRecorderCheckResultsKeyedToSession();
+    void testRecorderBatterySnapshotIsFrozen();
+    void testRecorderEnergyFromMeasurementsOnly();
     void testIncrementBatteryCycleGuard();
     void testFlightSessionRoundTrip();
     void testCheckResultAuditTrail();
@@ -401,6 +403,69 @@ void DatabaseManagerTest::testRecorderCheckResultsKeyedToSession()
     QCOMPARE(r.value(QStringLiteral("flight_session_id")).toInt(), 0);
     r = row(QStringLiteral("SELECT * FROM check_results WHERE check_id = 'power.battery.voltage'"));
     QCOMPARE(r.value(QStringLiteral("flight_session_id")).toInt(), rec.flightId());
+}
+
+// F8: each flight keeps the pack as it was at arm; editing the pack later
+// changes no flight. Start/end values and the FC energy counter are stored.
+void DatabaseManagerTest::testRecorderBatterySnapshotIsFrozen()
+{
+    RecorderFixture f;
+    QVERIFY(f.init());
+    DatabaseManager &db = DatabaseManager::instance();
+    QVERIFY(db.saveBatteryPack(QStringLiteral("PK-9"), QStringLiteral("Wing B"), QStringLiteral("LiIon"), 4, 2, 3000));
+    SessionRecorder rec(db);
+    f.wire(rec);
+    rec.connectionOpened(QStringLiteral("UID-R"), QStringLiteral("Flight"), QString(), QString());
+
+    SessionRecorder::FlightStart st = start(QStringLiteral("gcs"));
+    st.batterySerial = QStringLiteral("PK-9");
+    st.pack = db.batteryPack(QStringLiteral("PK-9"));
+    f.sample = SessionRecorder::Sample{16.6, 0.0, 98, 2.0, 100.0};
+    rec.armed(st);
+    const int id = rec.flightId();
+    QVERIFY(db.saveBatteryPack(QStringLiteral("PK-9"), QStringLiteral("Wing B"), QStringLiteral("LiIon"), 4, 2, 3500));   // edited mid-flight
+    f.clock.advance(600000);
+    f.sample = SessionRecorder::Sample{14.9, 2400.0, 41, 40.0, 5100.0};
+    const SessionRecorder::FlightEnd end = rec.disarmed();
+    QCOMPARE(end.whUsed, 38.0);                             // FC energy counter: 40 - 2
+
+    const QVariantMap b = row(QStringLiteral("SELECT * FROM flight_batteries WHERE flight_session_id = %1").arg(id));
+    QCOMPARE(b.value(QStringLiteral("pack_serial")).toString(), QStringLiteral("PK-9"));
+    QCOMPARE(b.value(QStringLiteral("cell_mah")).toInt(), 3000);       // as at arm, not 3500
+    QCOMPARE(b.value(QStringLiteral("rated_mah")).toInt(), 6000);
+    QCOMPARE(b.value(QStringLiteral("chemistry")).toString(), QStringLiteral("LiIon"));
+    QCOMPARE(b.value(QStringLiteral("start_voltage")).toDouble(), 16.6);
+    QCOMPARE(b.value(QStringLiteral("end_voltage")).toDouble(), 14.9);
+    QCOMPARE(b.value(QStringLiteral("start_percent")).toInt(), 98);
+    QCOMPARE(b.value(QStringLiteral("end_percent")).toInt(), 41);
+    QCOMPARE(b.value(QStringLiteral("mah_used")).toDouble(), 2400.0);
+    QCOMPARE(b.value(QStringLiteral("wh_used")).toDouble(), 38.0);
+    const QVariantMap fs = row(QStringLiteral("SELECT energy_consumed_wh, distance_m FROM flight_sessions WHERE id = %1").arg(id));
+    QCOMPARE(fs.value(QStringLiteral("energy_consumed_wh")).toDouble(), 38.0);
+    QCOMPARE(fs.value(QStringLiteral("distance_m")).toDouble(), 5000.0);
+}
+
+// F10: no FC energy counter -> mAh x mean voltage; nothing known -> NULL, not 0.
+void DatabaseManagerTest::testRecorderEnergyFromMeasurementsOnly()
+{
+    QCOMPARE(SessionRecorder::energyUsedWh(-1, -1, 2000.0, 16.0, 14.0), 30.0);
+    QCOMPARE(SessionRecorder::energyUsedWh(5.0, 3.0, 2000.0, 16.0, 14.0), 30.0);   // counter reset: fall back
+    QCOMPARE(SessionRecorder::energyUsedWh(-1, -1, -1, 16.0, 14.0), -1.0);
+
+    RecorderFixture f;
+    QVERIFY(f.init());
+    SessionRecorder rec(DatabaseManager::instance());
+    f.wire(rec);
+    rec.connectionOpened(QStringLiteral("UID-R"), QStringLiteral("Flight"), QString(), QString());
+    rec.armed(start(QStringLiteral("external")));          // no pack, no battery data at all
+    const int id = rec.flightId();
+    rec.disarmed();
+    const QVariantMap b = row(QStringLiteral("SELECT * FROM flight_batteries WHERE flight_session_id = %1").arg(id));
+    QVERIFY(!b.isEmpty());
+    QVERIFY(b.value(QStringLiteral("pack_serial")).isNull());
+    QVERIFY(b.value(QStringLiteral("start_voltage")).isNull());
+    QVERIFY(b.value(QStringLiteral("wh_used")).isNull());
+    QVERIFY(b.value(QStringLiteral("mah_used")).isNull());
 }
 
 void DatabaseManagerTest::testDoubleIncrementGuard()

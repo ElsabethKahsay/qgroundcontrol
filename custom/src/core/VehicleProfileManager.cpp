@@ -1092,9 +1092,10 @@ void VehicleProfileManager::setPlanLongitude(double lon)
 }
 
 /// Track arm/disarm transitions.
-/// On arm: start the armed timer and record battery % for delta calculation.
-/// On disarm: if armed long enough (configurable threshold, default 30 s), record
-/// a battery cycle, estimate energy consumption, and log flight distance.
+/// Tracks the armed timer and the battery % at arm. Battery cycles, energy and
+/// distance per flight are no longer written here: SessionRecorder is their one
+/// writer (F9: the 30 s disarm rule double-counted cycles; F10: the energy guess
+/// read PX4's BAT_CAPACITY, so ArduPilot fell back to 0.45 Ah per %).
 void VehicleProfileManager::_onArmedChanged(bool armed)
 {
     if (armed == m_wasArmed)
@@ -1106,49 +1107,6 @@ void VehicleProfileManager::_onArmedChanged(bool armed)
         if (m_telemetry)
             m_armBatteryPct = m_telemetry->property("batteryPercent").toDouble();
     } else {
-        // Disarm — check if it was a real flight (not just a test arm)
-        int armedThresholdMs = [this]() {
-        QString val = DatabaseManager::instance().getCheckConfig("vehicle_profile", "armed_timer_threshold_ms");
-        if (!val.isEmpty()) { bool ok; int v = val.toInt(&ok); if (ok) return v; }
-        return kArmedTimerThresholdMs;
-    }();
-    if (m_armedTimer.isValid() && m_armedTimer.elapsed() > armedThresholdMs) {
-            // F9 / Step 3 item 7: battery cycles have ONE writer now,
-            // DatabaseManager::recordBatteryFlight() at session end (a flight
-            // that used >= 20 % of the pack's rated capacity). The 30 s
-            // disarm rule that also wrote here double-counted cycles.
-
-            // Record energy consumption for power model calibration.
-            if (m_flightSessionId > 0 && m_telemetry) {
-                double disarmPct = m_telemetry->property("batteryPercent").toDouble();
-                double pctUsed = 0.0;
-                if (m_armBatteryPct > 0 && disarmPct >= 0)
-                    pctUsed = qBound(0.0, m_armBatteryPct - disarmPct, 100.0);
-                double batteryVoltage = m_telemetry->property("batteryVoltage").toDouble();
-                // Use battery capacity parameter if available for accurate Wh calculation;
-                // fall back to a rough 0.45 Ah-per-percent estimate otherwise.
-                double energyWh = pctUsed * batteryVoltage * kEnergyWhPerPercentAh;
-                if (m_telemetry->hasParameter("BAT_CAPACITY")) {
-                    float capMah = m_telemetry->parameterValue("BAT_CAPACITY", 0.0f);
-                    if (capMah > 0)
-                        energyWh = (pctUsed / 100.0) * capMah * batteryVoltage / 1000.0;
-                } else if (m_telemetry->hasParameter("BAT1_CAPACITY")) {
-                    float capMah = m_telemetry->parameterValue("BAT1_CAPACITY", 0.0f);
-                    if (capMah > 0)
-                        energyWh = (pctUsed / 100.0) * capMah * batteryVoltage / 1000.0;
-                }
-
-                double distM = m_telemetry->property("missionTotalDistance").toDouble();
-                if (distM <= 0.0) {
-                    // Fallback: estimate from ground speed * duration
-                    double gndSpd = m_telemetry->property("groundSpeed").toDouble();
-                    double durSec = m_armedTimer.elapsed() / 1000.0;
-                    distM = gndSpd * durSec;
-                }
-                DatabaseManager::instance().updateFlightSessionEnergy(
-                    m_flightSessionId, energyWh, distM);
-            }
-        }
         m_armBatteryPct = -1.0;
     }
 }

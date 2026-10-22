@@ -4,6 +4,7 @@
 #include <QMultiHash>
 #include <QDirIterator>
 #include <QFile>
+#include <QRegularExpression>
 #include <QSet>
 #include <QStringList>
 #include <QTest>
@@ -134,6 +135,7 @@ private slots:
     void testShadowedOverridesCarryCustomContent();
     void testNoUndeclaredQmlShadow();
     void testArmControlsCannotOpenGateInOneTap();
+    void testNoColourLiteralsOutsideSingletons();
 };
 
 // Core invariant: whatever custom.qrc declares at a resource path is what the
@@ -314,6 +316,55 @@ void QmlShadowTest::testArmControlsCannotOpenGateInOneTap()
     QVERIFY2(!gateHeader.isEmpty(), "cannot read ArmingGate.h");
     QVERIFY2(!gateHeader.contains("Q_PROPERTY(Mode mode READ mode WRITE"),
              "ArmingGate.mode is still writable from QML");
+}
+
+// Item 21: pass / fail / warn / stale must look the same on every screen, so
+// colours come only from the Colors singleton. Fails on a hex colour literal in
+// any custom QML file outside qml/singletons/, and on a named colour other than
+// "transparent" on the safety screens (checklists, arm gate, Fly-view layer).
+void QmlShadowTest::testNoColourLiteralsOutsideSingletons()
+{
+    if (_sourceDir().isEmpty()) {
+        QSKIP("no source tree next to the executable (packaged run); colour lint skipped");
+    }
+    const QString qmlDir = _sourceDir() + QStringLiteral("/custom/qml");
+    static const QRegularExpression hexLiteral(QStringLiteral("[\"']#[0-9a-fA-F]{3,8}[\"']"));
+    static const QRegularExpression namedColour(
+        QStringLiteral("\\b(?:color|Color)\\s*:\\s*\"(?!transparent\")[a-zA-Z]+\""));
+    static const QSet<QString> safetyScreens = {
+        QStringLiteral("cpts/PreflightChecklistView.qml"), QStringLiteral("pages/PreFlightChecklist.qml"),
+        QStringLiteral("cpts/ArmGatePanel.qml"), QStringLiteral("cpts/ArmGateDialog.qml"),
+        QStringLiteral("cpts/ActionCheckCard.qml"), QStringLiteral("cpts/ChecklistEngine.qml"),
+        QStringLiteral("PreflightToolbarIndicator.qml"), QStringLiteral("cpts/WizardStep4Review.qml"),
+        QStringLiteral("cpts/FlyViewTelemetryStrip.qml"), QStringLiteral("FlyViewCustomLayer.qml"),
+        QStringLiteral("MainStatusIndicator.qml"), QStringLiteral("pages/GimbalTest.qml"),
+    };
+
+    QStringList offenders;
+    int files = 0;
+    QDirIterator it(qmlDir, QStringList{QStringLiteral("*.qml")}, QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        const QString path = it.next();
+        const QString rel = QDir(qmlDir).relativeFilePath(path);
+        if (rel.startsWith(QStringLiteral("singletons/")))
+            continue;
+        QFile f(path);
+        if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+            continue;
+        ++files;
+        int lineNo = 0;
+        while (!f.atEnd()) {
+            const QString line = QString::fromUtf8(f.readLine());
+            ++lineNo;
+            const QString code = line.section(QStringLiteral("//"), 0, 0);   // ignore comments
+            if (hexLiteral.match(code).hasMatch()
+                || (safetyScreens.contains(rel) && namedColour.match(code).hasMatch()))
+                offenders << QStringLiteral("%1:%2: %3").arg(rel).arg(lineNo).arg(line.trimmed());
+        }
+    }
+    QVERIFY2(files > 50, qPrintable(QStringLiteral("only %1 QML files found under %2").arg(files).arg(qmlDir)));
+    QVERIFY2(offenders.isEmpty(),
+             qPrintable(QStringLiteral("colour literals (use a Colors token):\n") + offenders.join(QLatin1Char('\n'))));
 }
 
 UT_REGISTER_TEST(QmlShadowTest)

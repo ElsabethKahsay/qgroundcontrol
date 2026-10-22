@@ -51,10 +51,10 @@ Page {
                     text: {
                         if (WeatherProvider.loading) return "Fetching weather data..."
                         if (WeatherProvider.lastError.length > 0) return "Error: " + WeatherProvider.lastError
-                        if (WeatherProvider.temperature === 0) return "Tap Refresh to fetch live weather"
-                        return WeatherProvider.temperature.toFixed(1) + "°C  ·  "
+                        if (WeatherProvider.weatherSource.length === 0) return "Tap Refresh to fetch live weather"
+                        return (isNaN(WeatherProvider.temperature) ? "--" : WeatherProvider.temperature.toFixed(1)) + "°C  ·  "
                             + WeatherProvider.weatherDescription + "  ·  "
-                            + "Wind: " + WeatherProvider.windSpeed.toFixed(1) + " m/s  ·  "
+                            + "Wind: " + (isNaN(WeatherProvider.windSpeed) ? "--" : WeatherProvider.windSpeed.toFixed(1)) + " m/s  ·  "
                             + "Visibility: " + (WeatherProvider.visibility > 0 ? (WeatherProvider.visibility / 1000).toFixed(1) + " km" : "N/A")
                     }
                     font.pixelSize: Config.fontSizeBody

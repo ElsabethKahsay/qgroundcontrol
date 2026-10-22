@@ -222,11 +222,11 @@ void FlightSession::startFlightSession(const QString &purpose,
     WeatherProvider *wp = WeatherProvider::instance();
     if (wp) {
         QString desc = wp->weatherDescription();
+        // W6: unknown values read "--"; wind is m/s (it was labelled km/h).
+        auto num = [](double v) { return std::isfinite(v) ? QString::number(v, 'f', 1) : QStringLiteral("--"); };
         if (!desc.isEmpty())
-            weatherSummary = QStringLiteral("%1°C, %2, wind %3 km/h")
-                .arg(wp->temperature(), 0, 'f', 1)
-                .arg(desc)
-                .arg(wp->windSpeed(), 0, 'f', 1);
+            weatherSummary = QStringLiteral("%1°C, %2, wind %3 m/s (%4)")
+                .arg(num(wp->temperature()), desc, num(wp->windSpeed()), wp->weatherSource());
     }
 
     int id = DatabaseManager::instance().openFlight(

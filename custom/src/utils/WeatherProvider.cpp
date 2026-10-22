@@ -11,6 +11,9 @@
 #include <QTimer>
 #include <QtMath>
 #include <QUrlQuery>
+#include <QTimeZone>
+
+#include <cmath>
 
 #include "utils/Config.h"
 
@@ -61,15 +64,32 @@ QString WeatherProvider::weatherDescription() const
     return describeCode(m_weatherCode);
 }
 
+// W6: unknown values print as "--", never as 0.
+static QString num(double v, int decimals, double scale = 1.0)
+{
+    return std::isfinite(v) ? QString::number(v * scale, 'f', decimals) : QStringLiteral("--");
+}
+
 QString WeatherProvider::currentSummary() const
 {
-    if (m_windSpeed < 0.001 && m_visibilityKm < 0.001 && m_temperature < -50.0)
+    if (!m_metarTimestamp.isValid() && !m_forecastTimestamp.isValid())
         return QStringLiteral("Weather not yet fetched");
     return QStringLiteral("Wind %1 kt, Vis %2 km, %3, %4\u00B0C")
-        .arg(m_windSpeed / 0.514444, 0, 'f', 0)
-        .arg(m_visibilityKm, 0, 'f', 1)
-        .arg(weatherDescription())
-        .arg(m_temperature, 0, 'f', 1);
+        .arg(num(m_windSpeed, 0, 1.0 / 0.514444), num(m_visibilityKm, 1), weatherDescription(),
+             num(m_temperature, 1));
+}
+
+QString WeatherProvider::weatherSource() const
+{
+    if (m_fromMetar)
+        return QStringLiteral("METAR %1, observed %2")
+            .arg(m_stationId.isEmpty() ? QStringLiteral("?") : m_stationId,
+                 m_metarTimestamp.isValid() ? m_metarTimestamp.toUTC().toString(QStringLiteral("HH:mm'Z'"))
+                                            : QStringLiteral("time unknown"));
+    if (m_forecastTimestamp.isValid())
+        return QStringLiteral("Forecast (Open-Meteo), fetched %1")
+            .arg(m_forecastTimestamp.toUTC().toString(QStringLiteral("HH:mm'Z'")));
+    return {};
 }
 
 /** @brief Map a WMO weather code (or Open-Meteo code) to a human-readable description. */
@@ -129,7 +149,7 @@ void WeatherProvider::fetchWeather(double latitude, double longitude)
     query.addQueryItem(QStringLiteral("longitude"), QString::number(longitude, 'f', 6));
     query.addQueryItem(QStringLiteral("current"),
         QStringLiteral("temperature_2m,relative_humidity_2m,weather_code,"
-                       "wind_speed_10m,wind_direction_10m,visibility"));
+                       "wind_speed_10m,wind_direction_10m,wind_gusts_10m,visibility"));
     // W1: Open-Meteo defaults to km/h; m_windSpeed is m/s everywhere else
     // (METAR path converts kt -> m/s, display converts m/s -> kt).
     query.addQueryItem(QStringLiteral("wind_speed_unit"), QStringLiteral("ms"));
@@ -155,31 +175,43 @@ void WeatherProvider::fetchWeather(double latitude, double longitude)
             return;
         }
 
-        QByteArray data = reply->readAll();
-        QJsonDocument doc = QJsonDocument::fromJson(data);
-        if (doc.isNull() || !doc.isObject()) {
-            m_lastError = QStringLiteral("Invalid JSON response");
-            emit loadingChanged();
-            return;
-        }
-
-        QJsonObject root = doc.object();
-        QJsonObject current = root.value(QStringLiteral("current")).toObject();
-
-        m_temperature = current.value(QStringLiteral("temperature_2m")).toDouble();
-        m_humidity = current.value(QStringLiteral("relative_humidity_2m")).toDouble();
-        m_weatherCode = current.value(QStringLiteral("weather_code")).toInt();
-        m_flightCategory.clear();
-        m_windSpeed = current.value(QStringLiteral("wind_speed_10m")).toDouble();
-        m_windDirection = current.value(QStringLiteral("wind_direction_10m")).toDouble();
-        m_visibility = current.value(QStringLiteral("visibility")).toDouble();
-        m_visibilityKm = m_visibility / 1000.0;
-        m_metarTimestamp = QDateTime::currentDateTimeUtc();
-        m_lastError.clear();
-
-        emit weatherUpdated();
+        handleForecastJson(reply->readAll());
         emit loadingChanged();
     });
+}
+
+// W2/W3/W6: a forecast never stamps the METAR time, never overwrites a fresh
+// METAR (an observation beats a model), and a missing field is NaN, not 0.
+void WeatherProvider::handleForecastJson(const QByteArray &data)
+{
+    QJsonDocument doc = QJsonDocument::fromJson(data);
+    if (doc.isNull() || !doc.isObject()) {
+        m_lastError = QStringLiteral("Invalid JSON response");
+        return;
+    }
+    const QJsonObject current = doc.object().value(QStringLiteral("current")).toObject();
+    m_forecastTimestamp = QDateTime::currentDateTimeUtc();
+    m_lastError.clear();
+    if (metarFresh()) {
+        emit weatherUpdated();   // the source line now also knows a forecast exists
+        return;
+    }
+    auto val = [&current](const char *key) {
+        const QJsonValue v = current.value(QLatin1String(key));
+        return v.isDouble() ? v.toDouble() : qQNaN();
+    };
+    m_fromMetar = false;
+    m_temperature = val("temperature_2m");
+    m_humidity = val("relative_humidity_2m");
+    m_weatherCode = current.value(QStringLiteral("weather_code")).toInt(-1);
+    m_flightCategory.clear();
+    m_windSpeed = val("wind_speed_10m");
+    m_windDirection = val("wind_direction_10m");
+    m_windGust = val("wind_gusts_10m");
+    m_visibility = val("visibility");
+    m_visibilityKm = m_visibility / 1000.0;
+    m_ceilingFt = -1;            // a forecast reports no ceiling
+    emit weatherUpdated();
 }
 
 // ── METAR (NOAA ADDS) ────────────────────────────────────────────────
@@ -248,56 +280,53 @@ void WeatherProvider::handleMetarJson(const QByteArray &data)
     QJsonObject metar = arr.first().toObject();
     m_metarString = metar.value(QStringLiteral("rawOb")).toString();
 
-    // Timestamp
-    if (metar.contains(QStringLiteral("obsTime"))) {
-        QString ts = metar.value(QStringLiteral("obsTime")).toString();
-        m_metarTimestamp = QDateTime::fromString(ts, Qt::ISODate);
-    } else {
-        m_metarTimestamp = QDateTime::currentDateTimeUtc();
-    }
+    // W2/W4: the observation time; never "now" (that made any METAR fresh).
+    m_metarTimestamp = parseObsTime(metar);
+    m_fromMetar = true;
 
-    // Temperature (Celsius)
-    if (metar.contains(QStringLiteral("temp")))
-        m_temperature = metar.value(QStringLiteral("temp")).toDouble();
+    auto field = [&metar](const char *key) {
+        const QJsonValue v = metar.value(QLatin1String(key));
+        return v.isDouble() ? v.toDouble() : qQNaN();
+    };
 
-    // Wind
-    if (metar.contains(QStringLiteral("wspd")))
-        m_windSpeed = metar.value(QStringLiteral("wspd")).toDouble() * 0.514444; // knots -> m/s
-    if (metar.contains(QStringLiteral("wdir")))
-        m_windDirection = metar.value(QStringLiteral("wdir")).toDouble();
-    if (metar.contains(QStringLiteral("gust")))
-        m_windGust = metar.value(QStringLiteral("gust")).toDouble() * 0.514444;
+    // W6: a field the METAR does not carry is unknown (NaN), not 0.
+    m_temperature = field("temp");
+    m_windSpeed = field("wspd") * 0.514444;                   // knots -> m/s
+    // wdir is degrees, or "VRB" for variable wind (NaN).
+    m_windDirection = field("wdir");
+    // Gusts: "wgst" (current API; "gust" accepted). A METAR without a G group
+    // reports no gusts, so 0 is the real value here.
+    if (metar.contains(QStringLiteral("wgst")))
+        m_windGust = field("wgst") * 0.514444;
+    else if (metar.contains(QStringLiteral("gust")))
+        m_windGust = field("gust") * 0.514444;
     else
-        m_windGust = 0.0;
+        m_windGust = std::isfinite(m_windSpeed) ? 0.0 : qQNaN();
 
-    // Visibility (statute miles -> km)
-    if (metar.contains(QStringLiteral("visib"))) {
-        double visSm = metar.value(QStringLiteral("visib")).toDouble();
-        m_visibility = visSm * 1609.34;
-        m_visibilityKm = visSm * 1.60934;
-    }
+    // Visibility: statute miles, a number or a string such as "10+".
+    const double visSm = parseVisibilitySm(metar.value(QStringLiteral("visib")));
+    m_visibility = visSm * 1609.34;
+    m_visibilityKm = visSm * 1.60934;
 
-    // Ceiling (feet)
-    m_ceilingFt = 0;
-    if (metar.contains(QStringLiteral("ceiling"))) {
-        QJsonObject ceiling = metar.value(QStringLiteral("ceiling")).toObject();
-        m_ceilingFt = ceiling.value(QStringLiteral("base_feet_agl")).toInt();
-    }
+    // Ceiling: lowest BKN/OVC/OVX layer in clouds[]; the old "ceiling" object
+    // is still read if a source sends it.
+    m_ceilingFt = ceilingFromClouds(metar.value(QStringLiteral("clouds")).toArray());
+    if (metar.value(QStringLiteral("ceiling")).isObject())
+        m_ceilingFt = metar.value(QStringLiteral("ceiling")).toObject()
+                          .value(QStringLiteral("base_feet_agl")).toInt(m_ceilingFt);
 
-    // Weather code from flight category
-    m_flightCategory.clear();
-    if (metar.contains(QStringLiteral("flightCategory"))) {
-        QString cat = metar.value(QStringLiteral("flightCategory")).toString();
-        m_flightCategory = cat;
-        if (cat == QStringLiteral("VFR"))
-            m_weatherCode = 0;
-        else if (cat == QStringLiteral("MVFR"))
-            m_weatherCode = 2;
-        else if (cat == QStringLiteral("IFR"))
-            m_weatherCode = 45;
-        else if (cat == QStringLiteral("LIFR"))
-            m_weatherCode = 45;   // fog-class code; never 95 (thunderstorm)
-    }
+    // Flight category: "fltCat" (current API; "flightCategory" accepted).
+    m_flightCategory = metar.value(QStringLiteral("fltCat")).toString();
+    if (m_flightCategory.isEmpty())
+        m_flightCategory = metar.value(QStringLiteral("flightCategory")).toString();
+    m_weatherCode = m_flightCategory == QStringLiteral("VFR")  ? 0
+                  : m_flightCategory == QStringLiteral("MVFR") ? 2
+                  : (m_flightCategory == QStringLiteral("IFR") || m_flightCategory == QStringLiteral("LIFR"))
+                        ? 45     // fog-class code; never 95 (thunderstorm)
+                        : -1;
+    if (metar.contains(QStringLiteral("icaoId")))
+        m_stationId = metar.value(QStringLiteral("icaoId")).toString();
+    m_humidity = qQNaN();
 
     // Humidity from dewpoint
     if (metar.contains(QStringLiteral("temp")) && metar.contains(QStringLiteral("dewp"))) {
@@ -315,16 +344,14 @@ void WeatherProvider::handleMetarJson(const QByteArray &data)
 
     // Build parsed lines
     m_metarParsed.clear();
-    m_metarParsed << QStringLiteral("Wind: %1%2kt from %3%4")
-        .arg(m_windSpeed / 0.514444, 0, 'f', 0)
-        .arg(m_windGust > 0.0 ?
-             QStringLiteral(" G%1kt").arg(m_windGust / 0.514444, 0, 'f', 0) :
-             QString())
-        .arg(m_windDirection, 0, 'f', 0)
-        .arg(QChar(0x00B0));
-    m_metarParsed << QStringLiteral("Vis: %1 km").arg(m_visibilityKm, 0, 'f', 1);
-    m_metarParsed << QStringLiteral("Ceiling: %1 ft AGL").arg(m_ceilingFt);
-    m_metarParsed << QStringLiteral("Temp: %1 \u00B0C").arg(m_temperature, 0, 'f', 1);
+    m_metarParsed << QStringLiteral("Wind: %1%2kt from %3")
+        .arg(num(m_windSpeed, 0, 1.0 / 0.514444),
+             m_windGust > 0.0 ? QStringLiteral(" G%1").arg(num(m_windGust, 0, 1.0 / 0.514444)) : QString(),
+             std::isfinite(m_windDirection) ? num(m_windDirection, 0) + QChar(0x00B0) : QStringLiteral("variable"));
+    m_metarParsed << QStringLiteral("Vis: %1 km").arg(num(m_visibilityKm, 1));
+    m_metarParsed << (m_ceilingFt > 0 ? QStringLiteral("Ceiling: %1 ft AGL").arg(m_ceilingFt)
+                                      : QStringLiteral("Ceiling: none"));
+    m_metarParsed << QStringLiteral("Temp: %1 \u00B0C").arg(num(m_temperature, 1));
     if (!m_precipitation.isEmpty())
         m_metarParsed << QStringLiteral("Precip: %1").arg(m_precipitation.join(QStringLiteral(", ")));
 
@@ -616,32 +643,73 @@ void WeatherProvider::loadNotamGeoJson(const QString &filePath)
 
 QString WeatherProvider::windSummary() const
 {
-    if (m_windSpeed < 0.001 && m_windDirection < 0.5)
+    if (!std::isfinite(m_windSpeed))
         return {};
-    return QStringLiteral("%1 kt from %2\u00B0")
-        .arg(m_windSpeed / 0.514444, 0, 'f', 0)
-        .arg(m_windDirection, 0, 'f', 0);
+    return QStringLiteral("%1 kt from %2")
+        .arg(num(m_windSpeed, 0, 1.0 / 0.514444),
+             std::isfinite(m_windDirection) ? num(m_windDirection, 0) + QChar(0x00B0) : QStringLiteral("variable"));
 }
 
 QString WeatherProvider::ceiling() const
 {
     if (m_ceilingFt > 0)
         return QStringLiteral("%1 ft AGL").arg(m_ceilingFt);
-    if (!m_metarString.isEmpty())
-        return QStringLiteral("CAVOK");
+    // No BKN/OVC layer is "no ceiling", not CAVOK (which also means vis >= 10 km).
+    if (m_fromMetar)
+        return QStringLiteral("None");
     return {};
 }
 
 bool WeatherProvider::windOk() const
 {
-    return m_windSpeed <= kMaxWindMps;
+    // Unknown wind is not "OK".
+    return std::isfinite(m_windSpeed) && m_windSpeed <= kMaxWindMps;
 }
 
 QString WeatherProvider::lastUpdated() const
 {
-    if (!m_metarTimestamp.isValid())
+    const QDateTime t = m_fromMetar ? m_metarTimestamp : m_forecastTimestamp;
+    if (!t.isValid())
         return {};
-    return m_metarTimestamp.toLocalTime().toString(QStringLiteral("dd MMM yyyy  HH:mm"));
+    return t.toLocalTime().toString(QStringLiteral("dd MMM yyyy  HH:mm"));
+}
+
+QDateTime WeatherProvider::parseObsTime(const QJsonObject &metar)
+{
+    const QJsonValue obs = metar.value(QStringLiteral("obsTime"));
+    if (obs.isDouble())
+        return QDateTime::fromSecsSinceEpoch(qint64(obs.toDouble()), QTimeZone::UTC);
+    QDateTime t = QDateTime::fromString(obs.toString(), Qt::ISODate);
+    if (!t.isValid())
+        t = QDateTime::fromString(metar.value(QStringLiteral("reportTime")).toString(), Qt::ISODateWithMs);
+    return t;   // invalid = unknown: the METAR is then never "fresh"
+}
+
+double WeatherProvider::parseVisibilitySm(const QJsonValue &visib)
+{
+    if (visib.isDouble())
+        return visib.toDouble();
+    QString s = visib.toString().trimmed();
+    if (s.endsWith(QLatin1Char('+')))
+        s.chop(1);                 // "10+" = 10 SM or more
+    bool ok = false;
+    const double v = s.toDouble(&ok);
+    return ok ? v : qQNaN();
+}
+
+int WeatherProvider::ceilingFromClouds(const QJsonArray &clouds)
+{
+    int ceiling = -1;
+    for (const QJsonValue &layer : clouds) {
+        const QJsonObject l = layer.toObject();
+        const QString cover = l.value(QStringLiteral("cover")).toString();
+        if (cover != QLatin1String("BKN") && cover != QLatin1String("OVC") && cover != QLatin1String("OVX"))
+            continue;
+        const int base = l.value(QStringLiteral("base")).toInt(-1);
+        if (base >= 0 && (ceiling < 0 || base < ceiling))
+            ceiling = base;
+    }
+    return ceiling;
 }
 
 /**

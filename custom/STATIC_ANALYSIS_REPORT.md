@@ -55,7 +55,7 @@ Still open (all C++ unless noted)
 • Gimbal page attitude card (22 Oct, user): the PITCH / ROLL / YAW card between the restricted-zone card and the gimbal test buttons was bound to TelemetryBridge.gimbalPitch/Roll/Yaw, which nothing set until item 18, so it always read 0.0°. Now (user decision): one card that shows the gimbal's measured angles when a gimbal reports, otherwise the UAV's own attitude (TelemetryBridge.pitch / roll from ATTITUDE, radians → degrees; yaw as heading 0–360°), labelled "gimbal" or "UAV". The same readout is on the Fly view as an ATTITUDE column in the floating telemetry box (header "ATTITUDE · GIMBAL" / "ATTITUDE · UAV"), so operators see it without opening the preflight page. Check on the bench: with no gimbal, tilt the airframe nose-down ~20° and Pitch reads about -20°.
 • Item 18 (22 Oct, user priority; done in code 22 Oct, see the item 18 row): real gimbal pitch, roll and yaw tests. Today both gimbal buttons are disabled with a reason (stop-gap) because TelemetryBridge has no gimbal command. To do: TelemetryBridge::sendGimbalAngles(pitch, roll, yaw) via the gimbal protocol v2 (MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW / GIMBAL_MANAGER_SET_ATTITUDE, falling back to MAV_CMD_DO_MOUNT_CONTROL) with the command ack surfaced; decode GIMBAL_DEVICE_ATTITUDE_STATUS (quaternion → roll/pitch/yaw) and ArduPilot MOUNT_STATUS into gimbalPitch/Roll/Yaw with a gimbalAttitudeChanged signal; read MNT1_TYPE and MNT1_PITCH/ROLL/YAW_MIN/MAX and skip an axis with no range; one test per axis (command a target inside the limits, pass only if the measured angle is within ±3° within 3 s, return to centre and confirm), each logged; no gimbal or no feedback = fail. Tests: a mock gimbal stream unit test, and SITL with MNT1_TYPE = 1. The page already listens for gimbalAttitudeChanged and enables itself when sendMountControl/sendGimbalAngles exists.
 • Step 3 addition (21 Oct): trainer (master/slave) handover logging. Master/slave is a transmitter feature (EdgeTX/OpenTX Trainer mode): the aircraft sees only the master's link, so ArduPilot and the GCS cannot tell who is flying. To record it, the instructor's transmitter copies the trainer-switch state onto a spare channel (e.g. CH8); the GCS gets a setting for that channel, logs "control → student / instructor" events (time, altitude, battery) as HANDOVER rows on the current flight, and shows who has control in the Fly view during a Training session. Today the wizard records instructor/trainee names and RC links, and flight history/export have a "Trainer handovers" section, but nothing ever writes a HANDOVER event, so it is always empty. Depends on SessionRecorder (item 6) for the flight row.
-• Item 17 (weather W2–W4, W6, W7), item 18 (real gimbal command and feedback), item 21 lint test.
+• Item 17: W7 only (SITL weather location); W2–W4 and W6 done 22 Oct. Item 18: SITL / real-mount run. Item 21: done 22 Oct.
 • Items 12–14: SITL campaign, Jetson build (F20 start script), real radio and go/no-go.
 
 Summary
@@ -137,7 +137,7 @@ Data integrity
 The pack the operator enters in Fly view (type, S, P, cell mAh, reserve) is saved on the vehicle row and overwritten on each change. No flight or session row keeps a copy.
 core/VehicleProfileManager.cpp:577-623, 730-735; qml/cpts/FlyQuickActions.qml:558-564
 V
-Must — Status 22 Oct: partial: pack config now lives on the pack (batteries, v20) and is chosen in the Power section; the per-flight flight_batteries snapshot is still open (with SessionRecorder).
+Must — Status 22 Oct: done: v22 flight_batteries keeps a frozen copy of the pack at arm (serial, label, chemistry, S, P, cell mAh, rated mAh) plus start/end voltage and percent, minimum voltage, mAh and Wh; SessionRecorder writes it (DatabaseManagerTest::testRecorderBatterySnapshotIsFrozen).
 F9
 Data integrity
 Battery cycles have two writers, saveBatteryCycle on disarm after 30 s and incrementBatteryCycle on the gate-close ack; both bump total_cycles.
@@ -149,7 +149,7 @@ Data integrity
 Energy per flight uses BAT_CAPACITY/BAT1_CAPACITY, which are PX4 names; ArduPilot's is BATT_CAPACITY, so ArduPilot flights fall back to a 0.45 Ah-per-percent guess. Distance falls back to ground speed at disarm times duration, which is near zero. The pack entered in Fly view is not used.
 core/VehicleProfileManager.cpp:1129-1157
 V
-Must — Status 20 Oct: open.
+Must — Status 22 Oct: done: energy per flight is the FC energy counter (BATTERY_STATUS.energy_consumed) when reported, else mAh used x mean voltage, else unknown (NULL); distance is the vehicle's flown-distance counter. The BAT_CAPACITY guess and the ground-speed x duration distance in VehicleProfileManager are removed.
 F11
 Data integrity
 Check results are written with flight_session_id = -1 and the MAVLink system id as device_uid, while vehicles.device_uid is the hardware UID and foreign keys are on. Likely every insert is rejected; at best none can be joined to a flight.
@@ -399,15 +399,15 @@ V for code; km/h default from Open-Meteo's docs, from memory — Status 20 Oct: 
 W2
 An Open-Meteo fetch stamps m_metarTimestamp with the fetch time, so metarFresh() reports a fresh METAR when none was fetched. The gust check then reads windGust = 0 and auto-passes with "No gusts reported in METAR".
 utils/WeatherProvider.cpp:166, :45-50; core/WeatherWindGustCheck.cpp:29-37
-V — Status 20 Oct: open.
+V — Status 22 Oct: done: only a METAR's own observation time sets metarTimestamp; a forecast fetch stamps a separate forecast time, so the gust check can no longer auto-pass on forecast data (WeatherProviderTest::testForecastNeverMakesMetarFresh).
 W3
 Open-Meteo (model forecast for the GPS point) and METAR (an airport up to 50 km away) write the same fields, last one wins, and the UI does not say which source it shows.
 utils/WeatherProvider.cpp:159-166, 240-275
-V — Status 20 Oct: open.
+V — Status 22 Oct: done: a fresh METAR is not overwritten by a forecast, and weatherSource ("METAR HAAB, observed 09:00Z" / "Forecast (Open-Meteo), fetched 12:00Z") is shown in the weather panels and stored with the flight's weather summary.
 W4
 The METAR JSON parse likely misreads the current aviationweather.gov format: obsTime is a Unix time number, read here as an ISO string; visib can be the string "10+", read as 0; ceiling comes from clouds[], not a ceiling object. Good weather can show 0 km visibility and 0 ft ceiling.
 utils/WeatherProvider.cpp:238-262
-U, check against a saved real response — Status 20 Oct: open.
+U, check against a saved real response — Status 22 Oct: done, checked against real responses saved 22 Oct (HAAB, KBOS, ENGM, RJTT; now test fixtures). Worse than suspected: obsTime (Unix seconds) parsed as invalid, so a METAR was never fresh; visib "6+"/"10+" read as 0; gusts are in wgst (code read gust: never found); the category is fltCat (code read flightCategory, so the W5 label never applied to real data); ceiling comes from clouds[]; wdir can be "VRB". All parsed now.
 W5
 Flight category LIFR is mapped to weather code 95, which displays "Thunderstorm".
 utils/WeatherProvider.cpp:265-276
@@ -415,7 +415,7 @@ V — Status 20 Oct: done. weatherDescription() names the METAR flight category 
 W6
 Missing fields silently become 0 (wind, visibility, temperature), shown as real values.
 utils/WeatherProvider.cpp:159-164
-V — Status 20 Oct: open.
+V — Status 22 Oct: done: unreported values are NaN (ceiling -1) and display as "--" / "none reported", never 0; unknown wind is not windOk. FlightSession's weather summary also labelled m/s as km/h (fixed).
 W7
 In SITL the vehicle sits at the simulator's default home, so weather is fetched for that location, not yours.
 qml/pages/PreFlightChecklist.qml:57-87
@@ -537,7 +537,7 @@ Records
 Battery pack registry and per-flight snapshot
 F7, F8, F9, F10
 Move the battery modal out of Fly view into a mandatory "Battery pack" item in the preflight Power section that opens it on click; pick or edit a pack there; flight_batteries snapshot at arm; mAh and Wh from BATTERY_STATUS; BATT_CAPACITY fallback; cycles as a derived view.
-Test: edit a pack after a flight and the flight's snapshot is unchanged. Test: two flights on two packs give each pack one cycle. SITL: Wh within 5% of BATTERY_STATUS.energy_consumed. — Status 22 Oct: partial, commit da5a75260 + gimbal commit: registry, Power-section item and dialog, gate hard block in every mode, 20 % cycle rule (DatabaseManagerTest, ArmingGateTest). Open: flight_batteries snapshot, Wh from BATTERY_STATUS, BATT_CAPACITY fallback (F10).
+Test: edit a pack after a flight and the flight's snapshot is unchanged. Test: two flights on two packs give each pack one cycle. SITL: Wh within 5% of BATTERY_STATUS.energy_consumed. — Status 22 Oct: partial, commit da5a75260 + gimbal commit: registry, Power-section item and dialog, gate hard block in every mode, 20 % cycle rule (DatabaseManagerTest, ArmingGateTest). Snapshot and energy done 22 Oct (F8, F10). Open: the SITL check that Wh is within 5 % of BATTERY_STATUS.energy_consumed.
 8
 Records
 Database startup and migrations fail loudly
@@ -621,7 +621,7 @@ Commands
 One set of status colours on the safety screens
 UI consistency
 Semantic status tokens in Colors.qml with the old names as aliases; PreflightChecklistView, ArmGatePanel and the arm controls use only those tokens.
-Pass, fail, warn and stale look the same on every safety screen; a lint test fails on new hex literals in those files. — Status 20 Oct: done except the lint test. Status tokens in Colors.qml; no colour literals on safety screens (or anywhere outside the singletons).
+Pass, fail, warn and stale look the same on every safety screen; a lint test fails on new hex literals in those files. — Status 22 Oct: done, including the lint test (QmlShadowTest::testNoColourLiteralsOutsideSingletons: no hex colour literal in any custom QML outside qml/singletons, no named colour but "transparent" on the safety screens). Status tokens in Colors.qml; no colour literals on safety screens (or anywhere outside the singletons).
 After Phase 1
 These improve quality but do not change whether a Phase 1 test is safe or its records trustworthy.
 Item

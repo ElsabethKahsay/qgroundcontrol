@@ -539,6 +539,8 @@ public:
 
     virtual double batteryVoltage() const { return _batteryVoltage; }
     int batteryPercent() const { return _batteryPercent; }
+    /// Energy used per the FC (BATTERY_STATUS.energy_consumed, battery 1) in Wh; -1 = not reported.
+    double batteryEnergyConsumedWh() const { return _batteryEnergyWh; }
     double batteryCurrent() const { return _batteryCurrent; }
     double batteryCurrentAmps() const { return _batteryCurrentAmps; }
     int batterySocPct() const { return _batterySocPct; }
@@ -958,6 +960,7 @@ private:
     // -- Primary battery --
     double _batteryVoltage = 0.0;
     int _batteryPercent = -1;  ///< SOC (0-100), -1 = unknown. Mirrors _batterySocPct.
+    double _batteryEnergyWh = -1;  ///< BATTERY_STATUS.energy_consumed in Wh, -1 = not reported
     double _batteryCurrent = 0.0;
     double _batteryCurrentAmps = 0.0;
     int _batterySocPct = -1;                    ///< battery_remaining (0-100), -1 = FC not configured.

@@ -227,6 +227,17 @@ Rectangle {
                 }
             }
 
+            // W3: METAR observation or model forecast, and when.
+            Label {
+                width: parent.width
+                visible: WeatherProvider.weatherSource.length > 0
+                text: qsTr("Source: %1").arg(WeatherProvider.weatherSource)
+                font.pixelSize: Config.fontSizeSmall
+                font.italic: true
+                color: Colors.textSecondary
+                wrapMode: Text.Wrap
+            }
+
             SectionDivider {}
 
             // Raw METAR string

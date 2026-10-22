@@ -1,46 +1,46 @@
-Phase 1 Step 3 (item 6) run — 2026-10-22T08:29:36Z
-Same method as baseline-step2.txt. FlightSessionLifecycleTest exit 139 = known MockLink crash (also in baseline-step2/3).
+Phase 1 Step 3 run — 2026-10-22T10:01:31Z
+Same method as baseline-step2.txt, plus --allow-multiple (the operator's app may be open). FlightSessionLifecycleTest exit 139 = known MockLink crash.
 
 == ArmGateResilienceTest (exit 0)
-Totals: 14 passed, 0 failed, 0 skipped, 0 blacklisted, 70734ms
+Totals: 14 passed, 0 failed, 0 skipped, 0 blacklisted, 70731ms
 == ArmingFlowIntegrationTest (exit 0)
-Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 669ms
+Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 641ms
 == ArmingGateExtendedTest (exit 0)
-Totals: 9 passed, 0 failed, 0 skipped, 0 blacklisted, 37ms
+Totals: 9 passed, 0 failed, 0 skipped, 0 blacklisted, 39ms
 == ArmingGateTest (exit 0)
-Totals: 15 passed, 0 failed, 0 skipped, 0 blacklisted, 40ms
+Totals: 15 passed, 0 failed, 0 skipped, 0 blacklisted, 52ms
 == ArmSendTest (exit 0)
-Totals: 22 passed, 0 failed, 0 skipped, 0 blacklisted, 62096ms
+Totals: 22 passed, 0 failed, 0 skipped, 0 blacklisted, 62563ms
+== ChecklistPagesSmokeTest (exit 0)
+Totals: 4 passed, 0 failed, 0 skipped, 0 blacklisted, 2245ms
 == CheckSmokeTest (exit 0)
-Totals: 13 passed, 0 failed, 0 skipped, 0 blacklisted, 102ms
+Totals: 13 passed, 0 failed, 0 skipped, 0 blacklisted, 97ms
 == ControlSurfaceTestControllerTest (exit 0)
-Totals: 16 passed, 0 failed, 0 skipped, 0 blacklisted, 51968ms
+Totals: 16 passed, 0 failed, 0 skipped, 0 blacklisted, 51731ms
+== DatabaseManagerTest (exit 0)
+Totals: 33 passed, 0 failed, 0 skipped, 0 blacklisted, 1812ms
 == DatabaseMigrationTest (exit 0)
-Totals: 14 passed, 0 failed, 0 skipped, 0 blacklisted, 271ms
+Totals: 14 passed, 0 failed, 0 skipped, 0 blacklisted, 305ms
 == FlightSessionLifecycleTest (exit 139)
 == FlightSessionTest (exit 0)
 Totals: 10 passed, 0 failed, 0 skipped, 0 blacklisted, 103ms
 == FlyQuickActionsSmokeTest (exit 0)
-Totals: 8 passed, 0 failed, 0 skipped, 0 blacklisted, 422ms
+Totals: 8 passed, 0 failed, 0 skipped, 0 blacklisted, 428ms
 == HardwareTestControllerTest (exit 0)
-Totals: 13 passed, 0 failed, 0 skipped, 0 blacklisted, 18143ms
+Totals: 13 passed, 0 failed, 0 skipped, 0 blacklisted, 18434ms
 == MavLinkInterceptTest (exit 0)
-Totals: 19 passed, 0 failed, 0 skipped, 0 blacklisted, 54ms
+Totals: 19 passed, 0 failed, 0 skipped, 0 blacklisted, 57ms
 == MotorCheckPanelSmokeTest (exit 0)
-Totals: 5 passed, 0 failed, 0 skipped, 0 blacklisted, 2817ms
+Totals: 5 passed, 0 failed, 0 skipped, 0 blacklisted, 2903ms
 == PreflightManagerTest (exit 0)
-Totals: 20 passed, 0 failed, 0 skipped, 0 blacklisted, 68ms
+Totals: 20 passed, 0 failed, 0 skipped, 0 blacklisted, 88ms
 == QmlShadowTest (exit 0)
-Totals: 6 passed, 0 failed, 0 skipped, 0 blacklisted, 57ms
+Totals: 7 passed, 0 failed, 0 skipped, 0 blacklisted, 92ms
 == ReturnToLaunchTest (exit 0)
-Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 19762ms
+Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 20416ms
 == StateMachineTest (exit 0)
-Totals: 6 passed, 0 failed, 0 skipped, 0 blacklisted, 50ms
+Totals: 6 passed, 0 failed, 0 skipped, 0 blacklisted, 47ms
 == TelemetryBridgeTest (exit 0)
-Totals: 12 passed, 0 failed, 0 skipped, 0 blacklisted, 38ms
+Totals: 12 passed, 0 failed, 0 skipped, 0 blacklisted, 50ms
 == WeatherProviderTest (exit 0)
-Totals: 8 passed, 0 failed, 0 skipped, 0 blacklisted, 2661ms
-== DatabaseManagerTest (exit 0)
-Totals: 31 passed, 0 failed, 0 skipped, 0 blacklisted, 1537ms
-== ChecklistPagesSmokeTest (exit 0)
-Totals: 4 passed, 0 failed, 0 skipped, 0 blacklisted, 2019ms
+Totals: 12 passed, 0 failed, 0 skipped, 0 blacklisted, 1847ms

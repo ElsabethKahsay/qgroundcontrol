@@ -534,7 +534,7 @@ Item {
             text: qsTr("\u26A0 FLIGHT LOGGING IS OFF \u2014 %1").arg(typeof Database !== "undefined" ? Database.startupError : "")
             font.pixelSize: Config.fontSizeBody
             font.bold: true
-            color: "white"
+            color: Colors.background   // text on a status colour, as on the PASS/FAIL badges
         }
     }
 

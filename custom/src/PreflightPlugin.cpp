@@ -308,8 +308,13 @@ void PreflightPlugin::init()
     _sessionRecorder->setSampleProvider([this]() {
         SessionRecorder::Sample s;
         if (_telemetryBridge && _telemetryBridge->vehicle()) {
+            Vehicle *v = _telemetryBridge->vehicle();
             s.voltage = _telemetryBridge->batteryVoltage();
             s.mahConsumed = _batteryMahConsumed();
+            s.percent = _telemetryBridge->batteryPercent();
+            s.energyWh = _telemetryBridge->batteryEnergyConsumedWh();
+            const QVariant dist = v->flightDistance()->rawValue();
+            s.distanceM = dist.isValid() ? dist.toDouble() : -1;
         }
         return s;
     });
@@ -696,6 +701,7 @@ void PreflightPlugin::_onGateOpened()
     SessionRecorder::FlightStart start;
     start.batterySerial = _vehicleProfileManager ? _vehicleProfileManager->currentBatterySerial() : QString();
     start.payloadKg = _vehicleProfileManager ? _vehicleProfileManager->currentPayloadWeightKg() : 0.0;
+    start.pack = DatabaseManager::instance().batteryPack(start.batterySerial);
     const auto source = _armStateTracker ? _armStateTracker->lastArmSource() : ArmStateTracker::ArmSource::External;
     start.armSource = source == ArmStateTracker::ArmSource::Gcs ? QStringLiteral("gcs")
                     : source == ArmStateTracker::ArmSource::ForceToken ? QStringLiteral("force_token")

@@ -179,8 +179,11 @@ Item {
                     }
 
                     Text {
-                        text: "Wind: " + (WeatherProvider.windSpeed * 3.6).toFixed(1) + " km/h"
-                              + " from " + directionLabel(WeatherProvider.windDirection)
+                        // W6: unknown wind reads "--", variable direction "variable".
+                        text: "Wind: " + (isNaN(WeatherProvider.windSpeed) ? "--"
+                                          : (WeatherProvider.windSpeed * 3.6).toFixed(1) + " km/h"
+                                            + " from " + (isNaN(WeatherProvider.windDirection) ? "variable"
+                                                          : directionLabel(WeatherProvider.windDirection)))
                         font.pixelSize: Config.fontSizeSmall
                         color: Colors.textSecondary
                     }
@@ -196,8 +199,17 @@ Item {
                     Text {
                         text: "Ceiling: " + (WeatherProvider.ceilingFt > 0
                             ? WeatherProvider.ceilingFt + " ft"
-                            : "N/A")
+                            : "none reported")
                         font.pixelSize: Config.fontSizeSmall
+                        color: Colors.textSecondary
+                    }
+
+                    // W3: which source these values are from.
+                    Text {
+                        visible: WeatherProvider.weatherSource.length > 0
+                        text: WeatherProvider.weatherSource
+                        font.pixelSize: Config.fontSizeSmall
+                        font.italic: true
                         color: Colors.textSecondary
                     }
                 }

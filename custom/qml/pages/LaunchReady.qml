@@ -70,7 +70,7 @@ Page {
                 anchors.margins: Config.spacingMedium
                 spacing: Config.spacingSmall
                 Text { text: "Weather"; font.pixelSize: Config.fontSizeH3; font.bold: true; color: Colors.textPrimary }
-                Text { text: WeatherProvider.loading ? "Loading..." : (WeatherProvider.lastError.length > 0 ? WeatherProvider.lastError : WeatherProvider.temperature.toFixed(1) + "°C  ·  " + WeatherProvider.weatherDescription + "  ·  Wind " + WeatherProvider.windSpeed.toFixed(1) + " m/s"); font.pixelSize: Config.fontSizeBody; color: Colors.textSecondary; wrapMode: Text.WordWrap }
+                Text { text: WeatherProvider.loading ? "Loading..." : (WeatherProvider.lastError.length > 0 ? WeatherProvider.lastError : WeatherProvider.currentSummary); font.pixelSize: Config.fontSizeBody; color: Colors.textSecondary; wrapMode: Text.WordWrap }
             }
         }
 

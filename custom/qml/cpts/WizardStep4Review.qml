@@ -263,12 +263,12 @@ Item {
                 }
                 SummaryRow {
                     label: "Temperature"
-                    value: typeof WeatherProvider !== "undefined" ? WeatherProvider.temperature.toFixed(1) + " °C" : "—"
+                    value: typeof WeatherProvider !== "undefined" && !isNaN(WeatherProvider.temperature) ? WeatherProvider.temperature.toFixed(1) + " °C" : "—"
                     valueColor: Colors.textPrimary
                 }
                 SummaryRow {
                     label: "Visibility"
-                    value: typeof WeatherProvider !== "undefined" ? WeatherProvider.visibilityKm.toFixed(1) + " km" : "—"
+                    value: typeof WeatherProvider !== "undefined" && !isNaN(WeatherProvider.visibilityKm) ? WeatherProvider.visibilityKm.toFixed(1) + " km" : "—"
                     valueColor: Colors.textPrimary
                 }
 

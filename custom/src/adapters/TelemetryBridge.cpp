@@ -220,6 +220,7 @@ void TelemetryBridge::setVehicle(Vehicle* vehicle) {
     // Battery data is per-vehicle; reset SOC / EMA / freshness when switching.
     _batterySocPct = -1;
     _batteryPercent = -1;
+    _batteryEnergyWh = -1;
     _batteryCurrentSmoothAmps = 0.0;
     _batteryDataValid = false;
     _streamLastMs.fill(MonotonicClock::kNever);   // freshness is per vehicle
@@ -1204,6 +1205,8 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message) {
             mavlink_msg_battery_status_decode(&message, &batt);
 
             if (batt.id == 0) {
+                // Energy used (hJ; -1 = not provided). 1 Wh = 36 hJ.
+                _batteryEnergyWh = batt.energy_consumed >= 0 ? batt.energy_consumed / 36.0 : -1;
                 // Temperature (int16_t in centidegrees C, INT16_MAX = invalid)
                 if (batt.temperature != INT16_MAX) {
                     double tempC = batt.temperature / 100.0;
