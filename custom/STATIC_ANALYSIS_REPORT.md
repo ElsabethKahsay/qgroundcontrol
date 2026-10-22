@@ -527,7 +527,7 @@ Baseline
 Re-baseline the repository and tests
 State analysis section 8
 git status -sb, git log --oneline -10; review the three uncommitted files (the AirspeedCheck.cpp diff first); commit the roster cut and dependency pins; rebuild detached; run the gate suites one class at a time. Register or delete the five unregistered Rc checks.
-A tagged commit, and raw PASS/FAIL/Totals lines for every gate suite pasted against it — Status 20 Oct: open. The five Rc checks no longer need registering (merged into RcCheck).
+A tagged commit, and raw PASS/FAIL/Totals lines for every gate suite pasted against it — Status 22 Oct: done: tags phase1-step1 / phase1-step2 and tests/baseline-step1..3.txt (raw PASS/FAIL/Totals for every suite). The five Rc checks no longer need registering (merged into RcCheck).
 2
 Freshness
 Freshness from data age, not status age
@@ -563,7 +563,7 @@ Records
 Battery pack registry and per-flight snapshot
 F7, F8, F9, F10
 Move the battery modal out of Fly view into a mandatory "Battery pack" item in the preflight Power section that opens it on click; pick or edit a pack there; flight_batteries snapshot at arm; mAh and Wh from BATTERY_STATUS; BATT_CAPACITY fallback; cycles as a derived view.
-Test: edit a pack after a flight and the flight's snapshot is unchanged. Test: two flights on two packs give each pack one cycle. SITL: Wh within 5% of BATTERY_STATUS.energy_consumed. — Status 22 Oct: partial, commit da5a75260 + gimbal commit: registry, Power-section item and dialog, gate hard block in every mode, 20 % cycle rule (DatabaseManagerTest, ArmingGateTest). Snapshot and energy done 22 Oct (F8, F10). Open: the SITL check that Wh is within 5 % of BATTERY_STATUS.energy_consumed.
+Test: edit a pack after a flight and the flight's snapshot is unchanged. Test: two flights on two packs give each pack one cycle. SITL: Wh within 5% of BATTERY_STATUS.energy_consumed. — Status 22 Oct: done in code (da5a75260, ade82ce18); SITL Wh check open. Earlier note: commit da5a75260 + gimbal commit: registry, Power-section item and dialog, gate hard block in every mode, 20 % cycle rule (DatabaseManagerTest, ArmingGateTest). Snapshot and energy done 22 Oct (F8, F10). Open: the SITL check that Wh is within 5 % of BATTERY_STATUS.energy_consumed.
 8
 Records
 Database startup and migrations fail loudly
@@ -623,7 +623,7 @@ Field
 Reliable weather data
 W1 to W7
 Correct units, separate METAR and forecast with source and time shown, parse the current METAR JSON, missing means unknown, gust auto-pass only from a real METAR.
-Parser tests against saved real Open-Meteo and METAR responses; displayed wind matches the source within 1 kt — Status 20 Oct: open.
+Parser tests against saved real Open-Meteo and METAR responses; displayed wind matches the source within 1 kt — Status 22 Oct: done except W7 (W1–W6; WeatherProviderTest uses real responses saved 22 Oct, ade82ce18). W7 (SITL weather location) open.
 18
 Commands
 Working gimbal pitch, roll and yaw tests
@@ -1020,29 +1020,77 @@ Safety first, every time: **propellers off** for everything below. The plane may
 1. Open the gimbal page, type a target latitude and longitude (or press the map-centre button), press **Submit Target**.
 2. Pass if: it says "Target location saved". Close QGC, start it again, reconnect, open the gimbal page: the same target is filled in.
 
-### F. Trainer handover (instructor and student radios)
-What it is: in training, the student's radio is plugged into the instructor's radio with the trainer cable. Only the instructor's radio talks to the plane. While the instructor **holds the trainer switch**, the student's sticks fly the plane; when the instructor **lets go**, the instructor flies. The plane cannot see that switch by itself, so we make the instructor's radio send the switch position on a spare channel. The GCS watches that channel and logs every handover.
+### F. Training mode, step by step (instructor and student radios)
 
-**Why not CH8:** on this plane CH8 is the **flight-mode switch** (it changed MANUAL / STABILIZE / RTL today). We use **CH9** instead (your ELRS link carries 16 channels).
+#### F0. What training mode is, in plain words
+- **Two people, two radios.** The **instructor** has one GX12, the **student** has the other. They are joined by a **trainer cable** (a 3.5 mm audio-style cable into the trainer port of each radio).
+- **Only the instructor's radio talks to the plane.** It is "bound" to the plane's receiver (the ELRS link). The student's radio does **not** transmit to the plane; it only sends its stick positions down the cable to the instructor's radio. That makes the instructor's radio the **master** and the student's the **slave**.
+- **The trainer switch decides who flies.** It is a switch on the instructor's radio (often the spring-loaded one, e.g. SH). **Held** = the student's sticks pass through to the plane. **Released** = the instructor's sticks fly. If the student gets into trouble, the instructor just lets go of the switch and has control back instantly.
+- **What the GCS does in a Training session:**
+  1. It **never arms the plane from the GCS** — the arm button refuses with "Arming is disabled in training mode". Arming is done on the instructor's radio only.
+  2. It records **who** is instructing and training (names chosen when the session starts).
+  3. It shows on the Fly view **who is flying right now** (INSTRUCTOR FLYING / STUDENT FLYING) and logs every change of control as a **handover** with time, altitude, battery and flight mode. This needs the setup in F3.
 
-Step 1 — find which switch is the trainer switch (instructor's GX12):
-1. Press **MDL** (model settings) and page to **Special Functions**.
-2. Look for a line whose function is **Trainer** (e.g. `SH  Trainer`). The switch named there (here SH) is the trainer switch.
+You already proved F1–F2 work on 22 Oct morning: the student's sticks moved the plane only while the trainer switch was held.
 
-Step 2 — copy that switch onto CH9 (instructor's GX12):
-1. **MDL** → page to **Mixes**.
-2. Scroll to **CH9**, press the roller, choose **Insert** (or **Edit** if CH9 is empty).
-3. Set **Source** = the trainer switch from Step 1 (e.g. SH). Leave **Weight 100**, **Offset 0**. Exit to save.
-4. Check it on the radio: **SYS** → **Channel monitor** (or the Outputs page). Hold the trainer switch: CH9 should jump (e.g. from -100 to +100). Release: it returns.
-5. If your ELRS model uses **Hybrid** switch mode, a 2-position switch on CH9 is still fine.
+#### F1. Connect the radios (both radios OFF first)
+1. Plug the trainer cable into the **trainer port** of both GX12s (the round socket on the back; check the GX12 manual picture if unsure).
+2. Turn on the **instructor's** radio and select the plane's model (the one bound to this plane).
+3. Turn on the **student's** radio. On the student's radio, select a model whose **internal/external RF module is OFF** (Model settings → Internal RF → Off, and External RF → Off). The student radio must not transmit, or two radios fight over the link.
 
-Step 3 — tell the GCS to use CH9:
-1. Start a **Training** session in QGC with the plane connected and both radios on, trainer cable in.
-2. At the top of the Fly view a small chip appears. Tap it → set **Trainer switch channel = 9**.
-3. Pass if: the chip says **INSTRUCTOR FLYING (switch not seen yet)**.
-4. Hold the trainer switch → chip turns orange **STUDENT FLYING**, and a message "Trainer: STUDENT has control" appears. Release → green **INSTRUCTOR FLYING**.
-5. If the chip says **"not monitored — no CH9 trainer mix"**, the radio is not sending CH9: redo Step 2.
-6. If it says **"CH9 is the flight-mode channel"**, pick another free channel (10, 11…) in both the radio mix and the chip.
+#### F2. Set master and slave (once; you have probably done this already)
+1. **Instructor radio (master):** press **MDL** → page to the **Trainer** setting → **Mode = Master/Jack** (Jack = through the cable).
+2. **Student radio (slave):** press **MDL** → **Trainer** → **Mode = Slave/Jack**.
+3. **Instructor radio, the switch:** **MDL** → page to **Special Functions**. There must be a line like `SH  Trainer  Sticks` (switch, function "Trainer", what is passed = sticks). If there is none, add one: choose a free line, press the roller, set the switch (SH is a good choice: it springs back when you let go), function **Trainer**, value **Sticks**, and make sure it is ticked/enabled.
+4. **Instructor radio, check the student's sticks arrive:** **SYS** (radio settings) → page to **Trainer**. Move the student's sticks: the numbers on this page must move. If a stick moves the wrong channel or backwards, fix it on this page (each row maps one student channel; the "+/-" or "Inv" option reverses it). Press **Cal** here once with the student's sticks centred.
+5. **Check on the plane, props off:** in QGC look at the RC channels (the monitor sees them too). Hold the trainer switch and move the student's sticks: CH1–CH4 change. Release the switch: the student's sticks do nothing and the instructor's sticks move CH1–CH4.
+
+#### F3. Send the trainer switch position to the plane (needed for the GCS to know who flies)
+Why: the trainer switch only works *inside* the instructor's radio; the plane receives the same 16 channels either way, so the GCS cannot tell who is flying. We add a **mix** — a rule in the instructor's radio — that copies the trainer switch onto a spare channel. The plane passes all channels to the GCS, so the GCS can watch it.
+
+Which channel: **not CH8** — on this plane CH8 is the **flight-mode switch** (on 22 Oct it changed MANUAL / STABILIZE / RTL). Use **CH9** (your ELRS link carries 16 channels; CH9 is normally free). If CH9 is already used for something on this model, use CH10 or CH11 and use that number everywhere below.
+
+On the **instructor's** radio:
+1. Press **MDL** → page to **Mixes**.
+2. Scroll down to **CH9**. If there is already a line on CH9, stop and pick another free channel.
+3. Press the roller on CH9 → **Insert** (or **Edit**).
+4. **Source** = the trainer switch from F2 step 3 (e.g. **SH**). Press the roller on Source and flick the switch — EdgeTX picks the switch you move.
+5. Leave **Weight = 100**, **Offset = 0**, no curve. Press **RTN** to go back; it saves automatically.
+6. Check it: **SYS** → **Channel monitor** (or the **Outputs**/channels page). Hold the trainer switch: **CH9 jumps** (for example from -100 to +100). Release: it goes back. If it does not move, the Source is wrong — redo step 4.
+7. ELRS note: if your ELRS model is in **Hybrid** switch mode, a two-position switch on CH9 is still sent correctly; nothing to change.
+
+#### F4. Start a Training session in the GCS
+1. Plane powered (battery in), USB connected to the GCS computer, instructor's radio on and linked, student radio connected by cable. **Props off** for this first test.
+2. In QGC open the **Checklist** (Fly view). When it asks for the session mode, choose **Training Flight** ("Arming disabled • Full audit").
+3. Enter / choose the **instructor** and the **trainee** names when asked.
+4. Do the preflight checks as usual (including the **Battery pack**, section B).
+
+#### F5. Tell the GCS which channel carries the switch
+1. On the Fly view, at the top centre, a small round-cornered **trainer chip** appears (only in Training sessions with a plane connected).
+2. **Tap the chip.** A small window opens: **Trainer switch channel**. Set it to **9** (or the channel you used in F3).
+3. The setting is remembered for next time.
+
+#### F6. Test the handover (props off)
+1. Do not touch the trainer switch. The chip should say **INSTRUCTOR FLYING (switch not seen yet)** in green. ("Not seen yet" just means the GCS has not yet seen the switch move on this connection.)
+2. **Hold** the trainer switch. Within a second:
+   - the chip turns orange: **STUDENT FLYING**;
+   - a message pops up: **"Trainer: STUDENT has control"**.
+3. **Release** the switch: chip green **INSTRUCTOR FLYING**, message **"Trainer: INSTRUCTOR has control"**.
+4. Repeat 2–3 a few times. Each change is recorded.
+5. Arm **from the instructor's radio** (the GCS arm button refuses in Training — that is correct), hold/release the trainer switch once or twice, then disarm from the radio.
+6. Open **Flight History**, open that flight: a **TRAINER HANDOVERS** section lists each "HANDOVER_TO_STUDENT / HANDOVER_TO_INSTRUCTOR" with the time and altitude.
+
+#### F7. If it does not work
+| What the chip says / what you see | What it means | What to do |
+|---|---|---|
+| No chip at all | Not a Training session, or no plane connected | Start the session as **Training Flight**; check the plane is connected |
+| "not monitored — no CH9 trainer mix" | The plane sends nothing on CH9 | Redo F3; check CH9 moves on the radio's channel monitor |
+| "CH9 is the flight-mode channel (FLTMODE_CH)" | That channel already changes flight modes | Use another free channel in both F3 and F5 |
+| Chip changes but **the plane's flight mode also changes** | The mix is on the mode channel | Stop; move the mix to a free channel |
+| STUDENT / INSTRUCTOR are the wrong way round | The switch was held when the plane connected (the GCS takes the position at connection as "instructor") | Release the switch, unplug and replug USB, try again |
+| Student's sticks do nothing while the switch is held | Trainer cable / master–slave / special function | Recheck F1–F2 (the GCS is not involved in that part) |
+
+Safety rules for real training flights: the instructor keeps a finger on the trainer switch at all times; the student only gets control at a safe height; any doubt → release the switch. The GCS only records — it never switches control itself.
 
 ### G. Flight History (records)
 1. In a Flight or Training session, arm and disarm once (props off; motor test style arm is fine).
