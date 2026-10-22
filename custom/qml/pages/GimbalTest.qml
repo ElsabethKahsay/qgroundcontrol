@@ -1038,6 +1038,19 @@ Page {
                             }
                         }
 
+                        // Why the Sweep buttons are disabled, in plain sight (the
+                        // tooltip is invisible on a touchscreen).
+                        Text {
+                            Layout.fillWidth: true
+                            visible: typeof ControlSurfaceTestController !== "undefined"
+                                     && ControlSurfaceTestController.testBlockedReason.length > 0
+                            text: "\u26A0 " + ControlSurfaceTestController.testBlockedReason
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: Config.fontSizeSmall
+                            font.bold: true
+                            color: Colors.warning
+                        }
+
                         // Flight-mode + live feedback status strip
                         Rectangle {
                             Layout.fillWidth: true

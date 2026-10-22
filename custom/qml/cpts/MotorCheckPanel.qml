@@ -110,12 +110,15 @@ Rectangle {
                 Layout.fillWidth: true
             }
             Text {
-                text: root._mc > 0
+                // Disabled-with-reason in plain sight (a hover tooltip is
+                // invisible on a touchscreen), e.g. "start a Testing session first".
+                text: !root._canOpen ? root._blockedReason
+                    : root._mc > 0
                     ? (root._vt.length > 0 ? root._vt : qsTr("Vehicle")) + " \u2014 " + root._mc
                       + " " + qsTr("motor") + (root._mc !== 1 ? "s" : "") + qsTr(" detected")
                     : qsTr("Waiting for vehicle parameters\u2026")
                 font.pixelSize: Config.fontSizeSmall
-                color: root._mc > 0 ? Colors.textSecondary : Colors.textDisabled
+                color: !root._canOpen ? Colors.warning : root._mc > 0 ? Colors.textSecondary : Colors.textDisabled
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
             }
