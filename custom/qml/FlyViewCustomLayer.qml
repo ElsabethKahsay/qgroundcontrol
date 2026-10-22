@@ -453,7 +453,7 @@ Item {
     Rectangle {
         id: trainingBanner
         // Safety: training mode (C++ FlightSession) forbids arming, hence the banner.
-        visible: FlightSession.isTraining
+        visible: false
         anchors { top: parent.top; topMargin: _toolInsets.topEdgeCenterInset; left: parent.left; right: parent.right }
         height: 40
         z: QGroundControl.zOrderWidgets + 3
