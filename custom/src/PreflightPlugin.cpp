@@ -745,6 +745,17 @@ void PreflightPlugin::_onGateOpened()
 // _onGateClosed() — ArmStateTracker saw the vehicle DISARM. SessionRecorder
 // closes the flight; its closed-handler does the battery cycle and calibration.
 // ---------------------------------------------------------------------------
+QString PreflightPlugin::trainerChannelConflict() const
+{
+    if (!_telemetryBridge || !_telemetryBridge->hasParameter(QStringLiteral("FLTMODE_CH")))
+        return {};
+    const int modeCh = qRound(_telemetryBridge->parameterValue(QStringLiteral("FLTMODE_CH"), 0.0f));
+    return modeCh == _trainer.channel()
+        ? tr("CH%1 is the flight-mode channel (FLTMODE_CH) \u2014 mix the trainer switch onto another channel")
+              .arg(modeCh)
+        : QString();
+}
+
 void PreflightPlugin::setTrainerChannel(int channel)
 {
     if (channel < 1 || channel > 18 || channel == _trainer.channel())
@@ -765,6 +776,13 @@ void PreflightPlugin::_onRcChannels()
         return;
     const TrainerSwitchTracker::Control before = _trainer.control();
     const bool wasVerified = _trainer.verified();
+    // The flight-mode switch is not a trainer switch (ArduPlane's FLTMODE_CH
+    // defaults to 8): never read mode changes as handovers.
+    if (trainerChannelConflict().length() > 0) {
+        if (_trainer.update(QVariantList()))      // -> unmonitored
+            emit trainerChanged();
+        return;
+    }
     if (!_trainer.update(_telemetryBridge->rcChannelValues())) {
         if (wasVerified != _trainer.verified())
             emit trainerChanged();

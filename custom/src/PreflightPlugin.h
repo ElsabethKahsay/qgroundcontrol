@@ -96,6 +96,8 @@ class PreflightPlugin : public QGCCorePlugin
     Q_PROPERTY(bool trainerVerified READ trainerVerified NOTIFY trainerChanged)
     /// RC channel the instructor's radio mixes the trainer switch onto (default 8).
     Q_PROPERTY(int trainerChannel READ trainerChannel WRITE setTrainerChannel NOTIFY trainerChanged)
+    /// Non-empty when the trainer channel cannot be the trainer switch (it is FLTMODE_CH).
+    Q_PROPERTY(QString trainerChannelConflict READ trainerChannelConflict NOTIFY trainerChanged)
 public:
     // Font scaling factor used by QML to scale UI elements proportionally.
     Q_INVOKABLE double fontSizeFactor() const { return 1.95; }
@@ -111,6 +113,7 @@ public:
     bool trainerVerified() const { return _trainer.verified(); }
     int trainerChannel() const { return _trainer.channel(); }
     void setTrainerChannel(int channel);
+    QString trainerChannelConflict() const;
 
 signals:
     void trainerChanged();

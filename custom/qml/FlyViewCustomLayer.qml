@@ -505,7 +505,9 @@ Item {
             font.pixelSize: Config.fontSizeBody
             font.bold: true
             color: trainerChip._monitored ? Colors.background : Colors.textSecondary
-            text: !trainerChip._monitored
+            text: trainerChip._plugin && trainerChip._plugin.trainerChannelConflict
+                  ? qsTr("Trainer handover not monitored \u2014 ") + trainerChip._plugin.trainerChannelConflict
+                  : !trainerChip._monitored
                   ? qsTr("Trainer handover not monitored \u2014 no CH%1 trainer mix").arg(trainerChip._plugin ? trainerChip._plugin.trainerChannel : 8)
                   : (trainerChip._student ? qsTr("STUDENT FLYING") : qsTr("INSTRUCTOR FLYING"))
                     + (trainerChip._plugin && !trainerChip._plugin.trainerVerified ? qsTr("  (switch not seen yet)") : "")
