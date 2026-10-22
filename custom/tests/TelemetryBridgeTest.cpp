@@ -1,5 +1,7 @@
 #include <QTest>
 #include <QSignalSpy>
+#include <QtMath>
+#include <cmath>
 
 #include "UnitTest.h"
 #include "mocks/MockTelemetryBridge.h"
@@ -10,6 +12,9 @@ class TelemetryBridgeTest : public UnitTest {
 private slots:
     void testOnlyAutopilotHeartbeatCounts();
     void testConnectionQualityDecaysWithHeartbeatGap();
+    void testGimbalQuaternionDecodes();
+    void testGimbalEarthFrameYawIsMadeRelative();
+    void testGimbalMountMessagesDecode();
     void init() override { UnitTest::init(); }
     void cleanup() override { UnitTest::cleanup(); }
 
@@ -153,6 +158,73 @@ void TelemetryBridgeTest::testConnectionQualityDecaysWithHeartbeatGap()
     QCOMPARE(TelemetryBridge::connectionQualityForGap(6000, 0.0), 0);
     QCOMPARE(TelemetryBridge::connectionQualityForGap(10000, 0.0), 0);
     QCOMPARE(TelemetryBridge::connectionQualityForGap(0, 30.0), 70);   // drop-rate cap
+}
+
+// Item 18: a quaternion for pitch -30, roll 10, yaw 25 (vehicle frame,
+// ZYX order) decodes back to those angles.
+static void quatFromEulerDeg(double rollDeg, double pitchDeg, double yawDeg, float q[4])
+{
+    const double cr = std::cos(qDegreesToRadians(rollDeg) / 2), sr = std::sin(qDegreesToRadians(rollDeg) / 2);
+    const double cp = std::cos(qDegreesToRadians(pitchDeg) / 2), sp = std::sin(qDegreesToRadians(pitchDeg) / 2);
+    const double cy = std::cos(qDegreesToRadians(yawDeg) / 2), sy = std::sin(qDegreesToRadians(yawDeg) / 2);
+    q[0] = float(cr * cp * cy + sr * sp * sy);
+    q[1] = float(sr * cp * cy - cr * sp * sy);
+    q[2] = float(cr * sp * cy + sr * cp * sy);
+    q[3] = float(cr * cp * sy - sr * sp * cy);
+}
+
+static mavlink_message_t gimbalStatus(const float q[4], uint16_t flags, float deltaYaw)
+{
+    mavlink_message_t msg;
+    mavlink_msg_gimbal_device_attitude_status_pack(1, MAV_COMP_ID_GIMBAL, &msg, 0, 0, 0, flags, q,
+                                                   0.f, 0.f, 0.f, 0, deltaYaw, NAN, 1);
+    return msg;
+}
+
+void TelemetryBridgeTest::testGimbalQuaternionDecodes()
+{
+    float q[4];
+    quatFromEulerDeg(10.0, -30.0, 25.0, q);
+    double p = 0, r = 0, y = 0;
+    QVERIFY(TelemetryBridge::decodeGimbalAttitude(gimbalStatus(q, GIMBAL_DEVICE_FLAGS_YAW_IN_VEHICLE_FRAME, NAN), 0.0, p, r, y));
+    QVERIFY2(qAbs(p + 30.0) < 0.01, qPrintable(QString::number(p)));
+    QVERIFY2(qAbs(r - 10.0) < 0.01, qPrintable(QString::number(r)));
+    QVERIFY2(qAbs(y - 25.0) < 0.01, qPrintable(QString::number(y)));
+
+    mavlink_message_t hb;
+    mavlink_msg_heartbeat_pack(1, 1, &hb, MAV_TYPE_FIXED_WING, MAV_AUTOPILOT_ARDUPILOTMEGA, 0, 0, 0);
+    QVERIFY(!TelemetryBridge::decodeGimbalAttitude(hb, 0.0, p, r, y));
+}
+
+// An earth-frame yaw (gimbal at 100 deg true, vehicle heading 80 deg) is 20 deg
+// right of the nose — from delta_yaw, or from the vehicle yaw when it is NaN.
+void TelemetryBridgeTest::testGimbalEarthFrameYawIsMadeRelative()
+{
+    float q[4];
+    quatFromEulerDeg(0.0, 0.0, 100.0, q);
+    double p = 0, r = 0, y = 0;
+    QVERIFY(TelemetryBridge::decodeGimbalAttitude(
+        gimbalStatus(q, GIMBAL_DEVICE_FLAGS_YAW_IN_EARTH_FRAME, float(qDegreesToRadians(80.0))), 0.0, p, r, y));
+    QVERIFY2(qAbs(y - 20.0) < 0.01, qPrintable(QString::number(y)));
+    QVERIFY(TelemetryBridge::decodeGimbalAttitude(
+        gimbalStatus(q, GIMBAL_DEVICE_FLAGS_YAW_LOCK, NAN), qDegreesToRadians(80.0), p, r, y));
+    QVERIFY2(qAbs(y - 20.0) < 0.01, qPrintable(QString::number(y)));
+}
+
+void TelemetryBridgeTest::testGimbalMountMessagesDecode()
+{
+    mavlink_message_t msg;
+    double p = 0, r = 0, y = 0;
+    mavlink_msg_mount_status_pack(1, 1, &msg, 0, 0, -3000, 500, 35000, 2);   // centidegrees
+    QVERIFY(TelemetryBridge::decodeGimbalAttitude(msg, 0.0, p, r, y));
+    QCOMPARE(p, -30.0);
+    QCOMPARE(r, 5.0);
+    QCOMPARE(y, -10.0);   // 350 deg wraps to -10
+    mavlink_msg_mount_orientation_pack(1, 1, &msg, 0, 2.0f, -15.0f, 40.0f, 0.0f);
+    QVERIFY(TelemetryBridge::decodeGimbalAttitude(msg, 0.0, p, r, y));
+    QCOMPARE(p, -15.0);
+    QCOMPARE(r, 2.0);
+    QCOMPARE(y, 40.0);
 }
 
 UT_REGISTER_TEST(TelemetryBridgeTest)

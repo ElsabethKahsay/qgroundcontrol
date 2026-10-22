@@ -1113,18 +1113,10 @@ void VehicleProfileManager::_onArmedChanged(bool armed)
         return kArmedTimerThresholdMs;
     }();
     if (m_armedTimer.isValid() && m_armedTimer.elapsed() > armedThresholdMs) {
-            // Record a battery cycle (discharge event) for battery health tracking.
-            if (!m_batterySerial.isEmpty() && m_flightSessionId > 0) {
-                double capacityAtFull = m_telemetry
-                    ? m_telemetry->property("batteryPercent").toDouble() / 100.0
-                    : 0.0;
-                DatabaseManager::instance().saveBatteryCycle(
-                    m_batterySerial, m_flightSessionId,
-                    capacityAtFull, 0.0, 0.0, 0);
-                qDebug().noquote()
-                    << QStringLiteral("Battery cycle recorded for %1 (session %2)")
-                           .arg(m_batterySerial).arg(m_flightSessionId);
-            }
+            // F9 / Step 3 item 7: battery cycles have ONE writer now,
+            // DatabaseManager::recordBatteryFlight() at session end (a flight
+            // that used >= 20 % of the pack's rated capacity). The 30 s
+            // disarm rule that also wrote here double-counted cycles.
 
             // Record energy consumption for power model calibration.
             if (m_flightSessionId > 0 && m_telemetry) {

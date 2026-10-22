@@ -18,6 +18,7 @@
 #include <QTimer>
 #include <QUuid>
 #include <cmath>
+#include <QtMath>
 
 #include "FactSystem/Fact.h"
 #include "FactSystem/FactMetaData.h"
@@ -134,6 +135,63 @@ qint64 TelemetryBridge::streamAgeMs(TelemetryStream stream) const {
 
 bool TelemetryBridge::isAutopilotMessage(int sysId, int compId, int vehicleId, int autopilotCompId) {
     return sysId == vehicleId && compId == autopilotCompId;
+}
+
+bool TelemetryBridge::decodeGimbalAttitude(const mavlink_message_t &message, double vehicleYawRad,
+                                           double &pitchDeg, double &rollDeg, double &yawDeg)
+{
+    auto wrap180 = [](double deg) { return std::remainder(deg, 360.0); };
+    switch (message.msgid) {
+    case MAVLINK_MSG_ID_GIMBAL_DEVICE_ATTITUDE_STATUS: {
+        mavlink_gimbal_device_attitude_status_t st;
+        mavlink_msg_gimbal_device_attitude_status_decode(&message, &st);
+        const double w = st.q[0], x = st.q[1], y = st.q[2], z = st.q[3];
+        if (!std::isfinite(w) || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z))
+            return false;
+        rollDeg = qRadiansToDegrees(std::atan2(2.0 * (w * x + y * z), 1.0 - 2.0 * (x * x + y * y)));
+        pitchDeg = qRadiansToDegrees(std::asin(qBound(-1.0, 2.0 * (w * y - z * x), 1.0)));
+        double yaw = qRadiansToDegrees(std::atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z)));
+        // Earth frame: YAW_IN_EARTH_FRAME, or the older YAW_LOCK without
+        // YAW_IN_VEHICLE_FRAME. The tests command yaw relative to the nose.
+        const bool earth = (st.flags & GIMBAL_DEVICE_FLAGS_YAW_IN_EARTH_FRAME)
+                || ((st.flags & GIMBAL_DEVICE_FLAGS_YAW_LOCK) && !(st.flags & GIMBAL_DEVICE_FLAGS_YAW_IN_VEHICLE_FRAME));
+        if (earth)
+            yaw -= qRadiansToDegrees(std::isfinite(st.delta_yaw) ? double(st.delta_yaw) : vehicleYawRad);
+        yawDeg = wrap180(yaw);
+        return true;
+    }
+    case MAVLINK_MSG_ID_MOUNT_ORIENTATION: {
+        mavlink_mount_orientation_t mo;
+        mavlink_msg_mount_orientation_decode(&message, &mo);
+        pitchDeg = mo.pitch;
+        rollDeg = mo.roll;
+        yawDeg = wrap180(mo.yaw);
+        return true;
+    }
+    case MAVLINK_MSG_ID_MOUNT_STATUS: {
+        mavlink_mount_status_t ms;
+        mavlink_msg_mount_status_decode(&message, &ms);
+        pitchDeg = ms.pointing_a / 100.0;   // centidegrees
+        rollDeg = ms.pointing_b / 100.0;
+        yawDeg = wrap180(ms.pointing_c / 100.0);
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
+void TelemetryBridge::sendMountControl(double pitchDeg, double rollDeg, double yawDeg, int mode)
+{
+    if (!_vehicle)
+        return;
+    qCInfo(telemetryBridgeLog) << "Gimbal: DO_MOUNT_CONTROL pitch" << pitchDeg << "roll" << rollDeg
+                               << "yaw" << yawDeg << "mode" << mode;
+    _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_DO_MOUNT_CONTROL,
+                             false /* showError: the page shows the ack */,
+                             static_cast<float>(pitchDeg), static_cast<float>(rollDeg),
+                             static_cast<float>(yawDeg), 0.0f, 0.0f, 0.0f,
+                             static_cast<float>(mode));
 }
 
 int TelemetryBridge::connectionQualityForGap(qint64 gapMs, double dropRatePct) {
@@ -355,6 +413,13 @@ void TelemetryBridge::_connectVehicleSignals() {
 
     // Subscribe to raw MAVLink messages for servo outputs, ESC telemetry, GPS2, etc.
     connect(_vehicle, &Vehicle::mavlinkMessageReceived, this, &TelemetryBridge::_handleMavlinkMessage);
+
+    // Item 18: gimbal command acks for the gimbal page.
+    connect(_vehicle, &Vehicle::mavCommandResult, this,
+            [this](int, int, int command, int ackResult, int) {
+        if (command == MAV_CMD_DO_MOUNT_CONTROL || command == MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW)
+            emit gimbalCommandResult(command, ackResult);
+    });
 
     // Mission Manager: update mission distances when items or current index change.
     if (auto* missionMgr = _vehicle->missionManager()) {
@@ -1028,14 +1093,23 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message) {
             break;
         }
         case MAVLINK_MSG_ID_MOUNT_ORIENTATION:
+        case MAVLINK_MSG_ID_MOUNT_STATUS:
         case MAVLINK_MSG_ID_GIMBAL_DEVICE_ATTITUDE_STATUS: {
-            // Presence of either message means a mount/gimbal is configured and
+            // Presence of any of these means a mount/gimbal is configured and
             // publishing on the bus. Detection is latched for the session — the
-            // protocol has no "gimbal removed" message. Neither message carries
-            // the control mode, so _gimbalMode keeps its MAVLink default.
+            // protocol has no "gimbal removed" message. None carries the
+            // control mode, so _gimbalMode keeps its MAVLink default.
             if (!_gimbalDetected) {
                 _gimbalDetected = true;
                 emit gimbalDetectedChanged();
+            }
+            // Item 18: the measured attitude the gimbal tests pass or fail on.
+            double pitch = 0.0, roll = 0.0, yaw = 0.0;
+            if (decodeGimbalAttitude(message, _yaw, pitch, roll, yaw)) {
+                _gimbalPitch = pitch;
+                _gimbalRoll = roll;
+                _gimbalYaw = yaw;
+                emit gimbalAttitudeChanged();
             }
             break;
         }

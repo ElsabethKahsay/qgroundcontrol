@@ -49,9 +49,9 @@ Done in Step 2 (C++, tag phase1-step2, 21 Oct)
 
 Still open (all C++ unless noted)
 • Items 6–8: SessionRecorder, battery pack registry and snapshot (including moving the pack modal into the Power section), database startup and migration fixes.
-• Step 3 decisions (22 Oct, user): new Step 3 classes go into new source files added to custom/CMakeLists.txt in ONE batched change (one ~70-minute rebuild, then incremental builds); a flight counts as one battery cycle when it uses at least 20 % of the pack's rated capacity; the battery-pack entry lives in the preflight page's Power section (a "Battery pack" item that opens the pack dialog), not in the Fly view. Still to decide: whether a selected pack is required before a GCS arm in every session mode or only in Flight sessions.
-• Step 3 addition (22 Oct): gimbal-page target location does not save. Verified on the live database (UAVPreflight/PreflightQGroundControl Daily/uav_preflight_data.db): schema version 18, flights has no target_lat / target_lon / target_source because v19 never ran (F14), and the "Submit Target" button is enabled only when FlightSession.currentFlightId > 0, which nothing in normal use sets (only the never-opened FlightFormDialog). Typed or map-centre targets only update the in-memory distance readout. Fix in Step 3: item 8 runs v19; the target is stored on the connection session (it is set during preflight, before any arm) and copied onto each flight row; Submit is enabled whenever a vehicle is connected; the page reloads the saved target on open.
-• Item 18 (22 Oct, user priority): real gimbal pitch, roll and yaw tests. Today both gimbal buttons are disabled with a reason (stop-gap) because TelemetryBridge has no gimbal command. To do: TelemetryBridge::sendGimbalAngles(pitch, roll, yaw) via the gimbal protocol v2 (MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW / GIMBAL_MANAGER_SET_ATTITUDE, falling back to MAV_CMD_DO_MOUNT_CONTROL) with the command ack surfaced; decode GIMBAL_DEVICE_ATTITUDE_STATUS (quaternion → roll/pitch/yaw) and ArduPilot MOUNT_STATUS into gimbalPitch/Roll/Yaw with a gimbalAttitudeChanged signal; read MNT1_TYPE and MNT1_PITCH/ROLL/YAW_MIN/MAX and skip an axis with no range; one test per axis (command a target inside the limits, pass only if the measured angle is within ±3° within 3 s, return to centre and confirm), each logged; no gimbal or no feedback = fail. Tests: a mock gimbal stream unit test, and SITL with MNT1_TYPE = 1. The page already listens for gimbalAttitudeChanged and enables itself when sendMountControl/sendGimbalAngles exists.
+• Step 3 decisions (22 Oct, user): new Step 3 classes go into new source files added to custom/CMakeLists.txt in ONE batched change (one ~70-minute rebuild, then incremental builds); a flight counts as one battery cycle when it uses at least 20 % of the pack's rated capacity; the battery-pack entry lives in the preflight page's Power section (a "Battery pack" item that opens the pack dialog), not in the Fly view. Pack requirement (user, 22 Oct): required in every session mode — done.
+• Step 3 addition (22 Oct): gimbal-page target location does not save. Verified on the live database (UAVPreflight/PreflightQGroundControl Daily/uav_preflight_data.db): schema version 18, flights has no target_lat / target_lon / target_source because v19 never ran (F14), and the "Submit Target" button is enabled only when FlightSession.currentFlightId > 0, which nothing in normal use sets (only the never-opened FlightFormDialog). Typed or map-centre targets only update the in-memory distance readout. Fix in Step 3: item 8 runs v19; the target is stored on the connection session (it is set during preflight, before any arm) and copied onto each flight row; Submit is enabled whenever a vehicle is connected; the page reloads the saved target on open. Status 22 Oct: done, commit da5a75260, keyed on the vehicle row (v20 columns) until SessionRecorder adds connection sessions; copied onto each flight session at gate open.
+• Item 18 (22 Oct, user priority; done in code 22 Oct, see the item 18 row): real gimbal pitch, roll and yaw tests. Today both gimbal buttons are disabled with a reason (stop-gap) because TelemetryBridge has no gimbal command. To do: TelemetryBridge::sendGimbalAngles(pitch, roll, yaw) via the gimbal protocol v2 (MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW / GIMBAL_MANAGER_SET_ATTITUDE, falling back to MAV_CMD_DO_MOUNT_CONTROL) with the command ack surfaced; decode GIMBAL_DEVICE_ATTITUDE_STATUS (quaternion → roll/pitch/yaw) and ArduPilot MOUNT_STATUS into gimbalPitch/Roll/Yaw with a gimbalAttitudeChanged signal; read MNT1_TYPE and MNT1_PITCH/ROLL/YAW_MIN/MAX and skip an axis with no range; one test per axis (command a target inside the limits, pass only if the measured angle is within ±3° within 3 s, return to centre and confirm), each logged; no gimbal or no feedback = fail. Tests: a mock gimbal stream unit test, and SITL with MNT1_TYPE = 1. The page already listens for gimbalAttitudeChanged and enables itself when sendMountControl/sendGimbalAngles exists.
 • Step 3 addition (21 Oct): trainer (master/slave) handover logging. Master/slave is a transmitter feature (EdgeTX/OpenTX Trainer mode): the aircraft sees only the master's link, so ArduPilot and the GCS cannot tell who is flying. To record it, the instructor's transmitter copies the trainer-switch state onto a spare channel (e.g. CH8); the GCS gets a setting for that channel, logs "control → student / instructor" events (time, altitude, battery) as HANDOVER rows on the current flight, and shows who has control in the Fly view during a Training session. Today the wizard records instructor/trainee names and RC links, and flight history/export have a "Trainer handovers" section, but nothing ever writes a HANDOVER event, so it is always empty. Depends on SessionRecorder (item 6) for the flight row.
 • Item 17 (weather W2–W4, W6, W7), item 18 (real gimbal command and feedback), item 21 lint test.
 • Items 12–14: SITL campaign, Jetson build (F20 start script), real radio and go/no-go.
@@ -129,19 +129,19 @@ Data integrity
 Battery identity is batt:<sysid>, one fake serial per vehicle, so cycle counts and health trends are per vehicle, not per pack.
 PreflightPlugin.cpp:255-256
 V
-Must — Status 20 Oct: open.
+Must — Status 22 Oct: done, commit da5a75260: the synthetic batt:<sysid> serial is removed; the operator picks a registered pack (Battery pack item, Power section), required before any GCS arm.
 F8
 Data integrity
 The pack the operator enters in Fly view (type, S, P, cell mAh, reserve) is saved on the vehicle row and overwritten on each change. No flight or session row keeps a copy.
 core/VehicleProfileManager.cpp:577-623, 730-735; qml/cpts/FlyQuickActions.qml:558-564
 V
-Must — Status 20 Oct: open.
+Must — Status 22 Oct: partial: pack config now lives on the pack (batteries, v20) and is chosen in the Power section; the per-flight flight_batteries snapshot is still open (with SessionRecorder).
 F9
 Data integrity
 Battery cycles have two writers, saveBatteryCycle on disarm after 30 s and incrementBatteryCycle on the gate-close ack; both bump total_cycles.
 core/VehicleProfileManager.cpp:1112-1126, PreflightPlugin.cpp:586, utils/DatabaseManager.cpp:3511-3535, 3586-3637
 V
-Must — Status 20 Oct: open.
+Must — Status 22 Oct: done: one writer, DatabaseManager::recordBatteryFlight() at session end, counting a cycle only when the flight used >= 20 % of rated capacity (FC mAh consumed); the 30 s disarm writer in VehicleProfileManager is removed.
 F10
 Data integrity
 Energy per flight uses BAT_CAPACITY/BAT1_CAPACITY, which are PX4 names; ArduPilot's is BATT_CAPACITY, so ArduPilot flights fall back to a 0.45 Ah-per-percent guess. Distance falls back to ground speed at disarm times duration, which is near zero. The pack entered in Fly view is not used.
@@ -165,13 +165,13 @@ Reliability
 Startup ignores the result of DatabaseManager::initialize(), so a locked, full or corrupt database leaves the app running with no logging and no warning to the operator.
 PreflightPlugin.cpp:221
 V
-Must — Status 20 Oct: open.
+Must — Status 22 Oct: done, commit da5a75260: initialize()'s result is checked; DatabaseManager::startupError drives a red "FLIGHT LOGGING IS OFF" Fly-view banner and a startup message.
 F14
 Reliability, maintainability
 Migrations log failed SQL as warnings and still record the version, so a failed step is never retried. Migration v19 exists but kLatestSchemaVersion is 18, so it never runs and saveTargetLocation writes columns that do not exist.
 utils/DatabaseManager.cpp:997, 1037-1529, 3755-3765
 V
-Must — Status 20 Oct: open; confirmed (v19 block at utils/DatabaseManager.cpp:1490, kLatestSchemaVersion = 18).
+Must — Status 22 Oct: done, commit da5a75260: each step is transactional with its version row and stops on failure; version 20. Also fixed: storedSchemaVersion() answered 0 during initialize(), so every launch re-ran every migration (v12 rebuilt flights each start, zeroing its summary columns; the .bak was rewritten each launch).
 F15
 Reliability
 RTL waits up to 5 s in a nested QEventLoop and then dereferences the raw _vehicle pointer. Link loss, the most likely moment to press Return, can delete the vehicle during that wait. A second press re-enters the loop.
@@ -535,13 +535,13 @@ Records
 Battery pack registry and per-flight snapshot
 F7, F8, F9, F10
 Move the battery modal out of Fly view into a mandatory "Battery pack" item in the preflight Power section that opens it on click; pick or edit a pack there; flight_batteries snapshot at arm; mAh and Wh from BATTERY_STATUS; BATT_CAPACITY fallback; cycles as a derived view.
-Test: edit a pack after a flight and the flight's snapshot is unchanged. Test: two flights on two packs give each pack one cycle. SITL: Wh within 5% of BATTERY_STATUS.energy_consumed. — Status 20 Oct: open.
+Test: edit a pack after a flight and the flight's snapshot is unchanged. Test: two flights on two packs give each pack one cycle. SITL: Wh within 5% of BATTERY_STATUS.energy_consumed. — Status 22 Oct: partial, commit da5a75260 + gimbal commit: registry, Power-section item and dialog, gate hard block in every mode, 20 % cycle rule (DatabaseManagerTest, ArmingGateTest). Open: flight_batteries snapshot, Wh from BATTERY_STATUS, BATT_CAPACITY fallback (F10).
 8
 Records
 Database startup and migrations fail loudly
 F13, F14
 Check initialize()'s result and show a persistent banner when logging is off. Run each migration step in a transaction; on any failed statement roll back, keep the pre-migration backup, and stop. Fix the schema version constant so v19 (and the new tables) run.
-Migration test from saved v12 and v18 database files; test that a read-only database path shows the banner — Status 20 Oct: open.
+Migration test from saved v12 and v18 database files; test that a read-only database path shows the banner — Status 22 Oct: done, commit da5a75260 (DatabaseMigrationTest 14/14: restart does not re-run, v18 upgrade, failed step rolls back, unopenable path sets the error).
 9
 Safety
 Manual confirmations do not survive a restart
@@ -601,7 +601,7 @@ Commands
 Working gimbal pitch, roll and yaw tests
 Gimbal review
 Real command and attitude feedback in TelemetryBridge, MNT1 limits, per-axis measured test with return to center.
-Each axis shows a measured pass or fail in SITL with a simulated mount; no gimbal means fail, not pass — Status 20 Oct: stop-gap only. Buttons disabled with a reason and no pass without feedback; real command and feedback open.
+Each axis shows a measured pass or fail in SITL with a simulated mount; no gimbal means fail, not pass — Status 22 Oct: done in code (gimbal commit): DO_MOUNT_CONTROL with ack, attitude decoded from GIMBAL_DEVICE_ATTITUDE_STATUS / MOUNT_ORIENTATION / MOUNT_STATUS, MNT1 (or MNT_ANG*) limits, per-axis ±3°/3 s test with return to centre, logged to hardware_test_events (TelemetryBridgeTest decode tests). SITL / real-mount run still to do.
 19
 Safety
 Bench tests never disarm a flying aircraft (do with item 15)

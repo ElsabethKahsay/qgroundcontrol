@@ -1,0 +1,44 @@
+Phase 1 Step 3 run — 2026-10-22T07:31:18Z
+Same method as baseline-step2.txt. FlightSessionLifecycleTest exit 139 = known MockLink crash (also in baseline-step2).
+
+== ArmSendTest (exit 0)
+Totals: 22 passed, 0 failed, 0 skipped, 0 blacklisted, 61423ms
+== ArmingGateTest (exit 0)
+Totals: 15 passed, 0 failed, 0 skipped, 0 blacklisted, 42ms
+== ArmingGateExtendedTest (exit 0)
+Totals: 9 passed, 0 failed, 0 skipped, 0 blacklisted, 30ms
+== ArmGateResilienceTest (exit 0)
+Totals: 14 passed, 0 failed, 0 skipped, 0 blacklisted, 70713ms
+== ArmingFlowIntegrationTest (exit 0)
+Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 604ms
+== MavLinkInterceptTest (exit 0)
+Totals: 19 passed, 0 failed, 0 skipped, 0 blacklisted, 37ms
+== PreflightManagerTest (exit 0)
+Totals: 20 passed, 0 failed, 0 skipped, 0 blacklisted, 49ms
+== StateMachineTest (exit 0)
+Totals: 6 passed, 0 failed, 0 skipped, 0 blacklisted, 29ms
+== FlightSessionTest (exit 0)
+Totals: 10 passed, 0 failed, 0 skipped, 0 blacklisted, 115ms
+== FlightSessionLifecycleTest (exit 139)
+== HardwareTestControllerTest (exit 0)
+Totals: 13 passed, 0 failed, 0 skipped, 0 blacklisted, 18135ms
+== ControlSurfaceTestControllerTest (exit 0)
+Totals: 16 passed, 0 failed, 0 skipped, 0 blacklisted, 50726ms
+== ReturnToLaunchTest (exit 0)
+Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 19688ms
+== TelemetryBridgeTest (exit 0)
+Totals: 12 passed, 0 failed, 0 skipped, 0 blacklisted, 41ms
+== WeatherProviderTest (exit 0)
+Totals: 8 passed, 0 failed, 0 skipped, 0 blacklisted, 1567ms
+== CheckSmokeTest (exit 0)
+Totals: 13 passed, 0 failed, 0 skipped, 0 blacklisted, 33ms
+== QmlShadowTest (exit 0)
+Totals: 6 passed, 0 failed, 0 skipped, 0 blacklisted, 47ms
+== MotorCheckPanelSmokeTest (exit 0)
+Totals: 5 passed, 0 failed, 0 skipped, 0 blacklisted, 2800ms
+== FlyQuickActionsSmokeTest (exit 0)
+Totals: 8 passed, 0 failed, 0 skipped, 0 blacklisted, 422ms
+== TelemetryBridgeTest (exit 0)
+Totals: 12 passed, 0 failed, 0 skipped, 0 blacklisted, 32ms
+== DatabaseMigrationTest (exit 0)
+Totals: 14 passed, 0 failed, 0 skipped, 0 blacklisted, 204ms

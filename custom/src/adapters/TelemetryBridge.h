@@ -559,6 +559,13 @@ public:
     /// autopilot heartbeat, capped by the link drop rate: 100 up to 1.2 s,
     /// then 1 point per 50 ms late, 0 from 6 s.
     static int connectionQualityForGap(qint64 gapMs, double dropRatePct);
+
+    /// Item 18: gimbal attitude in degrees, yaw relative to the vehicle nose,
+    /// from GIMBAL_DEVICE_ATTITUDE_STATUS (quaternion; an earth-frame yaw is
+    /// turned into vehicle frame with delta_yaw, else @p vehicleYawRad),
+    /// MOUNT_ORIENTATION or ArduPilot MOUNT_STATUS. False for any other message.
+    static bool decodeGimbalAttitude(const mavlink_message_t &message, double vehicleYawRad,
+                                     double &pitchDeg, double &rollDeg, double &yawDeg);
     double batteryTemperature() const { return _batteryTemperature; }
     QString batteryChargeState() const { return _batteryChargeState; }
     double batteryTimeRemainingSeconds() const { return _batteryTimeRemainingSeconds; }
@@ -775,6 +782,11 @@ public:
     /// property so QML bindings react immediately.
     Q_INVOKABLE void setParameterValue(const QString& name, float value);
 
+    /// Item 18: point the gimbal (degrees; yaw relative to the vehicle nose)
+    /// with MAV_CMD_DO_MOUNT_CONTROL, mode 2 = MAVLINK_TARGETING. The ack
+    /// arrives as gimbalCommandResult(205, MAV_RESULT).
+    Q_INVOKABLE void sendMountControl(double pitchDeg, double rollDeg, double yawDeg, int mode = 2);
+
     /// Check whether a parameter exists in the local watchlist cache.
     Q_INVOKABLE bool hasParameter(const QString& name) const;
 
@@ -876,6 +888,8 @@ signals:
     void batteryDataQualityChanged();
     void gimbalAttitudeChanged();
     void gimbalCalibratingChanged();
+    /// Ack of a gimbal command (MAV_CMD id, MAV_RESULT).
+    void gimbalCommandResult(int command, int result);
     void ekfStatusChanged();
     void flightTimeChanged();
     void lastLogTimestampChanged();

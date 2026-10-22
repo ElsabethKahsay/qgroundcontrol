@@ -30,13 +30,137 @@ Page {
 
     property string _lastCmd: ""
     property string _lastAck: ""
-    property bool tiltTestRunning: false
-    property bool tiltTestPassed: false
-    // FORK PATCH: TelemetryBridge has no gimbal command yet (no sendMountControl),
-    // so these tests stay disabled until it does, rather than throwing on click
-    // and reporting a pass that was never measured.
+    // FORK PATCH: the tests stay disabled when the bridge has no gimbal
+    // command, rather than throwing on click.
     readonly property bool _gimbalCmdSupported: typeof TelemetryProvider !== "undefined" && TelemetryProvider
                                                 && typeof TelemetryProvider.sendMountControl === "function"
+
+    // ── Item 18: per-axis gimbal tests, passed or failed on MEASURED attitude ──
+    // Each axis: command a target inside its MNT limits, pass only if the
+    // gimbal reports within ±3° of it within 3 s, then command centre and
+    // confirm it returns within ±3° within 3 s. No gimbal, no feedback or a
+    // rejected command is a fail; an axis with no range is skipped.
+    readonly property real _axisToleranceDeg: 3
+    readonly property int  _axisTimeoutMs: 3000
+    readonly property var  _axisDefaults: ({ pitch: -30, roll: 20, yaw: 30 })
+    // {pitch|roll|yaw: {state: "pass"|"fail"|"skip"|"running", text}}
+    property var    _axisResults: ({})
+    property var    _axisQueue: []
+    property string _testAxis: ""
+    property real   _testTarget: 0
+    property int    _testPhase: 0          // 1 = moving to target, 2 = returning to centre
+    property real   _phaseStartMs: 0
+    property real   _testStartMs: 0
+    readonly property bool axisTestRunning: _testAxis !== ""
+
+    function _param(name) {
+        return TelemetryProvider.hasParameter(name) ? TelemetryProvider.parameterValue(name, 0) : NaN
+    }
+    // [min, max] in degrees: MNT1_* (ArduPilot 4.3+), else the older MNT_ANGMIN/ANGMAX_* in centidegrees.
+    function _axisLimits(axis) {
+        var n = { pitch: "PITCH", roll: "ROLL", yaw: "YAW" }[axis]
+        var lo = _param("MNT1_" + n + "_MIN"), hi = _param("MNT1_" + n + "_MAX")
+        if (!isNaN(lo) && !isNaN(hi))
+            return [lo, hi]
+        var o = { pitch: "TIL", roll: "ROL", yaw: "PAN" }[axis]
+        lo = _param("MNT_ANGMIN_" + o); hi = _param("MNT_ANGMAX_" + o)
+        if (!isNaN(lo) && !isNaN(hi))
+            return [lo / 100, hi / 100]
+        return null
+    }
+    function _measured(axis) {
+        return axis === "pitch" ? TelemetryProvider.gimbalPitch
+             : axis === "roll"  ? TelemetryProvider.gimbalRoll : TelemetryProvider.gimbalYaw
+    }
+    function _command(axis, angle) {
+        TelemetryProvider.sendMountControl(axis === "pitch" ? angle : 0, axis === "roll" ? angle : 0,
+                                           axis === "yaw" ? angle : 0, 2)
+    }
+    function _setAxis(axis, state, text) {
+        var r = Object.assign({}, _axisResults)
+        r[axis] = { state: state, text: text }
+        _axisResults = r
+    }
+    function _finishAxis(state, text) {
+        var axis = _testAxis
+        _setAxis(axis, state, text)
+        if (typeof Database !== "undefined" && Database)
+            Database.logHardwareTestStep(FlightSession.currentFlightId, "gimbal." + axis, 0,
+                                         Math.round(_testTarget), Math.round(_measured(axis)),
+                                         -_axisToleranceDeg, _axisToleranceDeg, false, state,
+                                         state === "pass" ? "" : text, "", Date.now() - _testStartMs)
+        console.info("GimbalTest:", axis, state, text)
+        if (state === "fail" && _testPhase === 1)
+            _command(axis, 0)            // do not leave the gimbal deflected
+        _testAxis = ""
+        _testPhase = 0
+        axisTimer.stop()
+        _startNextAxis()
+    }
+    function runAxisTests(axes) {
+        if (axisTestRunning)
+            return
+        _axisQueue = axes.slice()
+        _startNextAxis()
+    }
+    function _startNextAxis() {
+        if (_axisQueue.length === 0)
+            return
+        var q = _axisQueue.slice()
+        var axis = q.shift()
+        _axisQueue = q
+        _testAxis = axis
+        _testStartMs = Date.now()
+        var mntType = _param("MNT1_TYPE")
+        if (mntType === 0) { _finishAxis("fail", qsTr("No gimbal configured (MNT1_TYPE = 0)")); return }
+        if (!TelemetryProvider.gimbalDetected) { _finishAxis("fail", qsTr("No gimbal attitude feedback from the vehicle")); return }
+        var lim = _axisLimits(axis)
+        var lo = lim ? lim[0] + 2 : -45, hi = lim ? lim[1] - 2 : 45
+        var clamp = function(v) { return Math.max(lo, Math.min(hi, v)) }
+        var target = clamp(_axisDefaults[axis])
+        if (Math.abs(target) < 5)
+            target = clamp(-_axisDefaults[axis])
+        if (Math.abs(target) < 5) {
+            _testTarget = 0
+            _finishAxis("skip", lim ? qsTr("No range (limits %1° to %2°)").arg(lim[0]).arg(lim[1])
+                                    : qsTr("No range"))
+            return
+        }
+        _testTarget = Math.round(target)
+        _testPhase = 1
+        _phaseStartMs = Date.now()
+        _setAxis(axis, "running", qsTr("Moving to %1°…").arg(_testTarget))
+        _command(axis, _testTarget)
+        root._send(qsTr("Gimbal %1 test: %2°").arg(axis).arg(_testTarget))
+        axisTimer.start()
+    }
+
+    Timer {
+        id: axisTimer
+        interval: 100
+        repeat: true
+        onTriggered: {
+            var axis = root._testAxis
+            if (axis === "") { stop(); return }
+            var m = root._measured(axis)
+            var elapsed = Date.now() - root._phaseStartMs
+            if (root._testPhase === 1) {
+                if (Math.abs(m - root._testTarget) <= root._axisToleranceDeg) {
+                    root._testPhase = 2
+                    root._phaseStartMs = Date.now()
+                    root._setAxis(axis, "running", qsTr("Reached %1°, returning to centre…").arg(m.toFixed(1)))
+                    root._command(axis, 0)
+                } else if (elapsed > root._axisTimeoutMs) {
+                    root._finishAxis("fail", qsTr("Commanded %1°, measured %2° after 3 s").arg(root._testTarget).arg(m.toFixed(1)))
+                }
+            } else if (root._testPhase === 2) {
+                if (Math.abs(m) <= root._axisToleranceDeg)
+                    root._finishAxis("pass", qsTr("Reached %1° and returned to centre").arg(root._testTarget))
+                else if (elapsed > root._axisTimeoutMs)
+                    root._finishAxis("fail", qsTr("Did not return to centre (measured %1°)").arg(m.toFixed(1)))
+            }
+        }
+    }
     property bool _targetFromMap: false
 
     // Control surface test state (driven by ControlSurfaceTestController)
@@ -91,7 +215,9 @@ Page {
     Component.onDestruction: {
         root._safeStopAllSurfaces()
         ackTimer.stop()
-        tiltReturnTimer.stop()
+        axisTimer.stop()
+        if (root.axisTestRunning && root._gimbalCmdSupported)
+            TelemetryProvider.sendMountControl(0, 0, 0, 2)   // never leave the gimbal deflected
         targetStatusTimer.stop()
     }
 
@@ -117,34 +243,16 @@ Page {
         }
     }
 
-    // Tilt Test: sends pitch=-30, verifies attitude change within 2s, resets to 0
-    Timer {
-        id: tiltReturnTimer
-        interval: 2000
-        repeat: false
-        onTriggered: {
-            if (root._gimbalCmdSupported)
-                TelemetryProvider.sendMountControl(0, 0, 0, 2);
-            root.tiltTestRunning = false;
-            // Pass only on measured attitude feedback (onGimbalAttitudeChanged);
-            // no feedback within the window is a failure, never a pass.
-            root._send(root.tiltTestPassed ? "Tilt Test Complete (Passed)"
-                                           : "Tilt Test FAILED (no gimbal attitude feedback)");
-        }
-    }
-
     Connections {
         target: (typeof TelemetryProvider !== "undefined") ? TelemetryProvider : null
-        function onGimbalAttitudeChanged() {
-            if (root.tiltTestRunning) {
-                root.tiltTestPassed = true;
-            }
-        }
         function onGimbalCommandResult(command, result) {
-            // Only gimbal commands: 205 = MAV_CMD_DO_MOUNT_CONTROL, 200 = MAV_CMD_DO_SET_ROI.
-            // Only surface camera/gimbal command acks: 205=DO_MOUNT_CONTROL, 200=DO_CONTROL_VIDEO
-            if (command !== 205 && command !== 200)
+            // 205 = MAV_CMD_DO_MOUNT_CONTROL, 1000 = MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW
+            if (command !== 205 && command !== 1000)
                 return;
+            if (result !== 0 && root.axisTestRunning) {
+                root._finishAxis("fail", qsTr("Vehicle rejected the gimbal command (%1)")
+                                     .arg(root._ackLabels[result] || result));
+            }
             var label = root._ackLabels[result] || ("Unknown(" + result + ")");
             root._lastAck = label;
             statusToast.text = root._lastCmd + " \u2192 " + label;
@@ -735,15 +843,15 @@ Page {
                 // ── Gimbal Test Buttons (no Recalibrate) ──
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: root._gimbalCmdSupported ? 100 : 130
+                    Layout.preferredHeight: gimbalTestsCol.implicitHeight + Config.spacingMedium * 2
                     color: Colors.surface
                     radius: Config.radiusMedium
                     border.color: Colors.border
                     border.width: 1
 
                     ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: Config.spacingMedium
+                        id: gimbalTestsCol
+                        anchors { top: parent.top; left: parent.left; right: parent.right; margins: Config.spacingMedium }
                         spacing: Config.spacingSmall
 
                         Text {
@@ -753,40 +861,81 @@ Page {
                             color: Colors.textPrimary
                         }
 
-                        RowLayout {
+                        Flow {
                             Layout.fillWidth: true
-                            spacing: Config.spacingMedium
+                            spacing: Config.spacingSmall
 
-                            // Center Gimbal
                             Button {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 42
-                                text: "\uD83C\uDFAF Center Gimbal"
+                                width: (parent.width - 4 * parent.spacing) / 5
+                                height: 42
+                                text: "\uD83C\uDFAF " + qsTr("Center")
                                 font.pixelSize: Config.fontSizeSmall
                                 font.bold: true
-                                highlighted: true
-                                enabled: root._gimbalCmdSupported
+                                enabled: root._gimbalCmdSupported && !root.axisTestRunning
                                 onClicked: {
                                     // mode 2 = MAVLINK_TARGETING; zero angles center the gimbal
                                     TelemetryProvider.sendMountControl(0, 0, 0, 2);
                                     root._send("Center Gimbal (p=0, r=0, y=0, mode=2)");
                                 }
                             }
-
-                            // Tilt Test
+                            Repeater {
+                                model: [ { axis: "pitch", label: qsTr("Pitch test") },
+                                         { axis: "roll",  label: qsTr("Roll test") },
+                                         { axis: "yaw",   label: qsTr("Yaw test") } ]
+                                delegate: Button {
+                                    required property var modelData
+                                    width: (parent.width - 4 * parent.spacing) / 5
+                                    height: 42
+                                    text: modelData.label
+                                    font.pixelSize: Config.fontSizeSmall
+                                    font.bold: true
+                                    enabled: root._gimbalCmdSupported && !root.axisTestRunning
+                                    onClicked: root.runAxisTests([modelData.axis])
+                                }
+                            }
                             Button {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 42
-                                text: root.tiltTestRunning ? "\u23F3 Tilt Testing..." : "\uD83D\uDCDD Tilt Test (-30\u00B0)"
+                                width: (parent.width - 4 * parent.spacing) / 5
+                                height: 42
+                                text: root.axisTestRunning ? qsTr("Testing…") : qsTr("Test all axes")
+                                highlighted: true
                                 font.pixelSize: Config.fontSizeSmall
                                 font.bold: true
-                                enabled: root._gimbalCmdSupported && !root.tiltTestRunning
-                                onClicked: {
-                                    root.tiltTestRunning = true;
-                                    root.tiltTestPassed = false;
-                                    TelemetryProvider.sendMountControl(-30, 0, 0, 2);
-                                    root._send("Tilt Test started (-30\u00B0)");
-                                    tiltReturnTimer.restart();
+                                enabled: root._gimbalCmdSupported && !root.axisTestRunning
+                                onClicked: root.runAxisTests(["pitch", "roll", "yaw"])
+                            }
+                        }
+
+                        // Per-axis results
+                        Repeater {
+                            model: ["pitch", "roll", "yaw"]
+                            delegate: RowLayout {
+                                required property string modelData
+                                readonly property var res: root._axisResults[modelData]
+                                Layout.fillWidth: true
+                                visible: res !== undefined
+                                spacing: Config.spacingSmall
+                                Text {
+                                    text: modelData.toUpperCase()
+                                    font.pixelSize: Config.fontSizeSmall
+                                    font.bold: true
+                                    color: Colors.textSecondary
+                                    Layout.preferredWidth: 50
+                                }
+                                Text {
+                                    text: !res ? "" : res.state === "pass" ? "PASS" : res.state === "fail" ? "FAIL"
+                                                    : res.state === "skip" ? "SKIP" : "\u23F3"
+                                    font.pixelSize: Config.fontSizeSmall
+                                    font.bold: true
+                                    color: !res ? Colors.textSecondary : res.state === "pass" ? Colors.success
+                                         : res.state === "fail" ? Colors.error : Colors.textSecondary
+                                    Layout.preferredWidth: 44
+                                }
+                                Text {
+                                    text: res ? res.text : ""
+                                    font.pixelSize: Config.fontSizeSmall
+                                    color: Colors.textPrimary
+                                    wrapMode: Text.Wrap
+                                    Layout.fillWidth: true
                                 }
                             }
                         }
