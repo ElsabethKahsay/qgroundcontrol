@@ -2,7 +2,7 @@ Skywin GCS Phase 1 Readiness Plan
 20 Oct 2026 · @Arsema
 
 Implementation status (read this first)
-Updated 20 Oct 2026 against the working tree on custom-dev-next. Everything below is uncommitted and nothing has been built or run yet; "done" means edited and syntax-checked with qmllint, not tested. The findings further down are left as originally written; this section says which are fixed, which were wrong, and what is still open. Each finding, defect and work item below also carries a "Status 20 Oct" note. Step-by-step instructions for the remaining Steps 0–2 work are in the last section, "Agent instructions: Steps 0–2".
+First written 20 Oct 2026; status updated 22 Oct 2026 (Step 3). Steps 1–2 are tagged phase1-step1 / phase1-step2; Step 3 is committed and unit-tested but not yet verified on the aircraft (see "Still open"). The findings further down are left as originally written; this section says which are fixed, which were wrong, and what is still open. Each finding, defect and work item below also carries a "Status 20 Oct" note. Step-by-step instructions for the remaining Steps 0–2 work are in the last section, "Agent instructions: Steps 0–2".
 
 Corrections to this report after checking the current code
 • G1: the token-bound, expiring acknowledgment was implemented in commit 2fd409b49 and then removed by 0a71b8d22 ("Simplify preflight roster"). The project copy was not stale; the fix was lost. Restore those hunks rather than rewrite them.
@@ -47,7 +47,32 @@ Done in Step 2 (C++, tag phase1-step2, 21 Oct)
 • After Step 2 (21 Oct): item 10 done (Return without a nested event loop). RC check fixes from bench testing with a real ArduPilot RC link: RSSI 255 ("not reported", RSSI_TYPE = 0) no longer reads as RC failsafe, so RC Failsafe and RC RSSI no longer fail with a working transmitter; RC calibration no longer judges the throttle channel's trim against 1500 (ArduPilot puts it at the stick bottom); the throttle-minimum check was inverted (passed at any position >= 900 µs) and now passes only in the bottom 10 % of the calibrated range, honouring channel reversal. Gimbal page: the control-surface card is now laid out at full height so all five tests scroll into view; "Back to Checklist" matches the wide "Next: Gimbal Test" button.
 • Finding: custom/qml/MainStatusIndicator.qml (same resource path as the AOT-compiled stock file) and custom/qml/ArmedIndicator.qml (nothing references it) never load. QmlShadowTest checks resource content, not what the engine instantiates, so it does not catch this.
 
-Still open (all C++ unless noted)
+Done in Step 3 (22 Oct; code committed and unit-tested, NOT yet verified on the aircraft or in SITL)
+• Item 8 (da5a75260): transactional migrations, version 23; storedSchemaVersion() bug that re-ran every migration on every launch fixed; "FLIGHT LOGGING IS OFF" banner.
+• Item 7 (da5a75260, ade82ce18): required Battery pack item in the Power section (every session mode, gate hard block), pack registry, 20 % cycle rule, per-flight frozen pack snapshot with mAh/Wh from the FC counters (F7–F10).
+• Item 6 (9f39fcae6, ec506bb00): SessionRecorder — connection sessions, one flight per arm (RC arms included), link-loss and crash recovery, 10 s summary, check results keyed (F6, F11, F12); every flight also gets a Flight History row.
+• Item 18 (df0791266): real gimbal pitch/roll/yaw tests on measured attitude; gimbal target saves (da5a75260).
+• Item 17 W2–W4, W6 and item 21 lint (ade82ce18). Attitude readout on the gimbal page and the Fly view (9f39fcae6). Hidden checklist rows fixed (9f39fcae6).
+• Trainer handover logging (ec506bb00, 651dddbef), refusing a trainer channel equal to FLTMODE_CH.
+• Disabled motor / surface tests now say why on screen (60e0fdd18): they arm the vehicle, so they need a Testing session.
+
+Still open (22 Oct)
+Verification (operator, no code): see "Bench and SITL checks for Step 3" at the end of this document.
+• Not yet seen in the running app: Battery pack dialog, Fly-view ATTITUDE column, trainer chip, weather source line, Flight History rows (the app running on 22 Oct afternoon was the 11:35 build).
+• Trainer handover on the GX12 pair: needs a trainer-switch mix on a free channel (CH8 is the plane's flight-mode switch).
+• SITL: kill -9 mid-flight leaves a crash_recovered row (item 6); Wh within 5 % of BATTERY_STATUS.energy_consumed (item 7); gimbal axis tests with MNT1_TYPE = 1 (item 18).
+• tests/FlightSessionLifecycleTest.cpp still crashes inside MockLink (exit 139). Item 6's acceptance line asks for it to pass; the recorder is tested without MockLink instead (DatabaseManagerTest). Open.
+• Tag phase1-step3 once the bench checks pass.
+Aircraft findings from the 22 Oct bench session (fixed wing, CoreWingF405WingV2, ArduPlane 4.5.7, ELRS 16 ch) — fix before flying:
+• Roll reads about -46° with the airframe still (pitch follows a tilt): check AHRS_ORIENTATION and redo the accelerometer calibration if the plane sits level.
+• "MS4525: no sensor found / Airspeed 1 init failed": connect the airspeed sensor or set ARSPD_TYPE = 0.
+• Two GCS-failsafe RTLs from USB link drops (14:32, 14:34): check the cable and port; over the telemetry radio this is what sends the plane home.
+• After the RC link was lost, CH3 (throttle) read 1922: check the ELRS receiver failsafe is "No pulses", not a fixed high-throttle position.
+• Battery monitor now reads correctly (23.3 V, 1.13 A, mAh and energy counters): the morning's 0 V / "unhealthy" is resolved.
+Code still open:
+• Item 17 W7 (SITL weather location); items 12–14 (SITL campaign, Jetson build / F20 start script, real radio and go/no-go).
+
+Earlier notes on the open items (history; statuses above supersede them)
 • Items 6–8: SessionRecorder, battery pack registry and snapshot (including moving the pack modal into the Power section), database startup and migration fixes.
 • Step 3 decisions (22 Oct, user): new Step 3 classes go into new source files added to custom/CMakeLists.txt in ONE batched change (one ~70-minute rebuild, then incremental builds); a flight counts as one battery cycle when it uses at least 20 % of the pack's rated capacity; the battery-pack entry lives in the preflight page's Power section (a "Battery pack" item that opens the pack dialog), not in the Fly view. Pack requirement (user, 22 Oct): required in every session mode — done.
 • Step 3 addition (22 Oct): gimbal-page target location does not save. Verified on the live database (UAVPreflight/PreflightQGroundControl Daily/uav_preflight_data.db): schema version 18, flights has no target_lat / target_lon / target_source because v19 never ran (F14), and the "Submit Target" button is enabled only when FlightSession.currentFlightId > 0, which nothing in normal use sets (only the never-opened FlightFormDialog). Typed or map-centre targets only update the in-memory distance readout. Fix in Step 3: item 8 runs v19; the target is stored on the connection session (it is set during preflight, before any arm) and copied onto each flight row; Submit is enabled whenever a vehicle is connected; the page reloads the saved target on open. Status 22 Oct: done, commit da5a75260, keyed on the vehicle row (v20 columns) until SessionRecorder adds connection sessions; copied onto each flight session at gate open.
@@ -955,3 +980,83 @@ Stop after Step 2. Do not start Step 3 (SessionRecorder, battery packs, database
 - Decisions you made where this prompt was ambiguous, and anything you could not finish.
 - What you found for G13 in `Vehicle.cc`.
 - Do not claim SITL behaviour; nothing in this task is verified in SITL.
+
+---
+
+## Bench and SITL checks for Step 3 (written 22 Oct for the operator)
+
+Safety first, every time: **propellers off** for everything below. The plane may arm during the motor and surface tests.
+
+### A. Start the new build
+1. Close the QGC window that is open now (it is an older build from 11:35).
+2. Start it again from the build: `~/Dev/qgroundcontrol/build/Debug/PreflightQGroundControl`.
+3. Pass if: the app opens normally and there is **no red "FLIGHT LOGGING IS OFF" banner** at the top of the Fly view. (On this first start the database upgrades itself; a backup `uav_preflight_data.db.bak` is made first.)
+4. If the red banner appears: write down its text and send it to me — the app still flies, but nothing is being recorded.
+
+### B. Battery pack (Power section)
+1. Connect the plane over USB and plug in the flight battery.
+2. Open the checklist (Fly view → **Checklist**). Choose any session mode when asked.
+3. In the **Power** section look for an item called **Battery pack**, with a button **Select battery pack**.
+4. Press it. In the window: Pack = **+ New pack**; Pack ID = what is written on your pack (e.g. `PK-01`; write one on the pack with a marker if it has none); Type, S (cells in series, e.g. 6 for a 6S pack), P (usually 1), Cell capacity in mAh (the number on the pack label). Press **Save & use this pack**.
+5. Pass if: the item turns green and shows the pack name and "0 cycles". The button now says **Change battery pack**.
+6. Arming check (props off!): with the pack NOT selected (unplug USB and reconnect — the selection clears on every new connection), try to arm from the GCS. Pass if: it is refused with "Select the battery pack before arming".
+
+### C. Attitude readout and the plane's level problem
+1. On the Fly view, the floating telemetry box now has a 4th column **ATTITUDE · UAV** (it says GIMBAL instead if a gimbal is connected).
+2. Put the plane on a flat table, wings level, nose level.
+3. Pass if: Roll and Pitch read close to **0** (within about ±3°).
+4. Tilt the nose down a little: Pitch should go negative. Lift the right wing: Roll should change. They should follow you live.
+5. **Today the plane read Roll ≈ -46° while still.** If it still does on a flat table, the flight controller does not know how it is mounted:
+   - QGC → Vehicle Setup (gear icon) → **Sensors** → set the **Autopilot Orientation** to how the board is mounted (arrow on the board vs. the nose of the plane), then run **Accelerometer** calibration and follow the on-screen positions.
+   - Check step 3 again. Do not fly until Roll and Pitch read 0 when level.
+
+### D. Motor and control-surface tests (needs a Testing session)
+1. These tests arm the plane, so the GCS only allows them in a **Testing** session. If a session is already running, end it and start a new one choosing **Testing**.
+2. If a test is still greyed out, read the orange line under it — it now says why (e.g. "start a Testing session first", or "Vehicle is armed — disarm it").
+3. Motor test: props off, open it, confirm the props-off question, test the motor. Pass if the motor spins briefly and the vehicle disarms by itself afterwards.
+4. Surface test (gimbal page → Control Surface Test): press **Sweep** on each surface. Pass if each surface moves both ways and comes back to centre.
+
+### E. Gimbal page target location
+1. Open the gimbal page, type a target latitude and longitude (or press the map-centre button), press **Submit Target**.
+2. Pass if: it says "Target location saved". Close QGC, start it again, reconnect, open the gimbal page: the same target is filled in.
+
+### F. Trainer handover (instructor and student radios)
+What it is: in training, the student's radio is plugged into the instructor's radio with the trainer cable. Only the instructor's radio talks to the plane. While the instructor **holds the trainer switch**, the student's sticks fly the plane; when the instructor **lets go**, the instructor flies. The plane cannot see that switch by itself, so we make the instructor's radio send the switch position on a spare channel. The GCS watches that channel and logs every handover.
+
+**Why not CH8:** on this plane CH8 is the **flight-mode switch** (it changed MANUAL / STABILIZE / RTL today). We use **CH9** instead (your ELRS link carries 16 channels).
+
+Step 1 — find which switch is the trainer switch (instructor's GX12):
+1. Press **MDL** (model settings) and page to **Special Functions**.
+2. Look for a line whose function is **Trainer** (e.g. `SH  Trainer`). The switch named there (here SH) is the trainer switch.
+
+Step 2 — copy that switch onto CH9 (instructor's GX12):
+1. **MDL** → page to **Mixes**.
+2. Scroll to **CH9**, press the roller, choose **Insert** (or **Edit** if CH9 is empty).
+3. Set **Source** = the trainer switch from Step 1 (e.g. SH). Leave **Weight 100**, **Offset 0**. Exit to save.
+4. Check it on the radio: **SYS** → **Channel monitor** (or the Outputs page). Hold the trainer switch: CH9 should jump (e.g. from -100 to +100). Release: it returns.
+5. If your ELRS model uses **Hybrid** switch mode, a 2-position switch on CH9 is still fine.
+
+Step 3 — tell the GCS to use CH9:
+1. Start a **Training** session in QGC with the plane connected and both radios on, trainer cable in.
+2. At the top of the Fly view a small chip appears. Tap it → set **Trainer switch channel = 9**.
+3. Pass if: the chip says **INSTRUCTOR FLYING (switch not seen yet)**.
+4. Hold the trainer switch → chip turns orange **STUDENT FLYING**, and a message "Trainer: STUDENT has control" appears. Release → green **INSTRUCTOR FLYING**.
+5. If the chip says **"not monitored — no CH9 trainer mix"**, the radio is not sending CH9: redo Step 2.
+6. If it says **"CH9 is the flight-mode channel"**, pick another free channel (10, 11…) in both the radio mix and the chip.
+
+### G. Flight History (records)
+1. In a Flight or Training session, arm and disarm once (props off; motor test style arm is fine).
+2. Open **Flight History**. Pass if: the flight appears with its time and duration. In a Training flight where you flipped the trainer switch, open the flight: a **TRAINER HANDOVERS** section lists each handover with time and altitude.
+
+### H. Other things seen today on the plane (fix before flying)
+- Airspeed sensor "no sensor found": plug it in, or if the plane has none set parameter **ARSPD_TYPE = 0** (Vehicle Setup → Parameters, search ARSPD_TYPE).
+- USB link dropped twice → the plane went to RTL (GCS failsafe). Try another USB cable/port.
+- After the RC link was lost, throttle (CH3) showed 1922. Check on the RC receiver's ELRS settings (or ELRS Lua script on the radio) that **failsafe is "No pulses"**; then, props off, switch the transmitter off: the plane must show "RC failsafe" and the motor must not spin.
+
+### What to send me
+For each section A–H: pass, or what you saw instead (a photo of the screen is fine). Keep QGC's MAVLink forwarding on — the monitor I run reads the plane's messages and shows arm/disarm, modes, CH9 and failsafes as they happen.
+
+### SITL checks (later, at the desk)
+- Kill QGC (`kill -9`) while a simulated flight is armed; restart: the flight shows end reason **crash_recovered**.
+- Fly a short SITL flight; the flight's Wh should be within 5 % of the simulator's energy counter.
+- SITL with `MNT1_TYPE = 1`: run the gimbal Pitch / Roll / Yaw tests; each should PASS.
