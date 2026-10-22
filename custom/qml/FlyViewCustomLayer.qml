@@ -510,7 +510,10 @@ Item {
                   : !trainerChip._monitored
                   ? qsTr("Trainer handover not monitored \u2014 no CH%1 trainer mix").arg(trainerChip._plugin ? trainerChip._plugin.trainerChannel : 8)
                   : (trainerChip._student ? qsTr("STUDENT FLYING") : qsTr("INSTRUCTOR FLYING"))
-                    + (trainerChip._plugin && !trainerChip._plugin.trainerVerified ? qsTr("  (switch not seen yet)") : "")
+                    // Unverified: the channel has not moved on this link. ELRS sends 1500 on an
+                    // unmixed channel, so a channel that never moves likely has no trainer mix.
+                    + (trainerChip._plugin && !trainerChip._plugin.trainerVerified
+                       ? qsTr("  (switch not seen yet \u2014 flick it once to confirm the mix)") : "")
         }
 
         // Tap: choose the channel the instructor's radio mixes the switch onto.

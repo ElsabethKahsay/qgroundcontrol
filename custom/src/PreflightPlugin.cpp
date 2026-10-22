@@ -123,6 +123,15 @@ PreflightPlugin::PreflightPlugin(QObject *parent)
 
 PreflightPlugin::~PreflightPlugin()
 {
+    // Close the session records now, while the objects the recorder's
+    // callbacks use (telemetry bridge, profile manager, power model) are still
+    // alive. Left to the recorder's own destructor, an exit while armed would
+    // run them after those children were deleted.
+    if (_sessionRecorder) {
+        _sessionRecorder->connectionClosed(QStringLiteral("app_exit"));
+        _sessionRecorder->setSampleProvider({});
+        _sessionRecorder->setFlightClosedHandler({});
+    }
     qCDebug(preflightPluginLog) << "PreflightPlugin: Destroyed";
 }
 
@@ -736,8 +745,15 @@ void PreflightPlugin::_onGateOpened()
     const int flightId = _sessionRecorder->flightId();
     if (flightId > 0) {
         _vehicleProfileManager->setFlightSessionId(flightId);
-        // The target set on the gimbal page during preflight belongs to this flight.
-        DatabaseManager::instance().copyVehicleTargetToSession(flightId, _sessionRecorder->deviceUid());
+        // The target set on the gimbal page during preflight belongs to this
+        // flight, and to its Flight History row.
+        DatabaseManager &db = DatabaseManager::instance();
+        db.copyVehicleTargetToSession(flightId, _sessionRecorder->deviceUid());
+        const QVariantMap target = db.vehicleTarget(_sessionRecorder->deviceUid());
+        if (!target.isEmpty() && _sessionRecorder->historyFlightId() > 0)
+            db.saveTargetLocation(_sessionRecorder->historyFlightId(), target.value(QStringLiteral("lat")).toDouble(),
+                                  target.value(QStringLiteral("lon")).toDouble(),
+                                  target.value(QStringLiteral("source")).toString());
     }
 }
 

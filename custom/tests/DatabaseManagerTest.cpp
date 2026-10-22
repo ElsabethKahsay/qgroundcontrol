@@ -363,7 +363,9 @@ void DatabaseManagerTest::testRecorderCrashRecoveryClosesBothTables()
     f.wire(*rec);
     rec->connectionOpened(QStringLiteral("UID-R"), QStringLiteral("Flight"), QString(), QString());
     f.sample = {16.0, 0.0};
-    rec->armed(start(QStringLiteral("gcs")));
+    SessionRecorder::FlightStart st = start(QStringLiteral("gcs"));
+    st.vehicleSysId = 1;
+    rec->armed(st);
     const int flight = rec->flightId(), conn = rec->connectionId();
     f.clock.advance(20000);
     f.sample = {15.2, 500.0};
@@ -382,6 +384,14 @@ void DatabaseManagerTest::testRecorderCrashRecoveryClosesBothTables()
     QCOMPARE(fr.value(QStringLiteral("mah_used")).toDouble(), 500.0);
     QCOMPARE(row(QStringLiteral("SELECT end_reason FROM connection_sessions WHERE id = %1").arg(conn))
                  .value(QStringLiteral("end_reason")).toString(), QStringLiteral("crash_recovered"));
+    // Its Flight History row closes at the same summary point (20 s), not at
+    // "now" (which would count the time until this restart as flight time).
+    const QVariantMap hist = row(QStringLiteral("SELECT f.duration_sec, f.ended_at FROM flights f "
+                                                "JOIN flight_sessions fs ON fs.history_flight_id = f.id "
+                                                "WHERE fs.id = %1").arg(flight));
+    QVERIFY(!hist.isEmpty());
+    QCOMPARE(hist.value(QStringLiteral("duration_sec")).toInt(), 20);
+    QCOMPARE(hist.value(QStringLiteral("ended_at")).toString(), summaryAt);
 }
 
 // F11: check results land in check_results keyed to the connection session

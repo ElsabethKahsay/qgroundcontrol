@@ -1733,6 +1733,24 @@ bool DatabaseManager::recoverOrphanedSessions()
     if (!m_initialized || !m_db.isOpen()) return false;
 
     QSqlQuery q(m_db);
+    // Flight History rows written by SessionRecorder close at their flight's
+    // last running summary (as flight_sessions below), not at "now": the
+    // generic rule would count the whole time until this start as flight time.
+    q.prepare(R"(
+        UPDATE flights
+        SET ended_at = (SELECT COALESCE(fs.last_summary_at, fs.started_at) FROM flight_sessions fs
+                        WHERE fs.history_flight_id = flights.id),
+            duration_sec = (SELECT CAST(fs.duration_seconds AS INTEGER) FROM flight_sessions fs
+                            WHERE fs.history_flight_id = flights.id),
+            notes = COALESCE(notes || ' ', '') || '[crash recovered]'
+        WHERE ended_at IS NULL
+          AND id IN (SELECT history_flight_id FROM flight_sessions
+                     WHERE ended_at IS NULL AND history_flight_id IS NOT NULL)
+    )");
+    if (!q.exec()) {
+        qWarning() << "DatabaseManager: recoverOrphanedSessions (history rows) failed:" << q.lastError().text();
+        return false;
+    }
     q.prepare(R"(
         UPDATE flights
         SET ended_at = datetime('now'),
