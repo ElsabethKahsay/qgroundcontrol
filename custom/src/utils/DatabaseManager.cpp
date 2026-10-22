@@ -18,6 +18,7 @@ Q_LOGGING_CATEGORY(dbLog, "database.manager")
 #include <QJsonObject>
 #include <QSqlError>
 #include <QSqlQuery>
+#include "core/BatteryPackCheck.h"
 #include <QStandardPaths>
 #include <QThread>
 #include <QTimer>
@@ -72,7 +73,48 @@ void DatabaseManager::reset()
         QSqlDatabase::removeDatabase(QSqlDatabase::defaultConnection);
     }
     m_initialized = false;
+    setStartupError(QString());
 }
+
+void DatabaseManager::setStartupError(const QString &error)
+{
+    if (!error.isEmpty())
+        qCCritical(dbLog) << "Flight logging is OFF:" << error;
+    if (m_startupError == error)
+        return;
+    m_startupError = error;
+    emit startupErrorChanged();
+}
+
+namespace {
+/// QSqlQuery for migrateSchema(): remembers the first failed statement so the
+/// step can be rolled back instead of recorded as applied (F14).
+class MigrationQuery
+{
+public:
+    explicit MigrationQuery(const QSqlDatabase &db) : m_q(db) {}
+    bool exec(const QString &sql) { return check(m_q.exec(sql), sql); }
+    bool exec() { return check(m_q.exec(), m_q.lastQuery()); }
+    bool prepare(const QString &sql) { return check(m_q.prepare(sql), sql); }
+    void addBindValue(const QVariant &value) { m_q.addBindValue(value); }
+    QSqlError lastError() const { return m_q.lastError(); }
+
+    void startStep() { m_failure.clear(); }
+    bool failed() const { return !m_failure.isEmpty(); }
+    QString failure() const { return m_failure; }
+
+private:
+    bool check(bool ok, const QString &sql)
+    {
+        if (!ok && m_failure.isEmpty())
+            m_failure = QStringLiteral("%1 (%2)").arg(m_q.lastError().text(), sql.simplified().left(120));
+        return ok;
+    }
+
+    QSqlQuery m_q;
+    QString m_failure;
+};
+} // namespace
 
 void DatabaseManager::backupBeforeMigration()
 {
@@ -177,6 +219,7 @@ bool DatabaseManager::initialize(const QString &dbPath)
 
     if (!m_db.open()) {
         qWarning() << "DatabaseManager: Failed to open database:" << m_db.lastError().text();
+        setStartupError(tr("Cannot open the flight database %1: %2").arg(finalPath, m_db.lastError().text()));
         return false;
     }
 
@@ -193,10 +236,12 @@ bool DatabaseManager::initialize(const QString &dbPath)
 
     // Create required tables
     if (!createTables()) {
+        setStartupError(tr("Cannot create the flight database tables in %1: %2").arg(finalPath, m_db.lastError().text()));
         return false;
     }
 
-    // Run pending schema migrations
+    // Run pending schema migrations. migrateSchema() sets the startup error
+    // itself, naming the step that failed.
     if (!migrateSchema()) {
         qWarning() << "DatabaseManager: schema migration failed";
         return false;
@@ -258,7 +303,13 @@ bool DatabaseManager::initialize(const QString &dbPath)
 //  13 - zone_id + intersection columns on zone_compliance_log so the automatic
 //       ZoneComplianceCheck can write one audit row per active zone.  zone_id is
 //       ON DELETE SET NULL so deleting a zone never breaks the audit trail.
-static const int kLatestSchemaVersion = 18;
+//  14-18 - vehicle weight, target on flight_sessions, thrust table, battery pack
+//          config and chemistry columns
+//  19 - flights.device_uid + target location on the flight row
+//  20 - battery pack config on batteries (chemistry, S, P, cell mAh) and the
+//       mAh each flight used on battery_cycles; the operator's target location
+//       on vehicles (set in preflight, before any flight row exists)
+static const int kLatestSchemaVersion = 20;
 
 bool DatabaseManager::createTables()
 {
@@ -1019,7 +1070,15 @@ int DatabaseManager::storedSchemaVersion() const
 bool DatabaseManager::migrateSchema()
 {
     assertMainThread();
-    int stored = storedSchemaVersion();
+    // Read the version directly: storedSchemaVersion() answers 0 until
+    // initialize() finishes, which made every launch re-run every step,
+    // including v12's rebuild of flights (dropping the later columns).
+    int stored = 0;
+    {
+        QSqlQuery vq(m_db);
+        if (vq.exec(QStringLiteral("SELECT MAX(version) FROM schema_version")) && vq.next())
+            stored = vq.value(0).toInt();
+    }
     int latest = schemaVersion();
     if (stored >= latest)
         return true;
@@ -1030,9 +1089,18 @@ bool DatabaseManager::migrateSchema()
 
     qDebug() << "DatabaseManager: migrating schema from version" << stored << "to" << latest;
 
-    QSqlQuery q(m_db);
+    MigrationQuery q(m_db);
 
+    // Each step runs in its own transaction together with its schema_version
+    // row: any failed statement rolls the step back and stops, so it is
+    // retried at the next start and the .bak copy still holds the old file.
     for (int v = stored + 1; v <= latest; ++v) {
+        if (!m_db.transaction()) {
+            setStartupError(tr("Database upgrade to version %1 could not start: %2")
+                                .arg(v).arg(m_db.lastError().text()));
+            return false;
+        }
+        q.startStep();
         switch (v) {
         case 1:
         case 2:
@@ -1514,19 +1582,52 @@ bool DatabaseManager::migrateSchema()
                       "(SELECT v.device_uid FROM vehicles v WHERE v.sysid = flights.vehicle_id) "
                       "WHERE device_uid IS NULL "
                       "AND EXISTS(SELECT 1 FROM vehicles v WHERE v.sysid = flights.vehicle_id)");
-            execOrWarn(q, "v19 backfill flights.device_uid");
-            q.prepare("CREATE INDEX IF NOT EXISTS idx_flights_device_uid ON flights(device_uid)");
-            execOrWarn(q, "v19 flights index");
+            q.exec();
+            q.exec("CREATE INDEX IF NOT EXISTS idx_flights_device_uid ON flights(device_uid)");
+            break;
+        }
+        case 20: {
+            // v20: battery pack registry (Step 3 item 7). Rated capacity is
+            // cell_mah * parallel_cells; a flight counts as a cycle when it
+            // used at least 20 % of it (used_mah).
+            auto addCol = [this, &q](const QString &table, const QString &colDef) {
+                QSqlQuery pragma(m_db);
+                pragma.exec(QStringLiteral("PRAGMA table_info(%1)").arg(table));
+                const QString colName = colDef.section(QLatin1Char(' '), 0, 0);
+                while (pragma.next())
+                    if (pragma.value(1).toString() == colName)
+                        return;
+                q.exec(QStringLiteral("ALTER TABLE %1 ADD COLUMN %2").arg(table, colDef));
+            };
+            addCol(QStringLiteral("batteries"), QStringLiteral("chemistry TEXT NOT NULL DEFAULT 'LiPo'"));
+            addCol(QStringLiteral("batteries"), QStringLiteral("series_cells INTEGER NOT NULL DEFAULT 0"));
+            addCol(QStringLiteral("batteries"), QStringLiteral("parallel_cells INTEGER NOT NULL DEFAULT 1"));
+            addCol(QStringLiteral("batteries"), QStringLiteral("cell_mah INTEGER NOT NULL DEFAULT 0"));
+            addCol(QStringLiteral("battery_cycles"), QStringLiteral("used_mah REAL NOT NULL DEFAULT 0"));
+            addCol(QStringLiteral("vehicles"), QStringLiteral("target_lat REAL"));
+            addCol(QStringLiteral("vehicles"), QStringLiteral("target_lon REAL"));
+            addCol(QStringLiteral("vehicles"), QStringLiteral("target_source TEXT"));
+            addCol(QStringLiteral("vehicles"), QStringLiteral("target_set_at TEXT"));
             break;
         }
         default:
             qWarning() << "DatabaseManager: unknown migration version" << v;
+            m_db.rollback();
+            setStartupError(tr("Database upgrade has no step for version %1").arg(v));
             return false;
         }
-        q.prepare("INSERT OR REPLACE INTO schema_version (version) VALUES (?)");
-        q.addBindValue(v);
-        if (!q.exec())
-            qWarning() << "DatabaseManager: failed to record schema version" << v << q.lastError().text();
+        if (q.prepare("INSERT OR REPLACE INTO schema_version (version) VALUES (?)")) {
+            q.addBindValue(v);
+            q.exec();
+        }
+        if (q.failed() || !m_db.commit()) {
+            const QString why = q.failed() ? q.failure() : m_db.lastError().text();
+            m_db.rollback();
+            setStartupError(tr("Database upgrade to version %1 failed and was rolled back: %2. "
+                               "The database before the upgrade is kept as %3.bak")
+                                .arg(v).arg(why, m_db.databaseName()));
+            return false;
+        }
     }
 
     qDebug() << "DatabaseManager: schema migration complete, version" << latest;
@@ -3575,6 +3676,114 @@ int DatabaseManager::getBatteryCycleCount(const QString &serialNumber)
     return 0;
 }
 
+// ── Battery pack registry (Step 3 item 7) ──────────────────────────────────
+
+static QVariantMap batteryPackRow(const QSqlQuery &q)
+{
+    QVariantMap p;
+    p[QStringLiteral("serial")] = q.value(0).toString();
+    p[QStringLiteral("label")] = q.value(1).toString();
+    p[QStringLiteral("chemistry")] = q.value(2).toString();
+    p[QStringLiteral("series")] = q.value(3).toInt();
+    p[QStringLiteral("parallel")] = q.value(4).toInt();
+    p[QStringLiteral("cellMah")] = q.value(5).toInt();
+    p[QStringLiteral("ratedMah")] = q.value(5).toInt() * qMax(1, q.value(4).toInt());
+    p[QStringLiteral("cycles")] = q.value(6).toInt();
+    p[QStringLiteral("lastSeen")] = q.value(7).toString();
+    return p;
+}
+
+static const char kBatteryPackColumns[] =
+    "serial_number, operator_label, chemistry, series_cells, parallel_cells, cell_mah, "
+    "total_cycles, last_seen FROM batteries";
+
+QVariantList DatabaseManager::listBatteryPacks()
+{
+    assertMainThread();
+    QVariantList out;
+    if (!m_initialized) return out;
+    QSqlQuery q(m_db);
+    if (!q.exec(QStringLiteral("SELECT %1 ORDER BY last_seen DESC").arg(QLatin1String(kBatteryPackColumns))))
+        return out;
+    while (q.next())
+        out.append(batteryPackRow(q));
+    return out;
+}
+
+QVariantMap DatabaseManager::batteryPack(const QString &serial)
+{
+    assertMainThread();
+    if (!m_initialized || serial.trimmed().isEmpty()) return {};
+    QSqlQuery q(m_db);
+    q.prepare(QStringLiteral("SELECT %1 WHERE serial_number = ?").arg(QLatin1String(kBatteryPackColumns)));
+    q.addBindValue(serial.trimmed());
+    if (!q.exec() || !q.next()) return {};
+    return batteryPackRow(q);
+}
+
+bool DatabaseManager::saveBatteryPack(const QString &serial, const QString &label,
+                                      const QString &chemistry, int series, int parallel, int cellMah)
+{
+    assertMainThread();
+    const QString id = serial.trimmed();
+    if (!m_initialized || id.isEmpty() || series < 1 || parallel < 1 || cellMah < 1) return false;
+    QSqlQuery q(m_db);
+    q.prepare(R"(
+        INSERT INTO batteries (serial_number, operator_label, first_seen, last_seen,
+                               chemistry, series_cells, parallel_cells, cell_mah)
+        VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?, ?, ?)
+        ON CONFLICT(serial_number) DO UPDATE SET
+            operator_label = excluded.operator_label, last_seen = excluded.last_seen,
+            chemistry = excluded.chemistry, series_cells = excluded.series_cells,
+            parallel_cells = excluded.parallel_cells, cell_mah = excluded.cell_mah
+    )");
+    q.addBindValue(id);
+    // Bind "" rather than a null QString: operator_label is NOT NULL.
+    q.addBindValue(label.trimmed().isEmpty() ? QStringLiteral("") : label.trimmed());
+    q.addBindValue(chemistry.isEmpty() ? QStringLiteral("LiPo") : chemistry);
+    q.addBindValue(series);
+    q.addBindValue(parallel);
+    q.addBindValue(cellMah);
+    return execOrWarn(q, "saveBatteryPack");
+}
+
+bool DatabaseManager::recordBatteryFlight(int flightSessionId, const QString &serial, double usedMah)
+{
+    assertMainThread();
+    if (!m_initialized || flightSessionId <= 0) return false;
+    const QVariantMap pack = batteryPack(serial);
+    if (pack.isEmpty()) return false;
+    if (!batteryFlightCountsAsCycle(usedMah, pack.value(QStringLiteral("ratedMah")).toInt())) {
+        qCDebug(dbLog) << "Battery" << serial << "used" << usedMah << "mAh: below one cycle";
+        return false;
+    }
+    QSqlQuery check(m_db);
+    check.prepare("SELECT COUNT(*) FROM battery_cycles WHERE flight_session_id = ?");
+    check.addBindValue(flightSessionId);
+    if (!check.exec() || !check.next() || check.value(0).toInt() > 0) return false;
+
+    if (!m_db.transaction()) return false;
+    QSqlQuery ins(m_db);
+    ins.prepare(R"(
+        INSERT INTO battery_cycles (battery_serial, flight_session_id, capacity_at_full_mah,
+                                    voltage_sag_v, resting_voltage_v, cycle_count, recorded_at, used_mah)
+        VALUES (?, ?, ?, 0.0, 0.0, 1, CURRENT_TIMESTAMP, ?)
+    )");
+    ins.addBindValue(pack.value(QStringLiteral("serial")));
+    ins.addBindValue(flightSessionId);
+    ins.addBindValue(pack.value(QStringLiteral("ratedMah")).toDouble());
+    ins.addBindValue(usedMah);
+    QSqlQuery u(m_db);
+    u.prepare("UPDATE batteries SET total_cycles = total_cycles + 1, last_seen = CURRENT_TIMESTAMP "
+              "WHERE serial_number = ?");
+    u.addBindValue(pack.value(QStringLiteral("serial")));
+    if (!execOrWarn(ins, "recordBatteryFlight") || !execOrWarn(u, "recordBatteryFlight total")) {
+        m_db.rollback();
+        return false;
+    }
+    return m_db.commit();
+}
+
 /**
  * @brief Record a battery cycle marker for a completed flight session.
  *
@@ -3763,6 +3972,54 @@ bool DatabaseManager::saveTargetLocation(int flightId, double lat, double lon,
     q.addBindValue(source);
     q.addBindValue(flightId);
     return execOrWarn(q, "saveTargetLocation");
+}
+
+bool DatabaseManager::saveVehicleTarget(const QString &deviceUid, double lat, double lon,
+                                        const QString &source)
+{
+    assertMainThread();
+    if (!m_initialized || deviceUid.isEmpty()) return false;
+    if (!std::isfinite(lat) || !std::isfinite(lon)) return false;
+    if (lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0) return false;
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE vehicles SET target_lat = ?, target_lon = ?, target_source = ?, "
+              "target_set_at = ? WHERE device_uid = ?");
+    q.addBindValue(lat);
+    q.addBindValue(lon);
+    q.addBindValue(source);
+    q.addBindValue(QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+    q.addBindValue(deviceUid);
+    return execOrWarn(q, "saveVehicleTarget") && q.numRowsAffected() == 1;
+}
+
+QVariantMap DatabaseManager::vehicleTarget(const QString &deviceUid)
+{
+    assertMainThread();
+    QVariantMap out;
+    if (!m_initialized || deviceUid.isEmpty()) return out;
+    QSqlQuery q(m_db);
+    q.prepare("SELECT target_lat, target_lon, target_source FROM vehicles "
+              "WHERE device_uid = ? AND target_lat IS NOT NULL AND target_lon IS NOT NULL");
+    q.addBindValue(deviceUid);
+    if (!execOrWarn(q, "vehicleTarget") || !q.next()) return out;
+    out.insert(QStringLiteral("lat"), q.value(0).toDouble());
+    out.insert(QStringLiteral("lon"), q.value(1).toDouble());
+    out.insert(QStringLiteral("source"), q.value(2).toString());
+    return out;
+}
+
+bool DatabaseManager::copyVehicleTargetToSession(int sessionId, const QString &deviceUid)
+{
+    assertMainThread();
+    const QVariantMap t = vehicleTarget(deviceUid);
+    if (t.isEmpty() || sessionId <= 0) return false;
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE flight_sessions SET target_lat = ?, target_lon = ?, target_source = ? WHERE id = ?");
+    q.addBindValue(t.value(QStringLiteral("lat")));
+    q.addBindValue(t.value(QStringLiteral("lon")));
+    q.addBindValue(t.value(QStringLiteral("source")));
+    q.addBindValue(sessionId);
+    return execOrWarn(q, "copyVehicleTargetToSession");
 }
 
 QVariantMap DatabaseManager::getTargetLocation(int flightId)

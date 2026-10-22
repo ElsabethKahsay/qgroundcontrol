@@ -20,6 +20,8 @@ Item {
 
     property string actionLabel: "Run"
     property bool running: false
+    /// Keep the button live after a pass (e.g. "Change pack").
+    property bool repeatable: false
 
     signal actionTriggered(string checkId)
     signal actionCompleted(string checkId, bool success)
@@ -55,7 +57,7 @@ Item {
 
         MouseArea {
             anchors.fill: parent
-            enabled: !running && check && !passed
+            enabled: !running && check && (!passed || repeatable)
             onClicked: {
                 if (check) root.actionTriggered(check.checkId)
             }

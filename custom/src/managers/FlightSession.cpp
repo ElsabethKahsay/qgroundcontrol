@@ -24,6 +24,7 @@
 #include "OperatorManager.h"
 #include "DatabaseManager.h"
 #include "VehicleRegistry.h"
+#include "core/VehicleProfileManager.h"
 #include "WeatherProvider.h"
 #include "utils/Config.h"
 
@@ -246,6 +247,17 @@ void FlightSession::startFlightSession(const QString &purpose,
     emit sessionStarted(SessionMode::Flight);
 }
 
+// The vehicles-row key, resolved as PreflightPlugin::_onGateOpened() does.
+static QString currentVehicleKey()
+{
+    QString key;
+    if (VehicleProfileManager *vpm = VehicleProfileManager::instance())
+        key = vpm->currentDeviceUid();
+    if (key.isEmpty() && VehicleRegistry::instance())
+        key = VehicleRegistry::instance()->currentFingerprint();
+    return key;
+}
+
 bool FlightSession::saveTargetLocation(double lat, double lon, const QString &source)
 {
     auto fail = [this](const QString &why) {
@@ -256,8 +268,12 @@ bool FlightSession::saveTargetLocation(double lat, double lon, const QString &so
         return false;
     };
 
-    if (m_flightId <= 0)
-        return fail(QStringLiteral("No active flight session"));
+    // Step 3: the target is set during preflight, before any flight row
+    // exists, so it is kept on the connected vehicle's row (and copied onto
+    // each flight session) — and on the flight row too when one is open.
+    const QString vehicleKey = currentVehicleKey();
+    if (vehicleKey.isEmpty() && m_flightId <= 0)
+        return fail(QStringLiteral("Connect a vehicle before saving a target"));
     if (!std::isfinite(lat) || !std::isfinite(lon))
         return fail(QStringLiteral("Enter a valid latitude and longitude"));
     if (lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0)
@@ -265,8 +281,13 @@ bool FlightSession::saveTargetLocation(double lat, double lon, const QString &so
     if (source.trimmed().isEmpty())
         return fail(QStringLiteral("Missing location source"));
 
-    if (!DatabaseManager::instance().saveTargetLocation(m_flightId, lat, lon, source.trimmed()))
-        return fail(QStringLiteral("Failed to save target location"));
+    DatabaseManager &db = DatabaseManager::instance();
+    if (!vehicleKey.isEmpty() && !db.saveVehicleTarget(vehicleKey, lat, lon, source.trimmed()))
+        return fail(db.startupError().isEmpty()
+                        ? QStringLiteral("Failed to save target location")
+                        : QStringLiteral("Not saved: flight logging is off"));
+    if (m_flightId > 0 && !db.saveTargetLocation(m_flightId, lat, lon, source.trimmed()))
+        return fail(QStringLiteral("Failed to save target location on the flight record"));
 
     m_targetLat = lat;
     m_targetLon = lon;
@@ -283,6 +304,8 @@ bool FlightSession::saveTargetLocation(double lat, double lon, const QString &so
 void FlightSession::reloadTargetLocation()
 {
     QVariantMap loc = DatabaseManager::instance().getTargetLocation(m_flightId);
+    if (loc.isEmpty())
+        loc = DatabaseManager::instance().vehicleTarget(currentVehicleKey());
     if (loc.isEmpty()) {
         // No persisted location for this flight — clear the cache.
         if (!std::isnan(m_targetLat) || !std::isnan(m_targetLon)

@@ -512,6 +512,33 @@ Item {
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    //  DATABASE BANNER — flight logging is off (F13); stays until restart
+    // ═══════════════════════════════════════════════════════════════════
+    Rectangle {
+        id: databaseBanner
+        visible: typeof Database !== "undefined" && Database.startupError !== ""
+        anchors {
+            top: parent.top
+            topMargin: _toolInsets.topEdgeCenterInset + (testingBanner.visible ? testingBanner.height : 0)
+            left: parent.left; right: parent.right
+        }
+        height: dbBannerText.implicitHeight + 16
+        z: QGroundControl.zOrderWidgets + 4
+        color: Qt.rgba(Colors.danger.r, Colors.danger.g, Colors.danger.b, 0.85)
+
+        Text {
+            id: dbBannerText
+            anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; margins: Config.spacingSmall }
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.Wrap
+            text: qsTr("\u26A0 FLIGHT LOGGING IS OFF \u2014 %1").arg(typeof Database !== "undefined" ? Database.startupError : "")
+            font.pixelSize: Config.fontSizeBody
+            font.bold: true
+            color: "white"
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     //  POST-FLIGHT BANNER — appears when state is PostFlight
     // ═══════════════════════════════════════════════════════════════════
     Rectangle {

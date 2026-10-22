@@ -62,12 +62,15 @@ Page {
 
     Component.onCompleted: {
         _loadSurfaces()
-        // Seed the target fields from the active flight's saved map target, if one exists
+        // Seed the target fields from the saved target (the open flight's, else
+        // the connected vehicle's), and point the distance readout at it.
+        FlightSession.reloadTargetLocation()
         if (!isNaN(FlightSession.targetLat) && !isNaN(FlightSession.targetLon)) {
             targetLat.text = FlightSession.targetLat.toFixed(6)
             targetLon.text = FlightSession.targetLon.toFixed(6)
             // FlightSession persists the source string; "map center" round-trips back here.
             root._targetFromMap = (FlightSession.targetSource === qsTr("map center"))
+            DistanceTracker.setTarget(FlightSession.targetLat, FlightSession.targetLon)
         }
     }
     // FORK PATCH (B2): stopAllSurfaces() force-disarms an armed vehicle, so it
@@ -264,8 +267,8 @@ Page {
                                 id: targetSubmitBtn
                                 text: qsTr("Submit Target")
                                 font.pixelSize: Config.fontSizeSmall
-                                // Only save a target while a flight is active (FlightSession owns the flight id)
-                                enabled: FlightSession.currentFlightId > 0
+                                // Saved on the connected vehicle (and the open flight, if any)
+                                enabled: !!root._vehicle || FlightSession.currentFlightId > 0
                                 onClicked: {
                                     var lat = parseFloat(targetLat.text)
                                     var lon = parseFloat(targetLon.text)
@@ -284,7 +287,7 @@ Page {
                                         targetStatus.show(FlightSession.lastTargetError, false)
                                     }
                                 }
-                                ToolTip.text: qsTr("Save this target location for the current flight")
+                                ToolTip.text: qsTr("Save this target location for this vehicle's flights")
                                 ToolTip.visible: hovered
                             }
                             Item { Layout.fillWidth: true }

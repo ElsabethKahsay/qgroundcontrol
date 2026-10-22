@@ -1,4 +1,5 @@
 #include <QTest>
+#include <QTemporaryDir>
 #include <QSignalSpy>
 #include <QTemporaryFile>
 #include <QDir>
@@ -39,6 +40,9 @@ private slots:
     void testBatteryCycleSaveAndQuery();
     void testBatteryCycleCount();
     void testDoubleIncrementGuard();
+    void testBatteryPackRegistry();
+    void testBatteryCycleNeedsTwentyPercent();
+    void testVehicleTargetSavedBeforeAnyFlight();
     void testIncrementBatteryCycleGuard();
     void testFlightSessionRoundTrip();
     void testCheckResultAuditTrail();
@@ -151,6 +155,79 @@ void DatabaseManagerTest::testBatteryCycleCount()
     db.endFlightSession(sessionId2, 60.0);
 
     QCOMPARE(db.getBatteryCycleCount(QStringLiteral("SN-BATT")), 2);
+}
+
+// Step 3 item 7: packs keep their rated config; editing one keeps its cycles.
+void DatabaseManagerTest::testBatteryPackRegistry()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    QTemporaryDir dir;
+    QVERIFY(db.initialize(dir.filePath(QStringLiteral("packs.db"))));
+
+    QVERIFY(!db.saveBatteryPack(QStringLiteral(" "), QString(), QStringLiteral("LiPo"), 6, 1, 5000));
+    QVERIFY(db.saveBatteryPack(QStringLiteral("PK-07"), QStringLiteral("Wing A"), QStringLiteral("LiIon"), 4, 2, 3000));
+    QVariantMap p = db.batteryPack(QStringLiteral("PK-07"));
+    QCOMPARE(p.value(QStringLiteral("label")).toString(), QStringLiteral("Wing A"));
+    QCOMPARE(p.value(QStringLiteral("chemistry")).toString(), QStringLiteral("LiIon"));
+    QCOMPARE(p.value(QStringLiteral("ratedMah")).toInt(), 6000);   // 3000 mAh x 2P
+
+    QVERIFY(db.recordBatteryFlight(11, QStringLiteral("PK-07"), 1500.0));
+    QVERIFY(db.saveBatteryPack(QStringLiteral("PK-07"), QStringLiteral("Wing A2"), QStringLiteral("LiIon"), 4, 2, 3200));
+    p = db.batteryPack(QStringLiteral("PK-07"));
+    QCOMPARE(p.value(QStringLiteral("label")).toString(), QStringLiteral("Wing A2"));
+    QCOMPARE(p.value(QStringLiteral("cycles")).toInt(), 1);
+    QCOMPARE(db.listBatteryPacks().size(), 1);
+}
+
+// Step 3 item 7 (user decision): one cycle = a flight using >= 20 % of rated.
+void DatabaseManagerTest::testBatteryCycleNeedsTwentyPercent()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    QTemporaryDir dir;
+    QVERIFY(db.initialize(dir.filePath(QStringLiteral("cycles.db"))));
+    QVERIFY(db.saveBatteryPack(QStringLiteral("PK-1"), QString(), QStringLiteral("LiPo"), 6, 1, 5000));
+
+    QVERIFY(!db.recordBatteryFlight(1, QStringLiteral("PK-1"), 999.0));    // 19.98 %
+    QVERIFY(db.recordBatteryFlight(2, QStringLiteral("PK-1"), 1000.0));    // exactly 20 %
+    QVERIFY(!db.recordBatteryFlight(2, QStringLiteral("PK-1"), 3000.0));   // same flight twice
+    QVERIFY(!db.recordBatteryFlight(3, QStringLiteral("NOPE"), 3000.0));   // unregistered pack
+    QCOMPARE(db.batteryPack(QStringLiteral("PK-1")).value(QStringLiteral("cycles")).toInt(), 1);
+
+    QSqlQuery q(QSqlDatabase::database());
+    QVERIFY(q.exec(QStringLiteral("SELECT used_mah FROM battery_cycles WHERE flight_session_id = 2")));
+    QVERIFY(q.next());
+    QCOMPARE(q.value(0).toDouble(), 1000.0);
+}
+
+// Step 3: the gimbal-page target is saved during preflight (no flight row
+// yet), survives a restart, and is copied onto the next flight session.
+void DatabaseManagerTest::testVehicleTargetSavedBeforeAnyFlight()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("target.db"));
+    QVERIFY(db.initialize(path));
+    QVERIFY(!db.saveVehicleTarget(QStringLiteral("UID-T"), 9.03, 38.74, QStringLiteral("manual")));   // no vehicle row
+    QVERIFY(db.upsertVehicle(QStringLiteral("UID-T"), QStringLiteral("Wing"), QStringLiteral("ArduPilot"), QStringLiteral("Plane")));
+    QVERIFY(db.vehicleTarget(QStringLiteral("UID-T")).isEmpty());
+    QVERIFY(!db.saveVehicleTarget(QStringLiteral("UID-T"), 91.0, 38.74, QStringLiteral("manual")));
+    QVERIFY(db.saveVehicleTarget(QStringLiteral("UID-T"), 9.03, 38.74, QStringLiteral("map center")));
+
+    db.reset();
+    QVERIFY(db.initialize(path));
+    const QVariantMap t = db.vehicleTarget(QStringLiteral("UID-T"));
+    QCOMPARE(t.value(QStringLiteral("lat")).toDouble(), 9.03);
+    QCOMPARE(t.value(QStringLiteral("lon")).toDouble(), 38.74);
+    QCOMPARE(t.value(QStringLiteral("source")).toString(), QStringLiteral("map center"));
+
+    const int session = db.startFlightSession(QStringLiteral("UID-T"), QString());
+    QVERIFY(session > 0);
+    QVERIFY(db.copyVehicleTargetToSession(session, QStringLiteral("UID-T")));
+    QSqlQuery q(QSqlDatabase::database());
+    QVERIFY(q.exec(QStringLiteral("SELECT target_lat, target_source FROM flight_sessions WHERE id = %1").arg(session)));
+    QVERIFY(q.next());
+    QCOMPARE(q.value(0).toDouble(), 9.03);
+    QCOMPARE(q.value(1).toString(), QStringLiteral("map center"));
 }
 
 void DatabaseManagerTest::testDoubleIncrementGuard()
@@ -563,7 +640,7 @@ void DatabaseManagerTest::testV12Migration()
     // v16 adds motor_thrust_table to vehicles; its accessor round-trip lives
     // in BatteryEstimatorTest::testMotorThrustTablePersistence. v17 adds the
     // battery pack config columns to vehicles; v18 adds the battery type.
-    QCOMPARE(db.storedSchemaVersion(), 18);
+    QCOMPARE(db.storedSchemaVersion(), db.schemaVersion());   // v19: flight target, v20: battery packs
 
     // v13: zone_id + intersection columns exist on zone_compliance_log.
     {

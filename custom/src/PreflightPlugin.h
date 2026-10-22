@@ -153,6 +153,9 @@ private:
     int _currentSessionId = -1;       // Active DB flight session ID, -1 when no session is active
     QString _currentSessionDeviceUid; // Canonical key (device_uid) of the active session
     QDateTime _sessionStartTime;      // Timestamp when gateOpened started the session
+    double _sessionStartMah = -1;     // FC mAh-consumed at session start, -1 = unknown
+    /// Flight controller's mAh-consumed counter for battery 1, -1 when unavailable.
+    double _batteryMahConsumed() const;
     QTimer _weatherRefreshTimer;      // Periodic timer that triggers weather data refresh
     ArmStateTracker *_armStateTracker = nullptr; // Armed transitions from HEARTBEAT only (Step 2.4)
 };

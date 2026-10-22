@@ -17,6 +17,7 @@
 #include "QmlObjectListModel.h"
 #include "QmlComponentInfo.h"
 #include "Vehicle/Vehicle.h"
+#include "Vehicle/FactGroups/VehicleBatteryFactGroup.h"
 #include "AppSettings.h"
 #include "FactMetaData.h"
 
@@ -50,6 +51,7 @@ int qInitResources_qmlcache_VehicleSetupModule();
 #include "AbstractCheck.h"
 #include "adapters/TelemetryBridge.h"
 #include "core/ArmingGate.h"
+#include "core/BatteryPackCheck.h"
 #include "core/ChecklistEngine.h"
 #include "core/ChecklistItemModel.h"
 #include "core/PowerModel.h"
@@ -228,7 +230,13 @@ void PreflightPlugin::init()
     // The NoFlyZoneModel constructor reloads zones from the database, so the
     // DB must be initialized before the model is created or the dropdown will
     // always be empty.
-    DatabaseManager::instance().initialize();
+    // F13: a database that cannot open or migrate means nothing is logged.
+    // The Fly view keeps a banner up from Database.startupError; this message
+    // tells the operator once at startup.
+    if (!DatabaseManager::instance().initialize()) {
+        qgcApp()->showAppMessage(tr("Flight logging is OFF: %1")
+                                     .arg(DatabaseManager::instance().startupError()));
+    }
 
     _noFlyZoneModel = new NoFlyZoneModel(this);
     _vehicleListModel = new VehicleListModel(this);
@@ -256,15 +264,22 @@ void PreflightPlugin::init()
         }
     });
 
-    // When we get a battery voltage reading and no battery serial has been
-    // assigned yet, create a synthetic serial ID from the vehicle ID so
-    // the power model can track per-battery cycle counts.
-    connect(_telemetryBridge, &TelemetryBridge::batteryVoltageChanged, this, [this]() {
-        if (!_telemetryBridge || !_vehicleProfileManager) return;
-        if (!_vehicleProfileManager->currentBatterySerial().isEmpty()) return;
-        QString sysId = QStringLiteral("batt:%1").arg(_telemetryBridge->vehicle() ? _telemetryBridge->vehicle()->id() : 0);
-        _vehicleProfileManager->setBatterySerial(sysId);
-    });
+    // Step 3 item 7: the operator names the fitted pack ("Battery pack" in the
+    // Power section). The synthetic "batt:<sysid>" serial that used to be
+    // assigned on the first voltage reading is gone: it satisfied the pack
+    // requirement without anyone choosing a pack.
+    auto *packCheck = new BatteryPackCheck([this]() -> QVariantMap {
+        const QString serial = _vehicleProfileManager ? _vehicleProfileManager->currentBatterySerial() : QString();
+        if (serial.isEmpty())
+            return {};
+        QVariantMap pack = DatabaseManager::instance().batteryPack(serial);
+        if (pack.isEmpty())
+            pack[QStringLiteral("serial")] = serial;   // database off: still selected
+        return pack;
+    }, _preflightManager);
+    _preflightManager->addCheck(packCheck);
+    connect(_vehicleProfileManager, &VehicleProfileManager::currentBatteryChanged,
+            packCheck, [packCheck]() { packCheck->evaluate(); });
 
     // --- Vehicle registry signals ---
     // knownVehicleConnected: a previously-seen vehicle reconnected; load its saved config.
@@ -509,6 +524,10 @@ void PreflightPlugin::_onActiveVehicleChanged(Vehicle *vehicle)
 
     if (_armStateTracker)
         _armStateTracker->setVehicle(vehicle);
+    // A new connection usually means a new pack (the FC was power-cycled for
+    // the swap), so the operator selects the pack again.
+    if (_vehicleProfileManager && !_vehicleProfileManager->currentBatterySerial().isEmpty())
+        _vehicleProfileManager->setBatterySerial(QString());
     if (vehicle) {
         _setupForVehicle(vehicle);
     } else {
@@ -556,6 +575,17 @@ void PreflightPlugin::_onKnownVehicleConnected(int vehicleId)
 // and the pilot is cleared to arm). Starts a new flight session in the database
 // for compliance tracking.
 // ---------------------------------------------------------------------------
+double PreflightPlugin::_batteryMahConsumed() const
+{
+    Vehicle *vehicle = _telemetryBridge ? _telemetryBridge->vehicle() : nullptr;
+    QmlObjectListModel *batteries = vehicle ? vehicle->batteries() : nullptr;
+    auto *battery = (batteries && batteries->count() > 0) ? batteries->value<VehicleBatteryFactGroup *>(0) : nullptr;
+    if (!battery)
+        return -1;
+    const QVariant mah = battery->mahConsumed()->rawValue();
+    return mah.isValid() ? mah.toDouble() : -1;
+}
+
 void PreflightPlugin::_onGateOpened()
 {
     if (_currentSessionId >= 0) return;
@@ -572,10 +602,13 @@ void PreflightPlugin::_onGateOpened()
     if (_currentSessionId > 0) {
         _vehicleProfileManager->setFlightSessionId(_currentSessionId);
         _currentSessionDeviceUid = key;
+        // The target set on the gimbal page during preflight belongs to this flight.
+        DatabaseManager::instance().copyVehicleTargetToSession(_currentSessionId, key);
     }
     // Stored timestamp: UTC (F17). TODO(step3): SessionRecorder takes durations
     // from a monotonic timer; this gate-driven session code is replaced there.
     _sessionStartTime = QDateTime::currentDateTimeUtc();
+    _sessionStartMah = _batteryMahConsumed();
     qCDebug(preflightPluginLog) << "Flight session started:" << _currentSessionId;
 }
 
@@ -609,7 +642,15 @@ void PreflightPlugin::_onGateClosed(const QString &reason)
     }
 
     DatabaseManager::instance().endFlightSession(_currentSessionId, duration);
-    DatabaseManager::instance().incrementBatteryCycle(_currentSessionId);
+    // Step 3 item 7: one cycle when the flight used >= 20 % of the pack's
+    // rated capacity (the flight controller's mAh-consumed counter).
+    const double nowMah = _batteryMahConsumed();
+    if (_sessionStartMah >= 0 && nowMah >= _sessionStartMah && _vehicleProfileManager) {
+        const QString serial = _vehicleProfileManager->currentBatterySerial();
+        if (DatabaseManager::instance().recordBatteryFlight(_currentSessionId, serial, nowMah - _sessionStartMah))
+            _vehicleProfileManager->setBatterySerial(serial);   // refreshes the cycle count shown
+    }
+    _sessionStartMah = -1;
 
     // Auto-calibrate the energy model from this flight's measured data: the
     // session row for _currentSessionDeviceUid now holds energy_consumed_wh,

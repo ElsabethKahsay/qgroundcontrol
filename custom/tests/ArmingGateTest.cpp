@@ -4,6 +4,7 @@
 #include "UnitTest.h"
 #include "ArmingGate.h"
 #include "AbstractCheck.h"
+#include "core/BatteryPackCheck.h"
 #include "mocks/MockTelemetryBridge.h"
 
 // Step 2.5 / 2.6: ArmingGate::decide() is the single arm decision (G5–G9, G12).
@@ -29,6 +30,8 @@ private slots:
     void testForceWindowClosesOnUse();
     void testInboundPeerArmNeverSpendsAck();
     void testTokensNeverRepeatAfterReset();
+    void testNoBatteryPackIsHardBlock();
+    void testBatteryPackCheckFollowsSelection();
 
 private:
     static ArmingGate::ArmRequest freshFailing(const QStringList &failing);
@@ -204,6 +207,53 @@ void ArmingGateTest::testTokensNeverRepeatAfterReset()
     gate.resetGate();
     const quint32 second = gate.forceArm();
     QVERIFY(second != first);
+}
+
+// Step 3 item 7: no pack selected denies even with a valid ack, in Flight
+// and Testing alike; a force token (bench) is not affected.
+void ArmingGateTest::testNoBatteryPackIsHardBlock()
+{
+    ArmingGate::GateSnapshot g;
+    g.ackValid = true;
+    g.ackToken = 42;
+    g.ackCheckIds = {QStringLiteral("power.battery.pack")};
+    ArmingGate::ArmRequest r = freshFailing({QStringLiteral("power.battery.pack")});
+    r.callToken = 42;
+    r.batteryPackSelected = false;
+    const auto d = ArmingGate::decide(r, g);
+    QCOMPARE(d.verdict, ArmingGate::ArmDecision::Deny);
+    QVERIFY(d.reason.contains(QStringLiteral("battery pack"), Qt::CaseInsensitive));
+
+    ArmingGate::GateSnapshot force;
+    force.forceWindowOpen = true;
+    force.forceToken = 9;
+    r.callToken = 9;
+    QCOMPARE(ArmingGate::decide(r, force).verdict, ArmingGate::ArmDecision::Allow);
+}
+
+void ArmingGateTest::testBatteryPackCheckFollowsSelection()
+{
+    QVariantMap pack;
+    BatteryPackCheck check([&pack]() { return pack; });
+    QCOMPARE(check.status(), CheckStatus::Pending);
+    QVERIFY(check.mandatory());
+
+    pack = {{QStringLiteral("serial"), QStringLiteral("PK-07")},
+            {QStringLiteral("label"), QStringLiteral("Wing A")},
+            {QStringLiteral("ratedMah"), 6000}, {QStringLiteral("cycles"), 3}};
+    check.evaluate();
+    QCOMPARE(check.status(), CheckStatus::Passed);
+    QVERIFY(check.message().contains(QStringLiteral("3 cycles")));
+    check.reset();                                    // a selection survives a checklist reset
+    QCOMPARE(check.status(), CheckStatus::Passed);
+
+    pack.clear();
+    check.evaluate();
+    QCOMPARE(check.status(), CheckStatus::Pending);
+
+    QVERIFY(!batteryFlightCountsAsCycle(1199.0, 6000));
+    QVERIFY(batteryFlightCountsAsCycle(1200.0, 6000));
+    QVERIFY(!batteryFlightCountsAsCycle(5000.0, 0));
 }
 
 UT_REGISTER_TEST(ArmingGateTest)

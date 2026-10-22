@@ -192,14 +192,8 @@ Item {
             enabled:  root.hasVehicle
         }
 
-        // 3. Battery Config modal button
-        QuickButton {
-            action:   "batConfig"
-            glyph:    "\uD83D\uDD0B"
-            label:    qsTr("Bat Config")
-            tooltip:  qsTr("Configure battery type & cell count for flight time calculation")
-            enabled:  root.hasVehicle
-        }
+        // FORK PATCH (Step 3 item 7): battery setup moved to the "Battery pack"
+        // item in the preflight Power section (BatteryPackDialog).
 
         // 4. FC Status panel
         QuickButton {
@@ -404,158 +398,12 @@ Item {
         }
     }
 
-    // ── Battery Config dialog ─────────────────────────────────────────────
-    Dialog {
-        id:              batteryConfigDialog
-        title:           qsTr("Battery Configuration")
-        standardButtons: Dialog.Ok | Dialog.Cancel
-        modal:           true
-        closePolicy:     Popup.CloseOnEscape
-        anchors.centerIn: Overlay.overlay
-        width:           360
-
-        ColumnLayout {
-            width:   parent.width
-            spacing: Config.spacingMedium
-
-            Text {
-                text: qsTr("Set pack configuration & chemistry for flight time calculation:")
-                font.pixelSize: Config.fontSizeSmall
-                color: Colors.textPrimary
-                wrapMode: Text.WordWrap
-                Layout.fillWidth: true
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: Config.spacingSmall
-
-                Text {
-                    text: qsTr("Type:")
-                    font.pixelSize: Config.fontSizeSmall
-                    font.weight: Font.DemiBold
-                    color: Colors.textSecondary
-                    Layout.preferredWidth: 110
-                }
-
-                ComboBox {
-                    id: batTypeCombo
-                    Layout.fillWidth: true
-                    model: ["LiPo", "LiHV", "LiIon", "LiFe"]
-                }
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: Config.spacingSmall
-
-                Text {
-                    text: qsTr("Series (S):")
-                    font.pixelSize: Config.fontSizeSmall
-                    font.weight: Font.DemiBold
-                    color: Colors.textSecondary
-                    Layout.preferredWidth: 110
-                }
-
-                SpinBox {
-                    id: cellCountSpin
-                    Layout.fillWidth: true
-                    from: 1
-                    to: 24
-                    editable: true
-                    value: 6
-                }
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: Config.spacingSmall
-
-                Text {
-                    text: qsTr("Parallel (P):")
-                    font.pixelSize: Config.fontSizeSmall
-                    font.weight: Font.DemiBold
-                    color: Colors.textSecondary
-                    Layout.preferredWidth: 110
-                }
-
-                SpinBox {
-                    id: parallelSpin
-                    Layout.fillWidth: true
-                    from: 1
-                    to: 16
-                    editable: true
-                    value: 1
-                }
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: Config.spacingSmall
-
-                Text {
-                    text: qsTr("Capacity (mAh):")
-                    font.pixelSize: Config.fontSizeSmall
-                    font.weight: Font.DemiBold
-                    color: Colors.textSecondary
-                    Layout.preferredWidth: 110
-                }
-
-                SpinBox {
-                    id: capacitySpin
-                    Layout.fillWidth: true
-                    from: 100
-                    to: 100000
-                    stepSize: 500
-                    editable: true
-                    value: 5000
-                }
-            }
-        }
-
-        onAboutToShow: {
-            if (typeof VehicleProfileManager !== 'undefined' && VehicleProfileManager) {
-                var currentType = VehicleProfileManager.batteryType || "LiPo"
-                var idx = batTypeCombo.model.indexOf(currentType)
-                batTypeCombo.currentIndex = idx >= 0 ? idx : 0
-
-                var series = VehicleProfileManager.batterySeriesCells
-                cellCountSpin.value = series > 0 ? series : 6
-
-                var parallel = VehicleProfileManager.batteryParallelCells
-                parallelSpin.value = parallel > 0 ? parallel : 1
-
-                var mah = VehicleProfileManager.batteryCellMah
-                capacitySpin.value = mah > 0 ? mah : 5000
-            }
-        }
-
-        onAccepted: {
-            var selectedType = batTypeCombo.currentText
-            var sCount = cellCountSpin.value
-            var pCount = parallelSpin.value
-            var mahVal = capacitySpin.value
-
-            if (typeof VehicleProfileManager !== 'undefined' && VehicleProfileManager) {
-                VehicleProfileManager.batteryType = selectedType
-                VehicleProfileManager.batterySeriesCells = sCount
-                VehicleProfileManager.batteryParallelCells = pCount
-                VehicleProfileManager.batteryCellMah = mahVal
-            }
-            root._lastModeLabel = "Battery: " + sCount + "S " + pCount + "P " + mahVal + " mAh (" + selectedType + ")"
-            root._modeToastSecsLeft = 10
-            modeToastTimer.restart()
-        }
-    }
-
     // ── Route actionTriggered ──────────────────────────────────────────────
     Connections {
         target: root
         function onActionTriggered(action) {
             if (action === "disarm") {
                 disarmDialog.open()
-            } else if (action === "batConfig") {
-                batteryConfigDialog.open()
             }
         }
     }

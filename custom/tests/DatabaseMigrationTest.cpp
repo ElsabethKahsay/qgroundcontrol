@@ -11,9 +11,13 @@
  */
 
 #include <QTest>
+#include <QSignalSpy>
+#include <QFile>
 #include <QSqlQuery>
 #include <QSqlDatabase>
 #include <QUuid>
+#include <QTemporaryDir>
+#include <QSqlError>
 
 #include "UnitTest.h"
 #include "utils/DatabaseManager.h"
@@ -36,7 +40,123 @@ private slots:
     void testCheckConfigTableStructure();
     void testVehicleConfigTableStructure();
     void testNoFlyZonesTableExists();
+
+    // Item 8 (F13, F14)
+    void testRestartDoesNotRerunMigrations();
+    void testUpgradeFrom18AddsFlightTargetColumns();
+    void testFailedStepRollsBackAndStops();
+    void testUnopenablePathSetsStartupError();
+
+private:
+    static QStringList columns(const QString &table);
+    static void downgradeTo18();
 };
+
+QStringList DatabaseMigrationTest::columns(const QString &table)
+{
+    QStringList cols;
+    QSqlQuery q(QSqlDatabase::database());
+    q.exec(QStringLiteral("PRAGMA table_info(%1)").arg(table));
+    while (q.next())
+        cols << q.value(1).toString();
+    return cols;
+}
+
+// Turns a freshly initialized database back into what a v18 build left.
+void DatabaseMigrationTest::downgradeTo18()
+{
+    QSqlQuery q(QSqlDatabase::database());
+    QVERIFY(q.exec(QStringLiteral("DROP INDEX IF EXISTS idx_flights_device_uid")));
+    for (const char *col : {"device_uid", "target_lat", "target_lon", "target_source"})
+        QVERIFY2(q.exec(QStringLiteral("ALTER TABLE flights DROP COLUMN %1").arg(QLatin1String(col))),
+                 qPrintable(q.lastError().text()));
+    QVERIFY(q.exec(QStringLiteral("DELETE FROM schema_version WHERE version > 18")));
+}
+
+// F14: storedSchemaVersion() answered 0 during initialize(), so every launch
+// re-ran every step and v12 rebuilt flights, zeroing its summary columns.
+void DatabaseMigrationTest::testRestartDoesNotRerunMigrations()
+{
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("m.db"));
+    DatabaseManager &db = DatabaseManager::instance();
+    QVERIFY(db.initialize(path));
+    {
+        QSqlQuery q(QSqlDatabase::database());
+        QVERIFY2(q.exec(QStringLiteral(
+            "INSERT INTO flights (mode, started_at, max_ground_speed_ms, target_lat) "
+            "VALUES ('Flight', '2026-10-22T10:00:00', 12.5, 9.03)")), qPrintable(q.lastError().text()));
+    }
+    db.reset();
+    QFile::remove(path + QStringLiteral(".bak"));   // taken by the first, fresh-file migration
+    QVERIFY(db.initialize(path));
+    QSqlQuery q(QSqlDatabase::database());
+    QVERIFY(q.exec(QStringLiteral("SELECT max_ground_speed_ms, target_lat FROM flights")));
+    QVERIFY(q.next());
+    QCOMPARE(q.value(0).toDouble(), 12.5);
+    QCOMPARE(q.value(1).toDouble(), 9.03);
+    QVERIFY2(!QFile::exists(path + QStringLiteral(".bak")), "nothing to migrate, so no backup is taken");
+}
+
+// F14: a v18 database (the live one today) gains the v19 flight columns.
+void DatabaseMigrationTest::testUpgradeFrom18AddsFlightTargetColumns()
+{
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("m.db"));
+    DatabaseManager &db = DatabaseManager::instance();
+    QVERIFY(db.initialize(path));
+    downgradeTo18();
+    QVERIFY(!columns(QStringLiteral("flights")).contains(QStringLiteral("target_lat")));
+    db.reset();
+    QFile::remove(path + QStringLiteral(".bak"));
+
+    QVERIFY(db.initialize(path));
+    QCOMPARE(db.storedSchemaVersion(), db.schemaVersion());
+    const QStringList cols = columns(QStringLiteral("flights"));
+    for (const char *col : {"device_uid", "target_lat", "target_lon", "target_source"})
+        QVERIFY2(cols.contains(QLatin1String(col)), col);
+    QVERIFY(db.startupError().isEmpty());
+    QVERIFY(QFile::exists(path + QStringLiteral(".bak")));
+}
+
+// F14: a failing statement rolls the whole step back, the version is not
+// recorded, and initialize() fails with a reason (F13).
+void DatabaseMigrationTest::testFailedStepRollsBackAndStops()
+{
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("m.db"));
+    DatabaseManager &db = DatabaseManager::instance();
+    QVERIFY(db.initialize(path));
+    downgradeTo18();
+    {
+        // A table holding the v19 index name makes its CREATE INDEX fail,
+        // after the step's ALTER TABLEs have already run.
+        QSqlQuery q(QSqlDatabase::database());
+        QVERIFY(q.exec(QStringLiteral("CREATE TABLE idx_flights_device_uid (x INTEGER)")));
+    }
+    db.reset();
+
+    QSignalSpy spy(&db, &DatabaseManager::startupErrorChanged);
+    QVERIFY(!db.initialize(path));
+    QCOMPARE(spy.count(), 1);
+    QVERIFY2(db.startupError().contains(QStringLiteral("version 19")), qPrintable(db.startupError()));
+
+    QSqlQuery q(QSqlDatabase::database());
+    QVERIFY(q.exec(QStringLiteral("SELECT MAX(version) FROM schema_version")));
+    QVERIFY(q.next());
+    QCOMPARE(q.value(0).toInt(), 18);
+    QVERIFY(!columns(QStringLiteral("flights")).contains(QStringLiteral("target_lat")));   // ALTERs rolled back
+}
+
+// F13: an unopenable path leaves a startup error for the banner.
+void DatabaseMigrationTest::testUnopenablePathSetsStartupError()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    QVERIFY(!db.initialize(QStringLiteral("/proc/skywin-no-such-dir/m.db")));
+    QVERIFY(!db.startupError().isEmpty());
+    db.reset();
+    QVERIFY(db.startupError().isEmpty());
+}
 
 // Fresh DB should initialize to the latest schema version
 void DatabaseMigrationTest::testFreshDBSchemaVersion()

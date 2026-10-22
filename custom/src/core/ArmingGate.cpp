@@ -439,6 +439,9 @@ ArmingGate::ArmRequest ArmingGate::currentRequest(quint32 callToken, bool isArm)
             if (st == CheckStatus::Passed || st == CheckStatus::Warning || st == CheckStatus::Skipped)
                 continue;
             r.failingMandatoryIds << c->id();
+            // Step 3 item 7: no pack selected is a hard block, in every mode.
+            if (c->id() == QLatin1String("power.battery.pack"))
+                r.batteryPackSelected = false;
             if (st == CheckStatus::Stale)
                 r.anyMandatoryStale = true;
         }

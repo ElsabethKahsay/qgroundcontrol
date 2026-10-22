@@ -97,6 +97,9 @@ struct VehicleRecord {
 
 class DatabaseManager : public QObject {
     Q_OBJECT
+    /// Non-empty when the database could not be opened or migrated at startup,
+    /// i.e. nothing is being logged (F13). The Fly view shows it as a banner.
+    Q_PROPERTY(QString startupError READ startupError NOTIFY startupErrorChanged)
 public:
     static DatabaseManager &instance();
 
@@ -220,6 +223,18 @@ public:
     Q_INVOKABLE QString getBatteryHealthTrend(const QString &serialNumber);
     Q_INVOKABLE bool incrementBatteryCycle(int flightSessionId, const QString &batterySerial = QString());
 
+    // ── Battery pack registry (Step 3 item 7) ─────────────────────────
+    /// Registered packs, most recently used first: {serial, label, chemistry,
+    /// series, parallel, cellMah, ratedMah, cycles, lastSeen}.
+    Q_INVOKABLE QVariantList listBatteryPacks();
+    Q_INVOKABLE QVariantMap batteryPack(const QString &serial);
+    /// Registers or updates a pack's rated config (the cycle count is kept).
+    Q_INVOKABLE bool saveBatteryPack(const QString &serial, const QString &label,
+                                     const QString &chemistry, int series, int parallel, int cellMah);
+    /// Logs one cycle for @p serial if the flight used at least 20 % of its
+    /// rated capacity; once per flight session. Returns true when counted.
+    bool recordBatteryFlight(int flightSessionId, const QString &serial, double usedMah);
+
     // ── Flight session CRUD ───────────────────────────────────────────
     Q_INVOKABLE int startFlightSession(const QString &deviceUid, const QString &batterySerial,
                                         double payloadWeightKg = 0.0);
@@ -234,6 +249,13 @@ public:
     /// Returns {lat, lon, source} for the session, or an empty map when no
     /// target location was saved (or the session id is unknown).
     Q_INVOKABLE QVariantMap getTargetLocation(int sessionId);
+    /// The operator's target location for a vehicle (Step 3): set from the
+    /// gimbal page during preflight, before any flight row exists. Saving fails
+    /// when the vehicle has no row in vehicles.
+    bool saveVehicleTarget(const QString &deviceUid, double lat, double lon, const QString &source);
+    QVariantMap vehicleTarget(const QString &deviceUid);
+    /// Copies the vehicle's target onto a flight_sessions row (at session start).
+    bool copyVehicleTargetToSession(int sessionId, const QString &deviceUid);
     Q_INVOKABLE bool endFlightSession(int sessionId, double durationSeconds);
     Q_INVOKABLE bool updateFlightSessionEnergy(int sessionId, double energyConsumedWh, double distanceM);
     Q_INVOKABLE QString getFlightSessions(const QString &deviceUid, int limit = 10);
@@ -425,7 +447,14 @@ public:
     bool recoverOrphanedSessions();
     void reset();
 
+    QString startupError() const { return m_startupError; }
+
+signals:
+    void startupErrorChanged();
+
 private:
+    void setStartupError(const QString &error);
+
     DatabaseManager(QObject *parent = nullptr);
     ~DatabaseManager() override;
 
@@ -452,4 +481,5 @@ private:
     QSqlDatabase m_db;
     bool m_initialized = false;
     QTimer m_maintenanceTimer;
+    QString m_startupError;
 };
