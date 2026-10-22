@@ -7,6 +7,7 @@
 #include "ParameterWatchlist.h"
 #include "AbstractCheck.h"
 #include "ManualConfirmCheck.h"
+#include "BatteryVoltageCheck.h"
 #include "mocks/MockTelemetryBridge.h"
 #include "utils/MonotonicClock.h"
 #include "utils/TelemetryStream.h"
@@ -35,6 +36,7 @@ private slots:
     void testBatteryStreamStopMarksCheckStale();
     void testPassedCheckReevaluatedEachTick();
     void testNeverSeenStreamIsNotStale();
+    void testUnhealthyBatteryMonitorIsNotCalledCritical();
 };
 
 void PreflightManagerTest::testInitialState()
@@ -438,6 +440,28 @@ void PreflightManagerTest::testNeverSeenStreamIsNotStale()
     t.clock.advance(60000);
     mgr.tick();
     QVERIFY(batt->status() != CheckStatus::Stale);
+}
+
+// ArduPilot's MAV_BATTERY_CHARGE_STATE_UNHEALTHY is a battery-MONITOR fault
+// (sensor / configuration), not a low charge. The check still blocks (like
+// ArduPilot's own pre-arm) but must say so instead of "Battery state: critical".
+void PreflightManagerTest::testUnhealthyBatteryMonitorIsNotCalledCritical()
+{
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    bridge.setBatteryVoltage(16.6);
+    bridge.setBatteryPercent(90);
+    BatteryVoltageCheck check(&bridge, 0.0, 5.0);
+    // setTestValue() is private but Q_INVOKABLE (this test is not a friend of AbstractCheck).
+    QVERIFY(QMetaObject::invokeMethod(&check, "setTestValue",
+                                      Q_ARG(QString, QStringLiteral("batteryChargeState")),
+                                      Q_ARG(QVariant, QVariant(QStringLiteral("unhealthy")))));
+
+    check.evaluate();
+    QCOMPARE(check.status(), CheckStatus::Failed);
+    QVERIFY2(check.message().contains(QStringLiteral("MONITOR")), qPrintable(check.message()));
+    QVERIFY2(!check.message().contains(QStringLiteral("critical")), qPrintable(check.message()));
 }
 
 UT_REGISTER_TEST(PreflightManagerTest)

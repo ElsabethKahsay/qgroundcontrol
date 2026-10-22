@@ -374,8 +374,12 @@ static QString parseBatteryChargeState(uint8_t state) {
         case MAV_BATTERY_CHARGE_STATE_LOW:
             return QStringLiteral("low");
         case MAV_BATTERY_CHARGE_STATE_CRITICAL:
-        case MAV_BATTERY_CHARGE_STATE_UNHEALTHY:
             return QStringLiteral("critical");
+        case MAV_BATTERY_CHARGE_STATE_UNHEALTHY:
+            // The autopilot's battery MONITOR has a sensor/config fault; it says
+            // nothing about the charge. Kept distinct from "critical" so the
+            // operator is not told a healthy pack is nearly empty.
+            return QStringLiteral("unhealthy");
         case MAV_BATTERY_CHARGE_STATE_EMERGENCY:
         case MAV_BATTERY_CHARGE_STATE_FAILED:
             return QStringLiteral("emergency");

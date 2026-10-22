@@ -82,6 +82,13 @@ void BatteryVoltageCheck::evaluate()
         msg = QStringLiteral("%1V %2S %3A — OK")
             .arg(voltage, 0, 'f', 1).arg(cells).arg(current, 0, 'f', 1);
         setStatus(CheckStatus::Passed, msg);
+    } else if (chargeState == QStringLiteral("unhealthy")) {
+        // Blocks like ArduPilot's own pre-arm battery check, but says what it is.
+        msg = QStringLiteral("Battery MONITOR reports unhealthy (reads %1V) \u2014 a sensor or "
+                             "configuration fault on the flight controller, not a low charge. "
+                             "Check BATT_MONITOR / BATTn_MONITOR, BATT_VOLT_PIN, BATT_CURR_PIN.")
+            .arg(voltage, 0, 'f', 1);
+        setStatus(CheckStatus::Failed, msg);
     } else if (!chargeOk && (chargeState == QStringLiteral("critical") || chargeState == QStringLiteral("emergency"))) {
         msg = QStringLiteral("%1V %2S — Battery state: %3")
             .arg(voltage, 0, 'f', 1).arg(cells).arg(chargeState);
