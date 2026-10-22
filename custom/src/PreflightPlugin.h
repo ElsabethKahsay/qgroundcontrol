@@ -38,6 +38,7 @@ class ChecklistEngine;
 class ChecklistItemModel;
 class VehicleRegistry;
 class NoFlyZoneModel;
+class SessionRecorder;
 class VehicleListModel;
 class MissionController;
 
@@ -150,10 +151,9 @@ private:
     MissionController *_planMissionController = nullptr;    // Plan View's mission controller (zone compliance source)
 
     // --- Flight session tracking ---
-    int _currentSessionId = -1;       // Active DB flight session ID, -1 when no session is active
-    QString _currentSessionDeviceUid; // Canonical key (device_uid) of the active session
-    QDateTime _sessionStartTime;      // Timestamp when gateOpened started the session
-    double _sessionStartMah = -1;     // FC mAh-consumed at session start, -1 = unknown
+    SessionRecorder *_sessionRecorder = nullptr;  // Step 3 item 6: the only session/flight writer
+    QMetaObject::Connection _linkLostConn;        // current vehicle's communicationLostChanged
+    void _openConnectionSession();                // opens once the vehicle UID is known
     /// Flight controller's mAh-consumed counter for battery 1, -1 when unavailable.
     double _batteryMahConsumed() const;
     QTimer _weatherRefreshTimer;      // Periodic timer that triggers weather data refresh

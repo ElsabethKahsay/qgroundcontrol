@@ -30,6 +30,12 @@ Page {
         viewMode: "standalone"
     }
 
+    // Step 3 item 7: opened by the "Battery pack" item (Power & Propulsion).
+    CE.ChecklistEngine.BatteryPackDialog {
+        id: batteryPackDialog
+        parent: Overlay.overlay
+    }
+
     // ── Vehicle-type gate for the checklist "Next" flow ─────────────────────
     // Explicit enumeration of the airframes that take Next → Gimbal Test.
     // Fixed-wing and multirotor both keep the button: GimbalTest.qml hides its
@@ -585,14 +591,19 @@ Page {
                                                                                 }
                                                                                 // Confirm when still failing.
                                                                                 Button {
-                                                                                    visible: (isManual || isAction) && !isPassed
-                                                                                    text: isManual ? "Confirm" : "Run"
+                                                                                    readonly property bool isPackCheck: chk && chk.checkId === "power.battery.pack"
+                                                                                    // The pack item stays clickable once passed, to change the pack.
+                                                                                    visible: ((isManual || isAction) && !isPassed) || isPackCheck
+                                                                                    text: isPackCheck ? (isPassed ? qsTr("Change") : qsTr("Select")) : isManual ? "Confirm" : "Run"
                                                                                     highlighted: true
                                                                                     font.pixelSize: Config.fontSizeSmall
                                                                                     Layout.preferredHeight: 26
-                                                                                    Layout.preferredWidth: 54
+                                                                                    Layout.preferredWidth: isPackCheck ? 64 : 54
                                                                                     onClicked: {
-                                                                                        if (isAction) {
+                                                                                        if (isPackCheck) {
+                                                                                            // Never confirm(): only choosing a pack passes it.
+                                                                                            batteryPackDialog.open();
+                                                                                        } else if (isAction) {
                                                                                             var c = PreflightManager.checkById(chk.checkId);
                                                                                             if (c) {
                                                                                                 c.evaluate();

@@ -250,6 +250,9 @@ void ArmingGateTest::testBatteryPackCheckFollowsSelection()
     pack.clear();
     check.evaluate();
     QCOMPARE(check.status(), CheckStatus::Pending);
+    // A generic "Run"/confirm button cannot pass it without a pack.
+    check.confirm(QStringLiteral("Action completed"));
+    QCOMPARE(check.status(), CheckStatus::Pending);
 
     QVERIFY(!batteryFlightCountsAsCycle(1199.0, 6000));
     QVERIFY(batteryFlightCountsAsCycle(1200.0, 6000));

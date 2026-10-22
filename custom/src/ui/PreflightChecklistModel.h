@@ -14,11 +14,15 @@
  */
 
 #pragma once
+
+#include <QPointer>
+#include <QVector>
 #include <QAbstractListModel>
 #include <QHash>
 #include <QByteArray>
 
 class PreflightManager;
+class AbstractCheck;
 
 /// QAbstractListModel that exposes preflight checklist items to QML.
 /// Each row corresponds to one AbstractCheck (sensor, manual, action, etc.).
@@ -98,4 +102,9 @@ private slots:
 
 private:
     PreflightManager *m_manager = nullptr;
+    /// The rows: the manager's checks minus informational ones, in order.
+    /// rowCount() used totalChecks() (which skips informational checks) while
+    /// rows indexed the full list, so the last few checks — including any the
+    /// plugin adds later, such as the Battery pack item — never showed.
+    QVector<QPointer<AbstractCheck>> m_rows;
 };

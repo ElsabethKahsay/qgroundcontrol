@@ -52,6 +52,8 @@ int qInitResources_qmlcache_VehicleSetupModule();
 #include "adapters/TelemetryBridge.h"
 #include "core/ArmingGate.h"
 #include "core/BatteryPackCheck.h"
+#include "core/SessionRecorder.h"
+#include "Vehicle/VehicleLinkManager.h"
 #include "core/ChecklistEngine.h"
 #include "core/ChecklistItemModel.h"
 #include "core/PowerModel.h"
@@ -300,6 +302,60 @@ void PreflightPlugin::init()
             : tr("Return NOT confirmed by the vehicle — check its flight mode"));
     });
 
+    // Step 3 item 6: SessionRecorder is the only writer of connection and
+    // flight rows. It opens the connection once the vehicle UID resolves.
+    _sessionRecorder = new SessionRecorder(DatabaseManager::instance(), this);
+    _sessionRecorder->setSampleProvider([this]() {
+        SessionRecorder::Sample s;
+        if (_telemetryBridge && _telemetryBridge->vehicle()) {
+            s.voltage = _telemetryBridge->batteryVoltage();
+            s.mahConsumed = _batteryMahConsumed();
+        }
+        return s;
+    });
+    _sessionRecorder->setFlightClosedHandler([this](const SessionRecorder::FlightEnd &end) {
+        // Battery cycle: non-bench flights only, >= 20 % of the pack (item 7).
+        if (!end.bench && end.mahUsed >= 0
+            && DatabaseManager::instance().recordBatteryFlight(end.flightId, end.batterySerial, end.mahUsed)
+            && _vehicleProfileManager && _vehicleProfileManager->currentBatterySerial() == end.batterySerial)
+            _vehicleProfileManager->setBatterySerial(end.batterySerial);   // refreshes the cycle count shown
+
+        // Compliance log entry for the flight (as the gate-close code wrote).
+        QJsonObject logEntry;
+        logEntry[QStringLiteral("sessionId")] = end.flightId;
+        logEntry[QStringLiteral("deviceUid")] = end.deviceUid;
+        logEntry[QStringLiteral("durationSec")] = end.durationSec;
+        logEntry[QStringLiteral("endReason")] = end.endReason;
+        logEntry[QStringLiteral("bench")] = end.bench;
+        logEntry[QStringLiteral("endTime")] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+        DatabaseManager::instance().saveComplianceLog(
+            QStringLiteral("session-%1").arg(end.flightId), end.deviceUid, QString(), QString(),
+            QString::fromUtf8(QJsonDocument(logEntry).toJson(QJsonDocument::Compact)), QString());
+
+        // Energy-model calibration from this vehicle's recorded flights.
+        if (!end.bench && _powerModel) {
+            const QVector<QPair<double, double>> history =
+                DatabaseManager::instance().getPowerCalibrationHistory(end.deviceUid, 50);
+            if (!history.isEmpty()) {
+                QVector<PowerCalibrationPoint> points;
+                points.reserve(history.size());
+                for (const auto &h : history)
+                    points.append(PowerCalibrationPoint{h.first, h.second});
+                _powerModel->setCalibrationPoints(end.deviceUid, points);
+            }
+        }
+        // VehicleProfileManager writes this flight's energy on the same
+        // disarm; release its flight id only after that has run.
+        QTimer::singleShot(0, this, [this, id = end.flightId]() {
+            if (_vehicleProfileManager && _vehicleProfileManager->currentFlightSessionId() == id)
+                _vehicleProfileManager->setFlightSessionId(-1);
+        });
+        qCInfo(preflightPluginLog) << "Flight" << end.flightId << "closed:" << end.endReason
+                                   << end.durationSec << "s" << (end.bench ? "(bench)" : "");
+    });
+    connect(_vehicleProfileManager, &VehicleProfileManager::currentVehicleChanged,
+            this, &PreflightPlugin::_openConnectionSession);
+
     connect(_armingGate, &ArmingGate::gateOpened,
             this, &PreflightPlugin::_onGateOpened);
     connect(_armingGate, &ArmingGate::gateClosed,
@@ -524,6 +580,23 @@ void PreflightPlugin::_onActiveVehicleChanged(Vehicle *vehicle)
 
     if (_armStateTracker)
         _armStateTracker->setVehicle(vehicle);
+    // Step 3 item 6: link loss keeps the flight open; vehicle removal closes
+    // the connection (and a flight still open, as link_lost).
+    QObject::disconnect(_linkLostConn);
+    if (_sessionRecorder) {
+        if (!vehicle) {
+            _sessionRecorder->connectionClosed(QStringLiteral("vehicle_removed"));
+        } else if (VehicleLinkManager *links = vehicle->vehicleLinkManager()) {
+            QPointer<Vehicle> v(vehicle);
+            _linkLostConn = connect(links, &VehicleLinkManager::communicationLostChanged, _sessionRecorder,
+                                    [this, v](bool lost) {
+                if (lost)
+                    _sessionRecorder->linkLost();
+                else
+                    _sessionRecorder->linkRestored(v && v->armed());
+            });
+        }
+    }
     // A new connection usually means a new pack (the FC was power-cycled for
     // the swap), so the operator selects the pack again.
     if (_vehicleProfileManager && !_vehicleProfileManager->currentBatterySerial().isEmpty())
@@ -586,93 +659,71 @@ double PreflightPlugin::_batteryMahConsumed() const
     return mah.isValid() ? mah.toDouble() : -1;
 }
 
-void PreflightPlugin::_onGateOpened()
+static QString sessionModeName()
 {
-    if (_currentSessionId >= 0) return;
-    // One authoritative session per flight.  The canonical key is the
-    // hardware UID (decimal) resolved exactly as the vehicle registry keys
-    // its rows; fall back to the connection fingerprint for UID-less links.
-    QString key = _vehicleProfileManager->currentDeviceUid();
+    FlightSession *fs = FlightSession::instance();
+    if (!fs) return QString();
+    if (fs->isFlight()) return QStringLiteral("Flight");
+    if (fs->isTesting()) return QStringLiteral("Testing");
+    if (fs->isTraining()) return QStringLiteral("Training");
+    return QStringLiteral("None");
+}
+
+// Opens the connection session once the vehicle's UID (the vehicles-row key)
+// is known. A different UID closes the previous connection first.
+void PreflightPlugin::_openConnectionSession()
+{
+    if (!_sessionRecorder || !_telemetryBridge || !_telemetryBridge->vehicle())
+        return;
+    QString key = _vehicleProfileManager ? _vehicleProfileManager->currentDeviceUid() : QString();
     if (key.isEmpty())
         key = VehicleRegistry::instance()->currentFingerprint();
-    if (key.isEmpty()) return;
-    _currentSessionId = DatabaseManager::instance().startFlightSession(
-        key, _vehicleProfileManager->currentBatterySerial(),
-        _vehicleProfileManager->currentPayloadWeightKg());
-    if (_currentSessionId > 0) {
-        _vehicleProfileManager->setFlightSessionId(_currentSessionId);
-        _currentSessionDeviceUid = key;
-        // The target set on the gimbal page during preflight belongs to this flight.
-        DatabaseManager::instance().copyVehicleTargetToSession(_currentSessionId, key);
-    }
-    // Stored timestamp: UTC (F17). TODO(step3): SessionRecorder takes durations
-    // from a monotonic timer; this gate-driven session code is replaced there.
-    _sessionStartTime = QDateTime::currentDateTimeUtc();
-    _sessionStartMah = _batteryMahConsumed();
-    qCDebug(preflightPluginLog) << "Flight session started:" << _currentSessionId;
+    OperatorManager *ops = OperatorManager::instance();
+    _sessionRecorder->connectionOpened(key, sessionModeName(), ops ? ops->currentOperatorName() : QString(),
+                                       QCoreApplication::applicationVersion());
 }
 
 // ---------------------------------------------------------------------------
-// _onGateClosed() — The arming gate closed (disarmed or check failure).
-// Ends the flight session: calculates duration, writes a compliance log entry
-// with session metadata, and increments the battery cycle counter.
+// _onGateOpened() — ArmStateTracker saw the vehicle ARM (HEARTBEAT), whoever
+// armed it. SessionRecorder opens the flight row (Step 3 item 6).
+// ---------------------------------------------------------------------------
+void PreflightPlugin::_onGateOpened()
+{
+    if (!_sessionRecorder)
+        return;
+    _openConnectionSession();   // no-op when already open for this vehicle
+
+    SessionRecorder::FlightStart start;
+    start.batterySerial = _vehicleProfileManager ? _vehicleProfileManager->currentBatterySerial() : QString();
+    start.payloadKg = _vehicleProfileManager ? _vehicleProfileManager->currentPayloadWeightKg() : 0.0;
+    const auto source = _armStateTracker ? _armStateTracker->lastArmSource() : ArmStateTracker::ArmSource::External;
+    start.armSource = source == ArmStateTracker::ArmSource::Gcs ? QStringLiteral("gcs")
+                    : source == ArmStateTracker::ArmSource::ForceToken ? QStringLiteral("force_token")
+                    : QStringLiteral("external");
+    start.gateAllowed = _armingGate && _armingGate->isArmingAllowed();
+    start.mode = sessionModeName();
+    // Bench: Testing mode, a bench force-arm, or a motor test in progress.
+    start.bench = start.mode == QLatin1String("Testing") || source == ArmStateTracker::ArmSource::ForceToken
+               || (_hardwareTestController && _hardwareTestController->isRunning());
+    _sessionRecorder->armed(start);
+
+    const int flightId = _sessionRecorder->flightId();
+    if (flightId > 0) {
+        _vehicleProfileManager->setFlightSessionId(flightId);
+        // The target set on the gimbal page during preflight belongs to this flight.
+        DatabaseManager::instance().copyVehicleTargetToSession(flightId, _sessionRecorder->deviceUid());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// _onGateClosed() — ArmStateTracker saw the vehicle DISARM. SessionRecorder
+// closes the flight; its closed-handler does the battery cycle and calibration.
 // ---------------------------------------------------------------------------
 void PreflightPlugin::_onGateClosed(const QString &reason)
 {
     Q_UNUSED(reason)
-    if (_currentSessionId < 0) return;
-    double duration = _sessionStartTime.isValid()
-        ? _sessionStartTime.secsTo(QDateTime::currentDateTimeUtc())
-        : 0.0;
-
-    // Save compliance log for this session
-    QString fp = VehicleRegistry::instance()->currentFingerprint();
-    if (!fp.isEmpty()) {
-        QJsonObject logEntry;
-        logEntry[QStringLiteral("sessionId")] = _currentSessionId;
-        logEntry[QStringLiteral("deviceUid")] = fp;
-        logEntry[QStringLiteral("durationSec")] = duration;
-        logEntry[QStringLiteral("startTime")] = _sessionStartTime.toString(Qt::ISODate);
-        logEntry[QStringLiteral("endTime")] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
-        logEntry[QStringLiteral("gateCloseReason")] = reason;
-        QString logJson = QString::fromUtf8(QJsonDocument(logEntry).toJson(QJsonDocument::Compact));
-        DatabaseManager::instance().saveComplianceLog(
-            QStringLiteral("session-%1").arg(_currentSessionId),
-            fp, QString(), QString(), logJson, QString());
-    }
-
-    DatabaseManager::instance().endFlightSession(_currentSessionId, duration);
-    // Step 3 item 7: one cycle when the flight used >= 20 % of the pack's
-    // rated capacity (the flight controller's mAh-consumed counter).
-    const double nowMah = _batteryMahConsumed();
-    if (_sessionStartMah >= 0 && nowMah >= _sessionStartMah && _vehicleProfileManager) {
-        const QString serial = _vehicleProfileManager->currentBatterySerial();
-        if (DatabaseManager::instance().recordBatteryFlight(_currentSessionId, serial, nowMah - _sessionStartMah))
-            _vehicleProfileManager->setBatterySerial(serial);   // refreshes the cycle count shown
-    }
-    _sessionStartMah = -1;
-
-    // Auto-calibrate the energy model from this flight's measured data: the
-    // session row for _currentSessionDeviceUid now holds energy_consumed_wh,
-    // distance_m and payload_weight_kg, so harvest workable (payload, Wh/km)
-    // points and feed the PowerModel's linear payload model (also revives the
-    // setCalibrationPoints API, which previously had no caller at all).
-    if (!_currentSessionDeviceUid.isEmpty()) {
-        const QVector<QPair<double, double>> history =
-            DatabaseManager::instance().getPowerCalibrationHistory(_currentSessionDeviceUid, 50);
-        if (!history.isEmpty()) {
-            QVector<PowerCalibrationPoint> points;
-            points.reserve(history.size());
-            for (const auto &h : history)
-                points.append(PowerCalibrationPoint{h.first, h.second});
-            _powerModel->setCalibrationPoints(_currentSessionDeviceUid, points);
-        }
-    }
-
-    qCDebug(preflightPluginLog) << "Flight session ended:" << _currentSessionId << "duration:" << duration << "s";
-    _vehicleProfileManager->setFlightSessionId(-1);
-    _currentSessionDeviceUid.clear();
-    _currentSessionId = -1;
+    if (_sessionRecorder)
+        _sessionRecorder->disarmed();
 }
 
 // ---------------------------------------------------------------------------

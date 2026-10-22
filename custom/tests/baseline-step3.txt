@@ -1,44 +1,46 @@
-Phase 1 Step 3 run — 2026-10-22T07:31:18Z
-Same method as baseline-step2.txt. FlightSessionLifecycleTest exit 139 = known MockLink crash (also in baseline-step2).
+Phase 1 Step 3 (item 6) run — 2026-10-22T08:29:36Z
+Same method as baseline-step2.txt. FlightSessionLifecycleTest exit 139 = known MockLink crash (also in baseline-step2/3).
 
-== ArmSendTest (exit 0)
-Totals: 22 passed, 0 failed, 0 skipped, 0 blacklisted, 61423ms
-== ArmingGateTest (exit 0)
-Totals: 15 passed, 0 failed, 0 skipped, 0 blacklisted, 42ms
-== ArmingGateExtendedTest (exit 0)
-Totals: 9 passed, 0 failed, 0 skipped, 0 blacklisted, 30ms
 == ArmGateResilienceTest (exit 0)
-Totals: 14 passed, 0 failed, 0 skipped, 0 blacklisted, 70713ms
+Totals: 14 passed, 0 failed, 0 skipped, 0 blacklisted, 70734ms
 == ArmingFlowIntegrationTest (exit 0)
-Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 604ms
-== MavLinkInterceptTest (exit 0)
-Totals: 19 passed, 0 failed, 0 skipped, 0 blacklisted, 37ms
-== PreflightManagerTest (exit 0)
-Totals: 20 passed, 0 failed, 0 skipped, 0 blacklisted, 49ms
-== StateMachineTest (exit 0)
-Totals: 6 passed, 0 failed, 0 skipped, 0 blacklisted, 29ms
-== FlightSessionTest (exit 0)
-Totals: 10 passed, 0 failed, 0 skipped, 0 blacklisted, 115ms
-== FlightSessionLifecycleTest (exit 139)
-== HardwareTestControllerTest (exit 0)
-Totals: 13 passed, 0 failed, 0 skipped, 0 blacklisted, 18135ms
-== ControlSurfaceTestControllerTest (exit 0)
-Totals: 16 passed, 0 failed, 0 skipped, 0 blacklisted, 50726ms
-== ReturnToLaunchTest (exit 0)
-Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 19688ms
-== TelemetryBridgeTest (exit 0)
-Totals: 12 passed, 0 failed, 0 skipped, 0 blacklisted, 41ms
-== WeatherProviderTest (exit 0)
-Totals: 8 passed, 0 failed, 0 skipped, 0 blacklisted, 1567ms
+Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 669ms
+== ArmingGateExtendedTest (exit 0)
+Totals: 9 passed, 0 failed, 0 skipped, 0 blacklisted, 37ms
+== ArmingGateTest (exit 0)
+Totals: 15 passed, 0 failed, 0 skipped, 0 blacklisted, 40ms
+== ArmSendTest (exit 0)
+Totals: 22 passed, 0 failed, 0 skipped, 0 blacklisted, 62096ms
 == CheckSmokeTest (exit 0)
-Totals: 13 passed, 0 failed, 0 skipped, 0 blacklisted, 33ms
-== QmlShadowTest (exit 0)
-Totals: 6 passed, 0 failed, 0 skipped, 0 blacklisted, 47ms
-== MotorCheckPanelSmokeTest (exit 0)
-Totals: 5 passed, 0 failed, 0 skipped, 0 blacklisted, 2800ms
+Totals: 13 passed, 0 failed, 0 skipped, 0 blacklisted, 102ms
+== ControlSurfaceTestControllerTest (exit 0)
+Totals: 16 passed, 0 failed, 0 skipped, 0 blacklisted, 51968ms
+== DatabaseMigrationTest (exit 0)
+Totals: 14 passed, 0 failed, 0 skipped, 0 blacklisted, 271ms
+== FlightSessionLifecycleTest (exit 139)
+== FlightSessionTest (exit 0)
+Totals: 10 passed, 0 failed, 0 skipped, 0 blacklisted, 103ms
 == FlyQuickActionsSmokeTest (exit 0)
 Totals: 8 passed, 0 failed, 0 skipped, 0 blacklisted, 422ms
+== HardwareTestControllerTest (exit 0)
+Totals: 13 passed, 0 failed, 0 skipped, 0 blacklisted, 18143ms
+== MavLinkInterceptTest (exit 0)
+Totals: 19 passed, 0 failed, 0 skipped, 0 blacklisted, 54ms
+== MotorCheckPanelSmokeTest (exit 0)
+Totals: 5 passed, 0 failed, 0 skipped, 0 blacklisted, 2817ms
+== PreflightManagerTest (exit 0)
+Totals: 20 passed, 0 failed, 0 skipped, 0 blacklisted, 68ms
+== QmlShadowTest (exit 0)
+Totals: 6 passed, 0 failed, 0 skipped, 0 blacklisted, 57ms
+== ReturnToLaunchTest (exit 0)
+Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 19762ms
+== StateMachineTest (exit 0)
+Totals: 6 passed, 0 failed, 0 skipped, 0 blacklisted, 50ms
 == TelemetryBridgeTest (exit 0)
-Totals: 12 passed, 0 failed, 0 skipped, 0 blacklisted, 32ms
-== DatabaseMigrationTest (exit 0)
-Totals: 14 passed, 0 failed, 0 skipped, 0 blacklisted, 204ms
+Totals: 12 passed, 0 failed, 0 skipped, 0 blacklisted, 38ms
+== WeatherProviderTest (exit 0)
+Totals: 8 passed, 0 failed, 0 skipped, 0 blacklisted, 2661ms
+== DatabaseManagerTest (exit 0)
+Totals: 31 passed, 0 failed, 0 skipped, 0 blacklisted, 1537ms
+== ChecklistPagesSmokeTest (exit 0)
+Totals: 4 passed, 0 failed, 0 skipped, 0 blacklisted, 2019ms

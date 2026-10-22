@@ -79,6 +79,14 @@ Item {
     readonly property real   _flightDist: activeVehicle && activeVehicle.flightDistance ? activeVehicle.flightDistance.rawValue : 0
     readonly property real   _currLat:    activeVehicle && activeVehicle.gps ? activeVehicle.gps.latitude.rawValue : 0
     readonly property real   _currLon:    activeVehicle && activeVehicle.gps ? activeVehicle.gps.longitude.rawValue : 0
+    // ATTITUDE column: the gimbal's measured angles when a gimbal reports,
+    // otherwise the UAV's own (ATTITUDE, radians -> degrees; yaw as heading).
+    readonly property var    _tel:          (typeof TelemetryProvider !== "undefined" && TelemetryProvider) ? TelemetryProvider : null
+    readonly property bool   _attFromGimbal: !!_tel && _tel.gimbalDetected
+    readonly property real   _attPitch: !_tel ? NaN : _attFromGimbal ? _tel.gimbalPitch : _tel.pitch * 180 / Math.PI
+    readonly property real   _attRoll:  !_tel ? NaN : _attFromGimbal ? _tel.gimbalRoll  : _tel.roll * 180 / Math.PI
+    readonly property real   _attYaw:   !_tel ? NaN : _attFromGimbal ? _tel.gimbalYaw
+                                                                     : ((_tel.yaw * 180 / Math.PI) + 360) % 360
     readonly property real   _planDist:   _haversine(
         _currLat, _currLon,
         VehicleProfileManager.planLatitude,
@@ -324,6 +332,27 @@ Item {
                     { label: "Tgt",
                       value: "--",
                       vcolor: Colors.textSecondary }
+                ]
+            }
+
+            // Vertical divider 3
+            Rectangle {
+                width: 1
+                Layout.fillHeight: true
+                Layout.topMargin:    4
+                Layout.bottomMargin: 4
+                Layout.leftMargin:   root._colGap
+                Layout.rightMargin:  root._colGap
+                color: Colors.borderLight
+            }
+
+            // ── Column 4: ATTITUDE (gimbal if present, else the UAV) ─────
+            TelColumn {
+                header: _attFromGimbal ? "ATTITUDE · GIMBAL" : "ATTITUDE · UAV"
+                rows: [
+                    { label: "Pitch", value: _formatVal(_attPitch, 1), unit: "°", vcolor: Colors.textPrimary },
+                    { label: "Roll",  value: _formatVal(_attRoll, 1),  unit: "°", vcolor: Colors.textPrimary },
+                    { label: "Yaw",   value: _formatVal(_attYaw, 0),   unit: "°", vcolor: Colors.accentCyan }
                 ]
             }
         }

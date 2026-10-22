@@ -37,7 +37,18 @@ public:
                         /*mandatory*/ true, /*canOverride*/ false, parent)
         , m_currentPack(std::move(currentPack))
     {
+        // Only a selected pack passes: a generic confirm() from a checklist
+        // button (or an override) is undone at once.
+        QObject::connect(this, &AbstractCheck::statusChanged, this, [this]() {
+            if (status() == CheckStatus::Passed && !hasPack())
+                evaluate();
+        });
         evaluate();
+    }
+
+    bool hasPack() const
+    {
+        return m_currentPack && !m_currentPack().value(QStringLiteral("serial")).toString().isEmpty();
     }
 
     void evaluate() override

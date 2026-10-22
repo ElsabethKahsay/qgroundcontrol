@@ -33,6 +33,7 @@
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
+#include <QQmlExpression>
 #include <QQmlProperty>
 #include <QJSValue>
 #include <QJSEngine>
@@ -965,8 +966,103 @@ void FlyQuickActionsSmokeTest::testNoQmlCallsGateOnlyForceArm()
                             .arg(funnelCallers.join(QStringLiteral(", ")))));
 }
 
+// ---------------------------------------------------------------------------
+// Step 3 item 7: the "Battery pack" item must be on both checklist pages
+// (Analyze -> Preflight Checklist and the Fly-view checklist page), with its
+// select button. Loads the shipped files from disk.
+// ---------------------------------------------------------------------------
+class ChecklistPagesSmokeTest : public UnitTest {
+    Q_OBJECT
+
+private slots:
+    void init() override { UnitTest::init(); }
+    void cleanup() override { UnitTest::cleanup(); }
+    void cleanupTestCase();
+
+    void testAnalyzeChecklistShowsBatteryPack();
+    void testFlyChecklistShowsBatteryPack();
+
+private:
+    QSharedPointer<QQmlApplicationEngine> _engine;
+    QSharedPointer<QQuickWindow>          _window;
+    QSharedPointer<QQuickItem>            _root;
+    QGCPalette                           *_palette = nullptr;
+
+    void _load(const QString &relPath);
+    static QStringList _texts(QQuickItem *item, int depth = 0);
+};
+
+void ChecklistPagesSmokeTest::cleanupTestCase()
+{
+    if (_root) _root->setParentItem(nullptr);
+    _root.clear();
+    _window.clear();
+    _engine.clear();
+    delete _palette; _palette = nullptr;
+}
+
+QStringList ChecklistPagesSmokeTest::_texts(QQuickItem *item, int depth)
+{
+    QStringList out;
+    if (!item || depth > 80) return out;
+    const QString t = item->property("text").toString();
+    if (!t.isEmpty() && item->isVisible()) out << t;
+    for (QQuickItem *child : item->childItems())
+        out << _texts(child, depth + 1);
+    return out;
+}
+
+void ChecklistPagesSmokeTest::_load(const QString &relPath)
+{
+    preflightInitOnce();
+    if (!_engine) {
+        _engine.reset(QGCCorePlugin::instance()->createQmlApplicationEngine(nullptr));
+        QVERIFY(_engine);
+        if (!_palette) _palette = new QGCPalette(this);
+        _engine->rootContext()->setContextProperty(QStringLiteral("qgcPal"), _palette);
+    }
+    if (!_window) {
+        _window.reset(createWindow(_engine, 1400, 2400));
+        QVERIFY(_window);
+    }
+    if (_root) _root->setParentItem(nullptr);
+    _root.clear();
+    QDir srcDir(QCoreApplication::applicationDirPath());
+    for (int i = 0; i < 4 && !QFileInfo::exists(srcDir.filePath(relPath)); ++i)
+        srcDir.cdUp();
+    const QString path = srcDir.filePath(relPath);
+    QVERIFY2(QFileInfo::exists(path), qPrintable(path));
+    QString err;
+    _root.reset(createComponent(_engine, _window.data(), path.toUtf8().constData(), &err));
+    QVERIFY2(_root, qPrintable(err));
+    pumpQml(300);
+}
+
+void ChecklistPagesSmokeTest::testAnalyzeChecklistShowsBatteryPack()
+{
+    _load(QStringLiteral("custom/qml/cpts/PreflightChecklistView.qml"));
+    const QStringList texts = _texts(_root.data());
+    QVERIFY2(texts.contains(QStringLiteral("Battery pack")), qPrintable(texts.mid(0, 80).join(QStringLiteral(" | "))));
+    QVERIFY2(texts.contains(QStringLiteral("Select battery pack")), qPrintable(texts.join(QStringLiteral(" | "))));
+}
+
+void ChecklistPagesSmokeTest::testFlyChecklistShowsBatteryPack()
+{
+    _load(QStringLiteral("custom/qml/pages/PreFlightChecklist.qml"));
+    // Go to the System step the way the wizard does (Testing mode starts there).
+    QQmlExpression step(qmlContext(_root.data()), _root.data(),
+                        QStringLiteral("_currentStep = 1; stackView.replace(step1Component); true"));
+    bool undefinedResult = false;
+    QVERIFY2(step.evaluate(&undefinedResult).toBool(), qPrintable(step.error().toString()));
+    pumpQml(600);
+    const QStringList texts = _texts(_root.data());
+    QVERIFY2(texts.contains(QStringLiteral("Battery pack")), qPrintable(texts.mid(0, 80).join(QStringLiteral(" | "))));
+    QVERIFY2(texts.contains(QStringLiteral("Select")), qPrintable(texts.join(QStringLiteral(" | "))));
+}
+
 UT_REGISTER_TEST(MotorCheckPanelSmokeTest)
 UT_REGISTER_TEST(MainStatusIndicatorSmokeTest)
 UT_REGISTER_TEST(FlyQuickActionsSmokeTest)
+UT_REGISTER_TEST(ChecklistPagesSmokeTest)
 
 #include "QmlSmokeTest.moc"

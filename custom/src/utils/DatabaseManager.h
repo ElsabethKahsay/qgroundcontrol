@@ -447,6 +447,28 @@ public:
     bool recoverOrphanedSessions();
     void reset();
 
+    // ── Session recording (Step 3 item 6) ─────────────────────────────
+    // SessionRecorder is the only caller. Timestamps are UTC ISO-8601;
+    // durations come from the recorder's monotonic clock.
+    int openConnectionSession(const QString &deviceUid, const QString &mode,
+                              const QString &operatorName, const QString &appVersion);
+    bool touchConnectionSession(int id);
+    bool closeConnectionSession(int id, const QString &endReason);
+    /// Opens an arm-to-disarm flight row in flight_sessions.
+    int openFlightRecord(int connectionSessionId, const QString &deviceUid, const QString &batterySerial,
+                         double payloadKg, const QString &armSource, bool gateAllowed,
+                         const QString &mode, bool isBench);
+    /// The 10 s running summary that crash recovery closes the row at.
+    bool updateFlightRecordSummary(int flightId, double durationSec, double minVoltage, double mahUsed);
+    /// @p endedAtUtc empty = now.
+    bool closeFlightRecord(int flightId, double durationSec, const QString &endReason,
+                           const QString &endedAtUtc, double minVoltage, double mahUsed);
+    bool logSessionEvent(int connectionSessionId, int flightId, const QString &event, const QString &detail);
+    /// Where recordCheckResult() files results (set by SessionRecorder).
+    void setRecordingContext(int connectionSessionId, int flightId, const QString &deviceUid);
+    /// F11: a check result keyed to the current connection session and flight.
+    bool recordCheckResult(const QString &checkId, const QString &status, const QString &message);
+
     QString startupError() const { return m_startupError; }
 
 signals:
@@ -482,4 +504,7 @@ private:
     bool m_initialized = false;
     QTimer m_maintenanceTimer;
     QString m_startupError;
+    int m_ctxConnectionId = -1;   ///< setRecordingContext()
+    int m_ctxFlightId = -1;
+    QString m_ctxDeviceUid;
 };

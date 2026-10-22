@@ -1,5 +1,6 @@
 #include <QTest>
 #include <QTemporaryDir>
+#include "core/SessionRecorder.h"
 #include <QSignalSpy>
 #include <QTemporaryFile>
 #include <QDir>
@@ -7,6 +8,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QSqlQuery>
+#include <QSqlRecord>
 #include <QSqlDatabase>
 
 #include "UnitTest.h"
@@ -43,6 +45,10 @@ private slots:
     void testBatteryPackRegistry();
     void testBatteryCycleNeedsTwentyPercent();
     void testVehicleTargetSavedBeforeAnyFlight();
+    void testRecorderFlightFollowsArmedState();
+    void testRecorderLinkLossClosesAtLossTime();
+    void testRecorderCrashRecoveryClosesBothTables();
+    void testRecorderCheckResultsKeyedToSession();
     void testIncrementBatteryCycleGuard();
     void testFlightSessionRoundTrip();
     void testCheckResultAuditTrail();
@@ -228,6 +234,173 @@ void DatabaseManagerTest::testVehicleTargetSavedBeforeAnyFlight()
     QVERIFY(q.next());
     QCOMPARE(q.value(0).toDouble(), 9.03);
     QCOMPARE(q.value(1).toString(), QStringLiteral("map center"));
+}
+
+// ── SessionRecorder (Step 3 item 6) — no vehicle, no MockLink ──────────────
+
+namespace {
+struct RecorderFixture {
+    QTemporaryDir dir;
+    QString path;
+    TestClock clock;
+    SessionRecorder::Sample sample;
+    RecorderFixture() : path(dir.filePath(QStringLiteral("rec.db"))) { MonotonicClock::setForTesting(&clock); }
+    ~RecorderFixture() { MonotonicClock::setForTesting(nullptr); }
+    bool init()
+    {
+        DatabaseManager &db = DatabaseManager::instance();
+        return db.initialize(path)
+            && db.upsertVehicle(QStringLiteral("UID-R"), QStringLiteral("Wing"), QStringLiteral("ArduPilot"), QStringLiteral("Plane"));
+    }
+    void wire(SessionRecorder &r) { r.setSampleProvider([this]() { return sample; }); }
+};
+
+QVariantMap row(const QString &sql)
+{
+    QVariantMap out;
+    QSqlQuery q(QSqlDatabase::database());
+    if (!q.exec(sql) || !q.next())
+        return out;
+    const QSqlRecord rec = q.record();
+    for (int i = 0; i < rec.count(); ++i)
+        out.insert(rec.fieldName(i), q.value(i));
+    return out;
+}
+
+SessionRecorder::FlightStart start(const QString &source, bool bench = false)
+{
+    SessionRecorder::FlightStart s;
+    s.armSource = source;
+    s.gateAllowed = source == QLatin1String("gcs");
+    s.mode = bench ? QStringLiteral("Testing") : QStringLiteral("Flight");
+    s.bench = bench;
+    return s;
+}
+} // namespace
+
+// F6: one flight per arm-to-disarm, whoever armed (an RC arm included), with
+// its source, gate state and bench flag stored; durations from the clock.
+void DatabaseManagerTest::testRecorderFlightFollowsArmedState()
+{
+    RecorderFixture f;
+    QVERIFY(f.init());
+    SessionRecorder rec(DatabaseManager::instance());
+    f.wire(rec);
+    rec.connectionOpened(QStringLiteral("UID-R"), QStringLiteral("Flight"), QStringLiteral("Pilot A"), QStringLiteral("1.0"));
+    QVERIFY(rec.connectionId() > 0);
+
+    f.sample = {16.4, 100.0};
+    rec.armed(start(QStringLiteral("external")));          // RC arm, no GCS ack
+    const int first = rec.flightId();
+    QVERIFY(first > 0);
+    f.clock.advance(65000);
+    f.sample = {15.1, 1400.0};
+    const SessionRecorder::FlightEnd end = rec.disarmed();
+    QCOMPARE(end.flightId, first);
+    QCOMPARE(end.endReason, QStringLiteral("disarmed"));
+    QCOMPARE(end.durationSec, 65.0);
+    QCOMPARE(end.mahUsed, 1300.0);
+    QVariantMap r = row(QStringLiteral("SELECT * FROM flight_sessions WHERE id = %1").arg(first));
+    QCOMPARE(r.value(QStringLiteral("arm_source")).toString(), QStringLiteral("external"));
+    QCOMPARE(r.value(QStringLiteral("gate_allowed")).toInt(), 0);
+    QCOMPARE(r.value(QStringLiteral("connection_session_id")).toInt(), rec.connectionId());
+    QCOMPARE(r.value(QStringLiteral("end_reason")).toString(), QStringLiteral("disarmed"));
+    QCOMPARE(r.value(QStringLiteral("duration_seconds")).toDouble(), 65.0);
+    QCOMPARE(r.value(QStringLiteral("min_voltage")).toDouble(), 15.1);
+    QVERIFY(!r.value(QStringLiteral("ended_at")).isNull());
+
+    // A second arm is a second flight (the old code folded it into the first).
+    rec.armed(start(QStringLiteral("force_token"), /*bench*/ true));
+    QVERIFY(rec.flightId() > first);
+    QCOMPARE(row(QStringLiteral("SELECT is_bench FROM flight_sessions WHERE id = %1").arg(rec.flightId()))
+                 .value(QStringLiteral("is_bench")).toInt(), 1);
+    const int connId = rec.connectionId();
+    rec.connectionClosed(QStringLiteral("vehicle_removed"));
+    QCOMPARE(row(QStringLiteral("SELECT end_reason FROM connection_sessions WHERE id = %1").arg(connId))
+                 .value(QStringLiteral("end_reason")).toString(), QStringLiteral("vehicle_removed"));
+    QCOMPARE(row(QStringLiteral("SELECT COUNT(*) AS n FROM flight_sessions WHERE ended_at IS NULL")).value(QStringLiteral("n")).toInt(), 0);
+}
+
+// Rule 4: link lost while armed keeps the flight open; back armed it goes on;
+// back disarmed it closes as link_lost at the moment the link was lost.
+void DatabaseManagerTest::testRecorderLinkLossClosesAtLossTime()
+{
+    RecorderFixture f;
+    QVERIFY(f.init());
+    SessionRecorder rec(DatabaseManager::instance());
+    f.wire(rec);
+    rec.connectionOpened(QStringLiteral("UID-R"), QStringLiteral("Flight"), QString(), QString());
+
+    rec.armed(start(QStringLiteral("gcs")));
+    f.clock.advance(10000);
+    rec.linkLost();
+    rec.linkRestored(/*armed*/ true);
+    QVERIFY(rec.flightOpen());                              // continues
+
+    const int id = rec.flightId();
+    f.clock.advance(20000);
+    rec.linkLost();                                         // lost at t = 30 s
+    f.clock.advance(45000);
+    rec.linkRestored(/*armed*/ false);                      // came back disarmed
+    QVERIFY(!rec.flightOpen());
+    const QVariantMap r = row(QStringLiteral("SELECT end_reason, duration_seconds FROM flight_sessions WHERE id = %1").arg(id));
+    QCOMPARE(r.value(QStringLiteral("end_reason")).toString(), QStringLiteral("link_lost"));
+    QCOMPARE(r.value(QStringLiteral("duration_seconds")).toDouble(), 30.0);
+    QCOMPARE(row(QStringLiteral("SELECT COUNT(*) AS n FROM session_events WHERE flight_session_id = %1").arg(id))
+                 .value(QStringLiteral("n")).toInt(), 4);   // lost, restored, lost, restored
+}
+
+// Rule 5 / F12: rows left open by a crash close at the last 10 s summary,
+// for flights and connections alike.
+void DatabaseManagerTest::testRecorderCrashRecoveryClosesBothTables()
+{
+    RecorderFixture f;
+    QVERIFY(f.init());
+    auto *rec = new SessionRecorder(DatabaseManager::instance());
+    f.wire(*rec);
+    rec->connectionOpened(QStringLiteral("UID-R"), QStringLiteral("Flight"), QString(), QString());
+    f.sample = {16.0, 0.0};
+    rec->armed(start(QStringLiteral("gcs")));
+    const int flight = rec->flightId(), conn = rec->connectionId();
+    f.clock.advance(20000);
+    f.sample = {15.2, 500.0};
+    rec->writeSummary();
+    const QString summaryAt = row(QStringLiteral("SELECT last_summary_at FROM flight_sessions WHERE id = %1").arg(flight))
+                                  .value(QStringLiteral("last_summary_at")).toString();
+
+    DatabaseManager::instance().reset();                    // "crash": nothing gets closed
+    delete rec;                                             // (writes are no-ops now)
+    QVERIFY(DatabaseManager::instance().initialize(f.path));
+
+    const QVariantMap fr = row(QStringLiteral("SELECT * FROM flight_sessions WHERE id = %1").arg(flight));
+    QCOMPARE(fr.value(QStringLiteral("end_reason")).toString(), QStringLiteral("crash_recovered"));
+    QCOMPARE(fr.value(QStringLiteral("ended_at")).toString(), summaryAt);
+    QCOMPARE(fr.value(QStringLiteral("duration_seconds")).toDouble(), 20.0);
+    QCOMPARE(fr.value(QStringLiteral("mah_used")).toDouble(), 500.0);
+    QCOMPARE(row(QStringLiteral("SELECT end_reason FROM connection_sessions WHERE id = %1").arg(conn))
+                 .value(QStringLiteral("end_reason")).toString(), QStringLiteral("crash_recovered"));
+}
+
+// F11: check results land in check_results keyed to the connection session
+// and the open flight, with the vehicles-row UID.
+void DatabaseManagerTest::testRecorderCheckResultsKeyedToSession()
+{
+    RecorderFixture f;
+    QVERIFY(f.init());
+    DatabaseManager &db = DatabaseManager::instance();
+    QVERIFY(!db.recordCheckResult(QStringLiteral("nav.gps.fix"), QStringLiteral("Failed"), QString()));   // no session
+    SessionRecorder rec(db);
+    rec.connectionOpened(QStringLiteral("UID-R"), QStringLiteral("Flight"), QString(), QString());
+    QVERIFY(db.recordCheckResult(QStringLiteral("nav.gps.fix"), QStringLiteral("Failed"), QStringLiteral("no fix")));
+    rec.armed(start(QStringLiteral("gcs")));
+    QVERIFY(db.recordCheckResult(QStringLiteral("power.battery.voltage"), QStringLiteral("Warning"), QString()));
+
+    QVariantMap r = row(QStringLiteral("SELECT * FROM check_results WHERE check_id = 'nav.gps.fix'"));
+    QCOMPARE(r.value(QStringLiteral("device_uid")).toString(), QStringLiteral("UID-R"));
+    QCOMPARE(r.value(QStringLiteral("connection_session_id")).toInt(), rec.connectionId());
+    QCOMPARE(r.value(QStringLiteral("flight_session_id")).toInt(), 0);
+    r = row(QStringLiteral("SELECT * FROM check_results WHERE check_id = 'power.battery.voltage'"));
+    QCOMPARE(r.value(QStringLiteral("flight_session_id")).toInt(), rec.flightId());
 }
 
 void DatabaseManagerTest::testDoubleIncrementGuard()

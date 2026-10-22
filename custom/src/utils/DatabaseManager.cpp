@@ -73,6 +73,7 @@ void DatabaseManager::reset()
         QSqlDatabase::removeDatabase(QSqlDatabase::defaultConnection);
     }
     m_initialized = false;
+    setRecordingContext(-1, -1, QString());
     setStartupError(QString());
 }
 
@@ -309,7 +310,11 @@ bool DatabaseManager::initialize(const QString &dbPath)
 //  20 - battery pack config on batteries (chemistry, S, P, cell mAh) and the
 //       mAh each flight used on battery_cycles; the operator's target location
 //       on vehicles (set in preflight, before any flight row exists)
-static const int kLatestSchemaVersion = 20;
+//  21 - SessionRecorder (Step 3 item 6): connection_sessions, session_events;
+//       flight_sessions becomes the arm-to-disarm flight record (connection,
+//       arm source, gate state, bench flag, end reason, running summary);
+//       check_results keyed to the connection session
+static const int kLatestSchemaVersion = 21;
 
 bool DatabaseManager::createTables()
 {
@@ -1610,6 +1615,49 @@ bool DatabaseManager::migrateSchema()
             addCol(QStringLiteral("vehicles"), QStringLiteral("target_set_at TEXT"));
             break;
         }
+        case 21: {
+            q.exec("CREATE TABLE IF NOT EXISTS connection_sessions ("
+                   "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                   "device_uid TEXT NOT NULL,"
+                   "session_mode TEXT NOT NULL DEFAULT '',"
+                   "operator TEXT NOT NULL DEFAULT '',"
+                   "app_version TEXT NOT NULL DEFAULT '',"
+                   "opened_at TEXT NOT NULL,"
+                   "last_seen_at TEXT,"
+                   "closed_at TEXT,"
+                   "end_reason TEXT)");
+            q.exec("CREATE INDEX IF NOT EXISTS idx_connection_sessions_device ON connection_sessions(device_uid)");
+            q.exec("CREATE TABLE IF NOT EXISTS session_events ("
+                   "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                   "connection_session_id INTEGER,"
+                   "flight_session_id INTEGER,"
+                   "event TEXT NOT NULL,"
+                   "detail TEXT NOT NULL DEFAULT '',"
+                   "at TEXT NOT NULL)");
+            q.exec("CREATE INDEX IF NOT EXISTS idx_session_events_flight ON session_events(flight_session_id)");
+            auto addCol = [this, &q](const QString &table, const QString &colDef) {
+                QSqlQuery pragma(m_db);
+                pragma.exec(QStringLiteral("PRAGMA table_info(%1)").arg(table));
+                const QString colName = colDef.section(QLatin1Char(' '), 0, 0);
+                while (pragma.next())
+                    if (pragma.value(1).toString() == colName)
+                        return;
+                q.exec(QStringLiteral("ALTER TABLE %1 ADD COLUMN %2").arg(table, colDef));
+            };
+            const QString fs = QStringLiteral("flight_sessions");
+            addCol(fs, QStringLiteral("connection_session_id INTEGER"));
+            addCol(fs, QStringLiteral("arm_source TEXT NOT NULL DEFAULT ''"));
+            addCol(fs, QStringLiteral("gate_allowed INTEGER"));
+            addCol(fs, QStringLiteral("session_mode TEXT NOT NULL DEFAULT ''"));
+            addCol(fs, QStringLiteral("is_bench INTEGER NOT NULL DEFAULT 0"));
+            addCol(fs, QStringLiteral("end_reason TEXT"));
+            addCol(fs, QStringLiteral("last_summary_at TEXT"));
+            addCol(fs, QStringLiteral("min_voltage REAL"));
+            addCol(fs, QStringLiteral("mah_used REAL"));
+            addCol(QStringLiteral("check_results"), QStringLiteral("connection_session_id INTEGER"));
+            q.exec("CREATE INDEX IF NOT EXISTS idx_flight_sessions_connection ON flight_sessions(connection_session_id)");
+            break;
+        }
         default:
             qWarning() << "DatabaseManager: unknown migration version" << v;
             m_db.rollback();
@@ -1681,7 +1729,197 @@ bool DatabaseManager::recoverOrphanedSessions()
     if (armedRecovered + preArmRecovered > 0)
         qCWarning(dbLog) << "Recovered" << armedRecovered + preArmRecovered
                          << "orphaned flight sessions";
+
+    // F12 / item 6: SessionRecorder's rows. A row still open at startup was
+    // cut off by a crash or power loss: close it at its last running summary
+    // (flights) or last-seen time (connections), keeping the duration the
+    // last summary recorded.
+    q.prepare(R"(
+        UPDATE flight_sessions
+        SET ended_at = COALESCE(last_summary_at, started_at),
+            end_reason = 'crash_recovered'
+        WHERE ended_at IS NULL
+    )");
+    if (!q.exec()) {
+        qWarning() << "DatabaseManager: recoverOrphanedSessions (flight_sessions) failed:" << q.lastError().text();
+        return false;
+    }
+    const int flightsRecovered = q.numRowsAffected();
+    q.prepare(R"(
+        UPDATE connection_sessions
+        SET closed_at = COALESCE(last_seen_at, opened_at),
+            end_reason = 'crash_recovered'
+        WHERE closed_at IS NULL
+    )");
+    if (!q.exec()) {
+        qWarning() << "DatabaseManager: recoverOrphanedSessions (connection_sessions) failed:" << q.lastError().text();
+        return false;
+    }
+    const int connectionsRecovered = q.numRowsAffected();
+    if (flightsRecovered + connectionsRecovered > 0)
+        qCWarning(dbLog) << "Crash recovery closed" << flightsRecovered << "flight and"
+                         << connectionsRecovered << "connection session rows";
     return true;
+}
+
+// ── Session recording (Step 3 item 6; SessionRecorder is the only caller) ──
+
+static QString utcNowIso()
+{
+    return QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
+}
+
+int DatabaseManager::openConnectionSession(const QString &deviceUid, const QString &mode,
+                                           const QString &operatorName, const QString &appVersion)
+{
+    assertMainThread();
+    if (!m_initialized || deviceUid.isEmpty()) return -1;
+    QSqlQuery q(m_db);
+    q.prepare("INSERT INTO connection_sessions (device_uid, session_mode, operator, app_version, "
+              "opened_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)");
+    const QString now = utcNowIso();
+    q.addBindValue(deviceUid);
+    q.addBindValue(mode.isNull() ? QStringLiteral("") : mode);
+    q.addBindValue(operatorName.isNull() ? QStringLiteral("") : operatorName);
+    q.addBindValue(appVersion.isNull() ? QStringLiteral("") : appVersion);
+    q.addBindValue(now);
+    q.addBindValue(now);
+    if (!execOrWarn(q, "openConnectionSession")) return -1;
+    return q.lastInsertId().toInt();
+}
+
+bool DatabaseManager::touchConnectionSession(int id)
+{
+    assertMainThread();
+    if (!m_initialized || id <= 0) return false;
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE connection_sessions SET last_seen_at = ? WHERE id = ? AND closed_at IS NULL");
+    q.addBindValue(utcNowIso());
+    q.addBindValue(id);
+    return execOrWarn(q, "touchConnectionSession");
+}
+
+bool DatabaseManager::closeConnectionSession(int id, const QString &endReason)
+{
+    assertMainThread();
+    if (!m_initialized || id <= 0) return false;
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE connection_sessions SET closed_at = ?, last_seen_at = ?, end_reason = ? "
+              "WHERE id = ? AND closed_at IS NULL");
+    const QString now = utcNowIso();
+    q.addBindValue(now);
+    q.addBindValue(now);
+    q.addBindValue(endReason);
+    q.addBindValue(id);
+    return execOrWarn(q, "closeConnectionSession");
+}
+
+int DatabaseManager::openFlightRecord(int connectionSessionId, const QString &deviceUid,
+                                      const QString &batterySerial, double payloadKg,
+                                      const QString &armSource, bool gateAllowed,
+                                      const QString &mode, bool isBench)
+{
+    assertMainThread();
+    if (!m_initialized || deviceUid.isEmpty()) return -1;
+    QSqlQuery q(m_db);
+    q.prepare("INSERT INTO flight_sessions (device_uid, battery_serial, payload_weight_kg, started_at, "
+              "connection_session_id, arm_source, gate_allowed, session_mode, is_bench, last_summary_at) "
+              "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    const QString now = utcNowIso();
+    q.addBindValue(deviceUid);
+    // battery_serial is FK -> batteries(serial_number): NULL, not "", when unset.
+    if (batterySerial.trimmed().isEmpty())
+        q.addBindValue(QVariant(QMetaType::fromType<QString>()));
+    else
+        q.addBindValue(batterySerial.trimmed());
+    q.addBindValue(payloadKg);
+    q.addBindValue(now);
+    q.addBindValue(connectionSessionId > 0 ? QVariant(connectionSessionId) : QVariant(QMetaType::fromType<int>()));
+    q.addBindValue(armSource);
+    q.addBindValue(gateAllowed ? 1 : 0);
+    q.addBindValue(mode.isNull() ? QStringLiteral("") : mode);
+    q.addBindValue(isBench ? 1 : 0);
+    q.addBindValue(now);
+    if (!execOrWarn(q, "openFlightRecord")) return -1;
+    return q.lastInsertId().toInt();
+}
+
+bool DatabaseManager::updateFlightRecordSummary(int flightId, double durationSec,
+                                                double minVoltage, double mahUsed)
+{
+    assertMainThread();
+    if (!m_initialized || flightId <= 0) return false;
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE flight_sessions SET duration_seconds = ?, min_voltage = ?, mah_used = ?, "
+              "last_summary_at = ? WHERE id = ? AND ended_at IS NULL");
+    q.addBindValue(durationSec);
+    q.addBindValue(std::isfinite(minVoltage) ? QVariant(minVoltage) : QVariant(QMetaType::fromType<double>()));
+    q.addBindValue(mahUsed >= 0 ? QVariant(mahUsed) : QVariant(QMetaType::fromType<double>()));
+    q.addBindValue(utcNowIso());
+    q.addBindValue(flightId);
+    return execOrWarn(q, "updateFlightRecordSummary");
+}
+
+bool DatabaseManager::closeFlightRecord(int flightId, double durationSec, const QString &endReason,
+                                        const QString &endedAtUtc, double minVoltage, double mahUsed)
+{
+    assertMainThread();
+    if (!m_initialized || flightId <= 0) return false;
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE flight_sessions SET ended_at = ?, duration_seconds = ?, end_reason = ?, "
+              "min_voltage = ?, mah_used = ?, last_summary_at = ? WHERE id = ? AND ended_at IS NULL");
+    const QString end = endedAtUtc.isEmpty() ? utcNowIso() : endedAtUtc;
+    q.addBindValue(end);
+    q.addBindValue(durationSec);
+    q.addBindValue(endReason);
+    q.addBindValue(std::isfinite(minVoltage) ? QVariant(minVoltage) : QVariant(QMetaType::fromType<double>()));
+    q.addBindValue(mahUsed >= 0 ? QVariant(mahUsed) : QVariant(QMetaType::fromType<double>()));
+    q.addBindValue(end);
+    q.addBindValue(flightId);
+    return execOrWarn(q, "closeFlightRecord");
+}
+
+bool DatabaseManager::logSessionEvent(int connectionSessionId, int flightId,
+                                      const QString &event, const QString &detail)
+{
+    assertMainThread();
+    if (!m_initialized) return false;
+    QSqlQuery q(m_db);
+    q.prepare("INSERT INTO session_events (connection_session_id, flight_session_id, event, detail, at) "
+              "VALUES (?, ?, ?, ?, ?)");
+    q.addBindValue(connectionSessionId > 0 ? QVariant(connectionSessionId) : QVariant(QMetaType::fromType<int>()));
+    q.addBindValue(flightId > 0 ? QVariant(flightId) : QVariant(QMetaType::fromType<int>()));
+    q.addBindValue(event);
+    q.addBindValue(detail.isNull() ? QStringLiteral("") : detail);
+    q.addBindValue(utcNowIso());
+    return execOrWarn(q, "logSessionEvent");
+}
+
+void DatabaseManager::setRecordingContext(int connectionSessionId, int flightId, const QString &deviceUid)
+{
+    m_ctxConnectionId = connectionSessionId;
+    m_ctxFlightId = flightId;
+    m_ctxDeviceUid = deviceUid;
+}
+
+bool DatabaseManager::recordCheckResult(const QString &checkId, const QString &status, const QString &message)
+{
+    assertMainThread();
+    // F11: keyed to the recorder's connection session and flight, with the
+    // vehicles-row UID (the old writer used the MAVLink sysid, which the
+    // device_uid foreign key rejects, and flight_session_id = -1).
+    if (!m_initialized || m_ctxDeviceUid.isEmpty() || m_ctxConnectionId <= 0) return false;
+    QSqlQuery q(m_db);
+    q.prepare("INSERT INTO check_results (device_uid, flight_session_id, connection_session_id, check_id, "
+              "status, message, evaluated_at) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    q.addBindValue(m_ctxDeviceUid);
+    q.addBindValue(m_ctxFlightId > 0 ? m_ctxFlightId : 0);
+    q.addBindValue(m_ctxConnectionId);
+    q.addBindValue(checkId);
+    q.addBindValue(status);
+    q.addBindValue(message.isNull() ? QStringLiteral("") : message);
+    q.addBindValue(utcNowIso());
+    return execOrWarn(q, "recordCheckResult");
 }
 
 // ── Component maintenance ─────────────────────────────────────────────────

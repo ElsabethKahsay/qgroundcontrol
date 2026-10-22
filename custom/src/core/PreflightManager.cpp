@@ -1053,10 +1053,6 @@ void PreflightManager::connectCheckSignals(AbstractCheck *check) {
 
             // Persist check result to DB for audit trail
             if (m_db && !checkId.isEmpty()) {
-              QString deviceUid;
-              if (m_telemetry && m_telemetry->vehicle()) {
-                deviceUid = QString::number(m_telemetry->vehicle()->id());
-              }
               QString statusStr;
               switch (static_cast<CheckStatus>(newStatus)) {
                 case CheckStatus::Passed:  statusStr = QStringLiteral("Passed"); break;
@@ -1067,8 +1063,9 @@ void PreflightManager::connectCheckSignals(AbstractCheck *check) {
                 case CheckStatus::Stale:   statusStr = QStringLiteral("Stale"); break;
                 default:                   statusStr = QStringLiteral("Pending"); break;
               }
-              m_db->saveCheckResult(deviceUid, -1, checkId, statusStr,
-                                    check->message());
+              // F11: keyed to SessionRecorder's connection session and
+              // flight (no-op until a connection session is open).
+              m_db->recordCheckResult(checkId, statusStr, check->message());
             }
           });
   connect(check, &AbstractCheck::checkFailed, this,

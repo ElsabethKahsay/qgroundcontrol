@@ -163,6 +163,18 @@ Page {
     }
     property bool _targetFromMap: false
 
+    // PITCH / ROLL / YAW card: the gimbal's measured angles when a gimbal
+    // reports, otherwise the UAV's own attitude (ATTITUDE, radians -> degrees;
+    // yaw as heading 0-360). Tilt the airframe (or gimbal) and these follow.
+    readonly property bool _hasTelemetry: typeof TelemetryProvider !== "undefined" && !!TelemetryProvider
+    readonly property bool _attFromGimbal: _hasTelemetry && TelemetryProvider.gimbalDetected
+    readonly property real _uavPitchDeg: !_hasTelemetry ? 0 : _attFromGimbal ? TelemetryProvider.gimbalPitch
+                                                                             : TelemetryProvider.pitch * 180 / Math.PI
+    readonly property real _uavRollDeg:  !_hasTelemetry ? 0 : _attFromGimbal ? TelemetryProvider.gimbalRoll
+                                                                             : TelemetryProvider.roll * 180 / Math.PI
+    readonly property real _uavYawDeg:   !_hasTelemetry ? 0 : _attFromGimbal ? TelemetryProvider.gimbalYaw
+                                                                             : ((TelemetryProvider.yaw * 180 / Math.PI) + 360) % 360
+
     // Control surface test state (driven by ControlSurfaceTestController)
     readonly property var _surfaces: (typeof ControlSurfaceTestController !== "undefined") ? ControlSurfaceTestController.surfaces : []
     readonly property var _states:   (typeof ControlSurfaceTestController !== "undefined") ? ControlSurfaceTestController.surfaceStates : []
@@ -743,10 +755,10 @@ Page {
                     visible: false
                 }
 
-                // ── Three Numbers: Pitch / Roll / Yaw ──
+                // ── Three Numbers: the UAV's live Pitch / Roll / Yaw (degrees) ──
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 90
+                    Layout.preferredHeight: 100
                     color: Colors.surface
                     radius: Config.radiusMedium
                     border.color: Colors.border
@@ -774,11 +786,18 @@ Page {
                                     Layout.alignment: Qt.AlignHCenter
                                 }
                                 Text {
-                                    text: (typeof TelemetryProvider !== "undefined" && TelemetryProvider && TelemetryProvider.gimbalPitch !== undefined ? TelemetryProvider.gimbalPitch : 0).toFixed(1) + "\u00B0"
+                                    text: (root._uavPitchDeg).toFixed(1) + "\u00B0"
                                     color: Colors.accent
                                     font.pixelSize: 20
                                     font.bold: true
                                     font.family: "monospace"
+                                    Layout.alignment: Qt.AlignHCenter
+                                }
+                                Text {
+                                    // Which attitude this is.
+                                    text: root._attFromGimbal ? qsTr("gimbal") : qsTr("UAV")
+                                    color: Colors.textSecondary
+                                    font.pixelSize: Config.fontSizeSmall
                                     Layout.alignment: Qt.AlignHCenter
                                 }
                             }
@@ -801,11 +820,18 @@ Page {
                                     Layout.alignment: Qt.AlignHCenter
                                 }
                                 Text {
-                                    text: (typeof TelemetryProvider !== "undefined" && TelemetryProvider && TelemetryProvider.gimbalRoll !== undefined ? TelemetryProvider.gimbalRoll : 0).toFixed(1) + "\u00B0"
+                                    text: (root._uavRollDeg).toFixed(1) + "\u00B0"
                                     color: Colors.accent
                                     font.pixelSize: 20
                                     font.bold: true
                                     font.family: "monospace"
+                                    Layout.alignment: Qt.AlignHCenter
+                                }
+                                Text {
+                                    // Which attitude this is.
+                                    text: root._attFromGimbal ? qsTr("gimbal") : qsTr("UAV")
+                                    color: Colors.textSecondary
+                                    font.pixelSize: Config.fontSizeSmall
                                     Layout.alignment: Qt.AlignHCenter
                                 }
                             }
@@ -828,11 +854,18 @@ Page {
                                     Layout.alignment: Qt.AlignHCenter
                                 }
                                 Text {
-                                    text: (typeof TelemetryProvider !== "undefined" && TelemetryProvider && TelemetryProvider.gimbalYaw !== undefined ? TelemetryProvider.gimbalYaw : 0).toFixed(1) + "\u00B0"
+                                    text: (root._uavYawDeg).toFixed(1) + "\u00B0"
                                     color: Colors.accent
                                     font.pixelSize: 20
                                     font.bold: true
                                     font.family: "monospace"
+                                    Layout.alignment: Qt.AlignHCenter
+                                }
+                                Text {
+                                    // Which attitude this is.
+                                    text: root._attFromGimbal ? qsTr("gimbal") : qsTr("UAV")
+                                    color: Colors.textSecondary
+                                    font.pixelSize: Config.fontSizeSmall
                                     Layout.alignment: Qt.AlignHCenter
                                 }
                             }

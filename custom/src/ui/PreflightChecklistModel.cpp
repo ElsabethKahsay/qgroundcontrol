@@ -26,14 +26,14 @@ void PreflightChecklistModel::setPreflightManager(PreflightManager *mgr)
 
 int PreflightChecklistModel::rowCount(const QModelIndex &) const
 {
-    return m_manager ? m_manager->totalChecks() : 0;
+    return m_rows.size();
 }
 
 QVariant PreflightChecklistModel::data(const QModelIndex &index, int role) const
 {
-    if (!m_manager || !index.isValid() || index.row() >= m_manager->totalChecks())
+    if (!index.isValid() || index.row() >= m_rows.size())
         return {};
-    auto *chk = m_manager->checks().at(index.row());
+    AbstractCheck *chk = m_rows.at(index.row());
     if (!chk)
         return {};
     switch (role) {
@@ -175,9 +175,9 @@ QString PreflightChecklistModel::statusSummary() const
 QVariantMap PreflightChecklistModel::get(int row) const
 {
     QVariantMap map;
-    if (!m_manager || row < 0 || row >= m_manager->totalChecks())
+    if (row < 0 || row >= m_rows.size())
         return map;
-    auto *chk = m_manager->checks().at(row);
+    AbstractCheck *chk = m_rows.at(row);
     if (!chk) return map;
     map[QStringLiteral("checkId")] = chk->id();
     map[QStringLiteral("label")] = chk->label();
@@ -218,6 +218,12 @@ QVariantMap PreflightChecklistModel::get(int row) const
 void PreflightChecklistModel::rebuild()
 {
     beginResetModel();
+    m_rows.clear();
+    if (m_manager) {
+        for (AbstractCheck *chk : m_manager->checks())
+            if (chk && !chk->isInformational())
+                m_rows.append(chk);
+    }
     endResetModel();
     Q_EMIT countChanged();
 }
