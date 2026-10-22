@@ -316,7 +316,9 @@ bool DatabaseManager::initialize(const QString &dbPath)
 //       check_results keyed to the connection session
 //  22 - flight_batteries: a frozen copy of each pack on each flight, plus its
 //       measured start/end voltage and percent, minimum voltage, mAh and Wh
-static const int kLatestSchemaVersion = 22;
+//  23 - flight_sessions.history_flight_id: the flights row Flight History,
+//       exports and stats read (and trainer handover events attach to)
+static const int kLatestSchemaVersion = 23;
 
 bool DatabaseManager::createTables()
 {
@@ -1683,6 +1685,16 @@ bool DatabaseManager::migrateSchema()
             q.exec("CREATE INDEX IF NOT EXISTS idx_flight_batteries_pack ON flight_batteries(pack_serial)");
             break;
         }
+        case 23: {
+            QSqlQuery pragma(m_db);
+            pragma.exec(QStringLiteral("PRAGMA table_info(flight_sessions)"));
+            bool has = false;
+            while (pragma.next())
+                has = has || pragma.value(1).toString() == QLatin1String("history_flight_id");
+            if (!has)
+                q.exec("ALTER TABLE flight_sessions ADD COLUMN history_flight_id INTEGER");
+            break;
+        }
         default:
             qWarning() << "DatabaseManager: unknown migration version" << v;
             m_db.rollback();
@@ -1970,6 +1982,31 @@ bool DatabaseManager::closeFlightBattery(int flightId, int slot, double endVolta
     q.addBindValue(flightId);
     q.addBindValue(slot);
     return execOrWarn(q, "closeFlightBattery");
+}
+
+int DatabaseManager::openHistoryFlight(int flightSessionId, int operatorId, int vehicleSysId,
+                                       const QString &mode, const QString &notes, const QString &weatherSummary)
+{
+    assertMainThread();
+    if (!m_initialized || flightSessionId <= 0) return -1;
+    QSqlQuery q(m_db);
+    // operator_id is nullable since v12: an RC arm before anyone picked an
+    // operator still gets a history row.
+    q.prepare("INSERT INTO flights (operator_id, vehicle_id, mode, notes, weather_summary, started_at, armed_at) "
+              "VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)");
+    q.addBindValue(operatorId > 0 ? QVariant(operatorId) : QVariant(QMetaType::fromType<int>()));
+    q.addBindValue(vehicleSysId);
+    q.addBindValue(mode);
+    q.addBindValue(notes);
+    q.addBindValue(weatherSummary);
+    if (!execOrWarn(q, "openHistoryFlight")) return -1;
+    const int id = q.lastInsertId().toInt();
+    QSqlQuery link(m_db);
+    link.prepare("UPDATE flight_sessions SET history_flight_id = ? WHERE id = ?");
+    link.addBindValue(id);
+    link.addBindValue(flightSessionId);
+    execOrWarn(link, "openHistoryFlight link");
+    return id;
 }
 
 void DatabaseManager::setRecordingContext(int connectionSessionId, int flightId, const QString &deviceUid)

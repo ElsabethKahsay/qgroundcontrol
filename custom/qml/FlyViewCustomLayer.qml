@@ -480,6 +480,78 @@ Item {
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    //  TRAINER CHIP — who has control in a two-radio Training session
+    //  (instructor's trainer switch mixed onto a spare channel, default CH8)
+    // ═══════════════════════════════════════════════════════════════════
+    Rectangle {
+        id: trainerChip
+        readonly property var _plugin: QGroundControl.corePlugin
+        readonly property string _control: _plugin && _plugin.trainerControl !== undefined ? _plugin.trainerControl : "unmonitored"
+        readonly property bool _student: _control === "student"
+        readonly property bool _monitored: _control !== "unmonitored"
+        visible: FlightSession.isTraining && !!QGroundControl.multiVehicleManager.activeVehicle
+        anchors { top: parent.top; topMargin: _toolInsets.topEdgeCenterInset + 8; horizontalCenter: parent.horizontalCenter }
+        z: QGroundControl.zOrderWidgets + 3
+        width: trainerChipText.implicitWidth + 24
+        height: trainerChipText.implicitHeight + 12
+        radius: height / 2
+        color: !_monitored ? Colors.surface : _student ? Colors.warning : Colors.success
+        border.color: _monitored ? color : Colors.border
+        border.width: 1
+
+        Text {
+            id: trainerChipText
+            anchors.centerIn: parent
+            font.pixelSize: Config.fontSizeBody
+            font.bold: true
+            color: trainerChip._monitored ? Colors.background : Colors.textSecondary
+            text: !trainerChip._monitored
+                  ? qsTr("Trainer handover not monitored \u2014 no CH%1 trainer mix").arg(trainerChip._plugin ? trainerChip._plugin.trainerChannel : 8)
+                  : (trainerChip._student ? qsTr("STUDENT FLYING") : qsTr("INSTRUCTOR FLYING"))
+                    + (trainerChip._plugin && !trainerChip._plugin.trainerVerified ? qsTr("  (switch not seen yet)") : "")
+        }
+
+        // Tap: choose the channel the instructor's radio mixes the switch onto.
+        MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: trainerChannelPopup.open()
+        }
+
+        Popup {
+            id: trainerChannelPopup
+            y: parent.height + 6
+            x: (parent.width - width) / 2
+            padding: 12
+            background: Rectangle { color: Colors.surface; border.color: Colors.border; radius: Config.radiusSmall }
+            ColumnLayout {
+                spacing: 6
+                Text {
+                    text: qsTr("Trainer switch channel")
+                    font.bold: true
+                    font.pixelSize: Config.fontSizeBody
+                    color: Colors.textPrimary
+                }
+                Text {
+                    Layout.preferredWidth: 300
+                    wrapMode: Text.WordWrap
+                    text: qsTr("The instructor's radio must copy the trainer switch onto this channel "
+                               + "(EdgeTX: Model \u2192 Mixes \u2192 CH%1, source = trainer switch). "
+                               + "The value at connection is taken as \"instructor\".").arg(channelSpin.value)
+                    font.pixelSize: Config.fontSizeSmall
+                    color: Colors.textSecondary
+                }
+                SpinBox {
+                    id: channelSpin
+                    from: 5; to: 16
+                    value: trainerChip._plugin ? trainerChip._plugin.trainerChannel : 8
+                    onValueModified: if (trainerChip._plugin) trainerChip._plugin.trainerChannel = value
+                }
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     //  TESTING MODE BANNER — visible when in testing mode
     // ═══════════════════════════════════════════════════════════════════
     Rectangle {

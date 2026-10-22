@@ -44,6 +44,9 @@ public:
         int percent = -1;          ///< state of charge; -1 = unknown
         double energyWh = -1;      ///< FC energy counter (BATTERY_STATUS.energy_consumed); -1 = unknown
         double distanceM = -1;     ///< vehicle's flown-distance counter; -1 = unknown
+        double altitudeM = std::numeric_limits<double>::quiet_NaN();   ///< relative altitude
+        int gpsSats = -1;
+        QString flightMode;
     };
 
     /// What is known at the arm transition.
@@ -55,6 +58,9 @@ public:
         QString mode;              ///< session mode: Flight, Testing, Training
         bool bench = false;        ///< motor/servo test or Testing mode: no hours, no cycles
         QVariantMap pack;          ///< DatabaseManager::batteryPack() of the selected pack (F8 snapshot)
+        int operatorId = -1;       ///< for the Flight History row; -1 = none selected
+        int vehicleSysId = 0;
+        QString weatherSummary;
     };
 
     /// What a closed flight was, for the caller's follow-up (battery cycle...).
@@ -143,9 +149,18 @@ public:
         m_startSample = s;
         m_startMah = s.mahConsumed;
         m_minVoltage = s.voltage;
+        m_maxAltitude = s.altitudeM;
+        m_maxVoltage = s.voltage;
         // F8: the pack as it was at arm; editing it later changes no flight.
-        if (m_flightId > 0)
+        if (m_flightId > 0) {
             m_db.openFlightBattery(m_flightId, 1, start.pack, s.voltage, s.percent);
+            // The row Flight History, exports and stats read.
+            m_historyId = m_db.openHistoryFlight(m_flightId, start.operatorId, start.vehicleSysId,
+                                                 start.mode.toUpper(),
+                                                 QStringLiteral("arm source: %1%2").arg(start.armSource,
+                                                     start.bench ? QStringLiteral(", bench") : QString()),
+                                                 start.weatherSummary);
+        }
         updateContext();
     }
 
@@ -155,6 +170,26 @@ public:
         return m_flightId > 0 ? closeFlight(m_linkLost ? QStringLiteral("link_lost")
                                                        : QStringLiteral("disarmed"))
                               : FlightEnd{};
+    }
+
+    int historyFlightId() const { return m_historyId; }
+
+    /// Trainer handover (instructor's trainer switch, via a mixed channel).
+    /// Logged on the open flight (and its Flight History row); before arm it
+    /// is a connection event only.
+    void trainerHandover(bool studentInControl, const QString &source)
+    {
+        const QString event = studentInControl ? QStringLiteral("HANDOVER_TO_STUDENT")
+                                               : QStringLiteral("HANDOVER_TO_INSTRUCTOR");
+        const Sample s = sample();
+        if (m_flightId > 0)
+            noteAltitude(s.altitudeM);
+        m_db.logSessionEvent(m_connId, m_flightId, event, source);
+        if (m_historyId > 0)
+            m_db.insertTelemetryEvent(m_historyId, event, source,
+                                      std::isfinite(s.voltage) ? s.voltage : 0.0,
+                                      std::isfinite(s.altitudeM) ? s.altitudeM : 0.0,
+                                      qMax(0, s.gpsSats), s.flightMode);
     }
 
     void linkLost()
@@ -189,6 +224,7 @@ public:
             return;   // during link loss the last summary stays the crash point
         const Sample s = sample();
         noteVoltage(s.voltage);
+        noteAltitude(s.altitudeM);
         m_db.updateFlightRecordSummary(m_flightId, elapsedSec(MonotonicClock::nowMs()), m_minVoltage,
                                        mahUsed(s.mahConsumed));
     }
@@ -200,6 +236,12 @@ private:
     {
         if (std::isfinite(v) && v > 0 && (!std::isfinite(m_minVoltage) || v < m_minVoltage))
             m_minVoltage = v;
+    }
+
+    void noteAltitude(double alt)
+    {
+        if (std::isfinite(alt) && (!std::isfinite(m_maxAltitude) || alt > m_maxAltitude))
+            m_maxAltitude = alt;
     }
 
     double mahUsed(double nowMah) const
@@ -232,6 +274,17 @@ private:
                 ? s.distanceM - m_startSample.distanceM : -1;
         if (end.whUsed >= 0 || distM >= 0)
             m_db.updateFlightSessionEnergy(m_flightId, qMax(0.0, end.whUsed), qMax(0.0, distM));
+        if (m_historyId > 0) {
+            if (!atLinkLoss)
+                noteAltitude(s.altitudeM);
+            m_db.setFlightDisarmedAt(m_historyId, QDateTime::currentDateTimeUtc());
+            m_db.closeFlight(m_historyId, qRound(end.durationSec),
+                             std::isfinite(m_maxAltitude) ? m_maxAltitude : 0.0,
+                             std::isfinite(m_minVoltage) ? m_minVoltage : 0.0,
+                             std::isfinite(m_maxVoltage) ? m_maxVoltage : 0.0, 0,
+                             0.0, 0.0, qMax(0.0, distM));
+        }
+        m_historyId = -1;
         m_flightId = -1;
         m_startMah = -1;
         m_minVoltage = std::numeric_limits<double>::quiet_NaN();
@@ -259,4 +312,7 @@ private:
     bool m_linkLost = false;
     qint64 m_linkLostAtMs = MonotonicClock::kNever;
     QString m_linkLostAtUtc;
+    int m_historyId = -1;          ///< flights row (Flight History)
+    double m_maxAltitude = std::numeric_limits<double>::quiet_NaN();
+    double m_maxVoltage = std::numeric_limits<double>::quiet_NaN();
 };

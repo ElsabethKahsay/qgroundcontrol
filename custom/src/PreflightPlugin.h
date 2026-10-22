@@ -5,6 +5,7 @@
 #include "Vehicle/Vehicle.h"
 #include <QTimer>
 #include <QPointer>
+#include "core/TrainerSwitchTracker.h"
 
 /// @file PreflightPlugin.h
 ///
@@ -88,6 +89,13 @@ class PreflightPlugin : public QGCCorePlugin
     Q_OBJECT
     QML_UNCREATABLE("")
     Q_PROPERTY(double fontSizeFactor READ fontSizeFactor CONSTANT)
+    /// Trainer handover (two-radio training): "instructor", "student" or
+    /// "unmonitored" (no valid value on the trainer channel).
+    Q_PROPERTY(QString trainerControl READ trainerControl NOTIFY trainerChanged)
+    /// The trainer channel has moved at least once this connection.
+    Q_PROPERTY(bool trainerVerified READ trainerVerified NOTIFY trainerChanged)
+    /// RC channel the instructor's radio mixes the trainer switch onto (default 8).
+    Q_PROPERTY(int trainerChannel READ trainerChannel WRITE setTrainerChannel NOTIFY trainerChanged)
 public:
     // Font scaling factor used by QML to scale UI elements proportionally.
     Q_INVOKABLE double fontSizeFactor() const { return 1.95; }
@@ -98,6 +106,16 @@ public:
     static PreflightPlugin *instance();
 
     void init() override;
+
+    QString trainerControl() const { return TrainerSwitchTracker::name(_trainer.control()); }
+    bool trainerVerified() const { return _trainer.verified(); }
+    int trainerChannel() const { return _trainer.channel(); }
+    void setTrainerChannel(int channel);
+
+signals:
+    void trainerChanged();
+
+public:
 
     const QVariantList &analyzePages() override;
     const QVariantList &toolBarIndicators() override;
@@ -152,6 +170,8 @@ private:
 
     // --- Flight session tracking ---
     SessionRecorder *_sessionRecorder = nullptr;  // Step 3 item 6: the only session/flight writer
+    TrainerSwitchTracker _trainer;                // who has control in two-radio training
+    void _onRcChannels();
     QMetaObject::Connection _linkLostConn;        // current vehicle's communicationLostChanged
     void _openConnectionSession();                // opens once the vehicle UID is known
     /// Flight controller's mAh-consumed counter for battery 1, -1 when unavailable.

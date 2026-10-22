@@ -469,6 +469,10 @@ public:
     /// End values; unknown ones (NaN / negative) are stored as NULL, not 0.
     bool closeFlightBattery(int flightId, int slot, double endVoltage, int endPercent,
                             double minVoltage, double mahUsed, double whUsed);
+    /// The Flight History row (flights) for a recorded flight; NULL operator
+    /// allowed. Linked from flight_sessions.history_flight_id.
+    int openHistoryFlight(int flightSessionId, int operatorId, int vehicleSysId,
+                          const QString &mode, const QString &notes, const QString &weatherSummary);
     /// Where recordCheckResult() files results (set by SessionRecorder).
     void setRecordingContext(int connectionSessionId, int flightId, const QString &deviceUid);
     /// F11: a check result keyed to the current connection session and flight.

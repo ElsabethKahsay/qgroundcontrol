@@ -51,6 +51,7 @@ private slots:
     void testRecorderCheckResultsKeyedToSession();
     void testRecorderBatterySnapshotIsFrozen();
     void testRecorderEnergyFromMeasurementsOnly();
+    void testRecorderWritesFlightHistoryAndHandovers();
     void testIncrementBatteryCycleGuard();
     void testFlightSessionRoundTrip();
     void testCheckResultAuditTrail();
@@ -466,6 +467,56 @@ void DatabaseManagerTest::testRecorderEnergyFromMeasurementsOnly()
     QVERIFY(b.value(QStringLiteral("start_voltage")).isNull());
     QVERIFY(b.value(QStringLiteral("wh_used")).isNull());
     QVERIFY(b.value(QStringLiteral("mah_used")).isNull());
+}
+
+// Flight History reads the flights table: every recorded flight gets a row
+// there (operator optional), and trainer handovers attach to it.
+void DatabaseManagerTest::testRecorderWritesFlightHistoryAndHandovers()
+{
+    RecorderFixture f;
+    QVERIFY(f.init());
+    DatabaseManager &db = DatabaseManager::instance();
+    SessionRecorder rec(db);
+    f.wire(rec);
+    rec.connectionOpened(QStringLiteral("UID-R"), QStringLiteral("Training"), QString(), QString());
+
+    rec.trainerHandover(true, QStringLiteral("trainer switch, CH8"));   // before arm: connection event only
+    SessionRecorder::FlightStart st = start(QStringLiteral("external"));
+    st.mode = QStringLiteral("Training");
+    st.vehicleSysId = 1;                                                // no operator selected
+    f.sample.voltage = 16.5;
+    f.sample.altitudeM = 0.0;
+    f.sample.flightMode = QStringLiteral("STABILIZE");
+    rec.armed(st);
+    const int hist = rec.historyFlightId();
+    QVERIFY(hist > 0);
+    QCOMPARE(row(QStringLiteral("SELECT history_flight_id FROM flight_sessions WHERE id = %1").arg(rec.flightId()))
+                 .value(QStringLiteral("history_flight_id")).toInt(), hist);
+
+    f.clock.advance(30000);
+    f.sample.altitudeM = 12.0;
+    rec.trainerHandover(true, QStringLiteral("trainer switch, CH8"));
+    f.clock.advance(60000);
+    f.sample.altitudeM = 8.0;
+    rec.trainerHandover(false, QStringLiteral("trainer switch, CH8"));
+    f.clock.advance(30000);
+    f.sample.voltage = 15.2;
+    rec.disarmed();
+
+    const QList<QVariantMap> h = db.getHandoverEventsForFlight(hist);
+    QCOMPARE(h.size(), 2);
+    QCOMPARE(h.at(0).value(QStringLiteral("event_type")).toString(), QStringLiteral("HANDOVER_TO_STUDENT"));
+    QCOMPARE(h.at(0).value(QStringLiteral("altitude_m")).toDouble(), 12.0);
+    QCOMPARE(h.at(1).value(QStringLiteral("event_type")).toString(), QStringLiteral("HANDOVER_TO_INSTRUCTOR"));
+    QCOMPARE(h.at(1).value(QStringLiteral("flight_mode")).toString(), QStringLiteral("STABILIZE"));
+
+    const QVariantMap fl = db.getFlightById(hist);
+    QCOMPARE(fl.value(QStringLiteral("mode")).toString(), QStringLiteral("TRAINING"));
+    QCOMPARE(fl.value(QStringLiteral("duration_sec")).toInt(), 120);
+    QCOMPARE(fl.value(QStringLiteral("max_altitude_m")).toDouble(), 12.0);
+    QVERIFY(!fl.value(QStringLiteral("ended_at")).toString().isEmpty());
+    QCOMPARE(row(QStringLiteral("SELECT COUNT(*) AS n FROM session_events WHERE event LIKE 'HANDOVER%'"))
+                 .value(QStringLiteral("n")).toInt(), 3);
 }
 
 void DatabaseManagerTest::testDoubleIncrementGuard()

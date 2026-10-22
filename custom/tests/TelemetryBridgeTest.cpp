@@ -5,6 +5,7 @@
 
 #include "UnitTest.h"
 #include "mocks/MockTelemetryBridge.h"
+#include "core/TrainerSwitchTracker.h"
 
 class TelemetryBridgeTest : public UnitTest {
     Q_OBJECT
@@ -15,6 +16,7 @@ private slots:
     void testGimbalQuaternionDecodes();
     void testGimbalEarthFrameYawIsMadeRelative();
     void testGimbalMountMessagesDecode();
+    void testTrainerSwitchTracker();
     void init() override { UnitTest::init(); }
     void cleanup() override { UnitTest::cleanup(); }
 
@@ -225,6 +227,42 @@ void TelemetryBridgeTest::testGimbalMountMessagesDecode()
     QCOMPARE(p, -15.0);
     QCOMPARE(r, 2.0);
     QCOMPARE(y, 40.0);
+}
+
+// Trainer handover: start value = instructor; a move > 300 us = student;
+// back within 150 us = instructor; no valid value = unmonitored.
+void TelemetryBridgeTest::testTrainerSwitchTracker()
+{
+    auto ch = [](int ch8) {
+        QVariantList v;
+        for (int i = 0; i < 8; ++i)
+            v << (i == 7 ? ch8 : 1500);
+        return v;
+    };
+    TrainerSwitchTracker t;
+    QCOMPARE(t.control(), TrainerSwitchTracker::Control::Unmonitored);
+    QVERIFY(t.update(ch(987)));                         // first value: instructor
+    QCOMPARE(t.control(), TrainerSwitchTracker::Control::Instructor);
+    QVERIFY(!t.verified());
+    QVERIFY(!t.update(ch(1100)));                       // jitter: no change
+    QVERIFY(t.update(ch(1500)));                        // your radio: 987 -> 1500
+    QCOMPARE(t.control(), TrainerSwitchTracker::Control::Student);
+    QVERIFY(t.verified());
+    QVERIFY(!t.update(ch(1200)));                       // not back yet (hysteresis)
+    QVERIFY(t.update(ch(1000)));
+    QCOMPARE(t.control(), TrainerSwitchTracker::Control::Instructor);
+
+    QVERIFY(t.update(QVariantList{1500, 1500, 1500, 1500}));   // only 4 channels: no CH8
+    QCOMPARE(t.control(), TrainerSwitchTracker::Control::Unmonitored);
+    QVERIFY(t.update(ch(2000)));                        // reversed mix: 2000 is the start
+    QVERIFY(t.update(ch(1000)));
+    QCOMPARE(t.control(), TrainerSwitchTracker::Control::Student);
+    t.update(ch(65535));                                // unused channel value
+    QCOMPARE(t.control(), TrainerSwitchTracker::Control::Unmonitored);
+
+    t.setChannel(6);
+    QCOMPARE(t.control(), TrainerSwitchTracker::Control::Unmonitored);
+    QCOMPARE(TrainerSwitchTracker::name(TrainerSwitchTracker::Control::Student), QStringLiteral("student"));
 }
 
 UT_REGISTER_TEST(TelemetryBridgeTest)

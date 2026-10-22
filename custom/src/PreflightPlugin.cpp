@@ -315,6 +315,9 @@ void PreflightPlugin::init()
             s.energyWh = _telemetryBridge->batteryEnergyConsumedWh();
             const QVariant dist = v->flightDistance()->rawValue();
             s.distanceM = dist.isValid() ? dist.toDouble() : -1;
+            s.altitudeM = _telemetryBridge->altitudeRelative();
+            s.gpsSats = _telemetryBridge->gpsSatellites();
+            s.flightMode = _telemetryBridge->flightMode();
         }
         return s;
     });
@@ -360,6 +363,15 @@ void PreflightPlugin::init()
     });
     connect(_vehicleProfileManager, &VehicleProfileManager::currentVehicleChanged,
             this, &PreflightPlugin::_openConnectionSession);
+
+    // Trainer handover: the instructor's radio mixes its trainer switch onto
+    // a spare channel (default CH8); RC_CHANNELS carries it here.
+    bool chOk = false;
+    const int savedChannel = DatabaseManager::instance().getCheckConfig(QStringLiteral("trainer"),
+                                                                       QStringLiteral("channel")).toInt(&chOk);
+    _trainer.setChannel(chOk && savedChannel >= 1 && savedChannel <= 18 ? savedChannel
+                                                                       : TrainerSwitchTracker::kDefaultChannel);
+    connect(_telemetryBridge, &TelemetryBridge::rcChannelValuesChanged, this, &PreflightPlugin::_onRcChannels);
 
     connect(_armingGate, &ArmingGate::gateOpened,
             this, &PreflightPlugin::_onGateOpened);
@@ -585,6 +597,8 @@ void PreflightPlugin::_onActiveVehicleChanged(Vehicle *vehicle)
 
     if (_armStateTracker)
         _armStateTracker->setVehicle(vehicle);
+    _trainer.reset();   // the first value on the new link is the instructor position
+    emit trainerChanged();
     // Step 3 item 6: link loss keeps the flight open; vehicle removal closes
     // the connection (and a flight still open, as link_lost).
     QObject::disconnect(_linkLostConn);
@@ -702,6 +716,12 @@ void PreflightPlugin::_onGateOpened()
     start.batterySerial = _vehicleProfileManager ? _vehicleProfileManager->currentBatterySerial() : QString();
     start.payloadKg = _vehicleProfileManager ? _vehicleProfileManager->currentPayloadWeightKg() : 0.0;
     start.pack = DatabaseManager::instance().batteryPack(start.batterySerial);
+    OperatorManager *ops = OperatorManager::instance();
+    start.operatorId = ops ? ops->currentOperatorId() : -1;
+    start.vehicleSysId = _telemetryBridge && _telemetryBridge->vehicle() ? _telemetryBridge->vehicle()->id() : 0;
+    if (_weatherProvider && !_weatherProvider->weatherSource().isEmpty())
+        start.weatherSummary = QStringLiteral("%1 (%2)").arg(_weatherProvider->currentSummary(),
+                                                            _weatherProvider->weatherSource());
     const auto source = _armStateTracker ? _armStateTracker->lastArmSource() : ArmStateTracker::ArmSource::External;
     start.armSource = source == ArmStateTracker::ArmSource::Gcs ? QStringLiteral("gcs")
                     : source == ArmStateTracker::ArmSource::ForceToken ? QStringLiteral("force_token")
@@ -725,6 +745,45 @@ void PreflightPlugin::_onGateOpened()
 // _onGateClosed() — ArmStateTracker saw the vehicle DISARM. SessionRecorder
 // closes the flight; its closed-handler does the battery cycle and calibration.
 // ---------------------------------------------------------------------------
+void PreflightPlugin::setTrainerChannel(int channel)
+{
+    if (channel < 1 || channel > 18 || channel == _trainer.channel())
+        return;
+    _trainer.setChannel(channel);
+    DatabaseManager::instance().setCheckConfig(QStringLiteral("trainer"), QStringLiteral("channel"),
+                                               QString::number(channel));
+    _onRcChannels();
+    emit trainerChanged();
+}
+
+// Who has control in two-radio training. A real switch (instructor <->
+// student) is logged as a handover in Training sessions only: in other modes
+// the same channel may be used for something else.
+void PreflightPlugin::_onRcChannels()
+{
+    if (!_telemetryBridge)
+        return;
+    const TrainerSwitchTracker::Control before = _trainer.control();
+    const bool wasVerified = _trainer.verified();
+    if (!_trainer.update(_telemetryBridge->rcChannelValues())) {
+        if (wasVerified != _trainer.verified())
+            emit trainerChanged();
+        return;
+    }
+    const TrainerSwitchTracker::Control now = _trainer.control();
+    const bool handover = before != TrainerSwitchTracker::Control::Unmonitored
+                       && now != TrainerSwitchTracker::Control::Unmonitored;
+    FlightSession *fs = FlightSession::instance();
+    if (handover && fs && fs->isTraining() && _sessionRecorder) {
+        _sessionRecorder->trainerHandover(now == TrainerSwitchTracker::Control::Student,
+                                          QStringLiteral("trainer switch, CH%1").arg(_trainer.channel()));
+        qgcApp()->showAppMessage(now == TrainerSwitchTracker::Control::Student
+                                     ? tr("Trainer: STUDENT has control")
+                                     : tr("Trainer: INSTRUCTOR has control"));
+    }
+    emit trainerChanged();
+}
+
 void PreflightPlugin::_onGateClosed(const QString &reason)
 {
     Q_UNUSED(reason)
