@@ -1126,3 +1126,56 @@ For each section A–H: pass, or what you saw instead (a photo of the screen is 
 - Kill QGC (`kill -9`) while a simulated flight is armed; restart: the flight shows end reason **crash_recovered**.
 - Fly a short SITL flight; the flight's Wh should be within 5 % of the simulator's energy counter.
 - SITL with `MNT1_TYPE = 1`: run the gimbal Pitch / Roll / Yaw tests; each should PASS.
+
+---
+
+## Agent instructions: Phase 1 recommendations 5, 6 and 8 (written 23 Oct)
+
+You are continuing work on the Skywin GCS fork of QGroundControl at `/home/lisabeth/Dev/qgroundcontrol`, branch `custom-dev-next`. All project code is under `custom/`. Read this whole document first: the "Implementation status", "Recommendations for Phase 1", item 12 and item 14 rows, and "Bench and SITL checks for Step 3". The aircraft facts below come from the 22 Oct bench session (fixed wing, CoreWingF405WingV2, ArduPlane 4.5.7, ELRS 16 channels; CH8 is its flight-mode switch).
+
+### Rules (non-negotiable)
+1. Change only files under `custom/`. Never edit upstream QGC (`src/`, `test/`), never push, never open a PR.
+2. **No full rebuild.** Build with `cmake --build build -j2` (incremental). Before building, dry-run: `ninja -C build -n | grep -c '^\['`; if more than 300 steps, stop and ask. Do **not** add source files to `custom/CMakeLists.txt` and do **not** edit `custom/custom.qrc` (both re-run CMake: ~70-minute rebuild). Use header-only classes without `Q_OBJECT`, QML inline components, and tests added to existing test files. New non-compiled files (scripts, docs) are fine.
+3. **Never edit a header while a build is running** (stale objects → crashes at exit). If it happens, `touch` the header and rebuild.
+4. Run tests one class per process, always with `--allow-multiple` (the operator's QGC may be open; without it the test hangs): `QT_QPA_PLATFORM=offscreen timeout -s KILL 300 build/Debug/PreflightQGroundControl --allow-multiple --unittest:<Class>`.
+5. Every new test is mutation-checked: break the rule it guards, show it fails, restore, rebuild, show it passes. Report the mutant.
+6. **Never touch the operator's flight database** `~/.local/share/UAVPreflight/Skywin GCS/uav_preflight_data.db`. Any run of the real app (SITL) uses a throw-away data folder: `HOME=<tmp> XDG_DATA_HOME=<tmp>/share XDG_CONFIG_HOME=<tmp>/config` plus `--allow-multiple`.
+7. **Never write parameters to the real aircraft** or arm it. Hardware steps are written as an operator procedure; the operator does them.
+8. Commit after each finished piece with a clear message ending in `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Update this document (status lines with the date and commit) in the same or the next commit.
+9. Ask before guessing on anything marked "decision" below.
+
+### Recommendation 5 — GCS-failsafe policy per airframe
+Problem: with RC as primary control, a telemetry dropout sends the plane home; it happened twice on 22 Oct over USB. Today's check (`src/core/GcsFailsafeCheck.cpp`, id `safety.failsafe.gcs`) reads `FS_GCS_ENABLE`, which is **ArduCopter's** name; ArduPlane's is **`FS_GCS_ENABL`**, so on the plane the check is Skipped. It also always warns when the failsafe is disabled, which is wrong if the chosen policy is "RC primary, GCS failsafe off".
+Do:
+1. Confirm the parameter names, values and meanings for ArduPlane 4.5 and ArduCopter 4.5 from the local ArduPilot source (`~/ardupilot`, e.g. `ArduPlane/Parameters.cpp`, `ArduCopter/Parameters.cpp`); include the related timeout/action parameters (e.g. `FS_GCS_TIMEOUT`, `FS_LONG_ACTN` on Plane). Quote what you found in the commit message.
+2. Make the check read the right parameter for the vehicle type.
+3. Add a per-airframe **policy**, stored in `check_config` (check id `safety.failsafe.gcs`, key `policy`, per vehicle): `rc_primary` (GCS failsafe expected OFF) or `telemetry_primary` (expected ON). Result: Passed when the vehicle's setting matches the policy; Failed with a clear message and fix steps when it does not; Warning "GCS-failsafe policy not chosen for this airframe" when no policy is stored. The GCS never writes the parameter itself.
+4. Let the operator choose the policy on the check's card in the checklist (both checklist pages), with one sentence explaining each choice. Keep colours from `Colors` (the lint test enforces it).
+5. Tests in an existing test file (e.g. `tests/CheckSmokeTest.cpp` or `PreflightManagerTest.cpp`): Plane name read on a plane, Copter name on a copter, each policy × setting combination, no policy → Warning.
+6. Decision for the operator (do not choose): which policy each airframe uses. Write the two options with their trade-off into the go/no-go template (below).
+
+### Recommendation 6 — fix the plane (operator does the physical part)
+Findings: roll reads about −46° at rest (pitch follows a tilt); "MS4525: no sensor found / Airspeed 1 init failed"; two USB link drops caused GCS-failsafe RTLs; after RC loss CH3 (throttle) read 1922.
+Do (software, so the GCS catches these on any airframe):
+1. **Level at rest:** extend the attitude check's failure text/fix steps so a large constant roll or pitch at rest points to `AHRS_ORIENTATION` and the accelerometer calibration (QGC Vehicle Setup → Sensors). Do not loosen its threshold.
+2. **Airspeed sensor:** add a check (header-only, registered in `PreflightManager` or the plugin like `BatteryPackCheck`) for fixed-wing only: if `ARSPD_TYPE` ≠ 0 and the autopilot reports the differential-pressure sensor missing/unhealthy (SYS_STATUS sensor bits; verify the bit and ArduPlane behaviour in `~/ardupilot`), Failed with "Airspeed sensor configured but not found — connect it or set ARSPD_TYPE = 0". `ARSPD_TYPE` = 0 → Passed/Skipped with a note.
+3. **Link drops:** show on the Fly view (or the checklist Communication section) how many times the GCS link was lost in this connection session (the recorder already logs `link_lost` events), so an unreliable cable is visible before flight.
+4. **RC failsafe:** verify that `RcFailsafeCheck`/`RadioFailsafeCheck` read the right ArduPlane parameters (`THR_FAILSAFE`, `THR_FS_VALUE`, `FS_SHORT_ACTN`, `FS_LONG_ACTN`) and that their fix steps mention setting the ELRS receiver failsafe to "No pulses". Correct what is wrong; do not invent behaviour — check `~/ardupilot`.
+5. Tests for 2 and 3 (mock telemetry / recorder events), mutation-checked.
+6. Write the operator procedure for the physical fixes into "Bench and SITL checks for Step 3" section H (ELRS failsafe setting, USB cable, `ARSPD_TYPE`, orientation + accelerometer calibration, and how to confirm each in the new checks). Plain language: the operator is new to RC equipment.
+
+### Recommendation 8 — SITL campaign (item 12)
+Scope from item 12: on ArduCopter and ArduPlane SITL — force-arm with 2989 against a failing pre-arm, RTL on plane, link loss while armed, netem loss and latency watching `parserStalled`, a 3-hour idle with the quit caller identified, then two clean run-of-show dry runs. Plus the Step 3 SITL checks: kill -9 mid-flight leaves a `crash_recovered` flight; flight Wh within 5 % of `BATTERY_STATUS.energy_consumed`; gimbal axis tests with `MNT1_TYPE = 1`.
+Do:
+1. Put scripts under `custom/tools/sitl/` (Python with pymavlink, which is installed for the user; run without `python3 -I`). One script per scenario plus a runner. Start SITL with `~/ardupilot/Tools/autotest/sim_vehicle.py` (`-v ArduCopter` / `-v ArduPlane`, `--out` to the GCS's UDP port), start the GCS with the throw-away data folder (rule 6) and `--allow-multiple`, `QT_QPA_PLATFORM=offscreen` is acceptable.
+2. Drive the vehicle from the script (MAVLink commands, RC overrides) — not by clicking. Where a scenario needs the GCS's own arm button, use the GCS code path that is already unit-tested or say it was not exercised.
+3. After each scenario, query the throw-away database and write a run log `custom/tools/sitl/runs/<date>-<scenario>.md`: timestamps, what was commanded, what the vehicle reported, and the rows produced (`connection_sessions`, `flight_sessions`, `flights`, `flight_batteries`, `session_events`, `check_results`, test-result tables). State PASS/FAIL against the expected rows.
+4. The 3-hour idle runs in the background; record memory (RSS) every 5 minutes and whether/why the app quit.
+5. Weather: SITL sits at its default home, so W7 applies; note it, do not fix it here unless asked.
+6. Report every failure you find as a finding in this document; fix only clear GCS bugs, each with a test, and say so.
+
+### Deliverables and order
+1. Recommendation 5 (code + tests), commit. 2. Recommendation 6 (code + tests + procedure), commit. 3. Recommendation 8 scripts, then runs (plane first, then copter), commit scripts and run logs. 4. Full test run, written to `custom/tests/baseline-step3.txt` (all classes must still pass). 5. Update this document: the recommendations' statuses, item 12's status, a go/no-go template section per airframe (channel map with the mode channel, GCS-failsafe policy and its trade-off, airspeed, failsafe settings, observed wind, sign-off lines) that item 14 can use.
+
+### Final report (your last message)
+Commits; per recommendation what changed (files), the tests and their mutants; the ArduPilot parameter facts you verified and where; each SITL scenario's PASS/FAIL with the run-log path; every bug found and whether fixed; anything that needs the operator (decisions, hardware steps). Do not claim hardware results — nothing here is verified on the aircraft.
