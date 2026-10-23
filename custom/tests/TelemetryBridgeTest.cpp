@@ -1,6 +1,7 @@
 #include <QTest>
 #include <QSignalSpy>
 #include <QtMath>
+#include <QMap>
 #include <cmath>
 
 #include "UnitTest.h"
@@ -17,6 +18,7 @@ private slots:
     void testGimbalEarthFrameYawIsMadeRelative();
     void testGimbalMountMessagesDecode();
     void testTrainerSwitchTracker();
+    void testTrainerChannelDetector();
     void init() override { UnitTest::init(); }
     void cleanup() override { UnitTest::cleanup(); }
 
@@ -268,6 +270,55 @@ void TelemetryBridgeTest::testTrainerSwitchTracker()
     t.update(ch(65535));                                // unused channel value
     QCOMPARE(t.control(), TrainerSwitchTracker::Control::Unmonitored);
     QCOMPARE(TrainerSwitchTracker::name(TrainerSwitchTracker::Control::Student), QStringLiteral("student"));
+}
+
+// Detect: the one switch channel flicked low/high a few times wins; sticks,
+// one-off moves and the flight-mode channel are not offered.
+void TelemetryBridgeTest::testTrainerChannelDetector()
+{
+    // 16 channels: sticks centred, CH8 mode switch at 987, the rest unused (987).
+    auto frame = [](QMap<int, int> set) {
+        QVariantList v;
+        for (int ch = 1; ch <= 16; ++ch)
+            v << set.value(ch, ch <= 4 ? 1500 : 987);
+        return v;
+    };
+    using O = TrainerChannelDetector::Outcome;
+    TrainerChannelDetector d;
+    int ch = -1;
+    QList<int> several;
+
+    // SH on CH9, flicked twice; a stick moves a lot meanwhile (ignored).
+    d.start(8);
+    for (int us : {987, 2011, 987, 2011, 987})
+        d.feed(frame({{9, us}, {1, us}}));
+    QCOMPARE(d.finish(&ch), O::Found);
+    QCOMPARE(ch, 9);
+    QVERIFY(d.clearEarly());                         // 4 transitions on one channel
+
+    // Only one flick: not enough.
+    d.start(8);
+    d.feed(frame({{9, 987}}));
+    d.feed(frame({{9, 2011}}));
+    QCOMPARE(d.finish(&ch), O::NoMovement);
+
+    // Two switches flicked together.
+    d.start(8);
+    for (int us : {987, 2011, 987, 2011})
+        d.feed(frame({{9, us}, {11, us}}));
+    QCOMPARE(d.finish(&ch, &several), O::Several);
+    QCOMPARE(several, (QList<int>{9, 11}));
+
+    // Only the flight-mode channel moved.
+    d.start(8);
+    for (int us : {987, 1500, 2011, 987, 2011})
+        d.feed(frame({{8, us}}));
+    QCOMPARE(d.finish(&ch), O::OnlyModeChannel);
+
+    // No RC at all (0 on every channel).
+    d.start(8);
+    d.feed(QVariantList(16, 0));
+    QCOMPARE(d.finish(&ch), O::NoRc);
 }
 
 UT_REGISTER_TEST(TelemetryBridgeTest)

@@ -98,6 +98,13 @@ class PreflightPlugin : public QGCCorePlugin
     Q_PROPERTY(int trainerChannel READ trainerChannel WRITE setTrainerChannel NOTIFY trainerChanged)
     /// true (default): trainer switch (SH) high = instructor / master flying; low = trainee.
     Q_PROPERTY(bool trainerHighIsInstructor READ trainerHighIsInstructor WRITE setTrainerHighIsInstructor NOTIFY trainerChanged)
+    /// "Detect": while running, the operator flicks SH and the channel is found.
+    Q_PROPERTY(bool trainerDetectRunning READ trainerDetectRunning NOTIFY trainerDetectChanged)
+    Q_PROPERTY(int trainerDetectSecondsLeft READ trainerDetectSecondsLeft NOTIFY trainerDetectChanged)
+    /// The channel found (-1 = none); acceptTrainerDetect() makes it the trainer channel.
+    Q_PROPERTY(int trainerDetectFound READ trainerDetectFound NOTIFY trainerDetectChanged)
+    /// What to show: the instruction while running, then the result.
+    Q_PROPERTY(QString trainerDetectStatus READ trainerDetectStatus NOTIFY trainerDetectChanged)
     /// Non-empty when the trainer channel cannot be the trainer switch (it is FLTMODE_CH).
     Q_PROPERTY(QString trainerChannelConflict READ trainerChannelConflict NOTIFY trainerChanged)
 public:
@@ -118,9 +125,17 @@ public:
     QString trainerChannelConflict() const;
     bool trainerHighIsInstructor() const { return _trainer.highIsInstructor(); }
     void setTrainerHighIsInstructor(bool v);
+    bool trainerDetectRunning() const { return _detectRunning; }
+    int trainerDetectSecondsLeft() const { return _detectSecsLeft; }
+    int trainerDetectFound() const { return _detectFound; }
+    QString trainerDetectStatus() const { return _detectStatus; }
+    Q_INVOKABLE void startTrainerDetect();
+    Q_INVOKABLE void cancelTrainerDetect();
+    Q_INVOKABLE void acceptTrainerDetect();
 
 signals:
     void trainerChanged();
+    void trainerDetectChanged();
 
 public:
 
@@ -179,6 +194,14 @@ private:
     SessionRecorder *_sessionRecorder = nullptr;  // Step 3 item 6: the only session/flight writer
     TrainerSwitchTracker _trainer;                // who has control in two-radio training
     void _onRcChannels();
+    TrainerChannelDetector _detector;             // "Detect" on the trainer chip
+    QTimer _detectTimer;                          // 1 s countdown while detecting
+    bool _detectRunning = false;
+    int _detectSecsLeft = 0;
+    int _detectFound = -1;
+    QString _detectStatus;
+    int _flightModeChannel() const;               // FLTMODE_CH, -1 if unknown
+    void _finishTrainerDetect();
     QMetaObject::Connection _linkLostConn;        // current vehicle's communicationLostChanged
     void _openConnectionSession();                // opens once the vehicle UID is known
     /// Flight controller's mAh-consumed counter for battery 1, -1 when unavailable.

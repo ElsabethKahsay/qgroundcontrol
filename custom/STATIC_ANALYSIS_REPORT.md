@@ -1070,8 +1070,9 @@ You already proved F1–F2 work on 22 Oct morning: the student's sticks moved th
 
 #### F3. Find the channel SH arrives on (the switch already reaches the plane)
 Operator convention (23 Oct): the instructor's radio uses switch **SH** for the handover, and SH is already sent to the flight controller. **SH high = the instructor (master) is flying; SH low = the trainee is flying.** No new mix is needed; the GCS only needs to know which channel carries SH.
+Easiest: use **Detect** in the GCS (F5) — it finds the channel while you flick SH. By hand instead:
 1. With the plane connected and the instructor's radio on, flick SH a few times.
-2. Find the channel that jumps (e.g. 987 ↔ 2011): on the radio (**SYS → Channel monitor**), in QGC (Vehicle Setup → Radio), or ask whoever runs the MAVLink monitor.
+2. Find the channel that jumps (e.g. 987 ↔ 2011): on the radio (**SYS → Channel monitor**) or in QGC (Vehicle Setup → Radio).
 3. It must not be the **flight-mode channel** (CH8 on the plane). If it is, the GCS refuses it (see F7).
 
 #### F4. Start a Training session in the GCS
@@ -1082,7 +1083,10 @@ Operator convention (23 Oct): the instructor's radio uses switch **SH** for the 
 
 #### F5. Tell the GCS which channel carries the switch
 1. On the Fly view, at the top centre, a small round-cornered **trainer chip** appears (only in Training sessions with a plane connected).
-2. **Tap the chip.** A small window opens: **Trainer switch (SH) channel**. Set it to the channel from F3. Leave **SH high = instructor** ticked (untick only for a radio wired the other way round).
+2. **Tap the chip.** A small window opens: **Trainer switch (SH) channel**.
+   - **Detect (recommended):** press **Detect**, then flick SH down and up 2 times within 15 s. The window shows **"Found: CH9"** (for example); press **Use CH9**. If it says "Several channels moved", flick only SH and try again; "No RC data" means the RC is not connected; "Only the flight-mode channel moved" means SH is not sent on its own channel.
+   - Or type the channel from F3 into the field.
+   - Leave **SH high = instructor** ticked (untick only for a radio wired the other way round).
 3. The setting is remembered for next time.
 
 #### F6. Test the handover (props off)

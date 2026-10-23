@@ -391,6 +391,13 @@ void PreflightPlugin::init()
     _trainer.setHighIsInstructor(DatabaseManager::instance().getCheckConfig(
         QStringLiteral("trainer"), QStringLiteral("high_is_instructor")) != QLatin1String("0"));
     connect(_telemetryBridge, &TelemetryBridge::rcChannelValuesChanged, this, &PreflightPlugin::_onRcChannels);
+    _detectTimer.setInterval(1000);
+    connect(&_detectTimer, &QTimer::timeout, this, [this]() {
+        if (--_detectSecsLeft <= 0)
+            _finishTrainerDetect();
+        else
+            emit trainerDetectChanged();
+    });
 
     connect(_armingGate, &ArmingGate::gateOpened,
             this, &PreflightPlugin::_onGateOpened);
@@ -786,11 +793,79 @@ void PreflightPlugin::setTrainerHighIsInstructor(bool v)
     emit trainerChanged();
 }
 
-QString PreflightPlugin::trainerChannelConflict() const
+int PreflightPlugin::_flightModeChannel() const
 {
     if (!_telemetryBridge || !_telemetryBridge->hasParameter(QStringLiteral("FLTMODE_CH")))
+        return -1;
+    return qRound(_telemetryBridge->parameterValue(QStringLiteral("FLTMODE_CH"), 0.0f));
+}
+
+// "Detect": 15 s in which the operator flicks SH; the channel that went
+// clearly low and high a few times (not a stick, not the mode channel) wins.
+void PreflightPlugin::startTrainerDetect()
+{
+    _detector.start(_flightModeChannel());
+    _detectRunning = true;
+    _detectSecsLeft = 15;
+    _detectFound = -1;
+    _detectStatus = tr("Flick SH down and up 2 times\u2026");
+    _detectTimer.start();
+    emit trainerDetectChanged();
+}
+
+void PreflightPlugin::cancelTrainerDetect()
+{
+    _detectTimer.stop();
+    _detectRunning = false;
+    _detectFound = -1;
+    _detectStatus.clear();
+    emit trainerDetectChanged();
+}
+
+void PreflightPlugin::acceptTrainerDetect()
+{
+    if (_detectFound > 0)
+        setTrainerChannel(_detectFound);
+    cancelTrainerDetect();
+}
+
+void PreflightPlugin::_finishTrainerDetect()
+{
+    _detectTimer.stop();
+    _detectRunning = false;
+    int channel = -1;
+    QList<int> several;
+    switch (_detector.finish(&channel, &several)) {
+    case TrainerChannelDetector::Outcome::Found:
+        _detectFound = channel;
+        _detectStatus = tr("Found: CH%1").arg(channel);
+        break;
+    case TrainerChannelDetector::Outcome::Several: {
+        QStringList names;
+        for (int c : several)
+            names << QStringLiteral("CH%1").arg(c);
+        _detectStatus = tr("Several channels moved (%1) \u2014 flick only SH and try again").arg(names.join(QStringLiteral(", ")));
+        break;
+    }
+    case TrainerChannelDetector::Outcome::OnlyModeChannel:
+        _detectStatus = tr("Only the flight-mode channel moved \u2014 SH must be on another channel");
+        break;
+    case TrainerChannelDetector::Outcome::NoRc:
+        _detectStatus = tr("No RC data from the plane \u2014 is the RC connected?");
+        break;
+    case TrainerChannelDetector::Outcome::NoMovement:
+    case TrainerChannelDetector::Outcome::Running:
+        _detectStatus = tr("No switch seen \u2014 is the RC connected and is SH sent to the plane?");
+        break;
+    }
+    emit trainerDetectChanged();
+}
+
+QString PreflightPlugin::trainerChannelConflict() const
+{
+    const int modeCh = _flightModeChannel();
+    if (modeCh < 0)
         return {};
-    const int modeCh = qRound(_telemetryBridge->parameterValue(QStringLiteral("FLTMODE_CH"), 0.0f));
     return modeCh == _trainer.channel()
         ? tr("CH%1 is the flight-mode channel (FLTMODE_CH) \u2014 mix the trainer switch onto another channel")
               .arg(modeCh)
@@ -815,6 +890,11 @@ void PreflightPlugin::_onRcChannels()
 {
     if (!_telemetryBridge)
         return;
+    if (_detectRunning) {
+        _detector.feed(_telemetryBridge->rcChannelValues());
+        if (_detector.clearEarly())
+            _finishTrainerDetect();
+    }
     const TrainerSwitchTracker::Control before = _trainer.control();
     const bool wasVerified = _trainer.verified();
     // The flight-mode switch is not a trainer switch (ArduPlane's FLTMODE_CH

@@ -14,6 +14,8 @@
 // Header-only and no QObject: no CMake or moc change, testable directly.
 #pragma once
 
+#include <QList>
+#include <QSet>
 #include <QString>
 #include <QVariantList>
 
@@ -94,4 +96,104 @@ private:
     bool m_highIsInstructor = true;
     bool m_seenHigh = false;
     bool m_seenLow = false;
+};
+
+/// "Detect" for the trainer chip: while the operator flicks SH, find the one
+/// switch channel (CH5-CH16) that went clearly low and clearly high and
+/// changed side at least kMinTransitions times. Sticks (CH1-CH4) and the
+/// flight-mode channel are never offered. Pure logic, fed RC_CHANNELS values.
+class TrainerChannelDetector {
+public:
+    enum class Outcome { Running, Found, NoMovement, Several, OnlyModeChannel, NoRc };
+
+    static constexpr int kFirstChannel = 5;
+    static constexpr int kLastChannel = 16;
+    static constexpr int kMinTransitions = 3;     ///< down-up-down: two flicks
+    static constexpr int kEarlyTransitions = 4;   ///< a lone candidate this clear ends it early
+
+    void start(int modeChannel)
+    {
+        m_modeChannel = modeChannel;
+        m_anyRc = false;
+        for (Track &t : m_tracks)
+            t = Track{};
+    }
+
+    /// Feed one RC_CHANNELS sample (µs, channel 1 first).
+    void feed(const QVariantList &pwm)
+    {
+        for (int ch = 1; ch <= qMin<int>(pwm.size(), kLastChannel); ++ch) {
+            const int us = pwm.at(ch - 1).toInt();
+            if (us < 800 || us > 2200)
+                continue;                              // missing / unused
+            m_anyRc = true;
+            if (ch < kFirstChannel)
+                continue;                              // sticks are not switches
+            Track &t = m_tracks[ch - kFirstChannel];
+            const int side = us > TrainerSwitchTracker::kHighUs ? 1 : us < TrainerSwitchTracker::kLowUs ? 0 : -1;
+            if (side < 0)
+                continue;
+            (side ? t.seenHigh : t.seenLow) = true;
+            if (t.side >= 0 && side != t.side)
+                ++t.transitions;
+            t.side = side;
+        }
+    }
+
+    /// Channels that behaved like a flicked switch (mode channel included).
+    QList<int> candidates() const
+    {
+        QList<int> out;
+        for (int ch = kFirstChannel; ch <= kLastChannel; ++ch) {
+            const Track &t = m_tracks[ch - kFirstChannel];
+            if (t.seenLow && t.seenHigh && t.transitions >= kMinTransitions)
+                out << ch;
+        }
+        return out;
+    }
+
+    /// True when one non-mode channel is clearly the switch already.
+    bool clearEarly() const
+    {
+        const QList<int> c = usable();
+        return c.size() == 1 && m_tracks[c.first() - kFirstChannel].transitions >= kEarlyTransitions
+               && candidates().size() == 1;
+    }
+
+    /// The verdict at the end of the detection window.
+    Outcome finish(int *channel = nullptr, QList<int> *several = nullptr) const
+    {
+        if (!m_anyRc)
+            return Outcome::NoRc;
+        const QList<int> all = candidates();
+        const QList<int> c = usable();
+        if (c.size() == 1) {
+            if (channel) *channel = c.first();
+            return Outcome::Found;
+        }
+        if (c.size() > 1) {
+            if (several) *several = c;
+            return Outcome::Several;
+        }
+        return all.isEmpty() ? Outcome::NoMovement : Outcome::OnlyModeChannel;
+    }
+
+private:
+    struct Track {
+        int side = -1;          ///< 0 low, 1 high, -1 not yet clear
+        bool seenLow = false;
+        bool seenHigh = false;
+        int transitions = 0;
+    };
+
+    QList<int> usable() const
+    {
+        QList<int> c = candidates();
+        c.removeAll(m_modeChannel);
+        return c;
+    }
+
+    Track m_tracks[kLastChannel - kFirstChannel + 1];
+    int m_modeChannel = -1;
+    bool m_anyRc = false;
 };

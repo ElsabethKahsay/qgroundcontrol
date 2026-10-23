@@ -524,6 +524,9 @@ Item {
 
         Popup {
             id: trainerChannelPopup
+            closePolicy: trainerChip._plugin && trainerChip._plugin.trainerDetectRunning
+                         ? Popup.NoAutoClose : (Popup.CloseOnEscape | Popup.CloseOnPressOutside)
+            onClosed: if (trainerChip._plugin && !trainerChip._plugin.trainerDetectRunning) trainerChip._plugin.cancelTrainerDetect()
             y: parent.height + 6
             x: (parent.width - width) / 2
             padding: 12
@@ -556,6 +559,47 @@ Item {
                     text: qsTr("SH high = instructor")
                     checked: trainerChip._plugin ? trainerChip._plugin.trainerHighIsInstructor : true
                     onToggled: if (trainerChip._plugin) trainerChip._plugin.trainerHighIsInstructor = checked
+                }
+
+                // Detect: flick SH while the GCS watches CH5-CH16 for it.
+                RowLayout {
+                    spacing: 8
+                    Button {
+                        text: trainerChip._plugin && trainerChip._plugin.trainerDetectRunning
+                              ? qsTr("Detecting\u2026 %1 s").arg(trainerChip._plugin.trainerDetectSecondsLeft)
+                              : qsTr("Detect")
+                        enabled: !!trainerChip._plugin && !trainerChip._plugin.trainerDetectRunning
+                        onClicked: trainerChip._plugin.startTrainerDetect()
+                    }
+                    Button {
+                        visible: !!trainerChip._plugin && trainerChip._plugin.trainerDetectRunning
+                        text: qsTr("Cancel")
+                        onClicked: trainerChip._plugin.cancelTrainerDetect()
+                    }
+                }
+                Text {
+                    Layout.preferredWidth: 300
+                    visible: text.length > 0
+                    wrapMode: Text.WordWrap
+                    text: trainerChip._plugin ? trainerChip._plugin.trainerDetectStatus : ""
+                    font.pixelSize: Config.fontSizeSmall
+                    font.bold: true
+                    color: trainerChip._plugin && trainerChip._plugin.trainerDetectFound > 0 ? Colors.success
+                         : trainerChip._plugin && trainerChip._plugin.trainerDetectRunning ? Colors.textPrimary
+                         : Colors.warning
+                }
+                RowLayout {
+                    visible: !!trainerChip._plugin && trainerChip._plugin.trainerDetectFound > 0
+                    spacing: 8
+                    Button {
+                        text: qsTr("Use CH%1").arg(trainerChip._plugin ? trainerChip._plugin.trainerDetectFound : 0)
+                        highlighted: true
+                        onClicked: trainerChip._plugin.acceptTrainerDetect()
+                    }
+                    Button {
+                        text: qsTr("Cancel")
+                        onClicked: trainerChip._plugin.cancelTrainerDetect()
+                    }
                 }
             }
         }
