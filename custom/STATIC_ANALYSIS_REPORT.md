@@ -55,13 +55,14 @@ Done in Step 3 (22 Oct; code committed and unit-tested, NOT yet verified on the 
 • Item 17 W2–W4, W6 and item 21 lint (ade82ce18). Attitude readout on the gimbal page and the Fly view (9f39fcae6). Hidden checklist rows fixed (9f39fcae6).
 • Trainer handover logging (ec506bb00, 651dddbef), refusing a trainer channel equal to FLTMODE_CH.
 • Disabled motor / surface tests now say why on screen (60e0fdd18): they arm the vehicle, so they need a Testing session.
+• Review fixes 23 Oct (c84b41fa8): app exit while armed no longer runs the recorder's callbacks on deleted objects; crash-recovered Flight History rows close at the flight's last summary instead of "now"; the gimbal target is also stored on the Flight History row. Reconnect crash in ControlSurfaceTestController fixed (see FlightSessionLifecycleTest below).
 
 Still open (22 Oct)
 Verification (operator, no code): see "Bench and SITL checks for Step 3" at the end of this document.
 • Not yet seen in the running app: Battery pack dialog, Fly-view ATTITUDE column, trainer chip, weather source line, Flight History rows (the app running on 22 Oct afternoon was the 11:35 build).
 • Trainer handover on the GX12 pair: needs a trainer-switch mix on a free channel (CH8 is the plane's flight-mode switch).
 • SITL: kill -9 mid-flight leaves a crash_recovered row (item 6); Wh within 5 % of BATTERY_STATUS.energy_consumed (item 7); gimbal axis tests with MNT1_TYPE = 1 (item 18).
-• tests/FlightSessionLifecycleTest.cpp still crashes inside MockLink (exit 139). Item 6's acceptance line asks for it to pass; the recorder is tested without MockLink instead (DatabaseManagerTest). Open.
+• tests/FlightSessionLifecycleTest.cpp: fixed 23 Oct, passes 5/5 with no expected failures or skips. The crash was not MockLink: ControlSurfaceTestController held a raw Vehicle* that dangled after every disconnect, and the next connection disconnected signals from freed memory — on the aircraft that is any reconnect (the plane reconnected twice on 22 Oct). It is a QPointer now, and the plugin hands both bench controllers "no vehicle" on disconnect. The test's scenario (c) was rewritten for the recorder design (two stale QEXPECT_FAILs removed; counts are relative to a baseline because the unit-test database is not emptied between tests).
 • Tag phase1-step3 once the bench checks pass.
 Aircraft findings from the 22 Oct bench session (fixed wing, CoreWingF405WingV2, ArduPlane 4.5.7, ELRS 16 ch) — fix before flying:
 • Roll reads about -46° with the airframe still (pitch follows a tilt): check AHRS_ORIENTATION and redo the accelerometer calibration if the plane sits level.

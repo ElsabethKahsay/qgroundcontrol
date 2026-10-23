@@ -16,7 +16,8 @@
  *   (a) gate flap with no arm        -> QSKIP (needs ArmingGate open/close flapping)
  *   (a-lite) arm without any session -> asserted: no flight record is created
  *   (b) RC arm while gate closed     -> QSKIP (needs the heartbeat/armedChanged path)
- *   (c) arm, disarm, arm again       -> QEXPECT_FAIL: state machine blocks a 2nd record
+ *   (c) arm, disarm, arm again       -> asserted: FSM re-arms; records are SessionRecorder's
+ *                                       (second record per arm: DatabaseManagerTest)
  *   (d) Testing/Training arm+disarm  -> asserted: bench run writes no records
  *   (e) link drop while armed        -> QSKIP (needs link-drop-while-armed harness)
  *   (f) orphaned open record         -> covered by DatabaseManagerTest
@@ -107,12 +108,14 @@ void FlightSessionLifecycleTest::testArmWithoutSessionStartCreatesNoRecord()
     QVERIFY(fs);
     fs->setVehicle(_vehicle);
     fs->setMode(QStringLiteral("FLIGHT"));
+    // The unit-test database is not emptied between tests: count from here.
+    const int base = _flightCount(vid);
 
-    // Arm without ever starting a session -> no `flights` row may appear.
+    // Arm without ever starting a session -> FlightSession adds no `flights` row.
     fs->onVehicleArmed();
-    QCOMPARE(_flightCount(vid), 0);
+    QCOMPARE(_flightCount(vid), base);
     fs->onVehicleDisarmed();
-    QCOMPARE(_flightCount(vid), 0);
+    QCOMPARE(_flightCount(vid), base);
     // Post-flight is parked (Config.h kPostFlightEnabled): a disarm returns to PreFlight.
     QCOMPARE(fs->state(), kPostFlightEnabled ? FlightSession::SessionState::PostFlight
                                              : FlightSession::SessionState::PreFlight);
@@ -134,6 +137,8 @@ void FlightSessionLifecycleTest::testBenchModeCreatesNoFlightOrSessionRows()
     FlightSession *fs = FlightSession::instance();
     fs->setVehicle(_vehicle);
     fs->setMode(QStringLiteral("TESTING"));
+    const int baseFlights = _flightCount(vid);
+    const int baseSessions = _sessionCount(fp);
     fs->startTestingSession();
     QCOMPARE(fs->state(), FlightSession::SessionState::PreFlight);
 
@@ -145,13 +150,17 @@ void FlightSessionLifecycleTest::testBenchModeCreatesNoFlightOrSessionRows()
                                              : FlightSession::SessionState::PreFlight);
 
     // A bench run is in-memory only: no audited flight, no compliance session.
-    QCOMPARE(_flightCount(vid), 0);
-    QCOMPARE(_sessionCount(fp), 0);
+    QCOMPARE(_flightCount(vid), baseFlights);
+    QCOMPARE(_sessionCount(fp), baseSessions);
 }
 
-// (c) Arm, disarm, arm again on the same connection must begin a SECOND, separate
-// flight record cleanly. The FSM currently re-uses the first flight id on the
-// second arm instead of opening a new record -> XFAIL against the design.
+// (c) Arm, disarm, arm again on the same connection. Since Step 3 the flight
+// records (one per arm-to-disarm, RC arms included) belong to SessionRecorder,
+// driven by the vehicle's armed state; that rule is asserted in
+// DatabaseManagerTest::testRecorderFlightFollowsArmedState. FlightSession's
+// own state machine must follow arm/disarm/arm without blocking a second arm,
+// and its form-opened record must not be re-opened or duplicated by it.
+// (This replaces two QEXPECT_FAILs written against the pre-recorder design.)
 void FlightSessionLifecycleTest::testSecondFlightRecordAfterDisarm()
 {
     int vid = 0; QString fp;
@@ -165,12 +174,13 @@ void FlightSessionLifecycleTest::testSecondFlightRecordAfterDisarm()
     FlightSession *fs = FlightSession::instance();
     fs->setVehicle(_vehicle);
     fs->setMode(QStringLiteral("FLIGHT"));
+    const int base = _flightCount(vid);
     fs->startFlightSession(QStringLiteral("test purpose"),
                            QStringLiteral("test loc"),
                            QStringLiteral("test notes"));
     const int firstId = fs->currentFlightId();
     QVERIFY(firstId > 0);
-    QCOMPARE(_flightCount(vid), 1);
+    QCOMPARE(_flightCount(vid), base + 1);
 
     fs->onVehicleArmed();
     QCOMPARE(fs->state(), FlightSession::SessionState::Armed);
@@ -179,17 +189,14 @@ void FlightSessionLifecycleTest::testSecondFlightRecordAfterDisarm()
     QCOMPARE(fs->state(), kPostFlightEnabled ? FlightSession::SessionState::PostFlight
                                              : FlightSession::SessionState::PreFlight);
 
-    // Second arm on the same connection.
+    // Second arm on the same connection is not blocked by the state machine.
     fs->onVehicleArmed();
     QCOMPARE(fs->state(), FlightSession::SessionState::Armed);
+    fs->onVehicleDisarmed();
 
-    // DESIRED: a second, separate record has begun.
-    QEXPECT_FAIL("", "state machine blocks a second flight record after disarm", Continue);
-    QCOMPARE(_flightCount(vid), 2);
-
-    // And the second arm must target the new record, not the stale first id.
-    QEXPECT_FAIL("", "second arm re-uses the first flight id instead of a new record", Continue);
-    QVERIFY(fs->currentFlightId() != firstId);
+    // FlightSession's arm handling writes no extra rows (SessionRecorder does,
+    // from the vehicle's real armed state, which this test does not change).
+    QCOMPARE(_flightCount(vid), base + 1);
 }
 
 UT_REGISTER_TEST(FlightSessionLifecycleTest)

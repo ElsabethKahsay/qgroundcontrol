@@ -633,6 +633,11 @@ void PreflightPlugin::_onActiveVehicleChanged(Vehicle *vehicle)
         _setupForVehicle(vehicle);
     } else {
         _telemetryBridge->setVehicle(nullptr);
+        // The bench-test controllers must not keep the departing vehicle.
+        if (_hardwareTestController)
+            _hardwareTestController->setVehicle(nullptr);
+        if (_controlSurfaceTestController)
+            _controlSurfaceTestController->setVehicle(nullptr);
         _weatherRefreshTimer.stop();
         if (_checklistEngine)
             _checklistEngine->stop();

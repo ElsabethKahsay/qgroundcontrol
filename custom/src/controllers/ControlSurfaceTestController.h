@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QPointer>
+
 #include <QObject>
 #include <QVariantList>
 #include <QVariantMap>
@@ -180,7 +182,10 @@ private:
     int _rcMapForSurface(const QString &id) const;
     int _readServoParam(const QString &prefix, const QString &suffix, int fallback) const;
 
-    Vehicle *m_vehicle = nullptr;
+    // QPointer: the vehicle is deleted on every disconnect (USB drop, power
+    // cycle). A raw pointer dangled, and the next setVehicle() disconnected
+    // from freed memory (FlightSessionLifecycleTest crash, 22 Oct).
+    QPointer<Vehicle> m_vehicle;
     QObject *m_armingGate = nullptr;    /// ArmingGate for arm-command override (set by PreflightPlugin)
     class TelemetryBridge *m_telemetryBridge = nullptr; /// Single force-arm funnel (set by PreflightPlugin)
     QVector<ControlSurface> m_surfaceList;
