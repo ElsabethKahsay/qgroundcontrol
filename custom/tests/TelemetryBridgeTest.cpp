@@ -229,38 +229,43 @@ void TelemetryBridgeTest::testGimbalMountMessagesDecode()
     QCOMPARE(y, 40.0);
 }
 
-// Trainer handover: start value = instructor; a move > 300 us = student;
-// back within 150 us = instructor; no valid value = unmonitored.
+// Trainer handover (operator convention): SH high (> 1600 us) = instructor /
+// master flying; SH low (< 1400 us) = trainee; in between = no change; no
+// valid value = unmonitored. Verified once both positions were seen.
 void TelemetryBridgeTest::testTrainerSwitchTracker()
 {
-    auto ch = [](int ch8) {
+    auto ch = [](int ch9) {
         QVariantList v;
-        for (int i = 0; i < 8; ++i)
-            v << (i == 7 ? ch8 : 1500);
+        for (int i = 0; i < 9; ++i)
+            v << (i == 8 ? ch9 : 1500);
         return v;
     };
     TrainerSwitchTracker t;
+    t.setChannel(9);
     QCOMPARE(t.control(), TrainerSwitchTracker::Control::Unmonitored);
-    QVERIFY(t.update(ch(987)));                         // first value: instructor
-    QCOMPARE(t.control(), TrainerSwitchTracker::Control::Instructor);
+    QVERIFY(!t.update(ch(1500)));                       // middle at start: not decided yet
+    QCOMPARE(t.control(), TrainerSwitchTracker::Control::Unmonitored);
+    QVERIFY(t.update(ch(987)));                         // SH low: trainee
+    QCOMPARE(t.control(), TrainerSwitchTracker::Control::Student);
     QVERIFY(!t.verified());
-    QVERIFY(!t.update(ch(1100)));                       // jitter: no change
-    QVERIFY(t.update(ch(1500)));                        // your radio: 987 -> 1500
-    QCOMPARE(t.control(), TrainerSwitchTracker::Control::Student);
+    QVERIFY(t.update(ch(2011)));                        // SH high: instructor
+    QCOMPARE(t.control(), TrainerSwitchTracker::Control::Instructor);
     QVERIFY(t.verified());
-    QVERIFY(!t.update(ch(1200)));                       // not back yet (hysteresis)
-    QVERIFY(t.update(ch(1000)));
+    QVERIFY(!t.update(ch(1500)));                       // in between: no flicker
+    QCOMPARE(t.control(), TrainerSwitchTracker::Control::Instructor);
+    // Connected with SH already high: instructor straight away (no baseline guess).
+    t.reset();
+    QVERIFY(t.update(ch(2011)));
     QCOMPARE(t.control(), TrainerSwitchTracker::Control::Instructor);
 
-    QVERIFY(t.update(QVariantList{1500, 1500, 1500, 1500}));   // only 4 channels: no CH8
-    QCOMPARE(t.control(), TrainerSwitchTracker::Control::Unmonitored);
-    QVERIFY(t.update(ch(2000)));                        // reversed mix: 2000 is the start
-    QVERIFY(t.update(ch(1000)));
+    t.setHighIsInstructor(false);                       // radio wired the other way
     QCOMPARE(t.control(), TrainerSwitchTracker::Control::Student);
-    t.update(ch(65535));                                // unused channel value
-    QCOMPARE(t.control(), TrainerSwitchTracker::Control::Unmonitored);
+    t.update(ch(987));
+    QCOMPARE(t.control(), TrainerSwitchTracker::Control::Instructor);
 
-    t.setChannel(6);
+    QVERIFY(t.update(QVariantList{1500, 1500, 1500, 1500}));   // channel missing
+    QCOMPARE(t.control(), TrainerSwitchTracker::Control::Unmonitored);
+    t.update(ch(65535));                                // unused channel value
     QCOMPARE(t.control(), TrainerSwitchTracker::Control::Unmonitored);
     QCOMPARE(TrainerSwitchTracker::name(TrainerSwitchTracker::Control::Student), QStringLiteral("student"));
 }

@@ -96,6 +96,8 @@ class PreflightPlugin : public QGCCorePlugin
     Q_PROPERTY(bool trainerVerified READ trainerVerified NOTIFY trainerChanged)
     /// RC channel the instructor's radio mixes the trainer switch onto (default 8).
     Q_PROPERTY(int trainerChannel READ trainerChannel WRITE setTrainerChannel NOTIFY trainerChanged)
+    /// true (default): trainer switch (SH) high = instructor / master flying; low = trainee.
+    Q_PROPERTY(bool trainerHighIsInstructor READ trainerHighIsInstructor WRITE setTrainerHighIsInstructor NOTIFY trainerChanged)
     /// Non-empty when the trainer channel cannot be the trainer switch (it is FLTMODE_CH).
     Q_PROPERTY(QString trainerChannelConflict READ trainerChannelConflict NOTIFY trainerChanged)
 public:
@@ -114,6 +116,8 @@ public:
     int trainerChannel() const { return _trainer.channel(); }
     void setTrainerChannel(int channel);
     QString trainerChannelConflict() const;
+    bool trainerHighIsInstructor() const { return _trainer.highIsInstructor(); }
+    void setTrainerHighIsInstructor(bool v);
 
 signals:
     void trainerChanged();

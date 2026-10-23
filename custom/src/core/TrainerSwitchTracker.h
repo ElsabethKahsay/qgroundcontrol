@@ -1,16 +1,15 @@
 // Step 3 addition (21 Oct): who is flying in a two-radio (master/slave)
 // training setup. The trainer switch lives in the instructor's transmitter,
-// so the aircraft cannot see it unless the radio copies the switch onto a
-// spare channel with a mix (EdgeTX: Mixes -> CH8 = trainer switch). This
-// reads that channel from RC_CHANNELS.
+// so the aircraft sees it only on the channel the switch is sent on (on the
+// operator's radios SH already reaches the flight controller). This reads
+// that channel from RC_CHANNELS.
 //
-// Rule: the first valid value seen on a connection is the instructor position
-// (the instructor holds control at the start); a move of more than
-// kDeltaUs away from it means the student has control, a return to within
-// kReturnUs means the instructor has it again. That works for any mix
-// output (987 -> 1500, 1000 -> 2000, or reversed). Until the channel has
-// moved once it is "unverified": a channel that never moves may not be the
-// trainer switch at all.
+// Rule (operator convention, 23 Oct): the instructor's radio uses switch SH
+// for the handover, and SH is sent on a channel. SH HIGH (> 1600 µs) = the
+// master / instructor is flying; SH LOW (< 1400 µs) = the trainee is flying.
+// Between the two the state does not change (no flicker on a noisy value).
+// A radio wired the other way round is handled by setHighIsInstructor(false).
+// "Verified" = the channel has been seen in both positions on this connection.
 //
 // Header-only and no QObject: no CMake or moc change, testable directly.
 #pragma once
@@ -23,8 +22,8 @@ public:
     enum class Control { Unmonitored, Instructor, Student };
 
     static constexpr int kDefaultChannel = 8;
-    static constexpr int kDeltaUs = 300;    ///< away from the start position: student
-    static constexpr int kReturnUs = 150;   ///< back within this of the start: instructor
+    static constexpr int kHighUs = 1600;    ///< above: switch high
+    static constexpr int kLowUs = 1400;     ///< below: switch low
 
     void setChannel(int channel)
     {
@@ -35,12 +34,22 @@ public:
     }
     int channel() const { return m_channel; }
 
-    /// New connection: forget the start position.
+    /// true (default): switch high = instructor; false: high = trainee.
+    void setHighIsInstructor(bool v)
+    {
+        if (v == m_highIsInstructor)
+            return;
+        m_highIsInstructor = v;
+        if (m_control != Control::Unmonitored)
+            m_control = m_control == Control::Instructor ? Control::Student : Control::Instructor;
+    }
+    bool highIsInstructor() const { return m_highIsInstructor; }
+
+    /// New connection: positions seen so far are forgotten.
     void reset()
     {
-        m_baseline = -1;
         m_control = Control::Unmonitored;
-        m_verified = false;
+        m_seenHigh = m_seenLow = false;
     }
 
     /// Feed RC_CHANNELS values (µs, channel 1 first). Returns true when the
@@ -52,27 +61,22 @@ public:
         const Control before = m_control;
         if (us < 800 || us > 2200) {          // missing, 0 or 65535 (unused)
             m_control = Control::Unmonitored;
-            m_baseline = -1;
             return before != m_control;
         }
-        if (m_baseline < 0) {
-            m_baseline = us;
-            m_control = Control::Instructor;
-            return before != m_control;
+        if (us > kHighUs) {
+            m_seenHigh = true;
+            m_control = m_highIsInstructor ? Control::Instructor : Control::Student;
+        } else if (us < kLowUs) {
+            m_seenLow = true;
+            m_control = m_highIsInstructor ? Control::Student : Control::Instructor;
         }
-        const int delta = qAbs(us - m_baseline);
-        if (m_control != Control::Student && delta > kDeltaUs) {
-            m_control = Control::Student;
-            m_verified = true;
-        } else if (m_control == Control::Student && delta < kReturnUs) {
-            m_control = Control::Instructor;
-        }
+        // in between: keep the last state (Unmonitored until a clear position)
         return before != m_control;
     }
 
     Control control() const { return m_control; }
-    /// The channel has moved at least once since the connection started.
-    bool verified() const { return m_verified; }
+    /// Both switch positions have been seen since the connection started.
+    bool verified() const { return m_seenHigh && m_seenLow; }
 
     static QString name(Control c)
     {
@@ -86,7 +90,8 @@ public:
 
 private:
     int m_channel = kDefaultChannel;
-    int m_baseline = -1;
     Control m_control = Control::Unmonitored;
-    bool m_verified = false;
+    bool m_highIsInstructor = true;
+    bool m_seenHigh = false;
+    bool m_seenLow = false;
 };

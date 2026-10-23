@@ -510,10 +510,9 @@ Item {
                   : !trainerChip._monitored
                   ? qsTr("Trainer handover not monitored \u2014 no CH%1 trainer mix").arg(trainerChip._plugin ? trainerChip._plugin.trainerChannel : 8)
                   : (trainerChip._student ? qsTr("STUDENT FLYING") : qsTr("INSTRUCTOR FLYING"))
-                    // Unverified: the channel has not moved on this link. ELRS sends 1500 on an
-                    // unmixed channel, so a channel that never moves likely has no trainer mix.
+                    // Unverified: both switch positions not yet seen on this link.
                     + (trainerChip._plugin && !trainerChip._plugin.trainerVerified
-                       ? qsTr("  (switch not seen yet \u2014 flick it once to confirm the mix)") : "")
+                       ? qsTr("  (flick SH once to confirm the channel)") : "")
         }
 
         // Tap: choose the channel the instructor's radio mixes the switch onto.
@@ -532,7 +531,7 @@ Item {
             ColumnLayout {
                 spacing: 6
                 Text {
-                    text: qsTr("Trainer switch channel")
+                    text: qsTr("Trainer switch (SH) channel")
                     font.bold: true
                     font.pixelSize: Config.fontSizeBody
                     color: Colors.textPrimary
@@ -540,9 +539,9 @@ Item {
                 Text {
                     Layout.preferredWidth: 300
                     wrapMode: Text.WordWrap
-                    text: qsTr("The instructor's radio must copy the trainer switch onto this channel "
-                               + "(EdgeTX: Model \u2192 Mixes \u2192 CH%1, source = trainer switch). "
-                               + "The value at connection is taken as \"instructor\".").arg(channelSpin.value)
+                    text: qsTr("The channel the instructor's SH switch reaches the flight controller on. "
+                               + "SH high = instructor (master) flying, SH low = trainee flying. "
+                               + "Not the flight-mode channel.")
                     font.pixelSize: Config.fontSizeSmall
                     color: Colors.textSecondary
                 }
@@ -551,6 +550,12 @@ Item {
                     from: 5; to: 16
                     value: trainerChip._plugin ? trainerChip._plugin.trainerChannel : 8
                     onValueModified: if (trainerChip._plugin) trainerChip._plugin.trainerChannel = value
+                }
+                CheckBox {
+                    // For a radio wired the other way round.
+                    text: qsTr("SH high = instructor")
+                    checked: trainerChip._plugin ? trainerChip._plugin.trainerHighIsInstructor : true
+                    onToggled: if (trainerChip._plugin) trainerChip._plugin.trainerHighIsInstructor = checked
                 }
             }
         }

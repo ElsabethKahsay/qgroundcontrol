@@ -387,6 +387,9 @@ void PreflightPlugin::init()
                                                                        QStringLiteral("channel")).toInt(&chOk);
     _trainer.setChannel(chOk && savedChannel >= 1 && savedChannel <= 18 ? savedChannel
                                                                        : TrainerSwitchTracker::kDefaultChannel);
+    // Operator convention: SH high = master / instructor flying (default).
+    _trainer.setHighIsInstructor(DatabaseManager::instance().getCheckConfig(
+        QStringLiteral("trainer"), QStringLiteral("high_is_instructor")) != QLatin1String("0"));
     connect(_telemetryBridge, &TelemetryBridge::rcChannelValuesChanged, this, &PreflightPlugin::_onRcChannels);
 
     connect(_armingGate, &ArmingGate::gateOpened,
@@ -773,6 +776,16 @@ void PreflightPlugin::_onGateOpened()
 // _onGateClosed() — ArmStateTracker saw the vehicle DISARM. SessionRecorder
 // closes the flight; its closed-handler does the battery cycle and calibration.
 // ---------------------------------------------------------------------------
+void PreflightPlugin::setTrainerHighIsInstructor(bool v)
+{
+    if (v == _trainer.highIsInstructor())
+        return;
+    _trainer.setHighIsInstructor(v);
+    DatabaseManager::instance().setCheckConfig(QStringLiteral("trainer"), QStringLiteral("high_is_instructor"),
+                                               v ? QStringLiteral("1") : QStringLiteral("0"));
+    emit trainerChanged();
+}
+
 QString PreflightPlugin::trainerChannelConflict() const
 {
     if (!_telemetryBridge || !_telemetryBridge->hasParameter(QStringLiteral("FLTMODE_CH")))
