@@ -14,6 +14,7 @@
 #include <QVariantMap>
 
 #include "DatabaseManager.h"
+#include "VehicleProfileManager.h"
 #include "utils/Config.h"
 
 PowerModel::PowerModel(QObject *parent)
@@ -212,5 +213,123 @@ QVariantMap PowerModel::estimateToMap(const QString &deviceUid, double payloadKg
     m[QStringLiteral("sourceLabel")] = est.sourceLabel;
     m[QStringLiteral("dataPointCount")] = est.dataPointCount;
     m[QStringLiteral("isCalibrated")] = est.isCalibrated;
+    return m;
+}
+
+double PowerModel::nominalCellVolts(const QString &chemistry)
+{
+    // Nominal (mid-discharge) voltage per cell, which is what turns Ah into Wh
+    // over a whole discharge. Full-charge voltages would overstate the energy.
+    if (chemistry.compare(QStringLiteral("LiHV"), Qt::CaseInsensitive) == 0)  return 3.85;
+    if (chemistry.compare(QStringLiteral("LiIon"), Qt::CaseInsensitive) == 0) return 3.6;
+    if (chemistry.compare(QStringLiteral("LiFe"), Qt::CaseInsensitive) == 0)  return 3.2;
+    return 3.7;   // LiPo and anything we do not recognise
+}
+
+double PowerModel::usablePackWh(int series, int parallel, int cellMah, const QString &chemistry,
+                                int socPct, double reserve)
+{
+    if (series <= 0 || parallel <= 0 || cellMah <= 0)
+        return -1.0;
+    // Same rule as the live battery chip: Ah above the reserve, where the
+    // reserve is a share of the whole pack and the result never goes below 0.
+    const double capacityAh = parallel * cellMah / 1000.0;
+    const double usableAh = VehicleProfileManager::usableAhAboveReserve(capacityAh, socPct, reserve);
+    if (usableAh < 0.0)
+        return -1.0;
+    return usableAh * series * nominalCellVolts(chemistry);
+}
+
+QString PowerModel::airframeForKind(const QString &vehicleKind)
+{
+    if (vehicleKind == QLatin1String("MULTIROTOR"))         return QStringLiteral("MultiRotor");
+    if (vehicleKind == QLatin1String("FIXED_WING"))         return QStringLiteral("FixedWing");
+    if (vehicleKind == QLatin1String("VTOL_CONVENTIONAL"))  return QStringLiteral("VTOL");
+    return QStringLiteral("Unknown");
+}
+
+double PowerModel::defaultCruiseKmph(const QString &airframeType)
+{
+    if (airframeType == QLatin1String("FixedWing")) return 60.0;
+    if (airframeType == QLatin1String("VTOL"))      return 50.0;
+    return 30.0;
+}
+
+PowerEstimate PowerModel::estimateFromEnergy(const QString &deviceUid, double payloadKg, double usableWh,
+                                             const QString &airframeType) const
+{
+    PowerEstimate est;
+    // Defaults first: the per-airframe energy per minute, made a little worse
+    // for each kg of payload, and range from an assumed cruise speed.
+    double whPerMin = defaultHoverWhPerMin(airframeType) * (1.0 + kPayloadWhSurchargePerKg * qMax(0.0, payloadKg));
+    double whPerKm = -1.0;
+
+    // With enough clean flights for this vehicle, use what it really burned:
+    // average Wh per minute over whole flights, and Wh per km over the distance
+    // it actually flew (payload-adjusted when flights recorded a payload).
+    if (!deviceUid.isEmpty()) {
+        const auto db = DatabaseManager::instance().getCalibratedPowerModel(deviceUid, payloadKg,
+                                                                           minCalibrationPoints());
+        est.dataPointCount = db.dataPointCount;
+        if (db.isCalibrated && db.hoverWhPerMin > 0.0) {
+            whPerMin = db.hoverWhPerMin;
+            whPerKm = db.whPerKm > 0.0 ? db.whPerKm : -1.0;
+            est.isCalibrated = true;
+        }
+    }
+
+    est.hoverWhPerMin = whPerMin;
+    est.flightTimeMin = (usableWh > 0.0 && whPerMin > 0.0) ? usableWh / whPerMin : 0.0;
+    if (whPerKm > 0.0) {
+        est.whPerKm = whPerKm;
+        est.rangeKm = usableWh > 0.0 ? usableWh / whPerKm : 0.0;
+    } else {
+        const double kmph = defaultCruiseKmph(airframeType);
+        est.rangeKm = est.flightTimeMin / 60.0 * kmph;
+        est.whPerKm = kmph > 0.0 ? whPerMin * 60.0 / kmph : 0.0;
+    }
+
+    const int needed = minCalibrationPoints();
+    if (est.isCalibrated)
+        est.sourceLabel = QStringLiteral("from %1 flights").arg(est.dataPointCount);
+    else if (est.dataPointCount > 0)
+        est.sourceLabel = QStringLiteral("default model, %1 more flight(s) to learn").arg(qMax(0, needed - est.dataPointCount));
+    else
+        est.sourceLabel = QStringLiteral("default model");
+    return est;
+}
+
+QVariantMap PowerModel::preflightEstimate(const QString &deviceUid, double payloadKg) const
+{
+    QVariantMap m;
+    VehicleProfileManager *vpm = VehicleProfileManager::instance();
+    if (!vpm || vpm->capacityAh() <= 0.0 || vpm->batterySeriesCells() <= 0) {
+        m[QStringLiteral("configured")] = false;
+        return m;
+    }
+    // The charge of the selected pack (from the flight controller's mAh
+    // counter). Before any battery data arrives we assume a full pack and
+    // say so in the label rather than show nothing.
+    int soc = vpm->liveSOC();
+    const bool assumedFull = soc < 0;
+    if (assumedFull)
+        soc = 100;
+
+    const double usableWh = usablePackWh(vpm->batterySeriesCells(), vpm->batteryParallelCells(),
+                                         vpm->batteryCellMah(), vpm->batteryType(), soc, vpm->batteryReserve());
+    const QString airframe = airframeForKind(vpm->vehicleKindString());
+    const PowerEstimate est = estimateFromEnergy(deviceUid, payloadKg, qMax(0.0, usableWh), airframe);
+
+    m[QStringLiteral("configured")] = true;
+    m[QStringLiteral("usableWh")] = usableWh;
+    m[QStringLiteral("socPct")] = soc;
+    m[QStringLiteral("assumedFull")] = assumedFull;
+    m[QStringLiteral("atReserve")] = usableWh <= 0.0;
+    m[QStringLiteral("rangeKm")] = est.rangeKm;
+    m[QStringLiteral("flightTimeMin")] = est.flightTimeMin;
+    m[QStringLiteral("isCalibrated")] = est.isCalibrated;
+    m[QStringLiteral("dataPointCount")] = est.dataPointCount;
+    m[QStringLiteral("sourceLabel")] = est.sourceLabel;
+    m[QStringLiteral("airframe")] = airframe;
     return m;
 }

@@ -58,6 +58,47 @@ public:
                                            double missionDistanceKm = -1.0,
                                            const QString &airframeHint = QString()) const;
 
+    // ── Pre-flight estimate for the status bar ────────────────────────────
+    //
+    // How it works: the energy we may still use is worked out from the pack
+    // the operator selected (cells in series × nominal cell voltage × the Ah
+    // left above the reserve), not guessed from the voltage. Flight time is
+    // that energy divided by how fast this vehicle burns energy per minute;
+    // range is the same energy divided by how much it burns per kilometre.
+    // Both burn rates come from this vehicle's own past flights once there are
+    // enough of them, otherwise from rough per-airframe defaults (and the
+    // label says so).
+
+    /// Nominal voltage of one cell for a chemistry name used in the pack
+    /// dialog (LiPo, LiHV, LiIon, LiFe). Unknown names are treated as LiPo.
+    static double nominalCellVolts(const QString &chemistry);
+
+    /// Wh that may still be used before the reserve, for a pack of
+    /// @p series × @p parallel cells of @p cellMah at @p socPct charge.
+    /// The reserve is a share of the whole pack. -1 when the pack or the
+    /// charge is unknown.
+    static double usablePackWh(int series, int parallel, int cellMah, const QString &chemistry,
+                               int socPct, double reserve);
+
+    /// The airframe name the energy defaults use, from the vehicle kind the
+    /// profile manager resolves (MULTIROTOR, FIXED_WING, VTOL_CONVENTIONAL).
+    static QString airframeForKind(const QString &vehicleKind);
+
+    /// Rough cruise ground speed per airframe, used only to turn a default
+    /// flight time into a range when there is no flight history.
+    static double defaultCruiseKmph(const QString &airframeType);
+
+    /// Time and range from the usable energy. Uses this vehicle's measured
+    /// Wh per minute and Wh per km when calibrated, defaults otherwise.
+    PowerEstimate estimateFromEnergy(const QString &deviceUid, double payloadKg, double usableWh,
+                                     const QString &airframeType) const;
+
+    /// The status-bar estimate for the connected vehicle and selected pack:
+    /// {configured, usableWh, socPct, assumedFull, atReserve, rangeKm,
+    ///  flightTimeMin, isCalibrated, dataPointCount, sourceLabel}.
+    /// "configured" is false when no pack is set up.
+    Q_INVOKABLE QVariantMap preflightEstimate(const QString &deviceUid, double payloadKg) const;
+
     // Set calibration data for a vehicle
     void setCalibrationPoints(const QString &deviceUid, const QVector<PowerCalibrationPoint> &points);
 

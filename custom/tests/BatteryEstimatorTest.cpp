@@ -12,6 +12,7 @@
 #include "UnitTest.h"
 #include "VehicleProfileManager.h"
 #include "DatabaseManager.h"
+#include "PowerModel.h"
 
 /**
  * Battery time estimator math: thrust→current interpolation, the known
@@ -67,6 +68,57 @@ private:
 private slots:
     void init() override { UnitTest::init(); }
     void cleanup() override { UnitTest::cleanup(); }
+
+    // ── Pre-flight estimate from the selected pack ───────────────────────
+    // Energy comes from the pack itself (cells × nominal volts × Ah above the
+    // reserve), not from a voltage guess; time = energy ÷ Wh per minute and
+    // range = time × cruise speed when the vehicle has no flight history.
+    void testUsablePackEnergyFromThePack()
+    {
+        QCOMPARE(PowerModel::nominalCellVolts(QStringLiteral("LiPo")), 3.7);
+        QCOMPARE(PowerModel::nominalCellVolts(QStringLiteral("LiIon")), 3.6);
+        QCOMPARE(PowerModel::nominalCellVolts(QStringLiteral("LiHV")), 3.85);
+        QCOMPARE(PowerModel::nominalCellVolts(QStringLiteral("LiFe")), 3.2);
+
+        // 6S1P 5000 mAh LiPo, full, 20 % reserve: 4 Ah usable × 6 × 3.7 V.
+        QVERIFY(qAbs(PowerModel::usablePackWh(6, 1, 5000, QStringLiteral("LiPo"), 100, 0.20) - 88.8) < 1e-9);
+        // Half charged: 1.5 Ah usable.
+        QVERIFY(qAbs(PowerModel::usablePackWh(6, 1, 5000, QStringLiteral("LiPo"), 50, 0.20) - 33.3) < 1e-9);
+        QCOMPARE(PowerModel::usablePackWh(6, 1, 5000, QStringLiteral("LiPo"), 20, 0.20), 0.0);   // at the reserve
+        QCOMPARE(PowerModel::usablePackWh(0, 1, 5000, QStringLiteral("LiPo"), 100, 0.20), -1.0); // no pack set
+
+        // The full-pack energy no longer guesses the cell count from the
+        // voltage (a 6S at 22 V used to count as 5S).
+        VehicleProfileManager vpm;
+        vpm.setBatterySeriesCells(6);
+        vpm.setBatteryParallelCells(1);
+        vpm.setBatteryCellMah(5000);
+        vpm.setBatteryType(QStringLiteral("LiPo"));
+        QVERIFY(qAbs(vpm.batteryWh() - 111.0) < 1e-9);
+    }
+
+    void testAirframeDecidesTheDefaults()
+    {
+        QCOMPARE(PowerModel::airframeForKind(QStringLiteral("FIXED_WING")), QStringLiteral("FixedWing"));
+        QCOMPARE(PowerModel::airframeForKind(QStringLiteral("MULTIROTOR")), QStringLiteral("MultiRotor"));
+        QCOMPARE(PowerModel::airframeForKind(QStringLiteral("VTOL_CONVENTIONAL")), QStringLiteral("VTOL"));
+        QCOMPARE(PowerModel::airframeForKind(QStringLiteral("UNKNOWN")), QStringLiteral("Unknown"));
+
+        PowerModel pm;
+        // No device id: defaults only. 88.8 Wh on a plane (2 Wh/min) lasts
+        // 44.4 min and at 60 km/h covers 44.4 km ...
+        PowerEstimate plane = pm.estimateFromEnergy(QString(), 0.0, 88.8, QStringLiteral("FixedWing"));
+        QVERIFY(qAbs(plane.flightTimeMin - 44.4) < 1e-9);
+        QVERIFY(qAbs(plane.rangeKm - 44.4) < 1e-9);
+        QVERIFY(!plane.isCalibrated);
+        // ... while a multirotor (8 Wh/min, 30 km/h) gets 11.1 min and 5.55 km.
+        PowerEstimate quad = pm.estimateFromEnergy(QString(), 0.0, 88.8, QStringLiteral("MultiRotor"));
+        QVERIFY(qAbs(quad.flightTimeMin - 11.1) < 1e-9);
+        QVERIFY(qAbs(quad.rangeKm - 5.55) < 1e-9);
+        QVERIFY(plane.flightTimeMin > 3.0 * quad.flightTimeMin);
+        // No energy left: no time.
+        QCOMPARE(pm.estimateFromEnergy(QString(), 0.0, 0.0, QStringLiteral("FixedWing")).flightTimeMin, 0.0);
+    }
 
     // ── Interpolation edges ──────────────────────────────────────────────
 
@@ -261,7 +313,7 @@ private slots:
         // The successful UPDATE above proves the v16 column exists (an UPDATE
         // against a missing column fails in execOrWarn); assert the migration
         // version as well.
-        QCOMPARE(db.storedSchemaVersion(), 18);
+        QCOMPARE(db.storedSchemaVersion(), db.schemaVersion());
 
         QFile::remove(path);
         QFile::remove(path + QStringLiteral(".bak"));

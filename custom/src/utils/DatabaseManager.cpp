@@ -4526,6 +4526,13 @@ QString DatabaseManager::getFlightSessions(const QString &deviceUid, int limit)
  * UI.  The model is only marked as "calibrated" if at least minSessions
  * data points are available.
  */
+// Which recorded flights the energy model may learn from: not bench runs,
+// ended by a normal disarm (not link loss, crash or a re-arm), measured
+// energy, at least half a kilometre flown and at least a minute in the air.
+static const char kCalibrationFlightFilter[] =
+    "is_bench = 0 AND end_reason = 'disarmed' AND energy_consumed_wh > 0 "
+    "AND distance_m >= 500 AND duration_seconds >= 60";
+
 DatabaseManager::CalibratedPowerModel DatabaseManager::getCalibratedPowerModel(
     const QString &deviceUid, double payloadKg, int minSessions)
 {
@@ -4534,10 +4541,16 @@ DatabaseManager::CalibratedPowerModel DatabaseManager::getCalibratedPowerModel(
     if (!m_initialized || deviceUid.isEmpty()) return result;
 
     QSqlQuery q(m_db);
-    q.prepare("SELECT energy_consumed_wh, distance_m, payload_weight_kg, duration_seconds "
+    // Learn only from real, complete flights. A motor or servo bench run is
+    // flagged is_bench; a flight cut off by a link loss or a crash has an
+    // incomplete energy total; and a flight that barely moved turns a little
+    // energy over a few metres into an absurd Wh/km. Any one of those would
+    // drag the estimate for this vehicle off for the next fifty flights.
+    q.prepare(QStringLiteral(
+              "SELECT energy_consumed_wh, distance_m, payload_weight_kg, duration_seconds "
               "FROM flight_sessions "
-              "WHERE device_uid = ? AND ended_at IS NOT NULL AND distance_m > 0 "
-              "ORDER BY id DESC LIMIT ?");
+              "WHERE device_uid = ? AND ended_at IS NOT NULL AND %1 "
+              "ORDER BY id DESC LIMIT ?").arg(QLatin1String(kCalibrationFlightFilter)));
     q.addBindValue(deviceUid);
     q.addBindValue(qMax(minSessions, 50));
 
@@ -4617,11 +4630,12 @@ QVector<QPair<double, double>> DatabaseManager::getPowerCalibrationHistory(
     QVector<QPair<double, double>> out;
     if (!m_initialized || deviceUid.isEmpty()) return out;
     QSqlQuery q(m_db);
-    q.prepare("SELECT payload_weight_kg, energy_consumed_wh, distance_m "
+    // Same flights as getCalibratedPowerModel() learns from (see the filter).
+    q.prepare(QStringLiteral(
+              "SELECT payload_weight_kg, energy_consumed_wh, distance_m "
               "FROM flight_sessions "
-              "WHERE device_uid = ? AND ended_at IS NOT NULL "
-              "AND energy_consumed_wh > 0 AND distance_m > 0 "
-              "ORDER BY id DESC LIMIT ?");
+              "WHERE device_uid = ? AND ended_at IS NOT NULL AND %1 "
+              "ORDER BY id DESC LIMIT ?").arg(QLatin1String(kCalibrationFlightFilter)));
     q.addBindValue(deviceUid);
     q.addBindValue(limit);
     if (!execOrWarn(q, "getPowerCalibrationHistory")) return out;

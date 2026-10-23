@@ -62,6 +62,30 @@ Rectangle {
     // At or below the reserve while flying: land now.
     readonly property bool _atReserve: _timeShown && _timeMin <= 0
 
+    // Before arming there is no current draw to time against, so the chip
+    // shows the pre-flight estimate instead: the selected pack's usable
+    // energy (above the reserve) divided by this vehicle's energy use per
+    // minute, learned from its past flights or a per-airframe default.
+    // It is refreshed every few seconds while connected and disarmed.
+    property var _preEst: null
+    readonly property bool _preEstShown: _connected && !_armed && !!_preEst && _preEst.configured
+                                         && !_preEst.atReserve
+    function _refreshPreEst() {
+        if (typeof PowerModel === "undefined" || !PowerModel || !_profile || !_connected || _armed) {
+            _preEst = null
+            return
+        }
+        _preEst = PowerModel.preflightEstimate(_profile.currentDeviceUid, _profile.currentPayloadWeightKg)
+    }
+    Timer {
+        id: preEstTimer
+        interval: 3000
+        repeat: true
+        running: root._connected && !root._armed
+        triggeredOnStart: true
+        onTriggered: root._refreshPreEst()
+    }
+
     readonly property bool _gateOk: _connected && _armed && _iSmooth >= kMinGateA
     readonly property bool _socKnown: _connected && _fresh && _soc >= 0
     readonly property bool _canComputeTime:
@@ -113,6 +137,7 @@ Rectangle {
         if (!_connected)            return "— · —"   // no vehicle
         if (!_fresh)                return "STALE"   // stale / no BATTERY_STATUS
         if (_soc < 0)               return "? · —"   // FC not configured
+        if (_preEstShown)           return _soc + "% · est ~" + Math.round(_preEst.flightTimeMin) + " min"
         if (!_gateOk || _timeMin < 0) return _soc + "% · —"
         if (_timeMin <= 0)          return _soc + "% · RESERVE \u2014 LAND"
         return _soc + "% · ~" + Math.round(_timeMin) + " min"
@@ -123,6 +148,7 @@ Rectangle {
         if (!_connected)            return "No vehicle connected"
         if (!_fresh)                return "No battery telemetry (stale)"
         if (_soc < 0)               return "Battery SOC not reported by flight controller"
+        if (_preEstShown)           return "Pre-flight estimate for the selected pack (" + _preEst.sourceLabel + ") \u2014 the live estimate starts once armed"
         if (!_gateOk)               return "Arm and draw ≥ " + kMinGateA.toFixed(1) + " A to estimate flight time"
         if (!_canComputeTime)       return "Configure battery pack (N_S · N_P · mAh) to estimate flight time"
         if (_atReserve)             return "Battery is at the reserve (" + Math.round((_profile ? _profile.batteryReserve : 0.2) * 100) + " % of the pack): land now"
@@ -322,6 +348,17 @@ Rectangle {
             DetailRow { label: qsTr("Est. flight time");
                         value: root._timeMin >= 0 ? "~" + Math.round(root._timeMin) + " min" : "—"
                         valueColor: root._timeShown ? Colors.success : Colors.textSecondary }
+            DetailRow { label: qsTr("Pre-flight est.");
+                        value: root._preEstShown
+                               ? "~" + Math.round(root._preEst.flightTimeMin) + " min / " + root._preEst.rangeKm.toFixed(1) + " km"
+                               : "—"
+                        valueColor: root._preEstShown && root._preEst.isCalibrated ? Colors.success : Colors.textSecondary }
+            DetailRow { label: qsTr("Based on");
+                        visible: root._preEstShown
+                        value: root._preEstShown
+                               ? root._preEst.sourceLabel + (root._preEst.assumedFull ? ", assuming a full pack" : "")
+                               : ""
+                        valueColor: Colors.textSecondary }
         }
     }
 }

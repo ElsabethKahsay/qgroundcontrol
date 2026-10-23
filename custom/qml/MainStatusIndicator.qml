@@ -216,37 +216,26 @@ if (typeof TelemetryProvider !== 'undefined' && TelemetryProvider) {
                 ? VehicleProfileManager.currentDeviceUid : ""
             var payloadKg = typeof VehicleProfileManager !== 'undefined' && VehicleProfileManager
                 ? VehicleProfileManager.currentPayloadWeightKg : 0.0
-            // Estimate capacity from battery voltage: rough Wh
-            var voltage = _activeVehicle ? _activeVehicle.battery.voltage.value : Config.batteryFallbackVoltage
-            var cellCount = Math.max(1, Math.round(voltage / Config.batteryCellMaxVoltage))
-            var capacityWh = cellCount * Config.batteryDefaultPackAh * Config.batteryNominalCellVoltage  // ~5000 mAh typical
-
-            var est = PowerModel.estimateToMap(deviceUid, payloadKg, capacityWh, -1)
-            if (!est) {
-                _estRangeText = ""
+            // The estimate is built in C++ from the pack selected in the
+            // checklist (cells, capacity, chemistry), its current charge and
+            // reserve, and this vehicle's own flight history when there is
+            // enough of it. See PowerModel::preflightEstimate.
+            var est = PowerModel.preflightEstimate(deviceUid, payloadKg)
+            if (!est || !est["configured"]) {
+                _estLabelColor = Colors.textDisabled
+                _estRangeText = "Est. \u2014 select the battery pack"
                 return
             }
-            var range = est["rangeKm"]
-            var flightTime = est["flightTimeMin"]
+            if (est["atReserve"]) {
+                _estLabelColor = Colors.error
+                _estRangeText = "Est. 0 min \u2014 pack at the reserve"
+                return
+            }
             var calibrated = est["isCalibrated"]
             var dataPts = est["dataPointCount"]
-
-            if (calibrated) {
-                _estLabelColor = Colors.success  // green
-            } else if (dataPts > 0) {
-                _estLabelColor = Colors.warning  // amber
-            } else {
-                _estLabelColor = Colors.textDisabled  // gray
-            }
-
-            _estRangeText = "Est. " + range.toFixed(1) + " km / " + flightTime.toFixed(0) + " min"
-            if (calibrated) {
-                _estRangeText += " (" + dataPts + " flights)"
-            } else if (dataPts > 0) {
-                _estRangeText += " (need " + (5 - dataPts) + " more flights)"
-            } else {
-                _estRangeText += " (default model)"
-            }
+            _estLabelColor = calibrated ? Colors.success : (dataPts > 0 ? Colors.warning : Colors.textDisabled)
+            _estRangeText = "Est. " + est["rangeKm"].toFixed(1) + " km / " + est["flightTimeMin"].toFixed(0) + " min"
+                    + " (" + est["sourceLabel"] + (est["assumedFull"] ? ", assuming a full pack" : "") + ")"
         }
     }
 

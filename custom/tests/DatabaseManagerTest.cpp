@@ -8,6 +8,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QSqlQuery>
+#include <QSqlError>
 #include <QSqlRecord>
 #include <QSqlDatabase>
 
@@ -53,6 +54,7 @@ private slots:
     void testRecorderEnergyFromMeasurementsOnly();
     void testRecorderWritesFlightHistoryAndHandovers();
     void testBenchTestResultsLinkToFlightAndConnection();
+    void testEnergyModelLearnsOnlyFromRealFlights();
     void testIncrementBatteryCycleGuard();
     void testFlightSessionRoundTrip();
     void testCheckResultAuditTrail();
@@ -562,6 +564,41 @@ void DatabaseManagerTest::testBenchTestResultsLinkToFlightAndConnection()
     r = row(QStringLiteral("SELECT flight_id, connection_session_id FROM motor_test_results"));
     QCOMPARE(r.value(QStringLiteral("flight_id")).toInt(), hist);
     QCOMPARE(r.value(QStringLiteral("connection_session_id")).toInt(), rec.connectionId());
+}
+
+// The energy model learns only from real, complete flights: not bench runs,
+// not flights cut off by link loss or a crash, and not flights that barely
+// moved (a few metres would give an absurd Wh/km).
+void DatabaseManagerTest::testEnergyModelLearnsOnlyFromRealFlights()
+{
+    RecorderFixture f;
+    QVERIFY(f.init());
+    DatabaseManager &db = DatabaseManager::instance();
+    auto add = [](int bench, const char *endReason, double wh, double distM, double durSec) {
+        QSqlQuery q(QSqlDatabase::database());
+        q.prepare(QStringLiteral("INSERT INTO flight_sessions (device_uid, started_at, ended_at, end_reason, "
+                                 "is_bench, energy_consumed_wh, distance_m, duration_seconds) "
+                                 "VALUES ('UID-R', '2026-10-23T10:00:00Z', '2026-10-23T10:20:00Z', ?, ?, ?, ?, ?)"));
+        q.addBindValue(QString::fromLatin1(endReason));
+        q.addBindValue(bench);
+        q.addBindValue(wh);
+        q.addBindValue(distM);
+        q.addBindValue(durSec);
+        QVERIFY2(q.exec(), qPrintable(q.lastError().text()));
+    };
+    add(0, "disarmed", 40.0, 10000.0, 1200.0);    // real flight: 4 Wh/km, 2 Wh/min
+    add(1, "disarmed", 5.0, 600.0, 120.0);        // bench run
+    add(0, "link_lost", 3.0, 2000.0, 300.0);      // cut off: energy incomplete
+    add(0, "crash_recovered", 2.0, 1000.0, 200.0);
+    add(0, "disarmed", 1.0, 10.0, 90.0);          // barely moved: 100 Wh/km
+    add(0, "disarmed", 1.0, 800.0, 20.0);         // too short
+
+    const auto m = db.getCalibratedPowerModel(QStringLiteral("UID-R"), 0.0, 1);
+    QCOMPARE(m.dataPointCount, 1);
+    QVERIFY(m.isCalibrated);
+    QVERIFY(qAbs(m.whPerKm - 4.0) < 1e-9);
+    QVERIFY(qAbs(m.hoverWhPerMin - 2.0) < 1e-9);
+    QCOMPARE(db.getPowerCalibrationHistory(QStringLiteral("UID-R"), 50).size(), 1);
 }
 
 void DatabaseManagerTest::testDoubleIncrementGuard()

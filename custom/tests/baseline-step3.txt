@@ -1,47 +1,78 @@
-Phase 1 Step 3 run — 2026-10-23T06:32:29Z
-Same method as baseline-step2.txt, plus --allow-multiple. All 22 classes pass and exit 0 (FlightSessionLifecycleTest included).
+Full run of ALL registered test classes — 2026-10-23T12:51:57Z
+One class per process, QT_QPA_PLATFORM=offscreen, --allow-multiple. MainStatusIndicatorSmokeTest left out (known teardown crash; that indicator never loads).
+Known, deliberate skips: LinkStressTest (2) and MavLinkFuzzTest (5), parser limitation documented in the tests.
+ChecklistPagesSmokeTest failed in this run only because another agent's PreFlightChecklist.qml edit was half-saved in the working tree (syntax error at line 1086); it passed earlier the same day on committed code.
 
 == ArmGateResilienceTest (exit 0)
-Totals: 14 passed, 0 failed, 0 skipped, 0 blacklisted, 70731ms
+Totals: 14 passed, 0 failed, 0 skipped, 0 blacklisted, 70749ms
 == ArmingFlowIntegrationTest (exit 0)
-Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 667ms
+Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 630ms
 == ArmingGateExtendedTest (exit 0)
-Totals: 9 passed, 0 failed, 0 skipped, 0 blacklisted, 31ms
+Totals: 9 passed, 0 failed, 0 skipped, 0 blacklisted, 45ms
 == ArmingGateTest (exit 0)
-Totals: 15 passed, 0 failed, 0 skipped, 0 blacklisted, 32ms
+Totals: 16 passed, 0 failed, 0 skipped, 0 blacklisted, 64ms
 == ArmSendTest (exit 0)
-Totals: 22 passed, 0 failed, 0 skipped, 0 blacklisted, 62525ms
-== ChecklistPagesSmokeTest (exit 0)
-Totals: 4 passed, 0 failed, 0 skipped, 0 blacklisted, 2180ms
+Totals: 22 passed, 0 failed, 0 skipped, 0 blacklisted, 67059ms
+== BatteryEstimatorTest (exit 0)
+Totals: 14 passed, 0 failed, 0 skipped, 0 blacklisted, 143ms
+== ChecklistEngineTest (exit 0)
+Totals: 12 passed, 0 failed, 0 skipped, 0 blacklisted, 52ms
+== ChecklistItemModelTest (exit 0)
+Totals: 10 passed, 0 failed, 0 skipped, 0 blacklisted, 70ms
+== ChecklistPagesSmokeTest (exit 139)
+FAIL!  : ChecklistPagesSmokeTest::testFlyChecklistShowsBatteryPack() '_root' returned FALSE. (file:///home/lisabeth/Dev/qgroundcontrol/custom/qml/pages/PreFlightChecklist.qml:1086 Expected token `}'
 == CheckSmokeTest (exit 0)
-Totals: 13 passed, 0 failed, 0 skipped, 0 blacklisted, 31ms
+Totals: 13 passed, 0 failed, 0 skipped, 0 blacklisted, 89ms
 == ControlSurfaceTestControllerTest (exit 0)
-Totals: 16 passed, 0 failed, 0 skipped, 0 blacklisted, 51888ms
+Totals: 16 passed, 0 failed, 0 skipped, 0 blacklisted, 53063ms
 == DatabaseManagerTest (exit 0)
-Totals: 34 passed, 0 failed, 0 skipped, 0 blacklisted, 1743ms
+Totals: 36 passed, 0 failed, 0 skipped, 0 blacklisted, 2575ms
 == DatabaseMigrationTest (exit 0)
-Totals: 14 passed, 0 failed, 0 skipped, 0 blacklisted, 283ms
+Totals: 15 passed, 0 failed, 0 skipped, 0 blacklisted, 343ms
+== FlightHistoryModelTest (exit 0)
+Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 669ms
 == FlightSessionLifecycleTest (exit 0)
-Totals: 5 passed, 0 failed, 0 skipped, 0 blacklisted, 5169ms
+Totals: 5 passed, 0 failed, 0 skipped, 0 blacklisted, 5216ms
 == FlightSessionTest (exit 0)
-Totals: 10 passed, 0 failed, 0 skipped, 0 blacklisted, 100ms
+Totals: 10 passed, 0 failed, 0 skipped, 0 blacklisted, 151ms
 == FlyQuickActionsSmokeTest (exit 0)
-Totals: 8 passed, 0 failed, 0 skipped, 0 blacklisted, 454ms
+Totals: 8 passed, 0 failed, 0 skipped, 0 blacklisted, 472ms
 == HardwareTestControllerTest (exit 0)
-Totals: 13 passed, 0 failed, 0 skipped, 0 blacklisted, 17905ms
+Totals: 13 passed, 0 failed, 0 skipped, 0 blacklisted, 18923ms
+== LinkStressTest (exit 0)
+SKIP   : LinkStressTest::testLatePacketDoesNotClobberNewerState() synthesized heartbeat frames fail mavlink_parse_char on both raw-injection and real-link delivery paths; MEMINFO on the identical link
+SKIP   : LinkStressTest::testStormOfMixedTrafficKeepsStateCoherent() synthesized heartbeat frames fail mavlink_parse_char on both raw-injection and real-link delivery paths; MEMINFO on the identical l
+Totals: 8 passed, 0 failed, 2 skipped, 0 blacklisted, 38881ms
+== MavLinkFuzzTest (exit 0)
+SKIP   : MavLinkFuzzTest::testGarbageDoesNotPoisonFollowingGoodFrame() parser swallows the frame behind a bogus declared length; no safe in-repo resync (docs/mavlink-parser-wedge.md)
+SKIP   : MavLinkFuzzTest::testPayloadContainingMagicBytes() parser swallows the frame behind a bogus declared length; no safe in-repo resync (docs/mavlink-parser-wedge.md)
+SKIP   : MavLinkFuzzTest::testDeclaredLengthLongerThanBuffer() parser swallows the frame behind a bogus declared length; no safe in-repo resync (docs/mavlink-parser-wedge.md)
+SKIP   : MavLinkFuzzTest::testRandomGarbageDeterministic() parser swallows the frame behind a bogus declared length; no safe in-repo resync (docs/mavlink-parser-wedge.md)
+SKIP   : MavLinkFuzzTest::testBackToBackGarbageStorm() parser swallows the frame behind a bogus declared length; no safe in-repo resync (docs/mavlink-parser-wedge.md)
+Totals: 8 passed, 0 failed, 5 skipped, 0 blacklisted, 23850ms
 == MavLinkInterceptTest (exit 0)
-Totals: 19 passed, 0 failed, 0 skipped, 0 blacklisted, 44ms
+Totals: 19 passed, 0 failed, 0 skipped, 0 blacklisted, 58ms
 == MotorCheckPanelSmokeTest (exit 0)
-Totals: 5 passed, 0 failed, 0 skipped, 0 blacklisted, 2971ms
+Totals: 5 passed, 0 failed, 0 skipped, 0 blacklisted, 3423ms
+== MotorSpinCheckTest (exit 0)
+Totals: 7 passed, 0 failed, 0 skipped, 0 blacklisted, 650ms
 == PreflightManagerTest (exit 0)
-Totals: 20 passed, 0 failed, 0 skipped, 0 blacklisted, 72ms
+Totals: 24 passed, 0 failed, 0 skipped, 0 blacklisted, 255ms
 == QmlShadowTest (exit 0)
-Totals: 7 passed, 0 failed, 0 skipped, 0 blacklisted, 84ms
+Totals: 7 passed, 0 failed, 0 skipped, 0 blacklisted, 120ms
+== RcCalibrationCheckTest (exit 0)
+Totals: 12 passed, 0 failed, 0 skipped, 0 blacklisted, 59ms
 == ReturnToLaunchTest (exit 0)
-Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 20099ms
+Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 20662ms
 == StateMachineTest (exit 0)
 Totals: 6 passed, 0 failed, 0 skipped, 0 blacklisted, 45ms
 == TelemetryBridgeTest (exit 0)
-Totals: 13 passed, 0 failed, 0 skipped, 0 blacklisted, 34ms
+Totals: 14 passed, 0 failed, 0 skipped, 0 blacklisted, 57ms
+== UavParameterManagerTest (exit 0)
+Totals: 10 passed, 0 failed, 0 skipped, 0 blacklisted, 39ms
+== VehicleProfileManagerTest (exit 0)
+Totals: 13 passed, 0 failed, 0 skipped, 0 blacklisted, 41ms
 == WeatherProviderTest (exit 0)
-Totals: 12 passed, 0 failed, 0 skipped, 0 blacklisted, 2524ms
+Totals: 12 passed, 0 failed, 0 skipped, 0 blacklisted, 3221ms
+== ZoneComplianceTest (exit 0)
+Totals: 9 passed, 0 failed, 0 skipped, 0 blacklisted, 257ms

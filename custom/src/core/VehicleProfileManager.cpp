@@ -23,6 +23,7 @@
 #include "utils/Config.h"
 #include "detection/VehicleRegistry.h"
 #include "DatabaseManager.h"
+#include "PowerModel.h"
 #include "TelemetryBridge.h"
 #include "MultiVehicleManager.h"
 #include "MAVLink/QGCMAVLink.h"
@@ -796,19 +797,15 @@ void VehicleProfileManager::_updateLiveEstimate()
     }
 }
 
+// Full energy of the configured pack: cells in series × nominal cell voltage
+// for its chemistry × Ah. It used to guess the cell count from the voltage
+// (round(V / 4.2)), which only works on a fully charged pack: a 6S pack at a
+// normal 22 V came out as 5S.
 double VehicleProfileManager::batteryWh() const
 {
-    if (!m_telemetry) return 0.0;
-
-    double capacityMah = -1.0;
-    if (m_telemetry->hasParameter(QStringLiteral("BATT_CAPACITY")))
-        capacityMah = static_cast<double>(m_telemetry->parameterValue(QStringLiteral("BATT_CAPACITY")));
-    if (capacityMah <= 0) return 0.0;
-
-    constexpr double kNominalCellVoltage = 3.7;
-    double voltage = m_telemetry->batteryVoltage();
-    double cellCount = voltage > 0 ? qRound(voltage / 4.2) : 6;  // assume 6S fallback
-    return capacityMah * cellCount * kNominalCellVoltage / 1000.0;
+    if (m_batterySeriesCells <= 0 || capacityAh() <= 0.0)
+        return 0.0;
+    return capacityAh() * m_batterySeriesCells * PowerModel::nominalCellVolts(m_batteryType);
 }
 
 // ── Motor thrust/current datasheet ──────────────────────────────────────────
