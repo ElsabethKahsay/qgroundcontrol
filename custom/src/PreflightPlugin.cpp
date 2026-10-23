@@ -286,11 +286,18 @@ void PreflightPlugin::init()
         QVariantMap pack = DatabaseManager::instance().batteryPack(serial);
         if (pack.isEmpty())
             pack[QStringLiteral("serial")] = serial;   // database off: still selected
+        if (_telemetryBridge && _telemetryBridge->hasParameter(QStringLiteral("BATT_CAPACITY")))
+            pack[QStringLiteral("fcCapacityMah")] =
+                qRound(_telemetryBridge->parameterValue(QStringLiteral("BATT_CAPACITY"), 0.0f));
         return pack;
     }, _preflightManager);
     _preflightManager->addCheck(packCheck);
     connect(_vehicleProfileManager, &VehicleProfileManager::currentBatteryChanged,
             packCheck, [packCheck]() { packCheck->evaluate(); });
+    // Action checks are not re-run on the evaluation timer: re-check once the
+    // vehicle's parameters (BATT_CAPACITY) have loaded.
+    connect(_telemetryBridge, &TelemetryBridge::parametersReadyChanged,
+            packCheck, [packCheck](bool) { packCheck->evaluate(); });
 
     // --- Vehicle registry signals ---
     // knownVehicleConnected: a previously-seen vehicle reconnected; load its saved config.

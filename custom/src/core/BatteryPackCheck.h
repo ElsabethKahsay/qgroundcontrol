@@ -26,8 +26,13 @@ inline bool batteryFlightCountsAsCycle(double usedMah, int ratedMah)
 
 class BatteryPackCheck : public AbstractCheck {
 public:
+    /// BATT_CAPACITY may differ from the pack's rated mAh by this share before
+    /// the item warns.
+    static constexpr double kCapacityTolerance = 0.05;
+
     /// @p currentPack returns the selected pack as {serial, label, ratedMah,
-    /// cycles}, or an empty map when none is selected.
+    /// cycles, fcCapacityMah (the FC's BATT_CAPACITY, optional)}, or an empty
+    /// map when none is selected.
     using PackProvider = std::function<QVariantMap()>;
 
     explicit BatteryPackCheck(PackProvider currentPack, QObject *parent = nullptr)
@@ -66,6 +71,16 @@ public:
         const int cycles = pack.value(QStringLiteral("cycles")).toInt();
         const QString name = label.isEmpty() ? serial : QStringLiteral("%1 (%2)").arg(label, serial);
         setCurrentValue(name);
+        // The flight controller counts the pack's charge against BATT_CAPACITY;
+        // if that is not the fitted pack's size, its battery % and failsafes
+        // are wrong (a warning: it does not block arming).
+        const int fcMah = pack.value(QStringLiteral("fcCapacityMah"), -1).toInt();
+        if (rated > 0 && fcMah > 0 && qAbs(fcMah - rated) > rated * kCapacityTolerance) {
+            setStatus(CheckStatus::Warning,
+                      QStringLiteral("%1 \u2014 flight controller BATT_CAPACITY is %2 mAh, pack is %3 mAh: "
+                                     "set BATT_CAPACITY = %3").arg(name).arg(fcMah).arg(rated));
+            return;
+        }
         setStatus(CheckStatus::Passed,
                   QStringLiteral("%1 — %2 cycles, %3 mAh rated")
                       .arg(name).arg(cycles).arg(rated > 0 ? QString::number(rated) : QStringLiteral("?")));

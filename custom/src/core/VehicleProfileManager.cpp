@@ -26,6 +26,8 @@
 #include "TelemetryBridge.h"
 #include "MultiVehicleManager.h"
 #include "MAVLink/QGCMAVLink.h"
+#include "QmlObjectListModel.h"
+#include "Vehicle/FactGroups/VehicleBatteryFactGroup.h"
 
 VehicleProfileManager *VehicleProfileManager::s_instance = nullptr;
 
@@ -751,7 +753,20 @@ void VehicleProfileManager::_updateLiveEstimate()
     const double kMinGateA = 3.0;
     const double kAlpha = 0.095;
 
-    int    soc = m_telemetry->batterySocPct();
+    // The selected pack's charge from the FC's mAh counter (battery 1); the
+    // FC's own % (relative to BATT_CAPACITY) only when that counter is missing.
+    double mahUsed = -1.0;
+    if (Vehicle *v = m_telemetry->vehicle()) {
+        QmlObjectListModel *batteries = v->batteries();
+        if (batteries && batteries->count() > 0) {
+            if (auto *b = batteries->value<VehicleBatteryFactGroup *>(0)) {
+                const QVariant mah = b->mahConsumed()->rawValue();
+                if (mah.isValid())
+                    mahUsed = mah.toDouble();
+            }
+        }
+    }
+    int    soc = packSocPct(m_telemetry->batterySocPct(), mahUsed, capacityAh());
     double cur = m_telemetry->batteryCurrentAmps();
     bool   armed = m_telemetry->armed();
     bool   connected = m_telemetry->isConnected();

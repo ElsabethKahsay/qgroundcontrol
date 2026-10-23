@@ -36,6 +36,7 @@ private slots:
     void testLiveSOCDefault();
     void testBatteryReserveBounds();
     void testUsableAhStopsAtTheReserve();
+    void testPackSocFromSelectedPackNotFcCapacity();
 };
 
 // Default battery config: 6S 1P 5000mAh LiPo 20% reserve
@@ -184,6 +185,21 @@ void VehicleProfileManagerTest::testUsableAhStopsAtTheReserve()
     vpm.setBatteryReserve(0.25);
     QVERIFY(qAbs(vpm.usableAhAboveReserveFor(45) - 1.0) < 1e-9);   // 5 Ah × (0.45 − 0.25)
     QCOMPARE(vpm.usableAhAboveReserveFor(25), 0.0);
+}
+
+// The charge comes from the SELECTED pack (rated mAh − FC mAh used), not the
+// FC's own % (relative to BATT_CAPACITY). On the plane (22 Oct) the FC said 81 %
+// after 621 mAh, i.e. BATT_CAPACITY ≈ 3300 mAh; with a 5000 mAh pack the real
+// charge was ~88 %.
+void VehicleProfileManagerTest::testPackSocFromSelectedPackNotFcCapacity()
+{
+    auto soc = &VehicleProfileManager::packSocPct;
+    QCOMPARE(soc(81, 621.0, 5.0), 88);        // pack-based, not the FC's 81
+    QCOMPARE(soc(50, 0.0, 5.0), 100);         // fresh counter
+    QCOMPARE(soc(10, 6000.0, 5.0), 0);        // used more than rated: 0, not negative
+    QCOMPARE(soc(73, -1.0, 5.0), 73);         // no mAh counter: FC % as fallback
+    QCOMPARE(soc(73, 500.0, 0.0), 73);        // no pack configured: FC % as fallback
+    QCOMPARE(soc(-1, -1.0, 5.0), -1);         // nothing known
 }
 
 UT_REGISTER_TEST(VehicleProfileManagerTest)

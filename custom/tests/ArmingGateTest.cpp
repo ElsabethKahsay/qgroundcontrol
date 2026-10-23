@@ -32,6 +32,7 @@ private slots:
     void testTokensNeverRepeatAfterReset();
     void testNoBatteryPackIsHardBlock();
     void testBatteryPackCheckFollowsSelection();
+    void testBatteryPackWarnsOnFcCapacityMismatch();
 
 private:
     static ArmingGate::ArmRequest freshFailing(const QStringList &failing);
@@ -257,6 +258,30 @@ void ArmingGateTest::testBatteryPackCheckFollowsSelection()
     QVERIFY(!batteryFlightCountsAsCycle(1199.0, 6000));
     QVERIFY(batteryFlightCountsAsCycle(1200.0, 6000));
     QVERIFY(!batteryFlightCountsAsCycle(5000.0, 0));
+}
+
+// The FC's BATT_CAPACITY must match the fitted pack, or its % and battery
+// failsafes are wrong: a Warning (not a block), with the value to set.
+void ArmingGateTest::testBatteryPackWarnsOnFcCapacityMismatch()
+{
+    QVariantMap pack{{QStringLiteral("serial"), QStringLiteral("PK-01")},
+                     {QStringLiteral("ratedMah"), 5000}, {QStringLiteral("cycles"), 0},
+                     {QStringLiteral("fcCapacityMah"), 3300}};
+    BatteryPackCheck check([&pack]() { return pack; });
+    QCOMPARE(check.status(), CheckStatus::Warning);
+    QVERIFY2(check.message().contains(QStringLiteral("BATT_CAPACITY = 5000")), qPrintable(check.message()));
+
+    pack[QStringLiteral("fcCapacityMah")] = 5100;      // within 5 %
+    check.evaluate();
+    QCOMPARE(check.status(), CheckStatus::Passed);
+    pack.remove(QStringLiteral("fcCapacityMah"));       // parameter not loaded yet
+    check.evaluate();
+    QCOMPARE(check.status(), CheckStatus::Passed);
+
+    // A Warning still counts as a selected pack for the arming gate.
+    pack[QStringLiteral("fcCapacityMah")] = 3300;
+    check.evaluate();
+    QVERIFY(check.status() == CheckStatus::Warning);
 }
 
 UT_REGISTER_TEST(ArmingGateTest)

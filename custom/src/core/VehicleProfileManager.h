@@ -67,7 +67,9 @@ class VehicleProfileManager : public QObject {
 
     /// Live battery delivery into the FlyView chip — recomputed every 2 s by an
     /// internal timer from TelemetryBridge telemetry while a vehicle is connected.
-    /// liveSOC is battery_remaining (0-100, -1=FC not configured).
+    /// liveSOC is the selected pack's state of charge (packSocPct: pack rated mAh
+    /// minus the FC's mAh used; the FC's battery_remaining only as fallback),
+    /// 0-100, -1 when unknown.
     /// liveTimeMins = usable Ah above the reserve ÷ smoothed current × 60; 0 when
     /// the pack is at or below the reserve (land now); -1 when the gate
     /// (armed && I_smooth >= 3 A) is not met or data is missing.
@@ -145,6 +147,18 @@ public:
             return -1.0;
         return qMax(0.0, capacityAh * (socPct / 100.0 - qBound(0.0, reserve, 1.0)));
     }
+    /// State of charge (%) of the SELECTED pack: 100 × (1 − mAh used ÷ pack
+    /// rated mAh), from the flight controller's mAh-consumed counter. The FC's
+    /// own battery % is relative to its BATT_CAPACITY parameter, which may not
+    /// match the pack fitted (on the plane, 22 Oct: ~3400 vs a 5000 mAh pack),
+    /// so it is only the fallback. -1 when neither is known.
+    static int packSocPct(int fcSocPct, double mahConsumed, double packCapacityAh)
+    {
+        if (packCapacityAh > 0.0 && mahConsumed >= 0.0)
+            return qBound(0, qRound(100.0 * (1.0 - mahConsumed / (packCapacityAh * 1000.0))), 100);
+        return fcSocPct >= 0 ? qBound(0, fcSocPct, 100) : -1;
+    }
+
     /// The same with this profile's pack and reserve (for QML).
     Q_INVOKABLE double usableAhAboveReserveFor(int socPct) const
     {
