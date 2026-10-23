@@ -1156,6 +1156,12 @@ Do:
 5. Tests in an existing test file (e.g. `tests/CheckSmokeTest.cpp` or `PreflightManagerTest.cpp`): Plane name read on a plane, Copter name on a copter, each policy × setting combination, no policy → Warning.
 6. Decision for the operator (do not choose): which policy each airframe uses. Write the two options with their trade-off into the go/no-go template (below).
 
+Status 23 Oct: done in commit 6efe022a7. The check reads `FS_GCS_ENABL` on Plane and `FS_GCS_ENABLE` on Copter, stores the chosen policy per vehicle in `check_config` (key `policy`), warns when no policy is stored, and never writes the vehicle parameter. The policy chooser is on both checklist pages. Tests: PreflightManagerTest 24/24 (Plane name, Copter name, each policy × setting, no policy → Warning, storage; five mutants caught), ChecklistPagesSmokeTest 4/4, QmlShadowTest 7/7, CheckSmokeTest 13/13, FlyQuickActionsSmokeTest 8/8. The full suite is re-run at the end (deliverable 4).
+
+GCS-failsafe policy options for the go/no-go sheet (operator decision, do not choose for the operator):
+- **RC-primary** — `FS_GCS_ENABL` / `FS_GCS_ENABLE` = 0. The RC link remains in control; a GCS or USB telemetry dropout must not trigger RTL. Trade-off: if the RC link also fails, or the aircraft is beyond RC range, there is no GCS-triggered failsafe; rely on the RC failsafe (ELRS "No pulses").
+- **Telemetry-primary** — `FS_GCS_ENABL` / `FS_GCS_ENABLE` ≥ 1, with the appropriate timeout/action (Plane: `FS_LONG_TIMEOUT`, `FS_LONG_ACTN`; Copter: `FS_GCS_TIMEOUT` and the action in `FS_GCS_ENABLE`). Loss of the GCS link triggers the configured failsafe. Trade-off: any telemetry or USB dropout (as on 22 Oct) sends the aircraft home; the link and cable must be reliable.
+
 ### Recommendation 6 — fix the plane (operator does the physical part)
 Findings: roll reads about −46° at rest (pitch follows a tilt); "MS4525: no sensor found / Airspeed 1 init failed"; two USB link drops caused GCS-failsafe RTLs; after RC loss CH3 (throttle) read 1922.
 Do (software, so the GCS catches these on any airframe):
