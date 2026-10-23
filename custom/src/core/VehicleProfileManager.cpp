@@ -739,9 +739,11 @@ void VehicleProfileManager::_persistBatteryConfig()
 // ── Live battery estimate (Feeds the FlyView chip) ────────────────────────
 // Runs every 2 s from TelemetryBridge telemetry while a vehicle is connected:
 //   I_smooth  = 0.095·I + 0.905·I_smooth    (EMA, α=0.095 @ 0.5 Hz ≈ 10 s)
-//   remaining_Ah = capacity_Ah · (SOC/100)
-//   usable_Ah    = remaining_Ah · (1 - reserve)   (20% reserve)
-//   time_min     = usable_Ah / I_smooth · 60, gated on armed && I_smooth >= 3 A
+//   usable_Ah    = capacity_Ah · (SOC/100 − reserve), never below 0
+//                  (reserve = share of the whole pack, default 20 %)
+//   time_min     = usable_Ah / I_smooth · 60, gated on armed && I_smooth >= 3 A;
+//                  0 means "at the reserve: land now"
+//   (EMA α = 0.095 per 2 s sample: time constant ≈ 20 s)
 void VehicleProfileManager::_updateLiveEstimate()
 {
     if (!m_telemetry) return;
@@ -768,8 +770,8 @@ void VehicleProfileManager::_updateLiveEstimate()
     double timeMin = -1.0;
     if (connected && soc >= 0 && capacityAh() > 0.0
             && armed && m_liveSmoothAmps >= kMinGateA) {
-        double usableAh = capacityAh() * (soc / 100.0) * (1.0 - m_batteryReserve);
-        timeMin = (usableAh / m_liveSmoothAmps) * 60.0;
+        const double usableAh = usableAhAboveReserve(capacityAh(), soc, m_batteryReserve);
+        timeMin = (usableAh / m_liveSmoothAmps) * 60.0;   // 0 at/below the reserve
     }
 
     if (soc != m_liveSOC || !qFuzzyCompare(timeMin + 1, m_liveTimeMins + 1)) {

@@ -76,6 +76,10 @@ Aircraft findings from the 22 Oct bench session (fixed wing, CoreWingF405WingV2,
 Code still open:
 • Item 17 W7 (SITL weather location); item 12 (SITL campaign) and item 14 (real radio and go/no-go). Item 13 (Jetson build and its start script) moved to after Phase 1 on 23 Oct.
 
+Flight-time estimate review (23 Oct)
+• A — done (live estimate, Fly-view battery chip): the reserve was taken from what is left (remaining × (1 − reserve)), so the time never reached 0 at the reserve and was overstated most near the end (5 Ah pack, 20 % reserve, 20 A: 2.4 min shown at 20 % SOC instead of 0). Now usable = capacity × (SOC − reserve), 0 at or below the reserve, and the chip shows "RESERVE — LAND" in red. VehicleProfileManagerTest::testUsableAhStopsAtTheReserve (mutant: old rule, caught).
+• Open, not yet fixed: B — the FC's SOC (relative to its BATT_CAPACITY) is multiplied by the GCS pack capacity; on the plane BATT_CAPACITY looks like ~3400 mAh, so a 5000 mAh pack entry would overstate the time ~47 % (fix: remaining = pack rated − FC mAh consumed, warn on mismatch). D/H — the pre-flight "Est. km / min" guesses the pack (cells = round(V/4.2), 5 Ah fixed, no SOC, no reserve). E/F — airframe type never passed (planes use the multirotor 120 Wh/km) and time = range ÷ an assumed 30 km/h. G — calibration learns from bench, link-lost/crashed and near-zero-distance flights.
+
 Recommendations for Phase 1 (23 Oct), easiest to hardest
 1. Label every battery pack physically (PK-01, PK-02, …) to match its registry entry; a pack is now required before arming. Minutes.
 2. Back up the database after each field day (copy uav_preflight_data.db); it is now the flight record. Minutes per day.

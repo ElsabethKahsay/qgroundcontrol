@@ -35,6 +35,7 @@ private slots:
     void testKindString();
     void testLiveSOCDefault();
     void testBatteryReserveBounds();
+    void testUsableAhStopsAtTheReserve();
 };
 
 // Default battery config: 6S 1P 5000mAh LiPo 20% reserve
@@ -158,6 +159,31 @@ void VehicleProfileManagerTest::testBatteryReserveBounds()
     // Very high should be clamped
     vpm.setBatteryReserve(1.0);
     QVERIFY(vpm.batteryReserve() <= 0.9);
+}
+
+// Flight time near the end must not be overstated: the reserve is a share of
+// the WHOLE pack, so usable Ah = capacity × (SOC − reserve) and reaches 0 at the
+// reserve ("land now"). The old rule, remaining × (1 − reserve), still showed
+// 0.8 Ah (2.4 min at 20 A) at 20 % SOC with a 20 % reserve.
+void VehicleProfileManagerTest::testUsableAhStopsAtTheReserve()
+{
+    auto usable = &VehicleProfileManager::usableAhAboveReserve;
+    QVERIFY(qAbs(usable(5.0, 60, 0.20) - 2.0) < 1e-9);
+    QVERIFY(qAbs(usable(5.0, 30, 0.20) - 0.5) < 1e-9);
+    QCOMPARE(usable(5.0, 20, 0.20), 0.0);       // at the reserve: land
+    QCOMPARE(usable(5.0, 10, 0.20), 0.0);       // below it: still 0, never negative
+    QCOMPARE(usable(0.0, 50, 0.20), -1.0);      // pack not configured
+    QCOMPARE(usable(5.0, -1, 0.20), -1.0);      // SOC not reported
+
+    // Minutes at 20 A for the documented example: 1.5 min at 30 %, 0 at 20 %.
+    QVERIFY(qAbs(usable(5.0, 30, 0.20) / 20.0 * 60.0 - 1.5) < 1e-9);
+
+    VehicleProfileManager vpm;
+    vpm.setBatteryParallelCells(1);
+    vpm.setBatteryCellMah(5000);
+    vpm.setBatteryReserve(0.25);
+    QVERIFY(qAbs(vpm.usableAhAboveReserveFor(45) - 1.0) < 1e-9);   // 5 Ah × (0.45 − 0.25)
+    QCOMPARE(vpm.usableAhAboveReserveFor(25), 0.0);
 }
 
 UT_REGISTER_TEST(VehicleProfileManagerTest)

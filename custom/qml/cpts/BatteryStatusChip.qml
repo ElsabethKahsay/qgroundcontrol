@@ -50,13 +50,17 @@ Rectangle {
         ? _profile.capacityAh
         : (_parallel > 0 && _cellMah > 0 ? (_parallel * _cellMah) / 1000.0 : 0)
 
-    // remaining_Ah = capacity × (SOC/100); usable_Ah = remaining × (1 − reserve)
+    // remaining_Ah = capacity × (SOC/100);
+    // usable_Ah = capacity × (SOC/100 − reserve) — the reserve is a share of the
+    // whole pack, so usable reaches 0 at the reserve (same rule as the C++ estimate).
     readonly property double _remainingAh:  (_soc >= 0 && _capacityAh > 0)
         ? _capacityAh * (_soc / 100.0)
         : -1
-    readonly property double _usableAh: (_remainingAh >= 0 && _profile)
-        ? _remainingAh * (1.0 - _profile.batteryReserve)
-        : (_remainingAh >= 0 ? _remainingAh * 0.8 : -1)
+    readonly property double _usableAh: (_profile && _capacityAh > 0)
+        ? _profile.usableAhAboveReserveFor(_soc) + 0 * _profile.batteryReserve   // re-evaluate on reserve change
+        : -1
+    // At or below the reserve while flying: land now.
+    readonly property bool _atReserve: _timeShown && _timeMin <= 0
 
     readonly property bool _gateOk: _connected && _armed && _iSmooth >= kMinGateA
     readonly property bool _socKnown: _connected && _fresh && _soc >= 0
@@ -110,6 +114,7 @@ Rectangle {
         if (!_fresh)                return "STALE"   // stale / no BATTERY_STATUS
         if (_soc < 0)               return "? · —"   // FC not configured
         if (!_gateOk || _timeMin < 0) return _soc + "% · —"
+        if (_timeMin <= 0)          return _soc + "% · RESERVE \u2014 LAND"
         return _soc + "% · ~" + Math.round(_timeMin) + " min"
     }
     readonly property bool _timeShown: _socKnown && _timeMin >= 0
@@ -120,12 +125,14 @@ Rectangle {
         if (_soc < 0)               return "Battery SOC not reported by flight controller"
         if (!_gateOk)               return "Arm and draw ≥ " + kMinGateA.toFixed(1) + " A to estimate flight time"
         if (!_canComputeTime)       return "Configure battery pack (N_S · N_P · mAh) to estimate flight time"
+        if (_atReserve)             return "Battery is at the reserve (" + Math.round((_profile ? _profile.batteryReserve : 0.2) * 100) + " % of the pack): land now"
         return "Estimated flight time at current draw (" + _iSmooth.toFixed(1) + " A smoothed) \u2014 tap for detail"
     }
 
     readonly property color _textColor: {
         if (_connected && !_fresh) return Colors.statusStale
         if (!_socKnown) return Colors.textDisabled
+        if (_atReserve) return Colors.error
         if (_soc > 30)  return Colors.success
         if (_soc >= 15) return Colors.warning
         return Colors.error

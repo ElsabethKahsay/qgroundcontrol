@@ -68,8 +68,9 @@ class VehicleProfileManager : public QObject {
     /// Live battery delivery into the FlyView chip — recomputed every 2 s by an
     /// internal timer from TelemetryBridge telemetry while a vehicle is connected.
     /// liveSOC is battery_remaining (0-100, -1=FC not configured).
-    /// liveTimeMins = remaining usable Ah ÷ smoothed current × 60, or -1 when the
-    /// gate (armed && I_smooth >= 3 A) is not met or data is missing.
+    /// liveTimeMins = usable Ah above the reserve ÷ smoothed current × 60; 0 when
+    /// the pack is at or below the reserve (land now); -1 when the gate
+    /// (armed && I_smooth >= 3 A) is not met or data is missing.
     Q_PROPERTY(int liveSOC READ liveSOC NOTIFY liveDataChanged)
     Q_PROPERTY(double liveTimeMins READ liveTimeMins NOTIFY liveDataChanged)
 
@@ -131,6 +132,24 @@ public:
     QString batteryType() const { return m_batteryType; }
     void setBatteryType(const QString &type);
     double capacityAh() const { return m_batteryParallelCells * m_batteryCellMah / 1000.0; }
+
+    /// Ah that may still be used before the reserve. The reserve is a share of
+    /// the WHOLE pack (land with e.g. 20 % of the pack left), so this is
+    /// capacity × (SOC − reserve), 0 at or below the reserve. (It used to be
+    /// remaining × (1 − reserve), which never reached 0 and overstated the time
+    /// most near the end: 2.4 min instead of 0 at 20 % SOC on a 5 Ah pack at 20 A.)
+    /// -1 when capacity or SOC is unknown.
+    static double usableAhAboveReserve(double capacityAh, int socPct, double reserve)
+    {
+        if (capacityAh <= 0.0 || socPct < 0)
+            return -1.0;
+        return qMax(0.0, capacityAh * (socPct / 100.0 - qBound(0.0, reserve, 1.0)));
+    }
+    /// The same with this profile's pack and reserve (for QML).
+    Q_INVOKABLE double usableAhAboveReserveFor(int socPct) const
+    {
+        return usableAhAboveReserve(capacityAh(), socPct, m_batteryReserve);
+    }
 
     /// Live estimate delivery (see Q_PROPERTY docs above).
     int liveSOC() const { return m_liveSOC; }
