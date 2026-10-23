@@ -529,10 +529,12 @@ Page {
                                                                         readonly property bool isHighlighted: chk && chk.checkId === root._highlightCheckId
                                                                         // Spin check -> dedicated C++ panel.
                                                                         readonly property bool isMotorCheck: chk && chk.checkId === "propulsion.motors.spin"
+                                                                        // GCS-failsafe policy is per airframe and needs a full-width card.
+                                                                        readonly property bool isGcsFailsafeCheck: chk && chk.checkId === "safety.failsafe.gcs"
 
                                                                         visible: matchCat
-                                                                        width: isMotorCheck ? parent.width : (isManual || isAction) ? parent.width : (parent.width / 2 - Config.spacingSmall / 2)
-                                                                        implicitHeight: isMotorCheck ? (motorLoader.item ? motorLoader.item.implicitHeight : 56) : 56
+                                                                        width: (isMotorCheck || isGcsFailsafeCheck) ? parent.width : (isManual || isAction) ? parent.width : (parent.width / 2 - Config.spacingSmall / 2)
+                                                                        implicitHeight: isMotorCheck ? (motorLoader.item ? motorLoader.item.implicitHeight : 56) : isGcsFailsafeCheck ? 128 : 56
                                                                         color: "transparent"
 
                                                                         Loader {
@@ -551,7 +553,7 @@ Page {
                                                                             id: checkTile
                                                                             visible: !isMotorCheck
                                                                             width: parent.width
-                                                                            implicitHeight: 52
+                                                                            implicitHeight: isGcsFailsafeCheck ? 124 : 52
                                                                             radius: Config.radiusSmall
                                                                             color: isHighlighted ? Qt.lighter(Colors.error, 1.8) : isPassed ? Colors.successDim : isFailed ? Colors.errorDim : isWarning ? Colors.checkWarnDim : Colors.surface
                                                                             border.color: isHighlighted ? Colors.error : isPassed ? Colors.success : isFailed ? Colors.error : isWarning ? Colors.checkWarn : Colors.borderLight
@@ -562,72 +564,130 @@ Page {
                                                                                 }
                                                                             }
 
-                                                                            RowLayout {
+                                                                            ColumnLayout {
                                                                                 anchors.fill: parent
                                                                                 anchors.margins: Config.spacingSmall
-                                                                                spacing: Config.spacingSmall
-                                                                                Text {
-                                                                                    text: isPassed ? "✓" : isFailed ? "✗" : isWarning ? "\u26a0" : "\u25cf"
-                                                                                    font.pixelSize: Config.fontSizeBody
-                                                                                    color: isPassed ? Colors.success : isFailed ? Colors.error : isWarning ? Colors.checkWarn : Colors.textDisabled
-                                                                                }
-                                                                                ColumnLayout {
+                                                                                spacing: 2
+
+                                                                                RowLayout {
                                                                                     Layout.fillWidth: true
-                                                                                    spacing: 1
+                                                                                    Layout.fillHeight: !isGcsFailsafeCheck
+                                                                                    spacing: Config.spacingSmall
                                                                                     Text {
-                                                                                        text: chk.label
-                                                                                        font.pixelSize: Config.fontSizeSmall
-                                                                                        font.bold: true
-                                                                                        color: Colors.textPrimary
-                                                                                        elide: Text.ElideRight
+                                                                                        text: isPassed ? "✓" : isFailed ? "✗" : isWarning ? "\u26a0" : "\u25cf"
+                                                                                        font.pixelSize: Config.fontSizeBody
+                                                                                        color: isPassed ? Colors.success : isFailed ? Colors.error : isWarning ? Colors.checkWarn : Colors.textDisabled
                                                                                     }
-                                                                                    Text {
-                                                                                        visible: chk.message.length > 0
-                                                                                        text: chk.message
-                                                                                        font.pixelSize: Config.fontSizeSmall
-                                                                                        color: Colors.textSecondary
-                                                                                        elide: Text.ElideRight
+                                                                                    ColumnLayout {
+                                                                                        Layout.fillWidth: true
+                                                                                        spacing: 1
+                                                                                        Text {
+                                                                                            text: chk.label
+                                                                                            font.pixelSize: Config.fontSizeSmall
+                                                                                            font.bold: true
+                                                                                            color: Colors.textPrimary
+                                                                                            elide: Text.ElideRight
+                                                                                        }
+                                                                                        Text {
+                                                                                            visible: chk.message.length > 0
+                                                                                            text: chk.message
+                                                                                            font.pixelSize: Config.fontSizeSmall
+                                                                                            color: Colors.textSecondary
+                                                                                            elide: Text.ElideRight
+                                                                                        }
                                                                                     }
-                                                                                }
-                                                                                // Confirm when still failing.
-                                                                                Button {
-                                                                                    readonly property bool isPackCheck: chk && chk.checkId === "power.battery.pack"
-                                                                                    // The pack item stays clickable once passed, to change the pack.
-                                                                                    visible: ((isManual || isAction) && !isPassed) || isPackCheck
-                                                                                    text: isPackCheck ? (isPassed ? qsTr("Change") : qsTr("Select")) : isManual ? "Confirm" : "Run"
-                                                                                    highlighted: true
-                                                                                    font.pixelSize: Config.fontSizeSmall
-                                                                                    Layout.preferredHeight: 26
-                                                                                    Layout.preferredWidth: isPackCheck ? 64 : 54
-                                                                                    onClicked: {
-                                                                                        if (isPackCheck) {
-                                                                                            // Never confirm(): only choosing a pack passes it.
-                                                                                            batteryPackDialog.open();
-                                                                                        } else if (isAction) {
-                                                                                            var c = PreflightManager.checkById(chk.checkId);
-                                                                                            if (c) {
-                                                                                                c.evaluate();
-                                                                                                if (c.status === 1)
-                                                                                                    return;
-                                                                                                c.confirm("Action completed");
+                                                                                    // Confirm when still failing.
+                                                                                    Button {
+                                                                                        readonly property bool isPackCheck: chk && chk.checkId === "power.battery.pack"
+                                                                                        // The pack item stays clickable once passed, to change the pack.
+                                                                                        visible: ((isManual || isAction) && !isPassed) || isPackCheck
+                                                                                        text: isPackCheck ? (isPassed ? qsTr("Change") : qsTr("Select")) : isManual ? "Confirm" : "Run"
+                                                                                        highlighted: true
+                                                                                        font.pixelSize: Config.fontSizeSmall
+                                                                                        Layout.preferredHeight: 26
+                                                                                        Layout.preferredWidth: isPackCheck ? 64 : 54
+                                                                                        onClicked: {
+                                                                                            if (isPackCheck) {
+                                                                                                // Never confirm(): only choosing a pack passes it.
+                                                                                                batteryPackDialog.open();
+                                                                                            } else if (isAction) {
+                                                                                                var c = PreflightManager.checkById(chk.checkId);
+                                                                                                if (c) {
+                                                                                                    c.evaluate();
+                                                                                                    if (c.status === 1)
+                                                                                                        return;
+                                                                                                    c.confirm("Action completed");
+                                                                                                }
+                                                                                            } else {
+                                                                                                chk.confirm("Operator confirmed");
                                                                                             }
-                                                                                        } else {
-                                                                                            chk.confirm("Operator confirmed");
+                                                                                        }
+                                                                                    }
+                                                                                    Rectangle {
+                                                                                        visible: isPassed
+                                                                                        color: Colors.success
+                                                                                        radius: Config.radiusSmall
+                                                                                        Layout.preferredHeight: 22
+                                                                                        Layout.preferredWidth: 44
+                                                                                        Text {
+                                                                                            anchors.centerIn: parent
+                                                                                            text: "PASS"
+                                                                                            color: Colors.background
+                                                                                            font.pixelSize: 9
+                                                                                            font.bold: true
                                                                                         }
                                                                                     }
                                                                                 }
-                                                                                Rectangle {
-                                                                                    visible: isPassed
-                                                                                    color: Colors.success
-                                                                                    radius: Config.radiusSmall
-                                                                                    Layout.preferredHeight: 22
-                                                                                    Layout.preferredWidth: 44
+
+                                                                                ColumnLayout {
+                                                                                    visible: isGcsFailsafeCheck
+                                                                                    Layout.fillWidth: true
+                                                                                    Layout.leftMargin: 18
+                                                                                    spacing: 2
+
                                                                                     Text {
-                                                                                        anchors.centerIn: parent
-                                                                                        text: "PASS"
-                                                                                        color: Colors.background
-                                                                                        font.pixelSize: 9
+                                                                                        text: qsTr("GCS failsafe policy for this airframe")
+                                                                                        font.pixelSize: Config.fontSizeSmall
                                                                                         font.bold: true
+                                                                                        color: Colors.textPrimary
+                                                                                    }
+
+                                                                                    RowLayout {
+                                                                                        Layout.fillWidth: true
+                                                                                        spacing: Config.spacingSmall
+                                                                                        Button {
+                                                                                            text: chk.policy === "rc_primary" ? qsTr("RC primary ✓") : qsTr("RC primary")
+                                                                                            highlighted: chk.policy === "rc_primary"
+                                                                                            font.pixelSize: Config.fontSizeSmall
+                                                                                            Layout.preferredHeight: 24
+                                                                                            onClicked: chk.setPolicy("rc_primary")
+                                                                                        }
+                                                                                        Text {
+                                                                                            Layout.fillWidth: true
+                                                                                            text: qsTr("RC link is primary; a GCS telemetry dropout must not trigger a failsafe.")
+                                                                                            font.pixelSize: Config.fontSizeSmall
+                                                                                            color: Colors.textSecondary
+                                                                                            wrapMode: Text.WordWrap
+                                                                                        }
+                                                                                    }
+
+                                                                                    RowLayout {
+                                                                                        Layout.fillWidth: true
+                                                                                        spacing: Config.spacingSmall
+                                                                                        Button {
+                                                                                            text: chk.policy === "telemetry_primary" ? qsTr("Telemetry primary ✓") : qsTr("Telemetry primary")
+                                                                                            highlighted: chk.policy === "telemetry_primary"
+                                                                                            font.pixelSize: Config.fontSizeSmall
+                                                                                            Layout.preferredHeight: 24
+                                                                                            onClicked: chk.setPolicy("telemetry_primary")
+                                                                                        }
+                                                                                        Text {
+                                                                                            Layout.fillWidth: true
+                                                                                            text: qsTr("GCS link is primary; losing it must trigger the aircraft's failsafe.")
+                                                                                            font.pixelSize: Config.fontSizeSmall
+                                                                                            color: Colors.textSecondary
+                                                                                            wrapMode: Text.WordWrap
+                                                                                        }
                                                                                     }
                                                                                 }
                                                                             }

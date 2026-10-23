@@ -8,7 +8,9 @@
 #include "AbstractCheck.h"
 #include "ManualConfirmCheck.h"
 #include "BatteryVoltageCheck.h"
+#include "GcsFailsafeCheck.h"
 #include "mocks/MockTelemetryBridge.h"
+#include "utils/DatabaseManager.h"
 #include "utils/MonotonicClock.h"
 #include "utils/TelemetryStream.h"
 
@@ -16,7 +18,11 @@ class PreflightManagerTest : public UnitTest {
     Q_OBJECT
 
 private slots:
-    void init() override { UnitTest::init(); }
+    void init() override {
+        UnitTest::init();
+        DatabaseManager::instance().reset();
+        DatabaseManager::instance().initialize();
+    }
     void cleanup() override { UnitTest::cleanup(); }
 
     void testInitialState();
@@ -37,6 +43,10 @@ private slots:
     void testPassedCheckReevaluatedEachTick();
     void testNeverSeenStreamIsNotStale();
     void testUnhealthyBatteryMonitorIsNotCalledCritical();
+    void testGcsFailsafeUsesPlaneParameterName();
+    void testGcsFailsafeUsesCopterParameterName();
+    void testGcsFailsafePolicyMatrix();
+    void testGcsFailsafeNoPolicyWarnsAndPolicyIsStoredPerVehicle();
 };
 
 void PreflightManagerTest::testInitialState()
@@ -462,6 +472,150 @@ void PreflightManagerTest::testUnhealthyBatteryMonitorIsNotCalledCritical()
     QCOMPARE(check.status(), CheckStatus::Failed);
     QVERIFY2(check.message().contains(QStringLiteral("MONITOR")), qPrintable(check.message()));
     QVERIFY2(!check.message().contains(QStringLiteral("critical")), qPrintable(check.message()));
+}
+
+namespace {
+
+bool setTestOverride(AbstractCheck &check, const QString &name, const QVariant &value)
+{
+    return QMetaObject::invokeMethod(&check, "setTestValue",
+                                     Q_ARG(QString, name), Q_ARG(QVariant, value));
+}
+
+void clearGcsPolicy(const QString &checkId)
+{
+    // check_config.value is NOT NULL; "unset" is not a valid policy, so
+    // GcsFailsafeCheck::policy() reports it as no stored policy.
+    DatabaseManager::instance().setCheckConfig(checkId, QStringLiteral("policy"),
+                                               QStringLiteral("unset"), 0);
+}
+
+} // namespace
+
+// ArduPlane 4.5 calls the parameter FS_GCS_ENABL, not ArduCopter's FS_GCS_ENABLE.
+// The check must read the plane's name and honour the telemetry-primary policy.
+void PreflightManagerTest::testGcsFailsafeUsesPlaneParameterName()
+{
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    GcsFailsafeCheck check(&bridge);
+    clearGcsPolicy(check.id());
+
+    QVERIFY(setTestOverride(check, QStringLiteral("vehicleType"),
+                            QVariant(QStringLiteral("FixedWing"))));
+    QVERIFY(setTestOverride(check, QStringLiteral("param_FS_GCS_ENABL"), QVariant(1.0)));
+    QVERIFY(DatabaseManager::instance().setCheckConfig(check.id(), QStringLiteral("policy"),
+                                                       QStringLiteral("telemetry_primary"), 0));
+
+    QCOMPARE(check.parameterName(), QStringLiteral("FS_GCS_ENABL"));
+    check.evaluate();
+    QCOMPARE(check.status(), CheckStatus::Passed);
+    QVERIFY2(check.message().contains(QStringLiteral("FS_GCS_ENABL")),
+             qPrintable(check.message()));
+    QVERIFY2(!check.message().contains(QStringLiteral("FS_GCS_ENABLE")),
+             qPrintable(check.message()));
+
+    clearGcsPolicy(check.id());
+}
+
+// ArduCopter 4.5 uses FS_GCS_ENABLE. The same check must read that name on a copter.
+void PreflightManagerTest::testGcsFailsafeUsesCopterParameterName()
+{
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    GcsFailsafeCheck check(&bridge);
+    clearGcsPolicy(check.id());
+
+    QVERIFY(setTestOverride(check, QStringLiteral("vehicleType"),
+                            QVariant(QStringLiteral("Quadrotor"))));
+    QVERIFY(setTestOverride(check, QStringLiteral("param_FS_GCS_ENABLE"), QVariant(1.0)));
+    QVERIFY(DatabaseManager::instance().setCheckConfig(check.id(), QStringLiteral("policy"),
+                                                       QStringLiteral("telemetry_primary"), 0));
+
+    QCOMPARE(check.parameterName(), QStringLiteral("FS_GCS_ENABLE"));
+    check.evaluate();
+    QCOMPARE(check.status(), CheckStatus::Passed);
+    QVERIFY2(check.message().contains(QStringLiteral("FS_GCS_ENABLE")),
+             qPrintable(check.message()));
+
+    clearGcsPolicy(check.id());
+}
+
+// Passed only when the vehicle setting matches the chosen policy.
+void PreflightManagerTest::testGcsFailsafePolicyMatrix()
+{
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    GcsFailsafeCheck check(&bridge);
+    clearGcsPolicy(check.id());
+
+    QVERIFY(setTestOverride(check, QStringLiteral("vehicleType"),
+                            QVariant(QStringLiteral("FixedWing"))));
+
+    struct Case {
+        const char *policy;
+        double setting;
+        CheckStatus expected;
+    };
+    const Case cases[] = {
+        { "rc_primary",         0.0, CheckStatus::Passed },
+        { "rc_primary",         1.0, CheckStatus::Failed },
+        { "telemetry_primary",  0.0, CheckStatus::Failed },
+        { "telemetry_primary",  1.0, CheckStatus::Passed },
+    };
+
+    for (const Case &c : cases) {
+        QVERIFY(setTestOverride(check, QStringLiteral("param_FS_GCS_ENABL"),
+                                QVariant(c.setting)));
+        QVERIFY(DatabaseManager::instance().setCheckConfig(
+            check.id(), QStringLiteral("policy"), QString::fromLatin1(c.policy), 0));
+
+        check.evaluate();
+        QVERIFY2(check.status() == c.expected,
+                 qPrintable(QStringLiteral("policy=%1 setting=%2 status=%3 message=%4")
+                                .arg(QString::fromLatin1(c.policy))
+                                .arg(c.setting)
+                                .arg(check.statusInt())
+                                .arg(check.message())));
+    }
+
+    clearGcsPolicy(check.id());
+}
+
+// No stored policy is a Warning; choosing one writes it for the current vehicle
+// and invalid choices are refused.
+void PreflightManagerTest::testGcsFailsafeNoPolicyWarnsAndPolicyIsStoredPerVehicle()
+{
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    GcsFailsafeCheck check(&bridge);
+    clearGcsPolicy(check.id());
+
+    QVERIFY(setTestOverride(check, QStringLiteral("vehicleType"),
+                            QVariant(QStringLiteral("FixedWing"))));
+    QVERIFY(setTestOverride(check, QStringLiteral("param_FS_GCS_ENABL"), QVariant(0.0)));
+
+    check.evaluate();
+    QCOMPARE(check.status(), CheckStatus::Warning);
+    QCOMPARE(check.message(),
+             QStringLiteral("GCS-failsafe policy not chosen for this airframe"));
+
+    QSignalSpy policySpy(&check, &GcsFailsafeCheck::policyChanged);
+    QVERIFY(check.setPolicy(QStringLiteral("telemetry_primary")));
+    QCOMPARE(policySpy.count(), 1);
+    QCOMPARE(check.policy(), QStringLiteral("telemetry_primary"));
+    QCOMPARE(DatabaseManager::instance().getCheckConfig(check.id(), QStringLiteral("policy"), 0),
+             QStringLiteral("telemetry_primary"));
+    QCOMPARE(check.status(), CheckStatus::Failed);
+
+    QVERIFY(!check.setPolicy(QStringLiteral("bogus")));
+    QCOMPARE(check.policy(), QStringLiteral("telemetry_primary"));
+
+    clearGcsPolicy(check.id());
 }
 
 UT_REGISTER_TEST(PreflightManagerTest)

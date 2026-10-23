@@ -417,7 +417,8 @@ Rectangle {
                                         required property bool isAction
                                         required property string actionButtonText
 
-                                        width: gridHost.cellWidth
+                                        readonly property bool isGcsFailsafeCheck: checkId === "safety.failsafe.gcs"
+                                        width: isGcsFailsafeCheck ? gridHost.width : gridHost.cellWidth
                                         radius: Config.radiusSmall
                                         color: {
                                             if (status === 1) return Colors.successDim
@@ -570,6 +571,68 @@ Rectangle {
                                             elide: Text.ElideRight
                                             maximumLineCount: 1
                                             Layout.leftMargin: 20
+                                        }
+
+                                        // GCS-failsafe policy: chosen per airframe and stored
+                                        // in check_config; the GCS never writes the FC parameter.
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            Layout.leftMargin: 20
+                                            spacing: 3
+                                            visible: isGcsFailsafeCheck && checkItem.expanded
+
+                                            Text {
+                                                text: qsTr("GCS failsafe policy for this airframe")
+                                                font.pixelSize: Config.fontSizeBody
+                                                font.bold: true
+                                                color: Colors.textPrimary
+                                            }
+
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                spacing: 6
+                                                Button {
+                                                    text: checkObject && checkObject.policy === "rc_primary"
+                                                          ? qsTr("RC primary ✓") : qsTr("RC primary")
+                                                    highlighted: checkObject && checkObject.policy === "rc_primary"
+                                                    font.pixelSize: Config.fontSizeSmall
+                                                    Layout.preferredHeight: 28
+                                                    onClicked: {
+                                                        if (checkObject)
+                                                            checkObject.setPolicy("rc_primary")
+                                                    }
+                                                }
+                                                Text {
+                                                    Layout.fillWidth: true
+                                                    text: qsTr("RC link is primary; a GCS telemetry dropout must not trigger a failsafe.")
+                                                    font.pixelSize: Config.fontSizeSmall
+                                                    color: Colors.textSecondary
+                                                    wrapMode: Text.WordWrap
+                                                }
+                                            }
+
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                spacing: 6
+                                                Button {
+                                                    text: checkObject && checkObject.policy === "telemetry_primary"
+                                                          ? qsTr("Telemetry primary ✓") : qsTr("Telemetry primary")
+                                                    highlighted: checkObject && checkObject.policy === "telemetry_primary"
+                                                    font.pixelSize: Config.fontSizeSmall
+                                                    Layout.preferredHeight: 28
+                                                    onClicked: {
+                                                        if (checkObject)
+                                                            checkObject.setPolicy("telemetry_primary")
+                                                    }
+                                                }
+                                                Text {
+                                                    Layout.fillWidth: true
+                                                    text: qsTr("GCS link is primary; losing it must trigger the aircraft's failsafe.")
+                                                    font.pixelSize: Config.fontSizeSmall
+                                                    color: Colors.textSecondary
+                                                    wrapMode: Text.WordWrap
+                                                }
+                                            }
                                         }
 
                                         // Row 3: manual / action controls
