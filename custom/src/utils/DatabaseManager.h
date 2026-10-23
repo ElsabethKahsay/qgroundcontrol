@@ -492,6 +492,12 @@ private:
 
     /// Expands ~ in paths and ensures parent directories exist.
     QString expandPath(const QString &path);
+public:
+    /// The one flight database: <data>/<organization>/Skywin GCS/uav_preflight_data.db,
+    /// independent of the application name (unit tests keep their own folder).
+    static QString defaultDatabasePath();
+    static constexpr const char *kDatabaseFolderName = "Skywin GCS";
+private:
     /// Creates all tables and indexes if they don't already exist.
     bool createTables();
     /// Executes a query, logging a warning with the table name on failure.

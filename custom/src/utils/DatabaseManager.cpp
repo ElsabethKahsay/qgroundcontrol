@@ -170,16 +170,28 @@ void DatabaseManager::startMaintenanceTimer()
  * If path is empty, uses the default app data location.
  * Creates parent directories if they don't exist.
  */
+QString DatabaseManager::defaultDatabasePath()
+{
+    // One database, whatever the application is called at the moment. The
+    // name changes during start-up ("PreflightQGroundControl Daily" ->
+    // "Skywin GCS"), and AppDataLocation follows it, so records were split
+    // over two files (found 23 Oct). Unit tests keep their own folder
+    // (application name "..._unittest") so they never touch flight records.
+    if (QCoreApplication::applicationName().endsWith(QLatin1String("_unittest")))
+        return QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
+            .filePath(QStringLiteral("uav_preflight_data.db"));
+    const QString org = QCoreApplication::organizationName().isEmpty()
+                            ? QStringLiteral("UAVPreflight") : QCoreApplication::organizationName();
+    return QDir(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation))
+        .filePath(QStringLiteral("%1/%2/uav_preflight_data.db").arg(org, QLatin1String(kDatabaseFolderName)));
+}
+
 QString DatabaseManager::expandPath(const QString &path)
 {
     if (path.isEmpty()) {
-        // Use default app data location if no path specified
-        QString dataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-        QDir dir(dataDir);
-        if (!dir.exists()) {
-            dir.mkpath(".");
-        }
-        return dir.filePath("uav_preflight_data.db");
+        const QString file = defaultDatabasePath();
+        QDir().mkpath(QFileInfo(file).absolutePath());
+        return file;
     }
     
     // Expand ~ to home directory

@@ -11,6 +11,7 @@
  */
 
 #include <QTest>
+#include <QCoreApplication>
 #include <QSignalSpy>
 #include <QFile>
 #include <QSqlQuery>
@@ -46,6 +47,7 @@ private slots:
     void testUpgradeFrom18AddsFlightTargetColumns();
     void testFailedStepRollsBackAndStops();
     void testUnopenablePathSetsStartupError();
+    void testOneDatabaseWhateverTheAppName();
 
 private:
     static QStringList columns(const QString &table);
@@ -146,6 +148,25 @@ void DatabaseMigrationTest::testFailedStepRollsBackAndStops()
     QVERIFY(q.next());
     QCOMPARE(q.value(0).toInt(), 18);
     QVERIFY(!columns(QStringLiteral("flights")).contains(QStringLiteral("target_lat")));   // ALTERs rolled back
+}
+
+// One flight database: the app renames itself during start-up, and the
+// database folder must not follow (records were split over two files).
+// Only computes paths; never opens the real database.
+void DatabaseMigrationTest::testOneDatabaseWhateverTheAppName()
+{
+    const QString original = QCoreApplication::applicationName();
+    QCoreApplication::setApplicationName(QStringLiteral("PreflightQGroundControl Daily"));
+    const QString early = DatabaseManager::defaultDatabasePath();
+    QCoreApplication::setApplicationName(QStringLiteral("Skywin GCS"));
+    const QString late = DatabaseManager::defaultDatabasePath();
+    QCoreApplication::setApplicationName(original);
+
+    QCOMPARE(early, late);
+    QVERIFY2(late.endsWith(QStringLiteral("/Skywin GCS/uav_preflight_data.db")), qPrintable(late));
+    // Unit tests stay in their own folder, away from flight records.
+    QVERIFY2(original.endsWith(QStringLiteral("_unittest")), qPrintable(original));
+    QVERIFY2(DatabaseManager::defaultDatabasePath() != late, qPrintable(DatabaseManager::defaultDatabasePath()));
 }
 
 // F13: an unopenable path leaves a startup error for the banner.
