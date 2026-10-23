@@ -85,7 +85,8 @@ Page {
         var axis = _testAxis
         _setAxis(axis, state, text)
         if (typeof Database !== "undefined" && Database)
-            Database.logHardwareTestStep(FlightSession.currentFlightId, "gimbal." + axis, 0,
+            // Flight id 0: the database files it under the open flight / connection.
+            Database.logHardwareTestStep(0, "gimbal." + axis, 0,
                                          Math.round(_testTarget), Math.round(_measured(axis)),
                                          -_axisToleranceDeg, _axisToleranceDeg, false, state,
                                          state === "pass" ? "" : text, "", Date.now() - _testStartMs)

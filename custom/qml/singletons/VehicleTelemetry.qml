@@ -366,9 +366,9 @@ QtObject {
             batteryVoltage = TelemetryProvider.batteryVoltage
             _touchTelemetry()
         }
-        function onTelemetryUpdated() {
-            _touchTelemetry()
-        }
+        // (onTelemetryUpdated removed: TelemetryBridge has no telemetryUpdated
+        // signal, so it never ran and only produced a load-time warning. The
+        // per-stream handlers here call _touchTelemetry().)
         function onGpsSatellitesChanged() {
             satellites = TelemetryProvider.gpsSatellites
         }

@@ -52,6 +52,7 @@ private slots:
     void testRecorderBatterySnapshotIsFrozen();
     void testRecorderEnergyFromMeasurementsOnly();
     void testRecorderWritesFlightHistoryAndHandovers();
+    void testBenchTestResultsLinkToFlightAndConnection();
     void testIncrementBatteryCycleGuard();
     void testFlightSessionRoundTrip();
     void testCheckResultAuditTrail();
@@ -527,6 +528,40 @@ void DatabaseManagerTest::testRecorderWritesFlightHistoryAndHandovers()
     QVERIFY(!fl.value(QStringLiteral("ended_at")).toString().isEmpty());
     QCOMPARE(row(QStringLiteral("SELECT COUNT(*) AS n FROM session_events WHERE event LIKE 'HANDOVER%'"))
                  .value(QStringLiteral("n")).toInt(), 3);
+}
+
+// Bench-test results were all written with flight -1 / 0 / NULL (95 such rows
+// on the live database, 22 Oct). They now link to the connection and, when a
+// (bench) flight is open, to its Flight History row.
+void DatabaseManagerTest::testBenchTestResultsLinkToFlightAndConnection()
+{
+    RecorderFixture f;
+    QVERIFY(f.init());
+    DatabaseManager &db = DatabaseManager::instance();
+    SessionRecorder rec(db);
+    f.wire(rec);
+    rec.connectionOpened(QStringLiteral("UID-R"), QStringLiteral("Testing"), QString(), QString());
+
+    QVERIFY(db.logHardwareTestStep(-1, QStringLiteral("gimbal.pitch"), 0, -30, -29, -3, 3, false,
+                                   QStringLiteral("pass")));   // disarmed: connection only
+    SessionRecorder::FlightStart st = start(QStringLiteral("force_token"), /*bench*/ true);
+    st.vehicleSysId = 1;
+    rec.armed(st);
+    const int hist = rec.historyFlightId();
+    QVERIFY(hist > 0);
+    QVERIFY(db.logSurfaceTestResult(0, QStringLiteral("aileron"), 1, 1100, 1900, 1, QStringLiteral("PASS")));
+    QVERIFY(db.logMotorTestResult(1, 1, 10, 2, 1150, 1148, 2, QStringLiteral("PASS")));
+
+    QVariantMap r = row(QStringLiteral("SELECT flight_id, connection_session_id FROM hardware_test_events"));
+    QCOMPARE(r.value(QStringLiteral("flight_id")).toInt(), 0);
+    QCOMPARE(r.value(QStringLiteral("connection_session_id")).toInt(), rec.connectionId());
+    r = row(QStringLiteral("SELECT flight_id, connection_session_id FROM surface_test_results"));
+    QCOMPARE(r.value(QStringLiteral("flight_id")).toInt(), hist);
+    QCOMPARE(r.value(QStringLiteral("connection_session_id")).toInt(), rec.connectionId());
+    QCOMPARE(db.getSurfaceTestsForFlight(hist).size(), 1);           // shows in Flight History
+    r = row(QStringLiteral("SELECT flight_id, connection_session_id FROM motor_test_results"));
+    QCOMPARE(r.value(QStringLiteral("flight_id")).toInt(), hist);
+    QCOMPARE(r.value(QStringLiteral("connection_session_id")).toInt(), rec.connectionId());
 }
 
 void DatabaseManagerTest::testDoubleIncrementGuard()

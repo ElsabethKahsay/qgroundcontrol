@@ -474,7 +474,8 @@ public:
     int openHistoryFlight(int flightSessionId, int operatorId, int vehicleSysId,
                           const QString &mode, const QString &notes, const QString &weatherSummary);
     /// Where recordCheckResult() files results (set by SessionRecorder).
-    void setRecordingContext(int connectionSessionId, int flightId, const QString &deviceUid);
+    void setRecordingContext(int connectionSessionId, int flightId, const QString &deviceUid,
+                             int historyFlightId = -1);
     /// F11: a check result keyed to the current connection session and flight.
     bool recordCheckResult(const QString &checkId, const QString &status, const QString &message);
 
@@ -515,5 +516,6 @@ private:
     QString m_startupError;
     int m_ctxConnectionId = -1;   ///< setRecordingContext()
     int m_ctxFlightId = -1;
+    int m_ctxHistoryId = -1;      ///< flights.id of the open flight (Flight History)
     QString m_ctxDeviceUid;
 };

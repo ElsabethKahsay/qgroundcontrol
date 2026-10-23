@@ -294,7 +294,7 @@ private:
         return end;
     }
 
-    void updateContext() { m_db.setRecordingContext(m_connId, m_flightId, m_deviceUid); }
+    void updateContext() { m_db.setRecordingContext(m_connId, m_flightId, m_deviceUid, m_historyId); }
 
     DatabaseManager &m_db;
     std::function<Sample()> m_sample;

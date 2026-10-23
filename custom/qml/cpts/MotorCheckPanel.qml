@@ -369,7 +369,7 @@ Rectangle {
                         text: qsTr("RC Override:")
                         font.pixelSize: Config.fontSizeSmall
                         color: Colors.textSecondary
-                        anchors.verticalCenter: parent.verticalCenter
+                        Layout.alignment: Qt.AlignVCenter   // anchors inside a layout are undefined
                     }
                     Switch {
                         id: rcOverrideSwitch

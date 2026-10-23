@@ -318,7 +318,10 @@ bool DatabaseManager::initialize(const QString &dbPath)
 //       measured start/end voltage and percent, minimum voltage, mAh and Wh
 //  23 - flight_sessions.history_flight_id: the flights row Flight History,
 //       exports and stats read (and trainer handover events attach to)
-static const int kLatestSchemaVersion = 23;
+//  24 - connection_session_id on hardware_test_events, surface_test_results
+//       and motor_test_results (+ flight_id there): bench tests link to the
+//       connection and the open flight instead of -1 / 0 / NULL
+static const int kLatestSchemaVersion = 24;
 
 bool DatabaseManager::createTables()
 {
@@ -817,11 +820,15 @@ bool DatabaseManager::logHardwareTestStep(
     query.prepare(
         "INSERT INTO hardware_test_events "
         "(flight_id, timestamp, step_name, servo_instance, target_pwm, feedback_pwm, "
-        "tolerance_min, tolerance_max, operator_confirmed, result, failure_reason, operator_id, duration_ms) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        "tolerance_min, tolerance_max, operator_confirmed, result, failure_reason, operator_id, duration_ms, "
+        "connection_session_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     );
 
-    query.addBindValue(flightId);
+    // Callers do not know the flight: file the step under the open flight's
+    // Flight History row (bench tests arm, so they run inside one) and the
+    // connection. flight_id is NOT NULL here: 0 = none.
+    query.addBindValue(flightId > 0 ? flightId : qMax(0, m_ctxHistoryId));
     query.addBindValue(QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
     query.addBindValue(stepName);
     query.addBindValue(servoInstance);
@@ -834,6 +841,7 @@ bool DatabaseManager::logHardwareTestStep(
     query.addBindValue(failureReason);
     query.addBindValue(operatorId);
     query.addBindValue(durationMs);
+    query.addBindValue(m_ctxConnectionId > 0 ? QVariant(m_ctxConnectionId) : QVariant(QMetaType::fromType<int>()));
 
     if (!query.exec()) {
         qWarning() << "DatabaseManager: Failed to log hardware test step:" << query.lastError().text();
@@ -863,8 +871,8 @@ bool DatabaseManager::logMotorTestResult(int vehicleSysId, int motorIndex,
     query.prepare(
         "INSERT INTO motor_test_results "
         "(vehicle_sys_id, motor_index, throttle_pct, duration_sec, expected_pwm, "
-        " actual_pwm, pwm_delta, result, timestamp) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        " actual_pwm, pwm_delta, result, timestamp, flight_id, connection_session_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     );
     query.addBindValue(vehicleSysId);
     query.addBindValue(motorIndex);
@@ -875,6 +883,9 @@ bool DatabaseManager::logMotorTestResult(int vehicleSysId, int motorIndex,
     query.addBindValue(pwmDelta);
     query.addBindValue(result);
     query.addBindValue(QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+    // The open (bench) flight's Flight History row and the connection.
+    query.addBindValue(m_ctxHistoryId > 0 ? QVariant(m_ctxHistoryId) : QVariant(QMetaType::fromType<int>()));
+    query.addBindValue(m_ctxConnectionId > 0 ? QVariant(m_ctxConnectionId) : QVariant(QMetaType::fromType<int>()));
 
     if (!query.exec()) {
         qWarning() << "DatabaseManager: logMotorTestResult failed:" << query.lastError().text();
@@ -896,12 +907,15 @@ bool DatabaseManager::logSurfaceTestResult(int flightId, const QString &surfaceI
     QSqlQuery query(m_db);
     query.prepare(
         "INSERT INTO surface_test_results "
-        "(flight_id, surface_id, channel, min_pwm_actual, max_pwm_actual, direction_ok, result, timestamp) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        "(flight_id, surface_id, channel, min_pwm_actual, max_pwm_actual, direction_ok, result, timestamp, "
+        "connection_session_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
     );
-    // flight_id is FK → flights(id).  Control-surface sweeps run before the
-    // flight record exists, so bind NULL instead of 0 to satisfy FK enforcement.
-    if (flightId > 0) query.addBindValue(flightId); else query.addBindValue(QVariant(QMetaType::fromType<int>()));
+    // flight_id is FK → flights(id). A sweep arms the vehicle, so it runs inside
+    // a (bench) flight whose Flight History row the recorder has open; with none
+    // open, bind NULL instead of 0 to satisfy FK enforcement.
+    const int fid = flightId > 0 ? flightId : m_ctxHistoryId;
+    if (fid > 0) query.addBindValue(fid); else query.addBindValue(QVariant(QMetaType::fromType<int>()));
     query.addBindValue(surfaceId);
     query.addBindValue(channel);
     query.addBindValue(minPwmActual);
@@ -913,6 +927,7 @@ bool DatabaseManager::logSurfaceTestResult(int flightId, const QString &surfaceI
     }
     query.addBindValue(result);
     query.addBindValue(QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+    query.addBindValue(m_ctxConnectionId > 0 ? QVariant(m_ctxConnectionId) : QVariant(QMetaType::fromType<int>()));
 
     if (!query.exec()) {
         qWarning() << "DatabaseManager: logSurfaceTestResult failed:" << query.lastError().text();
@@ -1695,6 +1710,36 @@ bool DatabaseManager::migrateSchema()
                 q.exec("ALTER TABLE flight_sessions ADD COLUMN history_flight_id INTEGER");
             break;
         }
+        case 24: {
+            auto addCol = [this, &q](const QString &table, const QString &colDef) {
+                QSqlQuery pragma(m_db);
+                pragma.exec(QStringLiteral("PRAGMA table_info(%1)").arg(table));
+                const QString colName = colDef.section(QLatin1Char(' '), 0, 0);
+                while (pragma.next())
+                    if (pragma.value(1).toString() == colName)
+                        return;
+                q.exec(QStringLiteral("ALTER TABLE %1 ADD COLUMN %2").arg(table, colDef));
+            };
+            // motor_test_results comes from the v7 step; a database recorded at
+            // a later version without it (e.g. a hand-built v11 file) must not
+            // fail this step on the ALTER below.
+            q.exec("CREATE TABLE IF NOT EXISTS motor_test_results ("
+                   "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                   "vehicle_sys_id INTEGER NOT NULL,"
+                   "motor_index INTEGER NOT NULL,"
+                   "throttle_pct INTEGER NOT NULL,"
+                   "duration_sec INTEGER NOT NULL,"
+                   "expected_pwm INTEGER NOT NULL,"
+                   "actual_pwm INTEGER NOT NULL,"
+                   "pwm_delta INTEGER NOT NULL,"
+                   "result TEXT NOT NULL,"
+                   "timestamp TEXT NOT NULL)");
+            addCol(QStringLiteral("hardware_test_events"), QStringLiteral("connection_session_id INTEGER"));
+            addCol(QStringLiteral("surface_test_results"), QStringLiteral("connection_session_id INTEGER"));
+            addCol(QStringLiteral("motor_test_results"), QStringLiteral("connection_session_id INTEGER"));
+            addCol(QStringLiteral("motor_test_results"), QStringLiteral("flight_id INTEGER"));
+            break;
+        }
         default:
             qWarning() << "DatabaseManager: unknown migration version" << v;
             m_db.rollback();
@@ -2027,11 +2072,13 @@ int DatabaseManager::openHistoryFlight(int flightSessionId, int operatorId, int 
     return id;
 }
 
-void DatabaseManager::setRecordingContext(int connectionSessionId, int flightId, const QString &deviceUid)
+void DatabaseManager::setRecordingContext(int connectionSessionId, int flightId, const QString &deviceUid,
+                                          int historyFlightId)
 {
     m_ctxConnectionId = connectionSessionId;
     m_ctxFlightId = flightId;
     m_ctxDeviceUid = deviceUid;
+    m_ctxHistoryId = historyFlightId;
 }
 
 bool DatabaseManager::recordCheckResult(const QString &checkId, const QString &status, const QString &message)

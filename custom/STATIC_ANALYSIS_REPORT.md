@@ -55,6 +55,8 @@ Done in Step 3 (22 Oct; code committed and unit-tested, NOT yet verified on the 
 • Item 17 W2–W4, W6 and item 21 lint (ade82ce18). Attitude readout on the gimbal page and the Fly view (9f39fcae6). Hidden checklist rows fixed (9f39fcae6).
 • Trainer handover logging (ec506bb00, 651dddbef), refusing a trainer channel equal to FLTMODE_CH.
 • Disabled motor / surface tests now say why on screen (60e0fdd18): they arm the vehicle, so they need a Testing session.
+• Bench-test results linked (23 Oct, v24): motor, surface-sweep and gimbal-axis results were written with flight -1 / 0 / NULL (all 95 hardware_test_events rows on the live database). They now carry the connection session and, when a (bench) flight is open, its Flight History row, so they show in the flight's detail. Two load-time QML warnings removed (a handler for a TelemetryBridge signal that does not exist; anchors inside a layout in MotorCheckPanel).
+• check_results volume (review note, 23 Oct): a row is written on each status change. Checks are evaluated once a second, so a flapping check writes at most one row per second; no throttle was added, because dropping rows would make the audit trail wrong. Revisit if the database grows too fast on long sessions.
 • Review fixes 23 Oct (c84b41fa8): app exit while armed no longer runs the recorder's callbacks on deleted objects; crash-recovered Flight History rows close at the flight's last summary instead of "now"; the gimbal target is also stored on the Flight History row. Reconnect crash in ControlSurfaceTestController fixed (see FlightSessionLifecycleTest below).
 
 Still open (22 Oct)
@@ -71,7 +73,18 @@ Aircraft findings from the 22 Oct bench session (fixed wing, CoreWingF405WingV2,
 • After the RC link was lost, CH3 (throttle) read 1922: check the ELRS receiver failsafe is "No pulses", not a fixed high-throttle position.
 • Battery monitor now reads correctly (23.3 V, 1.13 A, mAh and energy counters): the morning's 0 V / "unhealthy" is resolved.
 Code still open:
-• Item 17 W7 (SITL weather location); items 12–14 (SITL campaign, Jetson build / F20 start script, real radio and go/no-go).
+• Item 17 W7 (SITL weather location); item 12 (SITL campaign) and item 14 (real radio and go/no-go). Item 13 (Jetson build and its start script) moved to after Phase 1 on 23 Oct.
+
+Recommendations for Phase 1 (23 Oct), easiest to hardest
+1. Label every battery pack physically (PK-01, PK-02, …) to match its registry entry; a pack is now required before arming. Minutes.
+2. Back up the database after each field day (copy uav_preflight_data.db); it is now the flight record. Minutes per day.
+3. Confirm the Open-Meteo licence before any commercial deployment: the free API is for non-commercial use. One check with Open-Meteo.
+4. Keep the flight-mode channel (FLTMODE_CH) for flight modes only: check each airframe's channel map once (mode switch, trainer mix, arm switch) and write it on the go/no-go sheet. On the plane CH8 is the mode switch.
+5. Decide the GCS-failsafe policy per airframe and put it on the go/no-go sheet: with RC as primary control, a telemetry dropout currently sends the plane home (FS_GCS_ENABL; it triggered twice on 22 Oct over USB). Either FS_GCS_ENABL = 0 and rely on the RC failsafe, or keep it and make the telemetry link solid.
+6. Fix the plane before any props-on test: ELRS receiver failsafe to "No pulses"; replace the USB cable that dropped twice; airspeed sensor fitted or ARSPD_TYPE = 0; roll reads about -46° at rest — set AHRS_ORIENTATION and redo the accelerometer calibration.
+7. Build the field laptop's Release build (about an hour, overnight) once the bench checks pass, then freeze and tag phase1-step3.
+8. Run the SITL campaign (item 12) before the first props-on flight, especially crash recovery, link loss and the 3-hour idle. Scripts can be written now; running them needs ArduPilot SITL on the development machine.
+9. Bench the copter: the release gate needs one copter and one plane, and only the plane has been on the bench so far. Plan its bench session (the same checks as the plane).
 
 Earlier notes on the open items (history; statuses above supersede them)
 • Items 6–8: SessionRecorder, battery pack registry and snapshot (including moving the pack modal into the Power section), database startup and migration fixes.
@@ -83,7 +96,7 @@ Earlier notes on the open items (history; statuses above supersede them)
 • Step 3 addition (21 Oct): trainer (master/slave) handover logging. Master/slave is a transmitter feature (EdgeTX/OpenTX Trainer mode): the aircraft sees only the master's link, so ArduPilot and the GCS cannot tell who is flying. To record it, the instructor's transmitter copies the trainer-switch state onto a spare channel (e.g. CH8); the GCS gets a setting for that channel, logs "control → student / instructor" events (time, altitude, battery) as HANDOVER rows on the current flight, and shows who has control in the Fly view during a Training session. Today the wizard records instructor/trainee names and RC links, and flight history/export have a "Trainer handovers" section, but nothing ever writes a HANDOVER event, so it is always empty. Depends on SessionRecorder (item 6) for the flight row. Status 22 Oct: done in code. TrainerSwitchTracker (header-only) reads the trainer channel from RC_CHANNELS (default CH8, changeable from the Fly-view chip; stored in check_config trainer/channel): the value at connection is "instructor", a move of more than 300 µs is "student", back within 150 µs is "instructor" again, so any mix output works (987 → 1500, 1000 → 2000, reversed). In Training sessions each switch is logged as HANDOVER_TO_STUDENT / HANDOVER_TO_INSTRUCTOR with altitude, battery, satellites and flight mode, on the flight and its Flight History row, and shown as an app message; a Fly-view chip shows INSTRUCTOR FLYING / STUDENT FLYING, "(switch not seen yet)" until the channel has moved once, or "not monitored" when the channel has no valid value. Tests: TelemetryBridgeTest::testTrainerSwitchTracker, DatabaseManagerTest::testRecorderWritesFlightHistoryAndHandovers. Bench 22 Oct (fixed wing, ELRS 16 ch): CH8 is the flight-mode switch (ArduPlane FLTMODE_CH = 8; 987/1500/2011 changed MANUAL/STABILIZE/RTL), so the trainer switch must be mixed onto a free channel (e.g. CH9/CH10). The GCS now refuses a trainer channel equal to FLTMODE_CH (chip says so; nothing is logged). Still to do: set the mix on the instructor GX12 and confirm the chosen channel follows the trainer switch.
 • Flight History gap (found 22 Oct): Flight History, CSV export and stats read the flights table, which only the never-shown FlightFormDialog path wrote; SessionRecorder wrote flight_sessions only, so recorded flights did not appear in Flight History. Fixed: SessionRecorder also writes a flights row per flight (operator optional, mode, arm source and bench flag in notes, weather and its source, max altitude, min/max voltage, distance, duration), linked by flight_sessions.history_flight_id (v23).
 • Item 17: W7 only (SITL weather location); W2–W4 and W6 done 22 Oct. Item 18: SITL / real-mount run. Item 21: done 22 Oct.
-• Items 12–14: SITL campaign, Jetson build (F20 start script), real radio and go/no-go.
+• Items 12 and 14: SITL campaign, real radio and go/no-go. (Item 13, Jetson, after Phase 1.)
 
 Summary
 Verdict: not ready for Phase 1 field testing yet, but close on the arm gate and far on records and freshness. The arm interceptor, force-arm token and RTL path are well designed and heavily tested. The weak points are the layers around them: how the code decides data is fresh, how it decides the vehicle is armed, and how it records flights and batteries.
@@ -93,7 +106,7 @@ The five findings that most change the plan:
 3. Session records are unreliable. For an RC-primary aircraft most flights create no session; a GCS arm followed by an RC disarm leaves a session open that swallows every later flight. Battery identity is one fake serial per vehicle, and the pack the operator entered in Fly view is never stored with the flight. [V]
 4. Database failures are silent. Startup ignores a failed database open, migrations record a version even when their SQL failed, the v19 migration never runs, and check-result rows likely fail a foreign key on every write. [V], runtime effect [U]
 5. Field robustness is unproven. Nothing has run on a real link, a 3-hour idle, or the Jetson target; the RTL confirm wait runs a nested event loop on a raw vehicle pointer that can be deleted mid-wait. [V] for the code, [R] for the test gaps
-The plan below has 21 must-have items for Phase 1, grouped into six workstreams, and a release gate that ends with a props-on, tethered or low-altitude flight on one copter and one plane.
+The plan below has 21 must-have items for Phase 1 (20 since 23 Oct: item 13, the Jetson build, moved to after Phase 1), grouped into six workstreams, and a release gate that ends with a props-on, tethered or low-altitude flight on one copter and one plane.
 Phase 1 scope
 Phase 1 is field testing of ArduPilot quadcopters and fixed-wing aircraft where the RC transmitter arms and flies, and the GCS monitors, gates GCS-initiated arming, runs bench tests and logs. Everything in this plan is judged against that job, not against a full-featured GCS.
 The GCS must, for Phase 1:
@@ -103,7 +116,7 @@ The GCS must, for Phase 1:
 • Run motor and servo bench tests safely, props off.
 • Record every arm-to-disarm as a flight, whoever armed it, with enough data to reconstruct what happened.
 • Survive link loss, link degradation and multi-hour idle without crashing, freezing or quitting.
-• Install and run repeatably on the Jetson Orin Nano (JetPack 6.2.2) field laptop or companion target.
+• Install and run repeatably on the field laptop (x86_64). Jetson Orin Nano deployment is after Phase 1 (decided 23 Oct; item 13 and its setup/start script are kept for then).
 The GCS does not, and should say so plainly:
 • Block RC-stick arming or arming from other MAVLink peers. ArduPilot's own pre-arm checks remain the last barrier.
 • Plan or fly missions, guided goto, takeoff or land in Phase 1.
@@ -236,7 +249,7 @@ Deployability
 The field build is a Debug build, which compiles in test-only hooks (m_testOverrides under QT_DEBUG) and is slower on the Jetson. The start script hard-codes x86_64-linux-gnu, so the AppImage layout will not load on the arm64 Jetson.
 core/AbstractCheck.cpp:207-209, deploy/qgroundcontrol-start.sh:3
 V
-Must — Status 20 Oct: open.
+After Phase 1 for the Jetson part (moved 23 Oct with item 13): the start-script fix (hard-coded x86_64-linux-gnu path) is kept, planned for the Jetson work. Still relevant to Phase 1: the field laptop should run a Release/RelWithDebInfo build, not the Debug build with test hooks. — Status 23 Oct: open.
 F21
 Scalability
 One PreflightManager with system id 1 is created for the whole app, and session, battery and gate state are single globals. Fine for one aircraft per GCS in Phase 1; multi-vehicle needs a per-vehicle context.
@@ -600,7 +613,7 @@ Field
 Jetson build and package
 F20
 Build RelWithDebInfo for arm64 on JetPack 6.2.2; fix the hard-coded x86_64-linux-gnu library path in deploy/qgroundcontrol-start.sh; run the unit test classes on the Jetson; measure CPU and memory over the 3-hour idle.
-The packaged build starts on a clean Jetson, tests pass there, and memory growth over 3 hours is under a limit you set — Status 20 Oct: open.
+The packaged build starts on a clean Jetson, tests pass there, and memory growth over 3 hours is under a limit you set — Status 23 Oct: moved to after Phase 1 (user decision). Kept here unchanged, including the deploy/qgroundcontrol-start.sh fix, for the Jetson work. For Phase 1 the 3-hour memory check is done on the field laptop as part of item 12.
 14
 Field
 Real radio link and go/no-go
@@ -654,6 +667,9 @@ These improve quality but do not change whether a Phase 1 test is safe or its re
 Item
 Fixes
 Why it can wait
+Jetson Orin Nano build and package (item 13): RelWithDebInfo for arm64 on JetPack 6.2.2, the deploy/qgroundcontrol-start.sh library-path fix, tests and a 3-hour run on the Jetson
+F20
+Moved here 23 Oct (user decision): Phase 1 runs on the field laptop. The setup and start script work is kept for when the Jetson becomes the target.
 Move database writes off the GUI thread (a writer queue) and add retention for check_results and events
 F19
 Once item 2 stops the stale cycling and item 6 writes only on transitions, write volume is small for single-aircraft tests. Revisit if the Jetson shows UI stalls.
@@ -685,7 +701,7 @@ Release gate for field testing
 Each stage needs the previous one passed and written up; a failure sends the build back one stage, not to the start.
 1. Code complete: items 1 to 11 merged, every gate and session test class passing one at a time on the tagged commit, no new quarantines.
 2. SITL: item 12 complete on both copter and plane, including the 3-hour idle and the crash-recovery check of item 6.
-3. Target hardware: item 13 complete, the same SITL run of show repeated once from the Jetson build.
+3. Target hardware: the same SITL run repeated once from the field laptop's Release/RelWithDebInfo build (the Jetson, item 13, is after Phase 1).
 4. Bench, props off: real radio and RC, motor and servo tests, a GCS arm, an RC arm, a force-arm and an RC disarm; check that each produced exactly one flight row with the right arm source and battery snapshot.
 5. Go/no-go: item 14 signed per airframe.
 6. First field test: props on, tethered or at low altitude, RC pilot in command, with a written abort plan; review the flight rows and logs before the next sortie.
