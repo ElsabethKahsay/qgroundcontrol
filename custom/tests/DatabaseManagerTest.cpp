@@ -24,7 +24,8 @@ private:
         QString tmpPath = QDir::tempPath() + QStringLiteral("/test_db_XXXXXX.db");
         QTemporaryFile tmpFile;
         tmpFile.setFileTemplate(tmpPath);
-        tmpFile.open();
+        if (!tmpFile.open())
+            qFatal("cannot create a temporary file for the test database");
         QString path = tmpFile.fileName();
         tmpFile.close();
         db.initialize(path);
@@ -82,7 +83,7 @@ void DatabaseManagerTest::testInitialize()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_preflight_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     bool ok = db.initialize(tmpFile.fileName());
     QVERIFY(ok);
 }
@@ -93,7 +94,7 @@ void DatabaseManagerTest::testVehicleInsertAndRead()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_vehicle_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     db.initialize(tmpFile.fileName());
 
     bool ok = db.upsertVehicle(QStringLiteral("UID-001"), QStringLiteral("TestUAV"),
@@ -111,7 +112,7 @@ void DatabaseManagerTest::testBatteryCrud()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_battery_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     db.initialize(tmpFile.fileName());
 
     bool ok = db.upsertBattery(QStringLiteral("SN-001"), QStringLiteral("Test Battery"));
@@ -128,7 +129,7 @@ void DatabaseManagerTest::testBatteryCycleSaveAndQuery()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_cycle_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     db.initialize(tmpFile.fileName());
 
     db.upsertVehicle(QStringLiteral("UID-TEST"), QStringLiteral("Test"),
@@ -151,7 +152,7 @@ void DatabaseManagerTest::testBatteryCycleCount()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_cycle_count_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     db.initialize(tmpFile.fileName());
 
     db.upsertVehicle(QStringLiteral("UID-TEST"), QStringLiteral("Test"),
@@ -691,7 +692,7 @@ void DatabaseManagerTest::testDoubleIncrementGuard()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_dbl_inc_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     db.initialize(tmpFile.fileName());
 
     db.upsertVehicle(QStringLiteral("UID-TEST"), QStringLiteral("Test"),
@@ -712,7 +713,7 @@ void DatabaseManagerTest::testIncrementBatteryCycleGuard()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_inc_guard_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     db.initialize(tmpFile.fileName());
 
     db.upsertVehicle(QStringLiteral("UID-SHORT"), QStringLiteral("Short"),
@@ -746,7 +747,7 @@ void DatabaseManagerTest::testFlightSessionRoundTrip()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_flight_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     db.initialize(tmpFile.fileName());
 
     db.upsertVehicle(QStringLiteral("UID-FLIGHT"), QStringLiteral("Flight"),
@@ -765,7 +766,7 @@ void DatabaseManagerTest::testCheckResultAuditTrail()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_audit_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     db.initialize(tmpFile.fileName());
 
     db.upsertVehicle(QStringLiteral("UID-CKR"), QStringLiteral("CheckTest"),
@@ -811,7 +812,7 @@ void DatabaseManagerTest::testSchemaMigration()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/migrate_test_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     QString dbPath = tmpFile.fileName();
     tmpFile.close();
 
@@ -943,7 +944,7 @@ void DatabaseManagerTest::testZoneCrud()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_zones_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     QVERIFY(db.initialize(tmpFile.fileName()));
 
     // Fresh databases are seeded with default airspace zones (Bole Airport
@@ -995,7 +996,7 @@ void DatabaseManagerTest::testZoneComplianceLog()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_compliance_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     QVERIFY(db.initialize(tmpFile.fileName()));
 
     int opId = db.insertOperator(QStringLiteral("Alice"), QStringLiteral("Pilot"));
@@ -1040,7 +1041,7 @@ void DatabaseManagerTest::testV12Migration()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/v12_migrate_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     QString dbPath = tmpFile.fileName();
     tmpFile.close();
 
@@ -1173,7 +1174,7 @@ void DatabaseManagerTest::testFlightSummaryFields()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_summary_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     QVERIFY(db.initialize(tmpFile.fileName()));
 
     int opId = db.insertOperator(QStringLiteral("Bob"), QStringLiteral("Pilot"));
@@ -1207,7 +1208,7 @@ void DatabaseManagerTest::testCheckCountsAndAnomalies()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_counts_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     QVERIFY(db.initialize(tmpFile.fileName()));
 
     int opId = db.insertOperator(QStringLiteral("Carol"), QStringLiteral("Pilot"));
@@ -1241,7 +1242,7 @@ void DatabaseManagerTest::testRecoverOrphanedSessions()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_orphan_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     QVERIFY(db.initialize(tmpFile.fileName()));
 
     int opId = db.insertOperator(QStringLiteral("Dave"), QStringLiteral("Pilot"));
@@ -1274,7 +1275,7 @@ void DatabaseManagerTest::testExportFlightsCsv()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_export_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     QVERIFY(db.initialize(tmpFile.fileName()));
 
     int opId = db.insertOperator(QStringLiteral("Eve"), QStringLiteral("Pilot"));
@@ -1316,7 +1317,7 @@ void DatabaseManagerTest::testExportFlightDetailCsv()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_detail_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     QVERIFY(db.initialize(tmpFile.fileName()));
 
     int opId = db.insertOperator(QStringLiteral("Frank"), QStringLiteral("Pilot"));
@@ -1357,7 +1358,7 @@ void DatabaseManagerTest::testGetFlightStats()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_stats_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     QVERIFY(db.initialize(tmpFile.fileName()));
 
     int op1 = db.insertOperator(QStringLiteral("Grace"), QStringLiteral("Pilot"));
@@ -1417,7 +1418,7 @@ void DatabaseManagerTest::testBackupBeforeMigration()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_backup_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     tmpFile.close();
     const QString path = tmpFile.fileName();
 
@@ -1451,7 +1452,7 @@ void DatabaseManagerTest::testEmptyNameUpsertAndSession()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_empty_name_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     QVERIFY(db.initialize(tmpFile.fileName()));
 
     // Empty friendly name + empty motor layout + zero GPS — the exact write
@@ -1493,7 +1494,7 @@ void DatabaseManagerTest::testOrphanedSessionRecoveredOnRelaunch()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_relaunch_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     QVERIFY(db.initialize(tmpFile.fileName()));
 
     int opId = db.insertOperator(QStringLiteral("Robin"), QStringLiteral("Pilot"));

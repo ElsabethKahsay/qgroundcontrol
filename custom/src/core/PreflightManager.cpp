@@ -777,8 +777,8 @@ void PreflightManager::tick() {
     int now = QDateTime::currentMSecsSinceEpoch() / 5000;
     if (now != lastSummary) {
       lastSummary = now;
-      qCDebug(preflightLog).noquote() << QStringLiteral("[Preflight] %1/91 passed | Pending:%2 Failed:%3 Warning:%4 Skipped:%5")
-        .arg(passCount).arg(pendingCount).arg(failedCount).arg(warnCount).arg(skipCount);
+      qCDebug(preflightLog).noquote() << QStringLiteral("[Preflight] %1/%6 passed | Pending:%2 Failed:%3 Warning:%4 Skipped:%5")
+        .arg(passCount).arg(pendingCount).arg(failedCount).arg(warnCount).arg(skipCount).arg(m_checks.size());
 
       for (auto *check : m_checks) {
         if (check->status() != CheckStatus::Passed) {

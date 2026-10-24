@@ -628,22 +628,18 @@ void VehicleProfileManager::setBatteryType(const QString &type)
     emit batteryConfigChanged();
 }
 
+// Force arm only through the single funnel (TelemetryBridge::forceArm), which
+// checks the session, ground speed and pilot details, bounds the override and
+// records it. Without the bridge there is no safe path, so nothing is sent.
 void VehicleProfileManager::forceArm()
 {
-    if (m_telemetry) {
-        qInfo() << "VehicleProfileManager: Force arming vehicle (funnel)";
-        m_telemetry->forceArm(QStringLiteral("VehicleProfileManager"),
-                              QStringLiteral("Profile force-arm action"));
+    if (!m_telemetry) {
+        qWarning() << "VehicleProfileManager: force arm refused, no telemetry bridge";
         return;
     }
-    Vehicle *vehicle = MultiVehicleManager::instance() ? MultiVehicleManager::instance()->activeVehicle() : nullptr;
-    if (vehicle) {
-        qWarning() << "VehicleProfileManager: TelemetryBridge unavailable; falling back to vehicle->forceArm()";
-        if (m_armingGate) {
-            QMetaObject::invokeMethod(m_armingGate, "forceArm");
-        }
-        vehicle->forceArm();
-    }
+    qInfo() << "VehicleProfileManager: Force arming vehicle (funnel)";
+    m_telemetry->forceArm(QStringLiteral("VehicleProfileManager"),
+                          QStringLiteral("Profile force-arm action"));
 }
 
 void VehicleProfileManager::disarmVehicle(bool force)

@@ -75,7 +75,7 @@ private slots:
     void testArmBlockedSendsNothing();
     void testForceArmThenArmSendsOne();
     void testForceArmExpiresThenArmBlocked();
-    void testStockSetArmedBypassesGate();
+    void testStockSetArmedBlockedByGate();
     void testNoInterceptorStockBehaviorUnchanged();
     void testDisarmSendsDisarmNotArm();
     void testProductionWiringInstallsInterceptor();
@@ -94,6 +94,7 @@ private slots:
     void testForceArmAuditLogRecordsPilotAndReason();
     void testAckOverrideRecordedWithPilotAndChecks();
     void testGcsArmDenialAndAckExpiryRecorded();
+    void testForceArmRefusedWithoutGate();
 
 private:
     // Unit-test singleton owner: FlightSession::instance() is null until a
@@ -285,7 +286,7 @@ void ArmSendTest::testForceArmExpiresThenArmBlocked()
 //     which now consults the installed arm interceptor: with the gate closed the
 //     command is vetoed locally (MAV_RESULT_DENIED), nothing reaches the wire,
 //     and the vehicle stays disarmed. This is the gated behavior.
-void ArmSendTest::testStockSetArmedBypassesGate()
+void ArmSendTest::testStockSetArmedBlockedByGate()
 {
     QVERIFY(_connectPlane());
     QVERIFY(!_vehicle->armed());
@@ -1157,6 +1158,26 @@ void ArmSendTest::testGcsArmDenialAndAckExpiryRecorded()
                           QStringLiteral("test.armsend.fail")), qPrintable(describe(events)));
     QVERIFY2(hasGateEvent(events, QStringLiteral("gcs_arm_denied"), QString(), QStringLiteral("test.armsend.fail")),
              qPrintable(describe(events)));
+}
+
+// The funnel never sends a force-arm that no gate bounds or records.
+void ArmSendTest::testForceArmRefusedWithoutGate()
+{
+    QVERIFY(_connectPlane());
+    QVERIFY(!_vehicle->armed());
+
+    MockTelemetryBridge bridge;          // no setArmingGate()
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    bridge.setVehicle(_vehicle);
+
+    _mockLink->clearReceivedMavCommandCounts();
+    const QString refusal = bridge.forceArm(QStringLiteral("TestPilot"), QStringLiteral("no gate"));
+    QVERIFY2(refusal.contains(QStringLiteral("gate"), Qt::CaseInsensitive), qPrintable(refusal));
+
+    QTest::qWait(300);
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 0);
+    QVERIFY(!_vehicle->armed());
 }
 
 UT_REGISTER_TEST(ArmSendTest)

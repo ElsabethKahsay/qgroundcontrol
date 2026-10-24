@@ -1506,17 +1506,13 @@ QString TelemetryBridge::forceArm(const QString &pilotName, const QString &reaso
     // A token left over from an earlier attempt must never authorize this one.
     _vehicle->setArmOverrideToken(0);
 
-    if (_armingGate) {
-        auto *gate = qobject_cast<ArmingGate*>(_armingGate);
-        if (gate) {
-            const quint32 token = gate->forceArm();
-            _vehicle->setArmOverrideToken(token);
-        } else {
-            QMetaObject::invokeMethod(_armingGate, "forceArm");
-        }
-    } else {
-        qCWarning(telemetryBridgeLog) << "forceArm(): no ArmingGate registered — sending unconditionally";
+    // No gate means nothing bounds or records the override: refuse rather
+    // than send an unbounded force-arm.
+    auto *gate = qobject_cast<ArmingGate*>(_armingGate);
+    if (!gate) {
+        return refuse(tr("Force-arm refused: no arming gate"));
     }
+    _vehicle->setArmOverrideToken(gate->forceArm());
 
     qCWarning(telemetryBridgeLog).noquote()
         << QStringLiteral("forceArm(): sending MAV_CMD_COMPONENT_ARM_DISARM with force flag (pilot %1)")

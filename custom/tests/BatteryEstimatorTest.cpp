@@ -36,7 +36,8 @@ private:
     {
         QTemporaryFile tmpFile;
         tmpFile.setFileTemplate(QDir::tempPath() + QStringLiteral("/test_db_XXXXXX.db"));
-        tmpFile.open();
+        if (!tmpFile.open())
+            qFatal("cannot create a temporary file for the test database");
         const QString path = tmpFile.fileName();
         tmpFile.close();
         db.initialize(path);
@@ -260,7 +261,7 @@ private slots:
         const QString json = makeDatasheet({ { 33.6, QString(), 1500, 7.7 },
                                              { 33.6, QString(), 2500, 12.4 } });
         QTemporaryFile f(QDir::tempPath() + QStringLiteral("/ds_XXXXXX.json"));
-        f.open();
+        QVERIFY(f.open());
         f.write(json.toUtf8());
         f.flush();
         const QString path = f.fileName();

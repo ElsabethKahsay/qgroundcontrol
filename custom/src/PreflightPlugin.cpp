@@ -627,6 +627,10 @@ void PreflightPlugin::_onActiveVehicleChanged(Vehicle *vehicle)
 
     if (_armStateTracker)
         _armStateTracker->setVehicle(vehicle);
+    // An acknowledgment or force-arm window was given for the previous
+    // vehicle's failing checks; it must not carry over to the next one.
+    if (_armingGate)
+        _armingGate->resetGate();
     _trainer.reset();   // the first value on the new link is the instructor position
     emit trainerChanged();
     // Link loss keeps the flight open; vehicle removal closes

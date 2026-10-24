@@ -18,7 +18,8 @@ private:
         QString tmpPath = QDir::tempPath() + QStringLiteral("/test_fhm_XXXXXX.db");
         QTemporaryFile tmpFile;
         tmpFile.setFileTemplate(tmpPath);
-        tmpFile.open();
+        if (!tmpFile.open())
+            qFatal("cannot create a temporary file for the test database");
         QString path = tmpFile.fileName();
         tmpFile.close();
         db.initialize(path);
@@ -53,7 +54,7 @@ void FlightHistoryModelTest::testFilterByMode()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_fhm_mode_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     QVERIFY(db.initialize(tmpFile.fileName()));
 
     int op = seedOperator(db, QStringLiteral("Alice"));
@@ -90,7 +91,7 @@ void FlightHistoryModelTest::testFilterByVehicleAndOperator()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_fhm_veh_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     QVERIFY(db.initialize(tmpFile.fileName()));
 
     int opA = seedOperator(db, QStringLiteral("Alice"));
@@ -128,7 +129,7 @@ void FlightHistoryModelTest::testFilterByDateRange()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_fhm_date_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     QVERIFY(db.initialize(tmpFile.fileName()));
 
     int op = seedOperator(db, QStringLiteral("Alice"));
@@ -157,7 +158,7 @@ void FlightHistoryModelTest::testFilterBySearch()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_fhm_search_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     QVERIFY(db.initialize(tmpFile.fileName()));
 
     int op = seedOperator(db, QStringLiteral("Pegasus"));
@@ -198,7 +199,7 @@ void FlightHistoryModelTest::testSortByDuration()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_fhm_sort_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     QVERIFY(db.initialize(tmpFile.fileName()));
 
     int op = seedOperator(db, QStringLiteral("Alice"));
@@ -226,7 +227,7 @@ void FlightHistoryModelTest::testPagination()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_fhm_page_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     QVERIFY(db.initialize(tmpFile.fileName()));
 
     int op = seedOperator(db, QStringLiteral("Alice"));
@@ -255,7 +256,7 @@ void FlightHistoryModelTest::testRoles()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_fhm_roles_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     QVERIFY(db.initialize(tmpFile.fileName()));
 
     int op = seedOperator(db, QStringLiteral("Carol"));
@@ -310,7 +311,7 @@ void FlightHistoryModelTest::testFiltersViaSetters()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_fhm_setters_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     QVERIFY(db.initialize(tmpFile.fileName()));
 
     int opA = seedOperator(db, QStringLiteral("Alice"));
@@ -361,7 +362,7 @@ void FlightHistoryModelTest::testGetFlightDetail()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/test_fhm_detail_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     QVERIFY(db.initialize(tmpFile.fileName()));
 
     int op = seedOperator(db, QStringLiteral("Alice"));

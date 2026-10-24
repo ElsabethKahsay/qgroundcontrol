@@ -1413,9 +1413,18 @@ void HardwareTestController::stopAll()
     qCDebug(hardwareTestLog) << "STOP ALL triggered";
 }
 
+// The motor panel's "Disarm" button, shown when the vehicle was armed by
+// someone else and so blocks the motor test. It sends a plain disarm (never
+// the forced 21196), and not at all while the vehicle reports flying: the
+// firmware would refuse it anyway, and a bench control has no business
+// commanding an aircraft in the air.
 void HardwareTestController::disarmVehicle()
 {
     if (!_vehicle) return;
+    if (_vehicle->flying()) {
+        qCWarning(hardwareTestLog) << "Disarm from the motor panel refused: vehicle reports flying";
+        return;
+    }
     qCDebug(hardwareTestLog) << "Disarming vehicle via GCS request";
     _vehicle->sendMavCommand(
         _vehicle->defaultComponentId(),

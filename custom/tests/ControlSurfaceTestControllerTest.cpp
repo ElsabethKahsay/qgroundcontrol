@@ -333,7 +333,7 @@ void ControlSurfaceTestControllerTest::testDbResultLoggingFires()
     QString tmpPath = QDir::tempPath() + QStringLiteral("/surfacetest_XXXXXX.db");
     QTemporaryFile tmpFile;
     tmpFile.setFileTemplate(tmpPath);
-    tmpFile.open();
+    QVERIFY(tmpFile.open());
     const QString dbPath = tmpFile.fileName();
     tmpFile.close();
     QVERIFY(db.initialize(dbPath));
