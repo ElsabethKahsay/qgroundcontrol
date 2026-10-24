@@ -24,11 +24,11 @@ class ArmingGate : public QObject {
     /// Human-readable reason why arming is denied.
     Q_PROPERTY(QString denialReason READ denialReason NOTIFY denialReasonChanged)
     /// Current gate mode (Passive / Active / Hybrid). Read-only from QML:
-    /// Phase 1 fixes the gate at Active; the badge is display-only (G2).
+    /// Phase 1 fixes the gate at Active; the badge is display-only.
     Q_PROPERTY(Mode mode READ mode NOTIFY modeChanged)
     /// Whether an operator override is currently active.
     Q_PROPERTY(bool overrideActive READ isOverrideActive NOTIFY overrideActiveChanged)
-    /// Which override is in force (G8): none, a pending acknowledgment, or an
+    /// Which override is in force: none, a pending acknowledgment, or an
     /// open force-arm window. armingAllowed never reports an override as "open".
     Q_PROPERTY(OverrideKind overrideKind READ overrideKind NOTIFY overrideKindChanged)
 
@@ -77,7 +77,7 @@ public:
     /// Intercept a MAVLink COMMAND_LONG and block or allow it based on gate state.
     bool interceptCommandLong(uint16_t command, const QMap<int, float> &params);
 
-    // ── Step 2.5: one decision function (G5–G9, G11, G12) ─────────────────
+    // ── One decision function ────────────────────────────────────────────
     /// Everything decide() needs about the vehicle and the checks.
     struct ArmRequest {
         bool isArm = true;                ///< false = disarm (always allowed)
@@ -123,7 +123,7 @@ public:
     /// Live inputs for decide().
     ArmRequest currentRequest(quint32 callToken, bool isArm = true) const;
     GateSnapshot snapshot() const;
-    /// Every QML Arm button calls this (G11). Allow → sends the arm via the
+    /// Every QML Arm button calls this. Allow → sends the arm via the
     /// telemetry bridge; Deny → emits commandRejected(reason). Returns
     /// {verdict: "allow"|"needsAck"|"deny", kind, reason, failing}.
     Q_INVOKABLE QVariantMap requestArm();
@@ -217,7 +217,7 @@ private:
 
     PreflightManager *m_manager = nullptr;
     TelemetryBridge *m_telemetry = nullptr;
-    qint64 m_lastTickMs = -1;   ///< MonotonicClock ms of the last autopilot heartbeatTick, -1 = never (F17)
+    qint64 m_lastTickMs = -1;   ///< MonotonicClock ms of the last autopilot heartbeatTick, -1 = never
     Mode m_mode = Active;
     OverridePolicy m_overridePolicy = ALLOW_WITH_ACK;
     bool m_armingAllowed = false;
@@ -229,7 +229,7 @@ private:
     QTimer *m_ackTimer = nullptr;
     Acknowledgment m_lastAck;
     quint32 m_ackToken = 0;
-    QStringList m_ackCheckIds;   ///< failing mandatory checks when the pilot acknowledged (G5)
+    QStringList m_ackCheckIds;   ///< failing mandatory checks when the pilot acknowledged
     int m_ackExpiryMs = kAckExpirySec * 1000;
 
     // One-shot override token model. forceArm()/setOverrideDuration() mint a fresh
@@ -240,7 +240,7 @@ private:
     // caller-scoped. A force-arm window whose token is spent or that expires
     // authorizes no other command: it is not ambient.
     quint32 m_overrideToken = 0;
-    quint32 m_overrideTokenSeq = 0;   ///< never reset, so tokens never repeat across windows (G9)
+    quint32 m_overrideTokenSeq = 0;   ///< never reset, so tokens never repeat across windows
     bool m_forceArmOverride = false;
 
     uint16_t m_armCommandCode = kMavCmdArmDisarm;

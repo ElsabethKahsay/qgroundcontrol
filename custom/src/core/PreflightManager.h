@@ -173,7 +173,7 @@ public slots:
     /// Timer tick — evaluates stale checks and drives state machine.
     void tick();
     /// Advance the FSM to the Armed terminal (autopilot confirmed arming).
-    /// Check-result transitions never retreat from Armed once reached (R8).
+    /// Check-result transitions never retreat from Armed once reached.
     Q_INVOKABLE void markArmed();
     /// Retreat from the Armed terminal after a disarm; check results then
     /// re-drive the FSM on the next tick.
@@ -231,7 +231,7 @@ private:
     int m_stalenessThresholdMs = 10000;
     /// True once a vehicle kind has been applied (MULTIROTOR / FIXED_WING /
     /// VTOL_CONVENTIONAL). Until then the applicable mandatory set is undefined
-    /// and the arming gate stays closed (R16).
+    /// and the arming gate stays closed.
     bool m_kindResolved = false;
     /// True while the post-flight checklist is active: only checks flagged
     /// isPostFlight() are re-evaluated; the rest report Skipped.

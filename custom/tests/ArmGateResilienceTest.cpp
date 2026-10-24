@@ -134,7 +134,7 @@ void ArmGateResilienceTest::_buildArmableGate(bool withTelemetry)
     _manager->setTelemetryBridge(_bridge);
     _manager->addCheck(_check);
     // Resolve the airframe kind before anything else. allMandatoryPassed() fails
-    // closed while m_kindResolved is false (R16: the applicable mandatory set is
+    // closed while m_kindResolved is false (the applicable mandatory set is
     // undefined until the vehicle kind is known), so without this the gate is
     // blocked for a reason unrelated to anything under test.
     _manager->applyVehicleKind(QStringLiteral("MULTIROTOR"));
@@ -264,7 +264,7 @@ void ArmGateResilienceTest::testForceArmTokenIsOneShot()
     _buildArmableGate();
     _gate->setMode(ArmingGate::Active);
     // Close the gate: the token is what authorizes the arm, not open checks.
-    // (Since Step 2.5 the force window closes on use; with the gate OPEN a
+    // (The force window closes on use; with the gate OPEN a
     // second arm would pass as an ordinary arm, which proves nothing here.)
     _check->forceStatus(CheckStatus::Failed, QStringLiteral("Simulated failure"));
 
@@ -436,7 +436,7 @@ void ArmGateResilienceTest::testCommHeartbeatStalenessDoesNotMakeCheckStaleButGa
 
 // (b) keep heartbeats flowing but stop the battery stream; assert the battery check goes Stale
 //     and the gate closes (heartbeat freshness alone must not keep it open).
-// Step 2.2 (F1–F3): heartbeats alone must not keep the gate open when the
+// Heartbeats alone must not keep the gate open when the
 // battery stream stops. The battery check is made mandatory and passing on a
 // fresh BATTERY_STATUS; then only heartbeats keep arriving, so the check goes
 // Stale (no BATTERY_STATUS for > 5 s) and the gate closes.
@@ -472,7 +472,7 @@ void ArmGateResilienceTest::testHeartbeatFreshnessDoesNotKeepGateOpenWhenBattery
                             .arg(_gate->denialReason())));
 }
 
-// Step 2.1 (F17): the gate's freshness clock is monotonic. With an injected
+// The gate's freshness clock is monotonic. With an injected
 // TestClock frozen, real time passing does not make the link stale; advancing
 // the injected clock past the 10 s limit does.
 void ArmGateResilienceTest::testGateFreshnessUsesMonotonicClock()

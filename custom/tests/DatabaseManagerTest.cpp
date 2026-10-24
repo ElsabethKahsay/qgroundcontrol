@@ -1479,7 +1479,7 @@ void DatabaseManagerTest::testEmptyNameUpsertAndSession()
 void DatabaseManagerTest::testOrphanedSessionRecoveredOnRelaunch()
 {
     // Unexpected-exit-and-relaunch, at the level this codebase actually supports.
-    // There is no child process to spawn or kill (see the Tier 4 report), so the
+    // There is no child process to spawn or kill, so the
     // process boundary is simulated where GCS state actually persists: db.reset()
     // drops every bit of in-memory state and closes the connection, exactly what
     // an abnormal exit does to anything not on disk, and initialize() then stands

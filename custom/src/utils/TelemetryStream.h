@@ -1,6 +1,6 @@
 #pragma once
 
-/// MAVLink streams whose arrival time TelemetryBridge stamps (F1–F3).
+/// MAVLink streams whose arrival time TelemetryBridge stamps.
 /// A check declares the streams it reads (AbstractCheck::setRequiredStreams);
 /// PreflightManager marks it Stale when one of them stops arriving.
 /// Header-only (no CMake change needed); kept apart from TelemetryBridge.h so

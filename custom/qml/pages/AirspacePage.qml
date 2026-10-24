@@ -38,7 +38,7 @@ AnalyzePage {
 
     // Automatic no-fly-zone route check. Single source of truth: the check is
     // owned/registered by PreflightManager (airspace.zone_compliance) and runs
-    // the shared ZoneComplianceTool — never a per-page duplicate path (R10/R17).
+    // the shared ZoneComplianceTool — never a per-page duplicate path.
     readonly property var _zoneCheck: PreflightManager ? PreflightManager.checkById("airspace.zone_compliance") : null
 
     // Compliance-log flight filter (-1 = all flights)
@@ -58,7 +58,7 @@ AnalyzePage {
         onTriggered: root._noticeText = ""
     }
 
-    // Stop the notice timer on teardown (R13).
+    // Stop the notice timer on teardown.
     Component.onDestruction: noticeTimer.stop()
 
     Connections {

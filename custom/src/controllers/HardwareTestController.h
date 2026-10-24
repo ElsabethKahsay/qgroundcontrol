@@ -59,7 +59,7 @@ class HardwareTestController : public QObject
     Q_PROPERTY(int durationSec READ durationSec WRITE setDurationSec NOTIFY durationSecChanged)
     Q_PROPERTY(QVariantList motorPwmValues READ motorPwmValues NOTIFY motorPwmValuesChanged)
     /// Why a motor test cannot start right now ("" = it can). Bound by the
-    /// QML start controls so a disabled control always says why (B4/B5).
+    /// QML start controls so a disabled control always says why.
     Q_PROPERTY(QString testBlockedReason READ testBlockedReason NOTIFY testBlockedReasonChanged)
 
 public:

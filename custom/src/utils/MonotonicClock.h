@@ -3,7 +3,7 @@
 #include <QElapsedTimer>
 #include <QtGlobal>
 
-/// Monotonic time for every age and duration in the preflight code (F17).
+/// Monotonic time for every age and duration in the preflight code.
 ///
 /// Wall-clock time (QDateTime::currentDateTime()) jumps on NTP / GPS time
 /// corrections and DST, which can mark everything stale or keep stale data

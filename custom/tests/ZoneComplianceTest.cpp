@@ -1,6 +1,6 @@
 /**
  * @file ZoneComplianceTest.cpp
- * @brief Tests for NoFlyZoneModel and ZoneComplianceCheck (L6 from TEST_CHECKLIST.md).
+ * @brief Tests for NoFlyZoneModel and ZoneComplianceCheck.
  *
  * Covers:
  *   - Zone CRUD operations

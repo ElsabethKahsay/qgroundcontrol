@@ -111,7 +111,7 @@ Item {
         anchors.fill: parent
         cursorShape: Qt.PointingHandCursor
         onClicked: {
-            // G5/G11 (Step 2.5): offer Acknowledge & Arm only when an
+            // Offer Acknowledge & Arm only when an
             // acknowledgment can actually allow the arm. Hard blocks (no or
             // stale telemetry, Training, stale data) go to the checklist instead.
             var v = QGroundControl.multiVehicleManager.activeVehicle

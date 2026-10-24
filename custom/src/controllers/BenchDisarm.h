@@ -5,8 +5,8 @@
 class Vehicle;
 
 /// Single disarm path for the bench test controllers (HardwareTestController,
-/// ControlSurfaceTestController). Findings B1–B4 of the Phase 1 readiness
-/// plan: a stop or close must never disarm a vehicle the test did not arm, and
+/// ControlSurfaceTestController). The rule it enforces
+/// is that a stop or close must never disarm a vehicle the test did not arm, and
 /// never one that is flying.
 namespace BenchDisarm {
 

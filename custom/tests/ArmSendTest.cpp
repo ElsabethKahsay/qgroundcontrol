@@ -207,8 +207,8 @@ void ArmSendTest::testForceArmThenArmSendsOne()
 
     // forceArm() opens the override window then sends.
     bridge.forceArm(QStringLiteral("TestPilot"), QStringLiteral("Unit test bench force arm"));
-    // Step 2.5: the force window closes as soon as its token is used, and a
-    // plain arm is never "allowed" by it (G8).
+    // The force window closes as soon as its token is used, and a
+    // plain arm is never "allowed" by it.
     QVERIFY(!gate.isOverrideActive());
     QCOMPARE(gate.overrideKind(), ArmingGate::NoOverride);
 
@@ -247,8 +247,8 @@ void ArmSendTest::testForceArmExpiresThenArmBlocked()
     _mockLink->clearReceivedMavCommandCounts();
 
     bridge.forceArm(QStringLiteral("TestPilot"), QStringLiteral("Unit test bench force arm"));
-    // Step 2.5: the force window closes as soon as its token is used, and a
-    // plain arm is never "allowed" by it (G8).
+    // The force window closes as soon as its token is used, and a
+    // plain arm is never "allowed" by it.
     QVERIFY(!gate.isOverrideActive());
     QCOMPARE(gate.overrideKind(), ArmingGate::NoOverride);
 
@@ -435,8 +435,8 @@ void ArmSendTest::testProductionWiringInstallsInterceptor()
     // The sanctioned path (forceArm opens the override window, arm() sends) must
     // still go through exactly once under the same side-effect-installed veto.
     bridge.forceArm(QStringLiteral("TestPilot"), QStringLiteral("Unit test bench force arm"));
-    // Step 2.5: the force window closes as soon as its token is used, and a
-    // plain arm is never "allowed" by it (G8).
+    // The force window closes as soon as its token is used, and a
+    // plain arm is never "allowed" by it.
     QVERIFY(!gate.isOverrideActive());
     QCOMPARE(gate.overrideKind(), ArmingGate::NoOverride);
     bridge.arm();
@@ -476,8 +476,8 @@ void ArmSendTest::testBenchForceArmFunnelSingle2989Command()
     const QString refusal = bridge.forceArm(QStringLiteral("TestPilot"), QStringLiteral("Unit test bench force arm"));   // funnel: override + one send
 
     QVERIFY2(refusal.isEmpty(), qPrintable(QStringLiteral("funnel refused on the ground: %1").arg(refusal)));
-    // Step 2.5: the force window closes as soon as its token is used, and a
-    // plain arm is never "allowed" by it (G8).
+    // The force window closes as soon as its token is used, and a
+    // plain arm is never "allowed" by it.
     QVERIFY(!gate.isOverrideActive());
     QCOMPARE(gate.overrideKind(), ArmingGate::NoOverride);
     QVERIFY(_pumpUntil(&ArmSendTest::_wireCount, &probe, 10000));
@@ -606,8 +606,8 @@ void ArmSendTest::testStockChainDeniedInsideBenchOverrideWindow()
     // for its own command.
     const QString refusal = bridge.forceArm(QStringLiteral("TestPilot"), QStringLiteral("Unit test bench force arm"));
     QVERIFY2(refusal.isEmpty(), qPrintable(QStringLiteral("funnel refused on the ground: %1").arg(refusal)));
-    // Step 2.5: the force window closes as soon as its token is used, and a
-    // plain arm is never "allowed" by it (G8).
+    // The force window closes as soon as its token is used, and a
+    // plain arm is never "allowed" by it.
     QVERIFY(!gate.isOverrideActive());
     QCOMPARE(gate.overrideKind(), ArmingGate::NoOverride);
 

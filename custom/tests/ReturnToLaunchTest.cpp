@@ -1,9 +1,9 @@
 /**
  * @file ReturnToLaunchTest.cpp
- * @brief Phase 1 (FlyQuickActions restructuring) — RTL hardening at the
+ * @brief RTL hardening at the
  *        TelemetryBridge layer.
  *
- * Track B contract (fork-native ArduPilot RTL):
+ * Contract (fork-native ArduPilot RTL):
  *
  *   (a) no vehicle connected -> returnToLaunch() refuses: returns false,
  *       emits nothing, nothing on the wire
@@ -14,14 +14,14 @@
  *       custom-mode number). The flight context captured at trigger time is
  *       emitted on rtlTriggered(), and the return value reflects the ACTUAL
  *       heartbeat-confirmed mode — never "command sent" claimed as success.
- *   (b2) per-type literal RTL mode IDs (B7): ArduPlane/ArduRover -> 11,
+ *   (b2) per-type literal RTL mode IDs: ArduPlane/ArduRover -> 11,
  *       ArduCopter -> 6 (the real ArduPilot mode-enum values).
  *   (c) distanceToHome()      -> haversine distance from the (virtual) GPS/home
  *       accessors; 0.0 before a fix/home is known
- *   (d) B8: DO_SET_MODE is sent regardless of the arming-gate state (open,
+ *   (d) DO_SET_MODE is sent regardless of the arming-gate state (open,
  *       closed, or no gate installed) — the arm interceptor is ARM_DISARM-only,
  *       it must never filter the RTL mode change.
- *   (e) B9: a DO_SET_MODE RTL leaves the armed state untouched (ArduPilot
+ *   (e) a DO_SET_MODE RTL leaves the armed state untouched (ArduPilot
  *       contract) — confirmed both by the returned result and live state.
  *
  * The MockLink ACKs MAV_CMD_DO_SET_MODE by echoing the requested custom mode in
@@ -30,7 +30,7 @@
  * "confirmed". The no-confirmation path is still covered by the contract check:
  * result always equals (mode heartbeat-confirmed AND armed preserved).
  *
- * B7 — the per-type literal mode IDs come from the real ArduPilot mode enums:
+ * The per-type literal mode IDs come from the real ArduPilot mode enums:
  *   - ArduCopter/mode.h   : enum Number { STABILIZE=0, ACRO=1, ALT_HOLD=2,
  *                           AUTO=3, GUIDED=4, LOITER=5, **RTL=6**, ... }
  *   - ArduPlane/mode.h    : enum Number { MANUAL=0, CIRCLE=1, ..., AUTO=10,
@@ -227,7 +227,7 @@ void ReturnToLaunchTest::testRtlPlaneSendsDoSetModeAndConfirms()
     QSignalSpy spyCompleted(&bridge, &TelemetryBridge::rtlCommandCompleted);
 
     const bool result = bridge.returnToLaunch();
-    QVERIFY(result);   // request sent; the outcome is asynchronous (item 10)
+    QVERIFY(result);   // request sent; the outcome is asynchronous
     QVERIFY(_waitForDoSetMode(1));
     QVERIFY(spyCompleted.count() == 1 || spyCompleted.wait(6000));
 
@@ -258,7 +258,7 @@ void ReturnToLaunchTest::testRtlPlaneSendsDoSetModeAndConfirms()
     QCOMPARE(spyCompleted.takeFirst().at(0).toBool(), true);
 }
 
-// (b2/B7) The RTL custom-mode number is literal and vehicle-type specific:
+// (b2) The RTL custom-mode number is literal and vehicle-type specific:
 // ArduPlane -> 11, ArduRover -> 11, ArduCopter -> 6 (real ArduPilot mode enums).
 void ReturnToLaunchTest::testRtlModeIdsPerVehicleType()
 {
@@ -298,7 +298,7 @@ void ReturnToLaunchTest::testRtlModeIdsPerVehicleType()
     }
 }
 
-// (d/B8) DO_SET_MODE is a flight-mode command: the ARM_DISARM interceptor
+// (d) DO_SET_MODE is a flight-mode command: the ARM_DISARM interceptor
 // (armed gate) must not filter it. It sends with a closed gate (interceptor
 // installed and vetoing arms) and with no gate reference at all.
 void ReturnToLaunchTest::testRtlSendsRegardlessOfArmGateState()
@@ -337,7 +337,7 @@ void ReturnToLaunchTest::testRtlSendsRegardlessOfArmGateState()
     QVERIFY(nullResult);
 }
 
-// (e/B9) A DO_SET_MODE RTL change leaves the armed state untouched: drive the
+// (e) A DO_SET_MODE RTL change leaves the armed state untouched: drive the
 // mock into the armed state first, RTL, and verify both the mode changed AND
 // the vehicle stayed armed (returned result also requires armed preservation).
 void ReturnToLaunchTest::testRtlPreservesArmedState()
@@ -372,7 +372,7 @@ void ReturnToLaunchTest::testRtlPreservesArmedState()
     QCOMPARE(spyCompleted.takeFirst().at(0).toBool(), true); // armed-safe + mode-confirmed
 }
 
-// Item 10 (F15): a second Return press while the first is still waiting for
+// A second Return press while the first is still waiting for
 // its heartbeat confirmation sends nothing new and starts no second wait.
 void ReturnToLaunchTest::testRtlSecondPressWhilePendingNotResent()
 {
@@ -393,7 +393,7 @@ void ReturnToLaunchTest::testRtlSecondPressWhilePendingNotResent()
     QCOMPARE(spyCompleted.count(), 1);
 }
 
-// Item 10 (F15): the vehicle is deleted (link loss) while Return waits for its
+// The vehicle is deleted (link loss) while Return waits for its
 // confirmation. No crash, and exactly one completion is reported. (The old code
 // ran a nested event loop and then dereferenced the raw vehicle pointer.)
 void ReturnToLaunchTest::testRtlVehicleLostDuringWaitNoCrash()

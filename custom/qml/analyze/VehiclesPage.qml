@@ -119,7 +119,7 @@ AnalyzePage {
                     onTriggered: exportStatus.visible = false
                 }
 
-                // Stop the pending export-status timer on teardown (R13).
+                // Stop the pending export-status timer on teardown.
                 Component.onDestruction: exportTimer.stop()
             }
 

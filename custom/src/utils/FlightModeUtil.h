@@ -6,7 +6,7 @@
 // QGC renders known flight modes as friendly names ("STABILIZE", "LOITER")
 // and unknown ones as "Custom:0x%1" (e.g. "Custom:0xb" = RTL/11). Both the
 // hardware-test and control-surface-test controllers need the numeric mode;
-// this is the single source of truth so the maps cannot drift (R10).
+// this is the single source of truth so the maps cannot drift.
 // ============================================================================
 
 #include <QHash>

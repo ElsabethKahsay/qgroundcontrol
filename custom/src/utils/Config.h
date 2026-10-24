@@ -187,11 +187,11 @@ constexpr int kArmedTimerThresholdMs = 30000;
 constexpr double kNominalCellVoltage       = 3.7;
 constexpr double kDefaultBatteryCapacityMah = 5000.0;
 // Rough Wh fallback when no battery capacity parameter is available:
-// pctUsed × voltage × 0.45 Ah-per-percent (R11).
+// pctUsed × voltage × 0.45 Ah-per-percent.
 constexpr double kEnergyWhPerPercentAh = 0.45;
 
 // ── Power-model estimation assumptions ─────────────────────────────────────────
-// Uncalibrated range/endurance prediction fallbacks (R11).
+// Uncalibrated range/endurance prediction fallbacks.
 constexpr double kPayloadWhSurchargePerKg = 0.05; // +5% Wh per kg payload above airframe default
 constexpr double kTakeoffLandingHoverMin  = 2.0;  // assumed hover min for takeoff/landing
 constexpr double kAssumedGroundSpeedKmph  = 30.0; // assumed cruise ground speed
@@ -226,7 +226,7 @@ constexpr double kExpectedMagField = 1000.0;
 
 // ── Filesystem / paths ───────────────────────────────────────────────────────
 // On-disk layout under the standard QStandardPaths writable locations.
-// Single source of truth for the export and weather-cache subdirectories (R17).
+// Single source of truth for the export and weather-cache subdirectories.
 constexpr const char *kExportSubdirName      = "UAVPreflightReports";
 constexpr const char *kWeatherCacheSubdirName = "weather";
 constexpr int kWeatherCacheMaxBytes = 50 * 1024 * 1024; // 50 MB

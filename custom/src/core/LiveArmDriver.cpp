@@ -259,7 +259,7 @@ void LiveArmDriver::_tick()
         _log("QML main window built: " +
              QString::number(engine->rootObjects().size()) + " root object(s)");
 
-        // B10: the built product must carry OUR QML sentinel (the custom layer
+        // The built product must carry OUR QML sentinel (the custom layer
         // aliases/overlays stock QML modules; the objectName on the custom
         // FlyQuickActions page proves the shipped ink is the forked file).
         QObject* const productRoot =
@@ -289,7 +289,7 @@ void LiveArmDriver::_tick()
 
     
 
-    // Step 0c/0e audit: full GuidedActionsController action-surface survey.
+    // Audit: full GuidedActionsController action-surface survey.
     // Reports EVERY stock guided-action control in the live tree with its real
     // geometry, z-order, visibility and owner chain, so we can tell a genuine
     // second instance from a different view's control, and establish whether
@@ -634,8 +634,8 @@ void LiveArmDriver::_tick()
     }
 
     case Phase::RtlRepro: {
-        // Evidence-only RTL wire count for Track B (B5 bug repro / B6 fix
-        // proof). Does NOT fail the run — the number is what tells the story.
+        // Evidence-only RTL wire count (shows the old no-send bug, or the fix
+        // sending once). Does NOT fail the run — the number is what tells the story.
         if (!_rtlReproStarted) {
             _rtlReproStarted = true;
             _mockLink->clearReceivedMavCommandCounts();
@@ -712,7 +712,7 @@ void LiveArmDriver::_tick()
         return;
     }
 
-    // Step 0c.2: wire-count every GuidedActionsController action that routes
+    // Wire-count every GuidedActionsController action that routes
     // through Vehicle/FirmwarePlugin. Each is invoked through
     // executeAction() -- the exact call the on-screen button makes -- with the
     // MockLink command counters cleared immediately before, so a count of 0
@@ -898,7 +898,7 @@ void LiveArmDriver::_tick()
         return;
     }
 
-    // Step 0d: Force Arm through the REAL signal chain.
+    // Force Arm through the REAL signal chain.
     // mainWindow.forceArmVehicleRequest -> GuidedActionsController
     // .onForceArmVehicleRequest -> confirmAction(actionForceArm) ->
     // confirmDialog -> operator accept -> executeAction(actionForceArm)

@@ -195,7 +195,7 @@ ColumnLayout {
                 }
             }
 
-            // FORK PATCH (G3): the one-tap "Override Gate" button is removed.
+            // FORK PATCH: the one-tap "Override Gate" button is removed.
             // Overrides go through the acknowledge dialog only.
         }
     }

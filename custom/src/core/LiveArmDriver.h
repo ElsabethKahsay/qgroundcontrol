@@ -27,7 +27,7 @@ class ArmingGate;
 ///            vehicle stays disarmed.
 ///   phase B: real operator force-arm (TelemetryBridge::forceArm) opens the
 ///            gate override window, the arm goes out EXACTLY once, vehicle arms.
-///   RTL repro (B5/B6): `--live-arm` also invokes TelemetryBridge::returnToLaunch
+///   RTL repro: `--live-arm` also invokes TelemetryBridge::returnToLaunch
 ///            in the armed state and counts MAV_CMD_DO_SET_MODE on the wire —
 ///            evidence-only (no pass/fail), so the same driver shows the bug
 ///            on the unpatched path (0 wires) and the fix on the patched path
@@ -96,7 +96,7 @@ private:
     qint64 _stockRtlSettleDeadlineMs = 0;
     QObject* _guidedController = nullptr;   // globals.guidedControllerFlyView
 
-    // Step 0c.2 per-action wire probe
+    // Per-action wire probe
     int         _probeIndex = 0;
     bool        _probeStarted = false;
     bool        _probeArmed = false;
@@ -105,7 +105,7 @@ private:
     QList<QList<QVariant>> _probeResults;
     qint64      _probeSettleDeadlineMs = 0;
 
-    // Step 0d Force Arm real-signal-chain probe
+    // Force Arm real-signal-chain probe
     bool        _forceArmSignalSent = false;
     bool        _forceArmPressed = false;
     bool        _forceArmDirect = false;
@@ -115,7 +115,7 @@ private:
     bool        _armedBeforeStockForceArm = false;
     qint64      _forceArmDeadlineMs = 0;
 
-    // Step 0e: one-shot CALLER-SCOPED override proof. A legitimate bench override
+    // One-shot CALLER-SCOPED override proof. A legitimate bench override
     // (TelemetryBridge::forceArm) mints a token for ITS OWN command; a subsequent
     // unattributed arm in the same window (the mainWindow.forceArmVehicleRequest
     // terminal, Vehicle::forceArm()) must be DENIED. Pre-fix the window is ambient

@@ -10,5 +10,5 @@ public:
     void evaluate() override;
 private:
     bool m_fetchTriggered = false;
-    qint64 m_fetchStartMs = -1;   ///< MonotonicClock ms when the fetch started, -1 = none (F17)
+    qint64 m_fetchStartMs = -1;   ///< MonotonicClock ms when the fetch started, -1 = none
 };

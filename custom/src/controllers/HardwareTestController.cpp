@@ -769,7 +769,7 @@ void HardwareTestController::_startFixedWingMotorTest(int idx)
     // Force-ARM the vehicle (param1=1.0). Plane bench tests need the ESC to
     // respond to the throttle channel. Routed through the funnel (TelemetryBridge::forceArm)
     // which opens the bounded override and sends the canonical kForceArmParam2.
-    // B5: the funnel refuses outside a Testing session (and when airborne);
+    // The funnel refuses outside a Testing session (and when airborne);
     // a refusal aborts the test instead of waiting for an arm that never comes.
     if (_telemetryBridge) {
         const QString refusal = _telemetryBridge->forceArm(QStringLiteral("Bench test"),
@@ -974,7 +974,7 @@ void HardwareTestController::testMotor(int motorIndex)
         return;
     }
 
-    // B4: a bench motor test must never run on a live-armed vehicle, and the
+    // A bench motor test must never run on a live-armed vehicle, and the
     // GCS must not disarm a vehicle someone else armed (it may be flying).
     // Refuse with a reason; the operator disarms deliberately.
     if (_isArmed) {
@@ -1402,7 +1402,7 @@ void HardwareTestController::stopAll()
     _activeMotor = -1;
     emit activeMotorChanged();
 
-    // B1/B3: STOP ALL stops outputs; it never force-disarms. If THIS test
+    // STOP ALL stops outputs; it never force-disarms. If THIS test
     // armed the vehicle (fixed-wing path) and it is landed and slow, BenchDisarm
     // sends a plain disarm so the bench is not left armed; a vehicle armed by
     // anyone else, or flying, is left alone.

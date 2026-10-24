@@ -34,7 +34,7 @@ void ArmingGateExtendedTest::testForceArmNonExpiring()
 
     gate.forceArm();
 
-    // G8 (Step 2.5): the window is open for the minted token only, so a plain
+    // The window is open for the minted token only, so a plain
     // arm — which is what armingAllowed answers — is still denied.
     QVERIFY(!gate.isArmingAllowed());
     QVERIFY(gate.isOverrideActive());
@@ -72,7 +72,7 @@ void ArmingGateExtendedTest::testInterceptCommandLongActiveBlocks()
     ArmingGate gate;
     gate.setMode(ArmingGate::Active);
 
-    // G7 (Step 2.5): without a PreflightManager the inbound path used to ALLOW
+    // Without a PreflightManager the inbound path used to ALLOW
     // every arm ("safety fallback"). It now fails closed like every other path.
     QMap<int, float> params;
     params[1] = 1.0f;
@@ -87,12 +87,12 @@ void ArmingGateExtendedTest::testInterceptCommandLongActiveAllowsWhenPassed()
 
     PreflightManager *mgr = new PreflightManager(1, &gate);
     gate.setPreflightManager(mgr);
-    // A live autopilot link: no heartbeat is a hard block (Step 2.5).
+    // A live autopilot link: no heartbeat is a hard block.
     MockTelemetryBridge bridge;
     gate.setTelemetryBridge(&bridge);
     bridge.emitHeartbeat();
 
-    // Resolve the airframe kind so the mandatory set is configured (R16);
+    // Resolve the airframe kind so the mandatory set is configured;
     // the gate is fail-closed until the kind is known.
     mgr->applyVehicleKind(QStringLiteral("MULTIROTOR"));
 
@@ -120,7 +120,7 @@ void ArmingGateExtendedTest::testDenialReasonSignal()
     QSignalSpy denialSpy(&gate, &ArmingGate::denialReasonChanged);
 
     // Any evaluation of a gate with no telemetry denies with a reason
-    // (processArmRequest() was removed — G12).
+    // (decide() is the only evaluation path).
     gate.resetGate();
     QVERIFY(!gate.denialReason().isEmpty());
     QVERIFY(denialSpy.count() >= 1);

@@ -203,7 +203,7 @@ Rectangle {
                 ToolTip.visible: hovered
             }
             Button {
-                // FORK PATCH (B3): stopAll() force-disarms an armed vehicle, so
+                // FORK PATCH: stopAll() force-disarms an armed vehicle, so
                 // it is disabled while flying (no bench test can be running then).
                 readonly property var _v: QGroundControl.multiVehicleManager.activeVehicle
                 readonly property bool _flying: !!_v && _v.armed && _v.flying

@@ -537,7 +537,7 @@ void ControlSurfaceTestController::_beginSurfaceTest(int idx)
     // be armed before the sweep.  Request a force-arm and defer the sweep start
     // until the arm is ACKed (see _onCommandResult), so the first PWM already
     // reaches the servos.  Already armed → sweep immediately.
-    // B4: never sweep on a vehicle someone else armed (it may be flying), and
+    // Never sweep on a vehicle someone else armed (it may be flying), and
     // never disarm it afterwards. Only a vehicle this controller armed may be
     // swept while armed.
     if (m_vehicle && m_vehicle->armed() && !m_weArmed) {
@@ -1134,7 +1134,7 @@ void ControlSurfaceTestController::switchToManual()
 void ControlSurfaceTestController::_requestDisarm()
 {
     if (!m_vehicle || !m_vehicle->armed() || m_pendingDisarmAck) return;
-    // B2: plain disarm, only if this controller armed the vehicle and it is
+    // Plain disarm, only if this controller armed the vehicle and it is
     // landed and slow; never a forced disarm.
     if (BenchDisarm::requestDisarm(m_vehicle, m_weArmed))
         m_pendingDisarmAck = true;

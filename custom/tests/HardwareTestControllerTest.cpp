@@ -136,7 +136,7 @@ bool HardwareTestControllerTest::_pumpUntil(bool (*cond)(void *ctx), void *ctx, 
     return cond(ctx);
 }
 
-// P0.3: The fixed-wing motor test must wait for the autopilot to CONFIRM the
+// The fixed-wing motor test must wait for the autopilot to CONFIRM the
 // arm (phase 1) before driving the throttle RC override — the ESC must never
 // spin with zero confirmation the vehicle actually armed.  Uses a real
 // ArduPlane mock Vehicle so the whole arm → spin → spin-down → evaluate
@@ -212,7 +212,7 @@ void HardwareTestControllerTest::testFixedWingMotorTestWaitsForArmBeforeSpin()
         Vehicle *v = static_cast<Vehicle *>(ctx);
         return !v->armed();
     }, _vehicle, 10000));
-    // ...and it is a PLAIN disarm from BenchDisarm, never the forced 21196 (B1, B7).
+    // ...and it is a PLAIN disarm from BenchDisarm, never the forced 21196.
     QCOMPARE(_mockLink->lastArmDisarmParam1(), 0.0f);
     QCOMPARE(_mockLink->lastArmDisarmParam2(), 0.0f);
 }
@@ -272,8 +272,8 @@ void HardwareTestControllerTest::testFixedWingMotorTestArmsViaFunnelWith2989()
     QTest::qWait(400);
 }
 
-// B1/B3: STOP ALL stops outputs but must never disarm a vehicle this test did
-// not arm — it may be flying. (Replaces the old P0.4 test, which asserted the
+// STOP ALL stops outputs but must never disarm a vehicle this test did
+// not arm — it may be flying. (An earlier version asserted the
 // opposite: STOP ALL used to force-disarm any armed vehicle.)
 void HardwareTestControllerTest::testStopAllLeavesExternallyArmedVehicleArmed()
 {
@@ -303,7 +303,7 @@ void HardwareTestControllerTest::testStopAllLeavesExternallyArmedVehicleArmed()
     QVERIFY(_pumpUntil([](void *ctx) { return !static_cast<Vehicle *>(ctx)->armed(); }, _vehicle, 10000));
 }
 
-// B4: a motor test on an already-armed vehicle is refused with a reason; the
+// A motor test on an already-armed vehicle is refused with a reason; the
 // controller must not disarm it (it used to force-disarm first).
 void HardwareTestControllerTest::testMotorTestRefusedWhileArmedExternally()
 {

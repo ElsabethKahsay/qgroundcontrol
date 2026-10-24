@@ -480,7 +480,7 @@ void ControlSurfaceTestControllerTest::testUnverifiedDisarmAck()
 {
     QVERIFY(_connectPlane());
 
-    // B4 (Step 1.4): a sweep never starts on a vehicle armed by someone else,
+    // A sweep never starts on a vehicle armed by someone else,
     // so the controller arms it itself (Testing session from the fixture).
     QVERIFY(!_vehicle->armed());
 
@@ -644,7 +644,7 @@ void ControlSurfaceTestControllerTest::testMissingTimeoutVerdict()
 {
     QVERIFY(_connectPlane());
 
-    // B4 (Step 1.4): a sweep never starts on a vehicle armed by someone else,
+    // A sweep never starts on a vehicle armed by someone else,
     // so the controller arms it itself (Testing session from the fixture).
     QVERIFY(!_vehicle->armed());
 
@@ -910,7 +910,7 @@ void ControlSurfaceTestControllerTest::_sendServoOutputRaw(int ch1, int ch2, int
     QTest::qWait(100);
 }
 
-// B4 (Step 1.4): a sweep on a vehicle armed by another source is refused with
+// A sweep on a vehicle armed by another source is refused with
 // a reason, and the controller sends no disarm (the vehicle may be flying).
 void ControlSurfaceTestControllerTest::testSweepRefusedWhileArmedExternally()
 {

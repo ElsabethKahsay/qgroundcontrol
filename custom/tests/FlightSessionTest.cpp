@@ -1,6 +1,6 @@
 /**
  * @file FlightSessionTest.cpp
- * @brief Tests for flight session lifecycle and compliance logging (L4 from TEST_CHECKLIST.md).
+ * @brief Tests for flight session lifecycle and compliance logging.
  *
  * Covers:
  *   - startFlightSession creates a row

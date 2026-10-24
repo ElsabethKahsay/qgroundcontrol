@@ -1,7 +1,7 @@
 /**
  * @file MavLinkInterceptTest.cpp
  * @brief Tests for ArmingGate::interceptCommandLong — the MAVLink arm command
- *        interception path (L1 from TEST_CHECKLIST.md).
+ *        interception path.
  *
  * Covers:
  *   - Passive mode allows all arm commands
@@ -103,7 +103,7 @@ void MavLinkInterceptTest::testActiveModeAllowsWhenPassed()
     PreflightManager *mgr = new PreflightManager(1, &gate);
     gate.setPreflightManager(mgr);
 
-    // Resolve the airframe kind so the mandatory set is configured (R16);
+    // Resolve the airframe kind so the mandatory set is configured;
     // the gate is fail-closed until the kind is known.
     mgr->applyVehicleKind(QStringLiteral("MULTIROTOR"));
 
@@ -115,7 +115,7 @@ void MavLinkInterceptTest::testActiveModeAllowsWhenPassed()
     TestBlockingCheck *passCheck = new TestBlockingCheck(QStringLiteral("test.passing"));
     passCheck->forceStatus(CheckStatus::Passed, QStringLiteral("Healthy"));
     mgr->addCheck(passCheck);
-    // A live autopilot link: no heartbeat is a hard block (Step 2.5).
+    // A live autopilot link: no heartbeat is a hard block.
     MockTelemetryBridge bridge;
     gate.setTelemetryBridge(&bridge);
     bridge.emitHeartbeat();
@@ -127,14 +127,14 @@ void MavLinkInterceptTest::testActiveModeAllowsWhenPassed()
     QVERIFY(gate.isArmingAllowed());
 }
 
-// G7 (Step 2.5, user decision 2026-10-21): the operator's acknowledgment is
+// The operator's acknowledgment is
 // for this GCS's own arm. A peer's inbound arm is judged with token 0, stays
 // denied, and leaves the acknowledgment unspent. (Was: Hybrid mode let the
 // first inbound arm after an acknowledgment through.)
 void MavLinkInterceptTest::testPeerArmCannotUseOperatorAck()
 {
     ArmingGate gate;
-    gate.setMode(ArmingGate::Hybrid);   // Hybrid behaves as Active (G12)
+    gate.setMode(ArmingGate::Hybrid);   // Hybrid behaves as Active
 
     PreflightManager *mgr = new PreflightManager(1, &gate);
     gate.setPreflightManager(mgr);
@@ -159,7 +159,7 @@ void MavLinkInterceptTest::testPeerArmCannotUseOperatorAck()
     delete mgr;
 }
 
-// G7/G8 (Step 2.5): a force window authorizes exactly the minted token on
+// A force window authorizes exactly the minted token on
 // this GCS's own command. armingAllowed (a plain arm) stays false and a
 // peer's inbound arm is denied. (Was: the window let every arm through.)
 void MavLinkInterceptTest::testForceWindowDoesNotOpenGateForPeers()
@@ -211,7 +211,7 @@ void MavLinkInterceptTest::testDisarmCommandPassesThrough()
     QVERIFY(gate.interceptCommandLong(MAV_CMD_COMPONENT_ARM_DISARM, params));
 }
 
-// ACK should only work once. Since Step 2.5 the acknowledgment is spent only
+// ACK should only work once. The acknowledgment is spent only
 // by this GCS's own arm carrying its token (the outbound interceptor); the
 // inbound peer path can never spend it (testPeerArmCannotUseOperatorAck).
 void MavLinkInterceptTest::testAckIsOneTimeUse()
@@ -333,8 +333,8 @@ void MavLinkInterceptTest::testLocalForceArmOpensOverrideWindow()
     // TelemetryBridge::forceArm() does via QMetaObject::invokeMethod).
     gate.forceArm();
 
-    // Override window opened for the minted token only (G8): a plain arm is
-    // still denied, and so is a peer's inbound force-arm (G7).
+    // Override window opened for the minted token only: a plain arm is
+    // still denied, and so is a peer's inbound force-arm.
     QVERIFY(!gate.isArmingAllowed());
     QVERIFY(gate.isOverrideActive());
     QCOMPARE(gate.overrideKind(), ArmingGate::ForceOverride);
@@ -376,7 +376,7 @@ void MavLinkInterceptTest::testLayer2InboundOnlyArmGate()
     QVERIFY(true);  // Architectural invariant documented
 }
 
-// Step 2.4 (F5): an accepted ARM_DISARM ACK alone never produces an arm
+// An accepted ARM_DISARM ACK alone never produces an arm
 // transition; it used to be guessed from the ACK and forced into the vehicle.
 void MavLinkInterceptTest::testAckNeverChangesArmedState()
 {
@@ -392,7 +392,7 @@ void MavLinkInterceptTest::testAckNeverChangesArmedState()
     QCOMPARE(opened.count(), 0);
 }
 
-// Step 2.4 (F5, F6): transitions come from armedChanged (HEARTBEAT) only, once
+// Transitions come from armedChanged (HEARTBEAT) only, once
 // each; a duplicate notification or a late duplicate ACK adds nothing.
 void MavLinkInterceptTest::testArmTransitionsComeFromHeartbeatOnly()
 {
@@ -414,7 +414,7 @@ void MavLinkInterceptTest::testArmTransitionsComeFromHeartbeatOnly()
     QCOMPARE(closed.count(), 1);
 }
 
-// Step 2.4: the ACK labels who armed. ACK then HEARTBEAT → GCS; HEARTBEAT
+// The ACK labels who armed. ACK then HEARTBEAT → GCS; HEARTBEAT
 // with no ACK → External (RC / another peer); HEARTBEAT then a late ACK →
 // corrected to GCS; an ACK older than the window → External.
 void MavLinkInterceptTest::testArmSourceLabels()
@@ -452,7 +452,7 @@ void MavLinkInterceptTest::testArmSourceLabels()
     QCOMPARE(tracker.lastArmSource(), S::External);
 }
 
-// Step 2.4 (G10): any disarm — including an RC disarm the GCS never commanded —
+// Any disarm — including an RC disarm the GCS never commanded —
 // clears an unspent acknowledgment.
 void MavLinkInterceptTest::testRcDisarmClearsUnspentAck()
 {

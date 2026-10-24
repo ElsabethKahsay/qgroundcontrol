@@ -144,12 +144,12 @@ public:
 
     /// Monotonic ms (MonotonicClock) of the last evaluation, or -1 if never.
     /// Refreshed by EVERY setStatus() call, including one that agrees with the
-    /// previous result (F1).
+    /// previous result.
     qint64 lastEvaluationMs() const { return m_lastEvalMs; }
 
     /// MAVLink streams this check's evaluate() reads. When one of them was seen
     /// and then stopped arriving, PreflightManager marks the check Stale instead
-    /// of evaluating it against cached values (F1–F3).
+    /// of evaluating it against cached values.
     QList<TelemetryStream> requiredStreams() const { return m_requiredStreams; }
     void setRequiredStreams(const QList<TelemetryStream> &streams) { m_requiredStreams = streams; }
     /// Whether the check data is stale and requires re-evaluation.

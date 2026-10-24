@@ -63,7 +63,7 @@ bool AbstractCheck::requiresReevaluation() const
     if (m_type != CheckType::Auto)
         return false;
 
-    // F2: every blocking-capable Auto check is re-evaluated on every tick, so a
+    // Every blocking-capable Auto check is re-evaluated on every tick, so a
     // value that degrades after passing is seen on the next tick (it used to be
     // skipped while Passed). Informational checks (weather, zone) keep the
     // old back-off because some of them start network fetches in evaluate().
@@ -91,7 +91,7 @@ bool AbstractCheck::overrideStatus(const QString &newStatus, const QString &reas
     rec.previousStatus = statusText();
     rec.newStatus = newStatus;
     rec.reason = reason.isEmpty() ? QStringLiteral("Operator override") : reason;
-    rec.timestamp = QDateTime::currentDateTimeUtc();   // stored: UTC (F17)
+    rec.timestamp = QDateTime::currentDateTimeUtc();   // stored: UTC
     m_overrideHistory.append(rec);
 
     setStatus(s, reason);
@@ -118,7 +118,7 @@ bool AbstractCheck::confirm(const QString &reason)
     rec.previousStatus = statusText();
     rec.newStatus = QStringLiteral("passed");
     rec.reason = reason.isEmpty() ? QStringLiteral("Operator confirmed") : reason;
-    rec.timestamp = QDateTime::currentDateTimeUtc();   // stored: UTC (F17)
+    rec.timestamp = QDateTime::currentDateTimeUtc();   // stored: UTC
     m_overrideHistory.append(rec);
 
     setStatus(CheckStatus::Passed, rec.reason);
@@ -143,7 +143,7 @@ void AbstractCheck::reset()
 // (not on repeated same-status sets) to avoid duplicate signal processing.
 void AbstractCheck::setStatus(CheckStatus newStatus, const QString &message)
 {
-    // F1: stamp every evaluation, including one that agrees with the last
+    // Stamp every evaluation, including one that agrees with the last
     // result; the stamp used to move only when the status changed.
     m_lastEvalMs = MonotonicClock::nowMs();
     if (m_status == newStatus && m_message == message)

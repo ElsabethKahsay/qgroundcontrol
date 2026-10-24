@@ -84,19 +84,19 @@ QtObject {
     // Footer
     readonly property int kFooterHeight: 48
 
-    // Battery estimation fallbacks (R11) — used when no live vehicle data is
+    // Battery estimation fallbacks — used when no live vehicle data is
     // available for a rough range estimate
     readonly property double batteryFallbackVoltage: 14.8          // 4S pack assumption
     readonly property double batteryCellMaxVoltage: 4.2            // LiPo per-cell max
     readonly property double batteryNominalCellVoltage: 3.7        // LiPo per-cell nominal
     readonly property double batteryDefaultPackAh: 5.0             // ~5000 mAh typical
 
-    // Airspace map defaults (R17) — fallback center used before the vehicle
+    // Airspace map defaults — fallback center used before the vehicle
     // position is available.
     readonly property double defaultMapLatitude: 9.03
     readonly property double defaultMapLongitude: 38.74
 
-    // ── Page navigation (R14) ──────────────────────────────────────────────
+    // ── Page navigation ────────────────────────────────────────────────────
     // The main-window stack view can be absent (headless/offscreen runs,
     // pages loaded before the main window exists, or stacked loaders), so all
     // custom-page navigation is routed through these guarded helpers instead

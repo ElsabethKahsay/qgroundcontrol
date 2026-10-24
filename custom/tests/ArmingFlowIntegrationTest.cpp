@@ -1,7 +1,7 @@
 /**
  * @file ArmingFlowIntegrationTest.cpp
  * @brief Integration test for the full arming flow: TelemetryBridge → Checks → Gate → Arm
- *        (L2 from TEST_CHECKLIST.md).
+ *       .
  *
  * Tests the complete chain:
  *   - Vehicle connects → telemetry available → checks evaluate → gate opens → arm allowed
@@ -69,7 +69,7 @@ void ArmingFlowIntegrationTest::testHappyPathConnectToArm()
     mgr.setTelemetryBridge(&bridge);
     gate.setPreflightManager(&mgr);
     gate.setTelemetryBridge(&bridge);
-    bridge.emitHeartbeat();   // live autopilot link: no heartbeat is a hard block (Step 2.5)
+    bridge.emitHeartbeat();   // live autopilot link: no heartbeat is a hard block
 
     // Simulate telemetry arrival
     bridge.setBatteryVoltage(12.6);
@@ -79,7 +79,7 @@ void ArmingFlowIntegrationTest::testHappyPathConnectToArm()
     bridge.setImuHealthy(true);
     bridge.setCompassHealthy(true);
 
-    // Resolve the airframe kind so the mandatory set is configured (R16);
+    // Resolve the airframe kind so the mandatory set is configured;
     // applyVehicleKind also runs the initial evaluation cycle.
     mgr.applyVehicleKind(QStringLiteral("MULTIROTOR"));
 
@@ -98,7 +98,7 @@ void ArmingFlowIntegrationTest::testHappyPathConnectToArm()
     QMap<int, float> armParams;
     armParams[1] = 1.0f;
     QVERIFY(gate.interceptCommandLong(MAV_CMD_COMPONENT_ARM_DISARM, armParams));
-    // The inbound path no longer writes gate state (G7, Step 2.5); armingAllowed
+    // The inbound path no longer writes gate state; armingAllowed
     // follows on the gate's own evaluation tick.
     QTRY_VERIFY_WITH_TIMEOUT(gate.isArmingAllowed(), 2000);
 }
@@ -122,7 +122,7 @@ void ArmingFlowIntegrationTest::testCheckFailClosesGate()
     batteryLike->forceStatus(CheckStatus::Passed, QStringLiteral("Healthy"));
     mgr.addCheck(batteryLike);
 
-    // Resolve kind so the built-in mandatory set is configured (R16).
+    // Resolve kind so the built-in mandatory set is configured.
     mgr.applyVehicleKind(QStringLiteral("MULTIROTOR"));
 
     // Built-in Auto checks need live telemetry; keep only the controlled check
@@ -169,13 +169,13 @@ void ArmingFlowIntegrationTest::testForceArmThenDisarm()
     failCheck->forceStatus(CheckStatus::Failed, QStringLiteral("Simulated failure"));
     mgr.addCheck(failCheck);
 
-    // Force arm: the window is for the minted token only (G8, Step 2.5)
+    // Force arm: the window is for the minted token only
     gate.forceArm();
     QVERIFY(!gate.isArmingAllowed());
     QVERIFY(gate.isOverrideActive());
     QCOMPARE(gate.overrideKind(), ArmingGate::ForceOverride);
 
-    // A peer's inbound arm does not ride the operator's force window (G7)
+    // A peer's inbound arm does not ride the operator's force window
     QMap<int, float> armParams;
     armParams[1] = 1.0f;
     QVERIFY(!gate.interceptCommandLong(MAV_CMD_COMPONENT_ARM_DISARM, armParams));
@@ -210,7 +210,7 @@ void ArmingFlowIntegrationTest::testMultipleConnectDisconnectCycles()
         mgr.addCheck(failCheck);
 
         // Resolve kind so the built-in auto checks become part of the mandatory
-        // set, matching real operation (R16).
+        // set, matching real operation.
         mgr.applyVehicleKind(QStringLiteral("MULTIROTOR"));
 
         // Confirm all non-failing checks; the forced-fail check keeps the gate closed.
@@ -259,7 +259,7 @@ void ArmingFlowIntegrationTest::testGateSignalsOnTransition()
     gate.interceptCommandLong(MAV_CMD_COMPONENT_ARM_DISARM, armParams);
     QVERIFY(deniedSpy.count() >= 1);
 
-    // Force arm: overrideKind changes; armingAllowed does not (G8, Step 2.5)
+    // Force arm: overrideKind changes; armingAllowed does not
     QSignalSpy kindSpy(&gate, &ArmingGate::overrideKindChanged);
     gate.forceArm();
     QVERIFY(kindSpy.count() >= 1);
@@ -267,7 +267,7 @@ void ArmingFlowIntegrationTest::testGateSignalsOnTransition()
     QVERIFY(!gate.isArmingAllowed());
     Q_UNUSED(allowedSpy)
 
-    // A peer's inbound arm is still denied (G7)
+    // A peer's inbound arm is still denied
     QVERIFY(!gate.interceptCommandLong(MAV_CMD_COMPONENT_ARM_DISARM, armParams));
 }
 
@@ -286,14 +286,14 @@ void ArmingFlowIntegrationTest::testCheckRecoveryReopensGate()
     gate.setPreflightManager(&mgr);
 
     gate.setTelemetryBridge(&bridge);
-    bridge.emitHeartbeat();   // live autopilot link (Step 2.5 hard block otherwise)
+    bridge.emitHeartbeat();   // live autopilot link (no heartbeat is a hard block)
 
     // Mandatory check that starts passing, fails, then recovers to pass again.
     TestFlowCheck *recover = new TestFlowCheck(QStringLiteral("test.recover"));
     recover->forceStatus(CheckStatus::Passed, QStringLiteral("Healthy"));
     mgr.addCheck(recover);
 
-    // Resolve a kind so the gate is out of the fail-closed state (R16), but
+    // Resolve a kind so the gate is out of the fail-closed state, but
     // keep only the controlled check mandatory: built-in Auto checks need live
     // telemetry and refuse confirm().
     mgr.applyVehicleKind(QStringLiteral("MULTIROTOR"));
@@ -369,7 +369,7 @@ void ArmingFlowIntegrationTest::testHybridModeOverrideFlow()
     QVERIFY(gate.acknowledgeOverride(QStringLiteral("TestPilot"), QStringLiteral("Safety review done")));
 
     // Step 3: this GCS's own arm carrying the ack token is allowed once. A
-    // peer's inbound arm can never spend the ack (G7, Step 2.5).
+    // peer's inbound arm can never spend the ack.
     QVERIFY(!gate.interceptCommandLong(MAV_CMD_COMPONENT_ARM_DISARM, armParams));
     const quint32 token = gate.ackTokenForArm();
     auto interceptor = gate.makeArmInterceptor();
@@ -388,7 +388,7 @@ void ArmingFlowIntegrationTest::testHybridModeOverrideFlow()
 // Documents the exact block condition TelemetryBridge::arm() evaluates before
 // sending: !armingAllowed && !overrideActive → the arm is suppressed. This is
 // the single authoritative arm-gating decision the QML arm paths route through
-// after the P0 consolidation (MainStatusIndicator/ArmedIndicator/Toolbar +
+// (MainStatusIndicator/ArmedIndicator/Toolbar +
 // the ArmGateDialog accept flow all call TelemetryProvider.arm()).
 void ArmingFlowIntegrationTest::testGateBlockedReportedForBridgeArm()
 {
@@ -413,13 +413,13 @@ void ArmingFlowIntegrationTest::testGateBlockedReportedForBridgeArm()
     QVERIFY(!gate.isOverrideActive());
 
     // After an operator force-arm the window is open for the minted token only;
-    // armingAllowed (a plain arm) stays false (G8, Step 2.5).
+    // armingAllowed (a plain arm) stays false.
     gate.forceArm();
     QVERIFY(!gate.isArmingAllowed());
     QVERIFY(gate.isOverrideActive());
     QCOMPARE(gate.overrideKind(), ArmingGate::ForceOverride);
 
-    // Pair with the P0 routing change: no QML arm widget may consult the gate
+    // No QML arm widget may consult the gate
     // via processArmRequest anymore (that path was removed); the bridge's arm()
     // reads exactly these two properties.
 }

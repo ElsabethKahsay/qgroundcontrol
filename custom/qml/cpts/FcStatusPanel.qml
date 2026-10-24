@@ -33,14 +33,14 @@ Rectangle {
 
     function _minutesString() {
         if (!_connected) return ""                 // no telemetry → no minutes at all
-        if (!root._isArmed) return ""              // B1: disarmed → "· —"
+        if (!root._isArmed) return ""              // disarmed → "· —"
         var i = _tel.batteryCurrentSmoothAmps
-        if (i < 3.0) return ""                     // B2: no meaningful draw (< 3 A)
+        if (i < 3.0) return ""                     // no meaningful draw (< 3 A)
         var capAh = _capacityAh()
         if (capAh <= 0) return ""                  // no capacity → no honest minutes
         var remAh  = capAh * (_tel.batterySocPct / 100.0)
         if (remAh <= 0) return ""
-        var usableAh = remAh * 0.8                 // B3: 20% reserve
+        var usableAh = remAh * 0.8                 // 20% reserve
         var tMin     = (usableAh / i) * 60.0
         return qsTr(" \u00B7 ~%1 min").arg(Math.max(1, Math.round(tMin)))
     }

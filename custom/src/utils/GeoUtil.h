@@ -5,7 +5,7 @@
 //
 // haversineMeters computes the great-circle distance between two lat/lon
 // points. Kept here as a single source of truth so the telemetry-event logger
-// and the dual-GPS consistency check cannot drift (R10).
+// and the dual-GPS consistency check cannot drift.
 // ============================================================================
 
 #include <QtMath>

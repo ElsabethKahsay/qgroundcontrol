@@ -99,7 +99,7 @@ Rectangle {
                 color: ArmingGate.mode === 1 ? Colors.background : Colors.textPrimary
             }
 
-            // FORK PATCH (G2): the badge is display-only. One tap used to cycle
+            // FORK PATCH: the badge is display-only. One tap used to cycle
             // the gate to Passive, which allowed every arm with no log.
         }
 
@@ -122,11 +122,11 @@ Rectangle {
             }
         }
 
-        // FORK PATCH (G3): the one-tap "Override" button is removed. It opened a
+        // FORK PATCH: the one-tap "Override" button is removed. It opened a
         // 30 s window in which every arm from every path passed. Overrides go
         // through the acknowledge dialog only.
 
-        // Force Arm button — bench use only (G4): shown in a Testing session
+        // Force Arm button — bench use only: shown in a Testing session
         // while the gate is denying, and always behind forceArmConfirm.
         Rectangle {
             Layout.preferredHeight: 32
