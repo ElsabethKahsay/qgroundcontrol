@@ -10,6 +10,7 @@ class RcFailsafeCheck : public AbstractCheck {
 public:
     RcFailsafeCheck(TelemetryBridge *telemetry, int minRssi = 50, QObject *parent = nullptr);
     void evaluate() override;
+    QStringList getFixSteps() const override;
 
 private:
     int m_minRssi;

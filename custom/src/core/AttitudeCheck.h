@@ -10,6 +10,7 @@ class AttitudeCheck : public AbstractCheck {
 public:
     AttitudeCheck(TelemetryBridge *telemetry, double maxPitchRollDeg = 30.0, QObject *parent = nullptr);
     void evaluate() override;
+    QStringList getFixSteps() const override;
 
 private:
     double m_maxPitchRollDeg;

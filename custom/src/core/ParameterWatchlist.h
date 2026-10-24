@@ -78,6 +78,22 @@ inline const QVector<ParameterDef> &all()
         {"FS_BATT_ENABLE",  "SAF", "Battery failsafe enable",         0.0f,   1.0f,    0.0f},
         {"FS_THR_ENABLE",   "SAF", "Throttle failsafe enable",        0.0f,   2.0f,    0.0f},
         {"FS_GCS_ENABLE",   "SAF", "GCS failsafe enable",             0.0f,   2.0f,    0.0f},
+        // ArduPlane names (and the related timeouts / actions) that the GCS
+        // failsafe, radio failsafe and airspeed checks read. Only parameters
+        // listed here are exposed to the checks, so a check whose parameter is
+        // missing from this list reports "not available" on a real vehicle.
+        // Ranges are the ArduPlane / ArduCopter 4.5 documented ranges.
+        {"FS_GCS_ENABL",    "SAF", "GCS failsafe enable (Plane)",     0.0f,   3.0f,    0.0f},
+        {"FS_GCS_TIMEOUT",  "SAF", "GCS failsafe timeout (Copter, s)",2.0f,   120.0f,  5.0f},
+        {"FS_SHORT_ACTN",   "SAF", "Short failsafe action (Plane)",   0.0f,   4.0f,    0.0f},
+        {"FS_SHORT_TIMEOUT","SAF", "Short failsafe timeout (Plane, s)",1.0f,  100.0f,  1.5f},
+        {"FS_LONG_ACTN",    "SAF", "Long failsafe action (Plane)",    0.0f,   4.0f,    0.0f},
+        {"FS_LONG_TIMEOUT", "SAF", "Long failsafe timeout (Plane, s)",1.0f,   300.0f,  5.0f},
+        {"THR_FAILSAFE",    "SAF", "Throttle / RC failsafe (Plane)",  0.0f,   2.0f,    1.0f},
+        {"THR_FS_VALUE",    "SAF", "Throttle failsafe PWM (Plane)",   925.0f, 2200.0f, 950.0f},
+        {"FS_THR_VALUE",    "SAF", "Throttle failsafe PWM (Copter)",  910.0f, 1100.0f, 975.0f},
+        {"RCMAP_THROTTLE",  "COM", "Throttle channel (ArduPilot)",    1.0f,   16.0f,   3.0f},
+        {"ARSPD_TYPE",      "NAV", "Airspeed sensor type (Plane)",    0.0f,   100.0f,  0.0f},
         {"FS_EKF_ACTION",   "SAF", "EKF failsafe action",             0.0f,   3.0f,    0.0f},
         {"FS_EKF_THRESH",   "SAF", "EKF failsafe threshold",          0.0f,   100.0f,  0.8f},
 

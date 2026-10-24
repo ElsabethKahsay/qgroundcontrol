@@ -6,6 +6,7 @@
 #include "TelemetryBridge.h"
 #include "Vehicle/Vehicle.h"
 #include "utils/DatabaseManager.h"
+#include "core/VehicleProfileManager.h"
 
 namespace {
 constexpr const char *kPolicyKey = "policy";
@@ -124,11 +125,30 @@ QString GcsFailsafeCheck::actionDescription(double value) const
     return QStringLiteral("unknown value");
 }
 
+QString GcsFailsafeCheck::deviceUid() const
+{
+    if (m_deviceUid)
+        return m_deviceUid();
+    VehicleProfileManager *vpm = VehicleProfileManager::instance();
+    return vpm ? vpm->currentDeviceUid() : QString();
+}
+
+// The policy belongs to one airframe. The MAVLink system id cannot tell
+// airframes apart (ArduPilot uses 1 on every vehicle unless SYSID_THISMAV is
+// changed), so the policy is stored under the vehicle's hardware UID, the same
+// key the flight records use: key "policy@<uid>", no vehicle id. Until the UID
+// is known, and for a policy chosen before this change, the old key ("policy"
+// with the system id) is used so nothing already chosen is lost.
 QString GcsFailsafeCheck::policy() const
 {
-    const QString stored =
-        DatabaseManager::instance().getCheckConfig(m_id, QString::fromLatin1(kPolicyKey),
-                                                   currentVehicleId());
+    QString stored;
+    const QString uid = deviceUid();
+    if (!uid.isEmpty())
+        stored = DatabaseManager::instance().getCheckConfig(
+            m_id, QStringLiteral("%1@%2").arg(QLatin1String(kPolicyKey), uid), -1);
+    if (stored != QLatin1String(kRcPrimary) && stored != QLatin1String(kTelemetryPrimary))
+        stored = DatabaseManager::instance().getCheckConfig(m_id, QString::fromLatin1(kPolicyKey),
+                                                            currentVehicleId());
     if (stored == QLatin1String(kRcPrimary) || stored == QLatin1String(kTelemetryPrimary))
         return stored;
     return {};
@@ -139,8 +159,13 @@ bool GcsFailsafeCheck::setPolicy(const QString &policy)
     if (policy != QLatin1String(kRcPrimary) && policy != QLatin1String(kTelemetryPrimary))
         return false;
 
-    if (!DatabaseManager::instance().setCheckConfig(m_id, QString::fromLatin1(kPolicyKey),
-                                                    policy, currentVehicleId()))
+    const QString uid = deviceUid();
+    const bool stored = uid.isEmpty()
+        ? DatabaseManager::instance().setCheckConfig(m_id, QString::fromLatin1(kPolicyKey),
+                                                     policy, currentVehicleId())
+        : DatabaseManager::instance().setCheckConfig(
+              m_id, QStringLiteral("%1@%2").arg(QLatin1String(kPolicyKey), uid), policy, -1);
+    if (!stored)
         return false;
 
     emit policyChanged();

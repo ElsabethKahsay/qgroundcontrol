@@ -223,6 +223,7 @@ bool DatabaseManager::initialize(const QString &dbPath)
     if (m_initialized) return true;  // Already initialized
     assertMainThread();
 
+    m_appStartUtc = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
     QString finalPath = expandPath(dbPath);
     qDebug() << "DatabaseManager: Initializing SQLite at" << finalPath;
 
@@ -2082,6 +2083,39 @@ int DatabaseManager::openHistoryFlight(int flightSessionId, int operatorId, int 
     link.addBindValue(flightSessionId);
     execOrWarn(link, "openHistoryFlight link");
     return id;
+}
+
+// Link drops for the vehicle that is connected now, since the app started.
+// Two kinds of drop are recorded by SessionRecorder and both count:
+//   * the link went quiet and came back (a "link_lost" event on the
+//     connection), and
+//   * the vehicle disappeared altogether, as when a USB cable drops out: QGC
+//     removes the vehicle and makes a new connection when it comes back, so
+//     the old connection ends with "vehicle_removed".
+// A connection that first logged "link_lost" and was then removed is one drop,
+// not two, so removed connections only count when they have no link_lost event.
+// Connections are matched by the vehicle's hardware UID, which survives the
+// reconnect.
+int DatabaseManager::linkDropsSinceStart() const
+{
+    assertMainThread();
+    if (!m_initialized || m_ctxDeviceUid.isEmpty())
+        return -1;
+    QSqlQuery q(m_db);
+    q.prepare("SELECT "
+              " (SELECT COUNT(*) FROM session_events e JOIN connection_sessions c ON c.id = e.connection_session_id"
+              "   WHERE c.device_uid = ? AND c.opened_at >= ? AND e.event = 'link_lost')"
+              " + (SELECT COUNT(*) FROM connection_sessions c"
+              "   WHERE c.device_uid = ? AND c.opened_at >= ? AND c.end_reason = 'vehicle_removed'"
+              "     AND NOT EXISTS (SELECT 1 FROM session_events e"
+              "                     WHERE e.connection_session_id = c.id AND e.event = 'link_lost'))");
+    q.addBindValue(m_ctxDeviceUid);
+    q.addBindValue(m_appStartUtc);
+    q.addBindValue(m_ctxDeviceUid);
+    q.addBindValue(m_appStartUtc);
+    if (!q.exec() || !q.next())
+        return -1;
+    return q.value(0).toInt();
 }
 
 void DatabaseManager::setRecordingContext(int connectionSessionId, int flightId, const QString &deviceUid,

@@ -20,6 +20,8 @@
 #include "AmbientTemperatureCheck.h"
 #include "AttitudeCheck.h"
 #include "BaroHealthCheck.h"
+#include "AirspeedSensorCheck.h"
+#include "GcsLinkDropsCheck.h"
 #include "BatteryFailsafeCheck.h"
 #include "BatteryFailsafeParamCheck.h"
 #include "BatteryVoltageCheck.h"
@@ -946,6 +948,10 @@ void PreflightManager::createPhase1Checks() {
 
   // Tier 4 — Enhancement / Niche checks
   m_checks.append(new BaroHealthCheck(m_telemetry, this));
+  // Fixed-wing: airspeed sensor configured (ARSPD_TYPE) but not found.
+  m_checks.append(new AirspeedSensorCheck(m_telemetry, this));
+  // How often the GCS lost the vehicle since the app started (advice only).
+  m_checks.append(new GcsLinkDropsCheck(this));
   m_checks.append(new RcRssiCheck(m_telemetry, 50, 50, this));
 
   // Tier 5 — Failsafe / Safety checks
@@ -998,6 +1004,7 @@ void PreflightManager::createPhase1Checks() {
     {QStringLiteral("nav.home"),              {TelemetryStream::GpsRawInt}},
     {QStringLiteral("nav.attitude"),          {TelemetryStream::Attitude}},
     {QStringLiteral("airframe.imu.cal"),      {TelemetryStream::SysStatus}},
+    {QStringLiteral("nav.airspeed.sensor"),   {TelemetryStream::SysStatus}},
     {QStringLiteral("comm.rc.rssi"),          {TelemetryStream::RcChannels}},
     {QStringLiteral("comm.heartbeat"),        {TelemetryStream::Heartbeat}},
   };

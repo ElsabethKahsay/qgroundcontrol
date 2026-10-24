@@ -9,6 +9,10 @@
 #include "ManualConfirmCheck.h"
 #include "BatteryVoltageCheck.h"
 #include "GcsFailsafeCheck.h"
+#include "RadioFailsafeCheck.h"
+#include "AttitudeCheck.h"
+#include "AirspeedSensorCheck.h"
+#include <QtMath>
 #include "mocks/MockTelemetryBridge.h"
 #include "utils/DatabaseManager.h"
 #include "utils/MonotonicClock.h"
@@ -47,6 +51,12 @@ private slots:
     void testGcsFailsafeUsesCopterParameterName();
     void testGcsFailsafePolicyMatrix();
     void testGcsFailsafeNoPolicyWarnsAndPolicyIsStoredPerVehicle();
+    void testGcsPolicyIsPerAirframeNotPerSystemId();
+    void testSafetyCheckParametersAreWatched();
+    void testRadioFailsafeReadsPlaneParameters();
+    void testRadioFailsafeReadsCopterParameters();
+    void testAttitudeFailurePointsToOrientation();
+    void testAirspeedSensorConfiguredButMissing();
 };
 
 void PreflightManagerTest::testInitialState()
@@ -616,6 +626,159 @@ void PreflightManagerTest::testGcsFailsafeNoPolicyWarnsAndPolicyIsStoredPerVehic
     QCOMPARE(check.policy(), QStringLiteral("telemetry_primary"));
 
     clearGcsPolicy(check.id());
+}
+
+// The GCS-failsafe policy belongs to one airframe. ArduPilot uses MAVLink
+// system id 1 on every vehicle by default, so keying by the system id made a
+// plane and a copter share one policy. With the hardware UID known, each
+// airframe keeps its own.
+void PreflightManagerTest::testGcsPolicyIsPerAirframeNotPerSystemId()
+{
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    GcsFailsafeCheck check(&bridge);
+    QString uid = QStringLiteral("UID-PLANE");
+    check.setDeviceUidProvider([&uid]() { return uid; });
+    QVERIFY(check.setPolicy(QStringLiteral("rc_primary")));
+    uid = QStringLiteral("UID-COPTER");                    // same system id, other airframe
+    QVERIFY(check.setPolicy(QStringLiteral("telemetry_primary")));
+    QCOMPARE(check.policy(), QStringLiteral("telemetry_primary"));
+    uid = QStringLiteral("UID-PLANE");
+    QCOMPARE(check.policy(), QStringLiteral("rc_primary"));   // the plane kept its own
+    for (const char *u : {"UID-PLANE", "UID-COPTER"})
+        DatabaseManager::instance().setCheckConfig(check.id(), QStringLiteral("policy@%1").arg(QLatin1String(u)),
+                                                   QStringLiteral("unset"), -1);
+}
+
+// Only parameters on ParameterWatchlist reach the checks on a real vehicle;
+// unit tests inject values directly and would not notice a missing entry. The
+// GCS-failsafe check read FS_GCS_ENABL (Plane), which was not on the list.
+void PreflightManagerTest::testSafetyCheckParametersAreWatched()
+{
+    const QSet<QString> watched = ParameterWatchlist::names();
+    const QStringList needed = {
+        QStringLiteral("FS_GCS_ENABL"), QStringLiteral("FS_GCS_ENABLE"), QStringLiteral("FS_GCS_TIMEOUT"),
+        QStringLiteral("FS_LONG_TIMEOUT"), QStringLiteral("FS_LONG_ACTN"), QStringLiteral("FS_SHORT_ACTN"),
+        QStringLiteral("FS_SHORT_TIMEOUT"), QStringLiteral("THR_FAILSAFE"), QStringLiteral("THR_FS_VALUE"),
+        QStringLiteral("FS_THR_ENABLE"), QStringLiteral("FS_THR_VALUE"), QStringLiteral("RCMAP_THROTTLE"),
+        QStringLiteral("RC3_MIN"), QStringLiteral("ARSPD_TYPE"), QStringLiteral("FLTMODE_CH"),
+        QStringLiteral("BATT_CAPACITY"),
+    };
+    for (const QString &p : needed)
+        QVERIFY2(watched.contains(p), qPrintable(p + QStringLiteral(" is read by a check but not watched")));
+}
+
+// ArduPlane's RC failsafe is THR_FAILSAFE (0 off, 1 on, 2 detect only), not
+// ArduCopter's FS_THR_ENABLE: on the plane the old check was always Skipped.
+void PreflightManagerTest::testRadioFailsafeReadsPlaneParameters()
+{
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    RadioFailsafeCheck check(&bridge);
+    check.evaluate();
+    QCOMPARE(check.status(), CheckStatus::Skipped);                 // no RC failsafe parameters at all
+
+    QVERIFY(setTestOverride(check, QStringLiteral("param_THR_FAILSAFE"), 1.0));
+    QVERIFY(setTestOverride(check, QStringLiteral("param_THR_FS_VALUE"), 950.0));
+    QVERIFY(setTestOverride(check, QStringLiteral("param_RC3_MIN"), 987.0));
+    QVERIFY(setTestOverride(check, QStringLiteral("param_FS_SHORT_ACTN"), 0.0));
+    QVERIFY(setTestOverride(check, QStringLiteral("param_FS_SHORT_TIMEOUT"), 1.5));
+    QVERIFY(setTestOverride(check, QStringLiteral("param_FS_LONG_ACTN"), 1.0));
+    QVERIFY(setTestOverride(check, QStringLiteral("param_FS_LONG_TIMEOUT"), 5.0));
+    check.evaluate();
+    QCOMPARE(check.status(), CheckStatus::Passed);
+    QVERIFY2(check.message().contains(QStringLiteral("return to launch")), qPrintable(check.message()));
+
+    QVERIFY(setTestOverride(check, QStringLiteral("param_THR_FS_VALUE"), 1000.0));   // at/above idle
+    check.evaluate();
+    QCOMPARE(check.status(), CheckStatus::Warning);
+    QVERIFY2(check.message().contains(QStringLiteral("RC3_MIN")), qPrintable(check.message()));
+
+    QVERIFY(setTestOverride(check, QStringLiteral("param_THR_FAILSAFE"), 0.0));
+    check.evaluate();
+    QCOMPARE(check.status(), CheckStatus::Warning);
+    QVERIFY(setTestOverride(check, QStringLiteral("param_THR_FAILSAFE"), 2.0));
+    check.evaluate();
+    QCOMPARE(check.status(), CheckStatus::Warning);
+    QVERIFY2(check.message().contains(QStringLiteral("no failsafe action")), qPrintable(check.message()));
+
+    bool elrs = false;
+    for (const QString &step : check.getFixSteps())
+        elrs = elrs || step.contains(QStringLiteral("No pulses"));
+    QVERIFY(elrs);
+}
+
+void PreflightManagerTest::testRadioFailsafeReadsCopterParameters()
+{
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    RadioFailsafeCheck check(&bridge);
+    QVERIFY(setTestOverride(check, QStringLiteral("param_FS_THR_ENABLE"), 1.0));
+    check.evaluate();
+    QCOMPARE(check.status(), CheckStatus::Passed);
+    QVERIFY2(check.message().contains(QStringLiteral("RTL")), qPrintable(check.message()));
+    QVERIFY(setTestOverride(check, QStringLiteral("param_FS_THR_ENABLE"), 0.0));
+    check.evaluate();
+    QCOMPARE(check.status(), CheckStatus::Warning);
+}
+
+// A large roll at rest (the plane read about -46 deg on the bench) fails as
+// before, and now says what to fix if the airframe is in fact level.
+void PreflightManagerTest::testAttitudeFailurePointsToOrientation()
+{
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    AttitudeCheck check(&bridge, 30.0);
+    QVERIFY(setTestOverride(check, QStringLiteral("roll"), qDegreesToRadians(-46.0)));
+    QVERIFY(setTestOverride(check, QStringLiteral("pitch"), qDegreesToRadians(5.0)));
+    QVERIFY(setTestOverride(check, QStringLiteral("yaw"), 0.0));
+    check.evaluate();
+    QCOMPARE(check.status(), CheckStatus::Failed);
+    QVERIFY2(check.message().contains(QStringLiteral("AHRS_ORIENTATION")), qPrintable(check.message()));
+    QVERIFY(check.getFixSteps().join(QStringLiteral(" ")).contains(QStringLiteral("Accelerometer")));
+    QVERIFY(setTestOverride(check, QStringLiteral("roll"), qDegreesToRadians(29.0)));   // threshold unchanged
+    check.evaluate();
+    QCOMPARE(check.status(), CheckStatus::Passed);
+}
+
+// ArduPlane marks the airspeed sensor (SYS_STATUS bit 0x10) healthy only when
+// every configured sensor works; "configured but not found" must fail.
+void PreflightManagerTest::testAirspeedSensorConfiguredButMissing()
+{
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    AirspeedSensorCheck check(&bridge);
+    QVERIFY(setTestOverride(check, QStringLiteral("vehicleType"), QStringLiteral("Fixed wing")));
+    check.evaluate();
+    QCOMPARE(check.status(), CheckStatus::Pending);                  // ARSPD_TYPE not loaded yet
+
+    QVERIFY(setTestOverride(check, QStringLiteral("param_ARSPD_TYPE"), 1.0));   // MS4525 configured
+    QVERIFY(setTestOverride(check, QStringLiteral("sensorHealth"), 0u));
+    check.evaluate();
+    QCOMPARE(check.status(), CheckStatus::Pending);                  // no SYS_STATUS yet
+
+    QVERIFY(setTestOverride(check, QStringLiteral("sensorHealth"), 0x0Fu));      // others fine, airspeed not
+    check.evaluate();
+    QCOMPARE(check.status(), CheckStatus::Failed);
+    QVERIFY2(check.message().contains(QStringLiteral("ARSPD_TYPE = 0")), qPrintable(check.message()));
+
+    QVERIFY(setTestOverride(check, QStringLiteral("sensorHealth"), 0x1Fu));
+    check.evaluate();
+    QCOMPARE(check.status(), CheckStatus::Passed);
+
+    QVERIFY(setTestOverride(check, QStringLiteral("param_ARSPD_TYPE"), 0.0));
+    QVERIFY(setTestOverride(check, QStringLiteral("sensorHealth"), 0x0Fu));
+    check.evaluate();
+    QCOMPARE(check.status(), CheckStatus::Passed);                   // no sensor configured is fine
+
+    QVERIFY(setTestOverride(check, QStringLiteral("vehicleType"), QStringLiteral("Quadrotor")));
+    check.evaluate();
+    QCOMPARE(check.status(), CheckStatus::Skipped);
 }
 
 UT_REGISTER_TEST(PreflightManagerTest)

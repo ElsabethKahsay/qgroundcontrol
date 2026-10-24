@@ -88,7 +88,9 @@ Recommendations for Phase 1 (23 Oct), easiest to hardest
 3. Confirm the Open-Meteo licence before any commercial deployment: the free API is for non-commercial use. One check with Open-Meteo.
 4. Keep the flight-mode channel (FLTMODE_CH) for flight modes only: check each airframe's channel map once (mode switch, trainer mix, arm switch) and write it on the go/no-go sheet. On the plane CH8 is the mode switch.
 5. Decide the GCS-failsafe policy per airframe and put it on the go/no-go sheet: with RC as primary control, a telemetry dropout currently sends the plane home (FS_GCS_ENABL; it triggered twice on 22 Oct over USB). Either FS_GCS_ENABL = 0 and rely on the RC failsafe, or keep it and make the telemetry link solid.
+   Status 24 Oct — two defects in the recommendation-5 code fixed: (1) the parameters it reads (FS_GCS_ENABL, FS_LONG_TIMEOUT, FS_LONG_ACTN, FS_GCS_TIMEOUT) were not on ParameterWatchlist, and only watched parameters reach the checks on a real vehicle, so on the plane it would have said "not available" while every unit test passed (tests inject values directly) — now watched, with a test that every parameter the safety checks read is watched; (2) the policy was stored per MAVLink system id, which is 1 on every ArduPilot vehicle by default, so a plane and a copter shared one "per-airframe" policy — now stored per hardware UID (the key the flight records use), with the old key as fallback. Decision still the operator's.
 6. Fix the plane before any props-on test: ELRS receiver failsafe to "No pulses"; replace the USB cable that dropped twice; airspeed sensor fitted or ARSPD_TYPE = 0; roll reads about -46° at rest — set AHRS_ORIENTATION and redo the accelerometer calibration.
+   Status 24 Oct — software done: the Attitude item names AHRS_ORIENTATION and the accelerometer calibration when a level vehicle reads tilted (threshold unchanged); new Airspeed Sensor item (fixed wing: ARSPD_TYPE set but SYS_STATUS differential-pressure bit 0x10 not healthy → Failed "Airspeed sensor configured but not found — connect it or set ARSPD_TYPE = 0"); new GCS Link Drops item (Communication) counting link losses and vehicle-removed connections since the app started; Radio Failsafe reads ArduPlane's THR_FAILSAFE / THR_FS_VALUE / FS_SHORT_ACTN / FS_LONG_ACTN (it read only ArduCopter's FS_THR_ENABLE, so it was Skipped on the plane) and warns when THR_FS_VALUE is not below the throttle minimum. Parameter facts verified in ~/ardupilot at tags Plane-4.5.7 and Copter-4.5.7 (4.5.7 FS_LONG_ACTN has no 5 = AUTOLAND; Copter 4.5.7 FS_THR_ENABLE ends at 6). Operator procedure: "Bench and SITL checks for Step 3", section H. Physical fixes on the aircraft: open (operator).
 7. Build the field laptop's Release build (about an hour, overnight) once the bench checks pass, then freeze and tag phase1-step3.
 8. Run the SITL campaign (item 12) before the first props-on flight, especially crash recovery, link loss and the 3-hour idle. Scripts can be written now; running them needs ArduPilot SITL on the development machine.
 9. Bench the copter: the release gate needs one copter and one plane, and only the plane has been on the bench so far. Plan its bench session (the same checks as the plane).
@@ -1116,10 +1118,37 @@ Safety rules for real training flights: the instructor keeps a finger on the tra
 1. In a Flight or Training session, arm and disarm once (props off; motor test style arm is fine).
 2. Open **Flight History**. Pass if: the flight appears with its time and duration. In a Training flight where you flipped the trainer switch, open the flight: a **TRAINER HANDOVERS** section lists each handover with time and altitude.
 
-### H. Other things seen today on the plane (fix before flying)
-- Airspeed sensor "no sensor found": plug it in, or if the plane has none set parameter **ARSPD_TYPE = 0** (Vehicle Setup → Parameters, search ARSPD_TYPE).
-- USB link dropped twice → the plane went to RTL (GCS failsafe). Try another USB cable/port.
-- After the RC link was lost, throttle (CH3) showed 1922. Check on the RC receiver's ELRS settings (or ELRS Lua script on the radio) that **failsafe is "No pulses"**; then, props off, switch the transmitter off: the plane must show "RC failsafe" and the motor must not spin.
+### H. Fix the plane before flying (operator procedure)
+**Propellers off for all of this.** Each fix has a matching item in the checklist that tells you when it is right.
+
+**H1. RC receiver failsafe → "No pulses"**
+*Why:* when the RC link is lost, the receiver must stop sending, so the flight controller knows the link is gone. If the receiver keeps sending the last sticks (or a fixed throttle — on 22 Oct throttle read 1922 after the link was lost), the plane can keep flying on them.
+1. If the receiver is connected to the flight controller by **PWM** wires: set its failsafe to **No pulses** (ExpressLRS receiver settings — the Lua script on the GX12, SYS → Tools → ExpressLRS, or the receiver's web page, depending on the receiver).
+2. If it is connected by a **serial / CRSF** wire (one cable, usually): there may be no such setting; the receiver simply stops sending and the flight controller detects the loss itself. Step 4 is what proves it either way.
+3. In QGC (Vehicle Setup → Parameters) check **THR_FAILSAFE = 1** and **FS_LONG_ACTN = 1** (return to launch) — or the action you choose.
+4. Confirm: switch the transmitter **off**. QGC must show an **RC failsafe**, and the motor must not spin. Switch it back on.
+5. Checklist: the **Radio Failsafe** item (Safety section) shows *"RC failsafe on (THR_FAILSAFE = 1). after 1.5 s: …; after 5 s: return to launch"* in green. Its detail lists these steps.
+
+**H2. Replace the USB cable that dropped twice**
+*Why:* each drop is a lost GCS link; with the GCS failsafe enabled the plane flies home (it did twice on 22 Oct, on the bench).
+1. Use a short, good-quality USB cable, straight into the computer (no hub), placed so it cannot be pulled.
+2. Confirm: leave the plane connected for 10 minutes. The **GCS Link Drops** item (Communication section) must stay green: *"No GCS link drops since the app started"*. Any drop turns it orange with the count. (The count starts again when the app restarts.)
+
+**H3. Airspeed sensor: fit it, or tell the flight controller there is none**
+*Why:* the flight controller is set to use an airspeed sensor it cannot find ("MS4525: no sensor found" at boot).
+- If the plane **has** an airspeed sensor: check its cable and connector, power-cycle the plane.
+- If it **has none**: Vehicle Setup → Parameters → **ARSPD_TYPE = 0**, then reboot the flight controller.
+- Confirm: the **Airspeed Sensor** item (GPS/Navigation & Sensors section) is green — *"Airspeed sensor found and healthy"* or *"No airspeed sensor configured (ARSPD_TYPE = 0)…"*. Red *"Airspeed sensor configured but not found"* means it is still wrong.
+
+**H4. Make the flight controller read "level" correctly**
+*Why:* with the plane still, it reports about −46° of roll. Either the board is mounted differently from what the flight controller thinks, or its accelerometers were calibrated badly. It would fly as if it were banked.
+1. Put the plane on a flat table, wings level.
+2. QGC → Vehicle Setup (gear icon) → **Sensors** → **Autopilot orientation**: choose how the board is mounted (compare the arrow on the board with the nose of the plane). This is the parameter **AHRS_ORIENTATION**.
+3. On the same page run the **Accelerometer** calibration and follow its positions.
+4. Confirm: on the Fly view the **ATTITUDE · UAV** column reads roll and pitch near **0°** with the plane level, and the **Attitude** item in the checklist is green. If the item is red it now says *"…If it is sitting level, the flight controller's orientation (AHRS_ORIENTATION) or accelerometer calibration is wrong"*.
+
+**H5. Battery capacity**
+In Vehicle Setup → Parameters set **BATT_CAPACITY** to the pack's mAh. The **Battery pack** item turns orange with the value to set if it does not match the selected pack.
 
 ### What to send me
 For each section A–H: pass, or what you saw instead (a photo of the screen is fine). Keep QGC's MAVLink forwarding on — the monitor I run reads the plane's messages and shows arm/disarm, modes, CH9 and failsafes as they happen.

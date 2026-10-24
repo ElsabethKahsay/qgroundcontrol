@@ -3,6 +3,8 @@
 // FS_GCS_ENABLE. The policy is stored in check_config; this check never writes
 // the vehicle parameter.
 #pragma once
+#include <functional>
+
 #include "AbstractCheck.h"
 
 class TelemetryBridge;
@@ -20,6 +22,10 @@ public:
     /// Store the policy for the current vehicle and re-evaluate.
     Q_INVOKABLE bool setPolicy(const QString &policy);
 
+    /// Where the vehicle's hardware UID comes from (the key flight records use).
+    /// Defaults to VehicleProfileManager's current device UID; tests replace it.
+    void setDeviceUidProvider(std::function<QString()> provider) { m_deviceUid = std::move(provider); }
+
     /// Vehicle-specific parameter name (FS_GCS_ENABL / FS_GCS_ENABLE), or
     /// empty for a vehicle this check does not support.
     QString parameterName() const;
@@ -36,6 +42,9 @@ private:
 
     VehicleKind vehicleKind() const;
     int currentVehicleId() const;
+    QString deviceUid() const;
+
+    std::function<QString()> m_deviceUid;
     QString settingDescription(double value) const;
     QString actionDescription(double value) const;
     QString timeoutParameterName() const;

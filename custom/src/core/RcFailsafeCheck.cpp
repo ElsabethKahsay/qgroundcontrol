@@ -57,3 +57,13 @@ void RcFailsafeCheck::evaluate()
     setStatus(CheckStatus::Passed,
               QStringLiteral("RC link OK, RSSI %1%").arg(rssi));
 }
+
+QStringList RcFailsafeCheck::getFixSteps() const
+{
+    return {
+        QStringLiteral("Make sure the transmitter is on, bound to this receiver, and the receiver has power."),
+        QStringLiteral("On the receiver (ELRS): set its failsafe to \"No pulses\" where it offers one (PWM "
+                       "receivers), so a lost link is seen as lost instead of holding the last sticks."),
+        QStringLiteral("If RSSI is low, check the receiver antennas and their position, then test the range."),
+    };
+}

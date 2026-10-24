@@ -1,6 +1,7 @@
 #include <QTest>
 #include <QTemporaryDir>
 #include "core/SessionRecorder.h"
+#include "core/GcsLinkDropsCheck.h"
 #include <QSignalSpy>
 #include <QTemporaryFile>
 #include <QDir>
@@ -55,6 +56,7 @@ private slots:
     void testRecorderWritesFlightHistoryAndHandovers();
     void testBenchTestResultsLinkToFlightAndConnection();
     void testEnergyModelLearnsOnlyFromRealFlights();
+    void testLinkDropsCountedSinceAppStart();
     void testIncrementBatteryCycleGuard();
     void testFlightSessionRoundTrip();
     void testCheckResultAuditTrail();
@@ -599,6 +601,44 @@ void DatabaseManagerTest::testEnergyModelLearnsOnlyFromRealFlights()
     QVERIFY(qAbs(m.whPerKm - 4.0) < 1e-9);
     QVERIFY(qAbs(m.hoverWhPerMin - 2.0) < 1e-9);
     QCOMPARE(db.getPowerCalibrationHistory(QStringLiteral("UID-R"), 50).size(), 1);
+}
+
+// The link-drop item counts what the recorder logged for this vehicle since
+// the app started: link losses, plus connections that ended because the
+// vehicle vanished (a USB drop) without a link loss first. One drop that was
+// first a link loss and then a removal counts once.
+void DatabaseManagerTest::testLinkDropsCountedSinceAppStart()
+{
+    RecorderFixture f;
+    QVERIFY(f.init());
+    DatabaseManager &db = DatabaseManager::instance();
+    GcsLinkDropsCheck check;
+    check.evaluate();
+    QCOMPARE(check.status(), CheckStatus::Pending);                 // no vehicle yet
+
+    SessionRecorder rec(db);
+    f.wire(rec);
+    rec.connectionOpened(QStringLiteral("UID-R"), QStringLiteral("Flight"), QString(), QString());
+    check.evaluate();
+    QCOMPARE(check.status(), CheckStatus::Passed);
+    QCOMPARE(db.linkDropsSinceStart(), 0);
+
+    rec.linkLost();                                                  // drop 1: quiet link, came back
+    rec.linkRestored(false);
+    rec.linkLost();                                                  // drop 2: quiet, then removed
+    rec.connectionClosed(QStringLiteral("vehicle_removed"));         //   (same drop, not counted twice)
+    rec.connectionOpened(QStringLiteral("UID-R"), QStringLiteral("Flight"), QString(), QString());
+    rec.connectionClosed(QStringLiteral("vehicle_removed"));         // drop 3: USB pulled, no link_lost
+    rec.connectionOpened(QStringLiteral("UID-R"), QStringLiteral("Flight"), QString(), QString());
+    QCOMPARE(db.linkDropsSinceStart(), 3);
+    check.evaluate();
+    QCOMPARE(check.status(), CheckStatus::Warning);
+    QVERIFY2(check.message().contains(QStringLiteral("3 times")), qPrintable(check.message()));
+
+    // Another vehicle's drops are not this vehicle's.
+    QVERIFY(db.upsertVehicle(QStringLiteral("UID-X"), QStringLiteral("X"), QStringLiteral("ArduPilot"), QStringLiteral("Plane")));
+    rec.connectionOpened(QStringLiteral("UID-X"), QStringLiteral("Flight"), QString(), QString());
+    QCOMPARE(db.linkDropsSinceStart(), 0);
 }
 
 void DatabaseManagerTest::testDoubleIncrementGuard()
