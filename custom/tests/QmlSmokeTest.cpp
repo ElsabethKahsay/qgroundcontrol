@@ -689,6 +689,7 @@ private slots:
     void testTakeoffRemoved();
     void testSingleForceArmPath();
     void testNoQmlCallsGateOnlyForceArm();
+    void testDisarmIsNeverForced();
 
 private:
     QSharedPointer<QQmlApplicationEngine> _engine;
@@ -898,6 +899,48 @@ void FlyQuickActionsSmokeTest::testSingleForceArmPath()
              "the custom bar's force-arm confirm dialog must be gone");
 }
 
+// No QML disarm may ask for ArduPilot's forced disarm. A plain GCS disarm is
+// refused by the firmware while it is flying; the forced one (param2 = 21196)
+// is not, so a Disarm button that forces stops the motors in the air. Every
+// live VehicleProfileManager.disarmVehicle() call in the custom QML must pass
+// a literal false, and the magic number must not appear in QML at all.
+void FlyQuickActionsSmokeTest::testDisarmIsNeverForced()
+{
+    _loadComponent();   // establishes the custom/ source root via _filePath
+
+    QDir root = QFileInfo(_filePath).dir();
+    QVERIFY2(root.cdUp() && root.cdUp(), "cannot locate custom/ source root");
+
+    static const QRegularExpression disarmCall(QStringLiteral("disarmVehicle\\s*\\(([^)]*)\\)"));
+    QStringList offenders;
+    int calls = 0;
+    QDirIterator it(root.filePath(QStringLiteral("qml")), QStringList{QStringLiteral("*.qml")},
+                    QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        const QString path = it.next();
+        QFile f(path);
+        if (!f.open(QIODevice::ReadOnly)) continue;
+        const QStringList lines = QString::fromUtf8(f.readAll()).split(QLatin1Char('\n'));
+        f.close();
+        for (int i = 0; i < lines.size(); ++i) {
+            const QString code = lines[i].trimmed();
+            if (code.startsWith(QLatin1String("//")) || code.startsWith(QLatin1String("*"))) continue;
+            if (code.contains(QLatin1String("21196")))
+                offenders << QStringLiteral("%1:%2 21196").arg(path).arg(i + 1);
+            if (!code.contains(QLatin1String("VehicleProfileManager.disarmVehicle"))) continue;
+            auto m = disarmCall.globalMatch(code);
+            while (m.hasNext()) {
+                const QString arg = m.next().captured(1).trimmed();
+                ++calls;
+                if (arg != QLatin1String("false"))
+                    offenders << QStringLiteral("%1:%2 disarmVehicle(%3)").arg(path).arg(i + 1).arg(arg);
+            }
+        }
+    }
+    QVERIFY2(calls > 0, "expected the Fly-view Disarm to call VehicleProfileManager.disarmVehicle");
+    QVERIFY2(offenders.isEmpty(), qPrintable(offenders.join(QLatin1Char('\n'))));
+}
+
 void FlyQuickActionsSmokeTest::testNoQmlCallsGateOnlyForceArm()
 {
     _loadComponent();   // establishes the custom/ source root via _filePath
@@ -942,9 +985,9 @@ void FlyQuickActionsSmokeTest::testNoQmlCallsGateOnlyForceArm()
                     offenders.append(QStringLiteral("%1 -> %2").arg(path).arg(bad));
                 }
             }
-            // Any argument list: the funnel is forceArm(pilot, reason) since
-            // now; the stock GuidedActionsController still passes none and
-            // is refused at runtime, which is fine (fails closed).
+            // Any argument list: the funnel takes forceArm(pilot, reason);
+            // the stock GuidedActionsController still passes none and is
+            // refused at runtime, which is fine (fails closed).
             static const QRegularExpression funnelCall(QStringLiteral("TelemetryProvider\\.forceArm\\("));
             if (code.contains(funnelCall)) {
                 funnelCallers.append(path);

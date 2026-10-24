@@ -57,6 +57,8 @@ private slots:
     void testRadioFailsafeReadsCopterParameters();
     void testAttitudeFailurePointsToOrientation();
     void testAirspeedSensorConfiguredButMissing();
+    void testInformationalChecksNeverGateArming();
+    void testMandatorySetPerAirframe();
 };
 
 void PreflightManagerTest::testInitialState()
@@ -779,6 +781,88 @@ void PreflightManagerTest::testAirspeedSensorConfiguredButMissing()
     QVERIFY(setTestOverride(check, QStringLiteral("vehicleType"), QStringLiteral("Quadrotor")));
     check.evaluate();
     QCOMPARE(check.status(), CheckStatus::Skipped);
+}
+
+// Weather and airspace checks are informational: once the airframe is known
+// they must stay non-mandatory, and even one marked mandatory by mistake must
+// not hold the gate shut (allMandatoryPassed and armingBlocker skip them).
+void PreflightManagerTest::testInformationalChecksNeverGateArming()
+{
+    PreflightManager mgr;
+    QStringList informational;
+    for (auto *c : mgr.checks()) {
+        if (c->isInformational())
+            informational << c->id();
+    }
+    QVERIFY2(informational.contains(QStringLiteral("env.temperature"))
+                 && informational.contains(QStringLiteral("airspace.zone_compliance")),
+             qPrintable(informational.join(QLatin1Char(','))));
+
+    for (const QString &kind : {QStringLiteral("MULTIROTOR"), QStringLiteral("FIXED_WING")}) {
+        mgr.applyVehicleKind(kind);
+        for (auto *c : mgr.checks()) {
+            if (c->isInformational())
+                QVERIFY2(!c->mandatory(), qPrintable(kind + QStringLiteral(": ") + c->id()));
+        }
+    }
+
+    // Leave only the informational checks, unevaluated or failing (no
+    // telemetry, no zone model), and force them mandatory.
+    bool someNotPassing = false;
+    for (auto *c : mgr.checks()) {
+        if (c->isInformational()) {
+            c->setMandatory(true);
+            const CheckStatus st = c->status();
+            someNotPassing |= st == CheckStatus::Pending || st == CheckStatus::Error || st == CheckStatus::Failed;
+        } else {
+            c->setMandatory(false);
+        }
+    }
+    QVERIFY2(someNotPassing, "the case needs an informational check that is not passing");
+    QVERIFY(mgr.allMandatoryPassed());
+    QVERIFY2(mgr.armingBlocker().isEmpty(), qPrintable(mgr.armingBlocker()));
+}
+
+// The exact set of checks that gate arming on each airframe. A change to the
+// roster or to updateCriticalChecks() must update this list on purpose.
+void PreflightManagerTest::testMandatorySetPerAirframe()
+{
+    const QStringList common = {
+        QStringLiteral("airframe.imu.cal"), QStringLiteral("com.rc"), QStringLiteral("com.rc.failsafe"),
+        QStringLiteral("com.rc.mode_switch"), QStringLiteral("com.telemetry.drop_rate"),
+        QStringLiteral("comm.gcs.link_drops"), QStringLiteral("comm.heartbeat"),
+        QStringLiteral("comm.mavlink.protocol"), QStringLiteral("comm.rc.rssi"),
+        QStringLiteral("nav.airspeed.sensor"), QStringLiteral("nav.attitude"), QStringLiteral("nav.baro.health"),
+        QStringLiteral("nav.gps.fix"), QStringLiteral("nav.home"), QStringLiteral("power.battery.voltage"),
+        QStringLiteral("propulsion.esc.firmware"), QStringLiteral("propulsion.esc.responsiveness"),
+        QStringLiteral("safety.failsafe.battery"), QStringLiteral("safety.failsafe.battery_param"),
+        QStringLiteral("safety.failsafe.ekf"), QStringLiteral("safety.failsafe.gcs"),
+        QStringLiteral("safety.failsafe.radio"),
+    };
+    auto mandatorySet = [](PreflightManager &mgr) {
+        QStringList ids;
+        for (auto *c : mgr.checks()) {
+            if (c->mandatory())
+                ids << c->id();
+        }
+        ids.sort();
+        return ids;
+    };
+
+    PreflightManager mgr;
+    QVERIFY(mandatorySet(mgr).isEmpty());   // nothing before the kind is known
+
+    QStringList copter = common;
+    copter << QStringLiteral("airframe.motor_count") << QStringLiteral("propulsion.motors.spin");
+    copter.sort();
+    mgr.applyVehicleKind(QStringLiteral("MULTIROTOR"));
+    QCOMPARE(mandatorySet(mgr), copter);
+
+    QStringList plane = common;
+    plane << QStringLiteral("safety.rtl_alt");
+    plane.sort();
+    mgr.applyVehicleKind(QStringLiteral("FIXED_WING"));
+    QCOMPARE(mandatorySet(mgr), plane);
 }
 
 UT_REGISTER_TEST(PreflightManagerTest)

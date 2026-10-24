@@ -385,6 +385,14 @@ int PreflightManager::countedChecks() const {
   return count;
 }
 
+// A check gates arming when it is mandatory and not informational. The arming
+// gate's list of failing checks (ArmingGate::currentRequest) applies the same
+// rule, so the gate verdict, the blocker text and the acknowledgment all agree
+// on which checks count.
+static bool gatesArming(const AbstractCheck *c) {
+  return c->mandatory() && !c->isInformational();
+}
+
 bool PreflightManager::allMandatoryPassed() const {
   // Until the vehicle kind resolves, the applicable mandatory set is
   // undefined. Allowing arming here (trivially true while every check is
@@ -393,7 +401,7 @@ bool PreflightManager::allMandatoryPassed() const {
     return false;
 
   for (auto *c : m_checks) {
-    if (!c->mandatory())
+    if (!gatesArming(c))
       continue;
     const CheckStatus s = c->status();
     // Advisory and non-applicable results must not gate arming:
@@ -437,19 +445,19 @@ QString PreflightManager::armingBlocker() const {
   // (see allMandatoryPassed); naming it here avoids leaving the operator with
   // a generic denial reason and no way to tell what is holding the gate shut.
   for (auto *c : m_checks) {
-    if (c->mandatory() && c->status() == CheckStatus::Stale)
+    if (gatesArming(c) && c->status() == CheckStatus::Stale)
       return c->label() + QStringLiteral(": ") + c->message();
   }
   for (auto *c : m_checks) {
-    if (c->mandatory() && c->status() == CheckStatus::Error)
+    if (gatesArming(c) && c->status() == CheckStatus::Error)
       return c->label() + QStringLiteral(": ") + c->message();
   }
   for (auto *c : m_checks) {
-    if (c->mandatory() && c->status() == CheckStatus::Failed)
+    if (gatesArming(c) && c->status() == CheckStatus::Failed)
       return c->label() + QStringLiteral(": ") + c->message();
   }
   for (auto *c : m_checks) {
-    if (c->mandatory() && c->status() == CheckStatus::Pending)
+    if (gatesArming(c) && c->status() == CheckStatus::Pending)
       return c->label() + QStringLiteral(": ") + c->message();
   }
   return {};
@@ -885,6 +893,14 @@ bool PreflightManager::updateCriticalChecks(const QString &kindString) {
   for (AbstractCheck *check : m_checks) {
     if (!check) continue;
     const QString id = check->id();
+
+    // Informational checks (weather, airspace) are shown to the operator but
+    // never gate arming: some of them sit in Pending while a network fetch
+    // runs, and the zone check fails on a mission, not on the aircraft.
+    if (check->isInformational()) {
+      check->setMandatory(false);
+      continue;
+    }
 
     if (id == QStringLiteral("airframe.motor_count")
         || id == QStringLiteral("propulsion.motors.spin")) {

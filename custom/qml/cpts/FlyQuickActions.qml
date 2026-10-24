@@ -387,11 +387,14 @@ Item {
             color:    Colors.textPrimary
         }
 
+        // Always a plain disarm (param2 = 0). ArduPilot refuses a plain GCS
+        // disarm while it thinks it is flying, which is the protection we
+        // want here; the forced disarm (21196) turns that check off and would
+        // stop the motors in the air on one tap and OK.
         onAccepted: {
             var v = root._activeVehicle
-            var isFlying = v ? (v.flying || v.armed) : false
             if (typeof VehicleProfileManager !== 'undefined' && VehicleProfileManager) {
-                VehicleProfileManager.disarmVehicle(isFlying)
+                VehicleProfileManager.disarmVehicle(false)
             } else if (v) {
                 v.armed = false
             }
