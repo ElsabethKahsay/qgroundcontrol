@@ -372,10 +372,41 @@ Item {
             }
         }
 
+        // FORK PATCH: RC-primary operation. The pilot flies from the
+        // transmitter; the GCS only monitors and can send RTL or Land. Every
+        // other stock guided action is switched off here, by overriding the
+        // controller's show* bindings, so nothing in the Fly view can move the
+        // aircraft into GUIDED or AUTO behind the pilot:
+        //   - mission start / continue / resume prompts (they appear on their
+        //     own when a mission is loaded),
+        //   - the map-click menu (Go to, Orbit, ROI, Set home, Set estimator
+        //     origin): with all of these off, FlyViewMap.onMapClicked opens
+        //     nothing, so a tap on the map does nothing,
+        //   - in-flight adjustments (altitude, speed, heading, loiter radius,
+        //     pause) and takeoff,
+        //   - the stock Emergency Stop, which is a forced disarm in the air.
+        // Kept: RTL, Land, Land Abort, Arm/Disarm (both go through the arming
+        // gate), Gripper.
         GuidedActionsController {
             id: guidedActionsController
             missionController: _missionController
             guidedValueSlider: _guidedValueSlider
+
+            showStartMission:       false
+            showContinueMission:    false
+            showResumeMission:      false
+            showTakeoff:            false
+            showPause:              false
+            showChangeAlt:          false
+            showChangeSpeed:        false
+            showChangeHeading:      false
+            showChangeLoiterRadius: false
+            showGotoLocation:       false
+            showOrbit:              false
+            showROI:                false
+            showSetHome:            false
+            showSetEstimatorOrigin: false
+            showEmergenyStop:       false
         }
 
         GuidedValueSlider {

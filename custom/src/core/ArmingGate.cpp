@@ -23,6 +23,34 @@
 #include "utils/DatabaseManager.h"
 #include "FlightSession.h"
 
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QUuid>
+
+// Writes one gate event to compliance_logs, the same table the force-arm
+// funnel uses (TelemetryBridge::forceArm), so every override and every refused
+// GCS arm can be traced after the fact: who (pilot, empty when the gate denied
+// on its own), why (the pilot's reason or the gate's denial reason), which
+// failing checks were involved, which vehicle, and when (UTC). The log id is
+// "gate-<event>-<uuid>"; listComplianceLogs(vehicleId) finds them per vehicle.
+static void recordGateEvent(const TelemetryBridge *telemetry, const QString &event, const QString &pilot,
+                            const QString &reason, const QStringList &checkIds)
+{
+    Vehicle *v = telemetry ? telemetry->vehicle() : nullptr;
+    QJsonObject entry;
+    entry[QStringLiteral("event")] = event;
+    entry[QStringLiteral("pilot")] = pilot;
+    entry[QStringLiteral("reason")] = reason;
+    entry[QStringLiteral("checks")] = QJsonArray::fromStringList(checkIds);
+    entry[QStringLiteral("timestamp")] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+    DatabaseManager::instance().saveComplianceLog(
+        QStringLiteral("gate-%1-%2").arg(event, QUuid::createUuid().toString(QUuid::WithoutBraces)),
+        v ? QString::number(v->id()) : QString(),
+        v ? v->vehicleTypeString() : QStringLiteral("unknown"), pilot,
+        QString::fromUtf8(QJsonDocument(entry).toJson(QJsonDocument::Compact)), QString());
+}
+
 // Set up the override expiration timer and the periodic gate evaluation timer.
 ArmingGate::ArmingGate(QObject *parent)
     : QObject(parent)
@@ -57,6 +85,8 @@ ArmingGate::ArmingGate(QObject *parent)
         if (!m_ackReceived && m_ackToken == 0) {
             return;
         }
+        recordGateEvent(m_telemetry, QStringLiteral("override_expired"), m_lastAck.pilotName,
+                        m_lastAck.reason, m_ackCheckIds);
         m_ackReceived = false;
         m_ackToken = 0;
         m_ackCheckIds.clear();
@@ -158,6 +188,7 @@ bool ArmingGate::interceptCommandLong(uint16_t command, const QMap<int, float> &
         return true;
     }
     qWarning().noquote() << QStringLiteral("ArmingGate: inbound ARM from a link peer denied: %1").arg(d.reason);
+    recordGateEvent(m_telemetry, QStringLiteral("peer_arm_denied"), QString(), d.reason, d.failingIds);
     emit armingDenied(command, d.reason);
     return false;
 }
@@ -186,6 +217,8 @@ bool ArmingGate::acknowledgeOverride(const QString &pilotName, const QString &re
     m_ackTimer->start();
     // The ack covers exactly the checks failing now; a new failure voids it.
     m_ackCheckIds = currentRequest(0).failingMandatoryIds;
+    recordGateEvent(m_telemetry, QStringLiteral("override_acknowledged"), m_lastAck.pilotName,
+                    m_lastAck.reason, m_ackCheckIds);
     emit overrideKindChanged();
 
     qWarning().noquote() << QStringLiteral("ArmingGate: ALLOW_WITH_ACK acknowledged by %1 — %2")
@@ -305,6 +338,10 @@ std::function<bool(QString&, quint32)> ArmingGate::makeArmInterceptor()
             return true;
         }
         denialReason = d.reason.isEmpty() ? QStringLiteral("Arming denied by preflight gate") : d.reason;
+        // Every arm this GCS sends passes here (its own buttons, the stock
+        // arm actions), so this is where a refused GCS arm is recorded.
+        recordGateEvent(guard->m_telemetry, QStringLiteral("gcs_arm_denied"), QString(), denialReason,
+                        d.failingIds);
         return false;
     };
 }
@@ -488,8 +525,10 @@ QVariantMap ArmingGate::requestArm()
             d.reason = QStringLiteral("No vehicle connected");
         }
     }
-    if (d.verdict == ArmDecision::Deny)
+    if (d.verdict == ArmDecision::Deny) {
+        recordGateEvent(m_telemetry, QStringLiteral("gcs_arm_denied"), QString(), d.reason, d.failingIds);
         emit commandRejected(d.reason);
+    }
     return toVariantMap(d);
 }
 
@@ -501,6 +540,8 @@ QVariantMap ArmingGate::previewArm() const
 
 void ArmingGate::consumeAck()
 {
+    recordGateEvent(m_telemetry, QStringLiteral("override_used"), m_lastAck.pilotName, m_lastAck.reason,
+                    m_ackCheckIds);
     qWarning().noquote() << QStringLiteral("ArmingGate: acknowledged override used by pilot %1 (reason: %2; checks: %3)")
                                 .arg(m_lastAck.pilotName, m_lastAck.reason,
                                      m_ackCheckIds.join(QStringLiteral(", ")));

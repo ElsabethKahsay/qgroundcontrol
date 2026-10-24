@@ -26,6 +26,9 @@
 
 #include <QTest>
 #include <QSignalSpy>
+#include <QJsonObject>
+#include <QJsonDocument>
+#include <QJsonArray>
 #include <QDateTime>
 #include <QCoreApplication>
 
@@ -89,6 +92,8 @@ private slots:
     void testForceArmRefusedOutsideTesting();
     void testForceArmRequiresPilotAndReason();
     void testForceArmAuditLogRecordsPilotAndReason();
+    void testAckOverrideRecordedWithPilotAndChecks();
+    void testGcsArmDenialAndAckExpiryRecorded();
 
 private:
     // Unit-test singleton owner: FlightSession::instance() is null until a
@@ -1039,6 +1044,119 @@ void ArmSendTest::testForceArmAuditLogRecordsPilotAndReason()
                  && logs.contains(QStringLiteral("audit refusal outside testing"))
                  && logs.contains(QStringLiteral("force_arm_refused")),
              "refused force-arm was not written to the compliance log with pilot and reason");
+}
+
+// Gate events written to compliance_logs for this vehicle since @p before
+// (the log ids that already existed). The unit-test database keeps rows from
+// earlier runs, so a test must only look at what it wrote itself.
+static QList<QJsonObject> newGateEvents(DatabaseManager &db, const QString &vehicleId, const QStringList &before)
+{
+    QList<QJsonObject> events;
+    for (const QString &logId : db.listComplianceLogs(vehicleId, 100000)) {
+        if (before.contains(logId) || !logId.startsWith(QLatin1String("gate-")))
+            continue;
+        const QJsonDocument doc = QJsonDocument::fromJson(db.loadComplianceLog(logId).toUtf8());
+        if (doc.isObject())
+            events << doc.object();
+    }
+    return events;
+}
+
+// One event row with this name, pilot and (when given) failing check id.
+static bool hasGateEvent(const QList<QJsonObject> &events, const QString &event, const QString &pilot,
+                         const QString &checkId = QString())
+{
+    for (const QJsonObject &e : events) {
+        if (e.value(QStringLiteral("event")).toString() != event
+            || e.value(QStringLiteral("pilot")).toString() != pilot)
+            continue;
+        if (checkId.isEmpty()
+            || e.value(QStringLiteral("checks")).toArray().contains(QJsonValue(checkId)))
+            return true;
+    }
+    return false;
+}
+
+static QString describe(const QList<QJsonObject> &events)
+{
+    QStringList out;
+    for (const QJsonObject &e : events)
+        out << QString::fromUtf8(QJsonDocument(e).toJson(QJsonDocument::Compact));
+    return out.isEmpty() ? QStringLiteral("(no new gate events)") : out.join(QLatin1Char('\n'));
+}
+
+// An acknowledged override is on record twice: when the pilot acknowledges
+// (who, why, which failing checks) and when the arm uses it.
+void ArmSendTest::testAckOverrideRecordedWithPilotAndChecks()
+{
+    QVERIFY(_connectPlane());
+
+    DatabaseManager &db = DatabaseManager::instance();
+    db.reset();
+    QVERIFY(db.initialize());
+    const QString vehicleId = QString::number(_vehicle->id());
+    const QStringList before = db.listComplianceLogs(vehicleId, 100000);
+
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    bridge.setVehicle(_vehicle);
+
+    ArmingGate gate;
+    _makeBlockedGate(gate, bridge);
+    bridge.setArmingGate(&gate);
+
+    _mockLink->clearReceivedMavCommandCounts();
+    QVERIFY(gate.acknowledgeOverride(QStringLiteral("Ack Pilot"), QStringLiteral("ack audit reason")));
+    bridge.arm();
+    QVERIFY2(_pumpUntil([](void* ctx) {
+        return static_cast<MockLink*>(ctx)->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM) >= 1;
+    }, _mockLink, 10000), "acknowledged arm was not sent");
+
+    const QList<QJsonObject> events = newGateEvents(db, vehicleId, before);
+    QVERIFY2(hasGateEvent(events, QStringLiteral("override_acknowledged"), QStringLiteral("Ack Pilot"),
+                          QStringLiteral("test.armsend.fail")), qPrintable(describe(events)));
+    QVERIFY2(hasGateEvent(events, QStringLiteral("override_used"), QStringLiteral("Ack Pilot"),
+                          QStringLiteral("test.armsend.fail")), qPrintable(describe(events)));
+    bool reasonKept = false;
+    for (const QJsonObject &e : events)
+        reasonKept |= e.value(QStringLiteral("reason")).toString() == QLatin1String("ack audit reason");
+    QVERIFY2(reasonKept, qPrintable(describe(events)));
+}
+
+// A GCS arm the gate refuses, and an acknowledgment that expires unused, are
+// both on record.
+void ArmSendTest::testGcsArmDenialAndAckExpiryRecorded()
+{
+    QVERIFY(_connectPlane());
+
+    DatabaseManager &db = DatabaseManager::instance();
+    db.reset();
+    QVERIFY(db.initialize());
+    const QString vehicleId = QString::number(_vehicle->id());
+    const QStringList before = db.listComplianceLogs(vehicleId, 100000);
+
+    MockTelemetryBridge bridge;
+    bridge.setConnected(true);
+    bridge.setConnectionQuality(100);
+    bridge.setVehicle(_vehicle);
+
+    ArmingGate gate;
+    _makeBlockedGate(gate, bridge);
+    bridge.setArmingGate(&gate);
+    gate.setAckExpiryMs(300);
+
+    QVERIFY(gate.acknowledgeOverride(QStringLiteral("Expiring Pilot"), QStringLiteral("never used")));
+    QTest::qWait(700);                   // past the test expiry
+    _vehicle->setArmed(true, false);     // stock arm path, gate closed
+    QTest::qWait(400);
+    QVERIFY(!_vehicle->armed());
+
+    const QList<QJsonObject> events = newGateEvents(db, vehicleId, before);
+    QVERIFY2(hasGateEvent(events, QStringLiteral("override_expired"), QStringLiteral("Expiring Pilot"),
+                          QStringLiteral("test.armsend.fail")), qPrintable(describe(events)));
+    QVERIFY2(hasGateEvent(events, QStringLiteral("gcs_arm_denied"), QString(), QStringLiteral("test.armsend.fail")),
+             qPrintable(describe(events)));
 }
 
 UT_REGISTER_TEST(ArmSendTest)

@@ -690,6 +690,7 @@ private slots:
     void testSingleForceArmPath();
     void testNoQmlCallsGateOnlyForceArm();
     void testDisarmIsNeverForced();
+    void testGuidedActionsOffExceptRtlAndLand();
 
 private:
     QSharedPointer<QQmlApplicationEngine> _engine;
@@ -939,6 +940,55 @@ void FlyQuickActionsSmokeTest::testDisarmIsNeverForced()
     }
     QVERIFY2(calls > 0, "expected the Fly-view Disarm to call VehicleProfileManager.disarmVehicle");
     QVERIFY2(offenders.isEmpty(), qPrintable(offenders.join(QLatin1Char('\n'))));
+}
+
+// RC-primary: in the Fly view the GCS may only send RTL or Land. Our FlyView.qml
+// overrides the stock GuidedActionsController's show* bindings to false for every
+// other guided action (mission start, map-click Go to / Orbit / ROI / Set home,
+// in-flight adjustments, Emergency Stop). Each overridden name must exist in the
+// stock controller (a typo stops the Fly view from loading), and RTL / Land must
+// stay as the stock controller computes them.
+void FlyQuickActionsSmokeTest::testGuidedActionsOffExceptRtlAndLand()
+{
+    _loadComponent();   // establishes the custom/ source root via _filePath
+
+    QDir root = QFileInfo(_filePath).dir();
+    QVERIFY2(root.cdUp() && root.cdUp(), "cannot locate custom/ source root");
+
+    auto readAll = [](const QString &path) {
+        QFile f(path);
+        return f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.readAll()) : QString();
+    };
+    const QString flyView = readAll(root.filePath(QStringLiteral("qml/FlyView.qml")));
+    const QString stock = readAll(root.filePath(QStringLiteral("../src/FlightDisplay/GuidedActionsController.qml")));
+    QVERIFY2(!flyView.isEmpty() && !stock.isEmpty(), "cannot read FlyView.qml or the stock GuidedActionsController.qml");
+
+    const int start = flyView.indexOf(QStringLiteral("GuidedActionsController {"));
+    QVERIFY2(start >= 0, "FlyView.qml no longer instantiates GuidedActionsController");
+    const int end = flyView.indexOf(QLatin1Char('}'), start);
+    const QString block = flyView.mid(start, end - start);
+
+    const QStringList off = {
+        QStringLiteral("showStartMission"), QStringLiteral("showContinueMission"),
+        QStringLiteral("showResumeMission"), QStringLiteral("showTakeoff"), QStringLiteral("showPause"),
+        QStringLiteral("showChangeAlt"), QStringLiteral("showChangeSpeed"), QStringLiteral("showChangeHeading"),
+        QStringLiteral("showChangeLoiterRadius"), QStringLiteral("showGotoLocation"), QStringLiteral("showOrbit"),
+        QStringLiteral("showROI"), QStringLiteral("showSetHome"), QStringLiteral("showSetEstimatorOrigin"),
+        QStringLiteral("showEmergenyStop"),
+    };
+    QStringList problems;
+    for (const QString &name : off) {
+        if (!stock.contains(QStringLiteral("property bool %1:").arg(name)))
+            problems << name + QStringLiteral(": not a property of the stock controller");
+        const QRegularExpression setFalse(QStringLiteral("\\b%1\\s*:\\s*false\\b").arg(name));
+        if (!block.contains(setFalse))
+            problems << name + QStringLiteral(": not set to false in FlyView.qml");
+    }
+    for (const QString &kept : {QStringLiteral("showRTL"), QStringLiteral("showLand")}) {
+        if (block.contains(QRegularExpression(QStringLiteral("\\b%1\\s*:").arg(kept))))
+            problems << kept + QStringLiteral(": must keep the stock binding");
+    }
+    QVERIFY2(problems.isEmpty(), qPrintable(problems.join(QLatin1Char('\n'))));
 }
 
 void FlyQuickActionsSmokeTest::testNoQmlCallsGateOnlyForceArm()
