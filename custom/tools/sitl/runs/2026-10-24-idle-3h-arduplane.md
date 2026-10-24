@@ -1,0 +1,135 @@
+# SITL run: idle-3h-arduplane — PASS
+
+- Vehicle: ArduPlane (SITL instance 4, ArduPilot ArduPilot-4.6.0-beta1-6903-g7f5070b504)
+- Started 2026-10-24T07:44:43Z, finished 2026-10-24T10:46:10Z
+- GCS: build/Debug/PreflightQGroundControl, throw-away data folder (deleted afterwards)
+- Relay counters: {'to_gcs': 1271629, 'to_sitl': 11491, 'dropped': 0}
+
+RSS samples (UTC, kB):
+
+- 2026-10-24T07:45:49Z 217928
+- 2026-10-24T07:50:49Z 218236
+- 2026-10-24T07:55:49Z 218632
+- 2026-10-24T08:00:50Z 218308
+- 2026-10-24T08:05:50Z 218188
+- 2026-10-24T08:10:50Z 218836
+- 2026-10-24T08:15:50Z 218372
+- 2026-10-24T08:20:50Z 218204
+- 2026-10-24T08:25:50Z 218996
+- 2026-10-24T08:30:50Z 218320
+- 2026-10-24T08:35:50Z 218324
+- 2026-10-24T08:40:50Z 218208
+- 2026-10-24T08:45:50Z 218724
+- 2026-10-24T08:50:51Z 218256
+- 2026-10-24T08:55:51Z 218264
+- 2026-10-24T09:00:51Z 218684
+- 2026-10-24T09:05:51Z 218260
+- 2026-10-24T09:10:51Z 218132
+- 2026-10-24T09:15:51Z 218272
+- 2026-10-24T09:20:51Z 218504
+- 2026-10-24T09:25:51Z 218208
+- 2026-10-24T09:30:51Z 218468
+- 2026-10-24T09:35:51Z 218288
+- 2026-10-24T09:40:52Z 218400
+- 2026-10-24T09:45:52Z 218204
+- 2026-10-24T09:50:52Z 218404
+- 2026-10-24T09:55:52Z 218808
+- 2026-10-24T10:00:52Z 218144
+- 2026-10-24T10:05:52Z 218400
+- 2026-10-24T10:10:52Z 218824
+- 2026-10-24T10:15:52Z 218464
+- 2026-10-24T10:20:52Z 218148
+- 2026-10-24T10:25:53Z 218424
+- 2026-10-24T10:30:53Z 218764
+- 2026-10-24T10:35:53Z 218272
+- 2026-10-24T10:40:53Z 218340
+
+## Checks
+
+- **PASS** GCS opened a connection session — device 772d51c6c5aba6fbc66470b0fd327b808b866baa41842902f8f5c8232dd3cfd6
+- **PASS** GCS still running after 3 h
+- **PASS** memory growth under 30 % — 212 MB -> 213 MB (+0.2 %)
+- **PASS** one connection session for the whole idle — 1
+- **PASS** no link_lost events — 0
+
+## Timeline
+
+```
+2026-10-24T07:44:43Z  SITL: /home/lisabeth/ardupilot/Tools/autotest/sim_vehicle.py -v ArduPlane -N --no-mavproxy -I 4 -w
+2026-10-24T07:44:44Z  vehicle heartbeat on control port (sysid 1, type 1)
+2026-10-24T07:44:44Z  GCS started (pid 48385), data folder /tmp/skywin-sitl-idle-3h-arduplane-b0isme_n
+2026-10-24T07:44:49Z  PASS: GCS opened a connection session device 772d51c6c5aba6fbc66470b0fd327b808b866baa41842902f8f5c8232dd3cfd6
+2026-10-24T07:45:49Z  GCS RSS 213 MB
+2026-10-24T07:50:49Z  GCS RSS 213 MB
+2026-10-24T07:55:49Z  GCS RSS 214 MB
+2026-10-24T08:00:50Z  GCS RSS 213 MB
+2026-10-24T08:05:50Z  GCS RSS 213 MB
+2026-10-24T08:10:50Z  GCS RSS 214 MB
+2026-10-24T08:15:50Z  GCS RSS 213 MB
+2026-10-24T08:20:50Z  GCS RSS 213 MB
+2026-10-24T08:25:50Z  GCS RSS 214 MB
+2026-10-24T08:30:50Z  GCS RSS 213 MB
+2026-10-24T08:35:50Z  GCS RSS 213 MB
+2026-10-24T08:40:50Z  GCS RSS 213 MB
+2026-10-24T08:45:50Z  GCS RSS 214 MB
+2026-10-24T08:50:51Z  GCS RSS 213 MB
+2026-10-24T08:55:51Z  GCS RSS 213 MB
+2026-10-24T09:00:51Z  GCS RSS 214 MB
+2026-10-24T09:05:51Z  GCS RSS 213 MB
+2026-10-24T09:10:51Z  GCS RSS 213 MB
+2026-10-24T09:15:51Z  GCS RSS 213 MB
+2026-10-24T09:20:51Z  GCS RSS 213 MB
+2026-10-24T09:25:51Z  GCS RSS 213 MB
+2026-10-24T09:30:51Z  GCS RSS 213 MB
+2026-10-24T09:35:51Z  GCS RSS 213 MB
+2026-10-24T09:40:52Z  GCS RSS 213 MB
+2026-10-24T09:45:52Z  GCS RSS 213 MB
+2026-10-24T09:50:52Z  GCS RSS 213 MB
+2026-10-24T09:55:52Z  GCS RSS 214 MB
+2026-10-24T10:00:52Z  GCS RSS 213 MB
+2026-10-24T10:05:52Z  GCS RSS 213 MB
+2026-10-24T10:10:52Z  GCS RSS 214 MB
+2026-10-24T10:15:52Z  GCS RSS 213 MB
+2026-10-24T10:20:52Z  GCS RSS 213 MB
+2026-10-24T10:25:53Z  GCS RSS 213 MB
+2026-10-24T10:30:53Z  GCS RSS 214 MB
+2026-10-24T10:35:53Z  GCS RSS 213 MB
+2026-10-24T10:40:53Z  GCS RSS 213 MB
+2026-10-24T10:45:49Z  PASS: GCS still running after 3 h 
+2026-10-24T10:45:49Z  PASS: memory growth under 30 % 212 MB -> 213 MB (+0.2 %)
+2026-10-24T10:45:49Z  PASS: one connection session for the whole idle 1
+2026-10-24T10:45:49Z  PASS: no link_lost events 0
+```
+
+## Database rows
+
+### connection_sessions (1 rows)
+
+| id | device_uid | session_mode | operator | app_version | opened_at | last_seen_at | closed_at | end_reason |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 772d51c6c5aba6fbc66470b0fd327b808b866baa41842902f8f5c8232dd3cfd6 | None |  | phase1-step0-4-g7aeb4a40d | 2026-10-24T07:44:49.301Z | 2026-10-24T10:46:09.063Z | None | None |
+
+### flight_sessions (0 rows)
+
+
+### flights (0 rows)
+
+
+### flight_batteries (0 rows)
+
+
+### session_events (0 rows)
+
+
+### check_results (0 rows)
+
+
+### hardware_test_events (0 rows)
+
+
+### motor_test_results (0 rows)
+
+
+### surface_test_results (0 rows)
+
+
