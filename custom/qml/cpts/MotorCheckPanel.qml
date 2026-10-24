@@ -24,12 +24,12 @@ Rectangle {
     readonly property int    _mc:    HardwareTestController.motorCount
     readonly property string _vt:    HardwareTestController.vehicleTypeLabel
     readonly property bool   _armed: HardwareTestController.isArmed
-    // FORK PATCH (B1/B6): stopAll() force-disarms an armed vehicle, so it must
+    // FORK PATCH: stopAll() force-disarms an armed vehicle, so it must
     // never run while flying. The dialog opens only disarmed with props off,
     // so an arm seen while it is open came from the test itself.
     readonly property var    _vehicle: QGroundControl.multiVehicleManager.activeVehicle
     readonly property bool   _flying: !!_vehicle && _vehicle.armed && _vehicle.flying
-    // B4/B5: the controller owns the rule (vehicle connected, not armed by
+    // The controller owns the rule (vehicle connected, not armed by
     // another source, Testing session for the fixed-wing path that arms).
     readonly property string _blockedReason: HardwareTestController.testBlockedReason
     readonly property bool   _canOpen: _blockedReason.length === 0
@@ -176,7 +176,7 @@ Rectangle {
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // PROPS-OFF CONFIRMATION (B6) — required before every motor test session
+    // PROPS-OFF CONFIRMATION — required before every motor test session
     // ════════════════════════════════════════════════════════════════════════
     Dialog {
         id: propsConfirm
@@ -460,7 +460,7 @@ Rectangle {
                         Text {
                             id: safetyTxt
                             Layout.fillWidth: true
-                            // B6: the fixed-wing path arms the vehicle to spin the motor.
+                            // The fixed-wing path arms the vehicle to spin the motor.
                             text: HardwareTestController.isFixedWing
                                   ? qsTr("The vehicle is ARMED during the fixed-wing motor test.\nRemove the propeller before starting.")
                                   : qsTr("Vehicle stays disarmed during the motor test.\nRemove propeller or ensure the area is clear before starting.")

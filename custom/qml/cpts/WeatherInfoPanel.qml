@@ -227,7 +227,7 @@ Rectangle {
                 }
             }
 
-            // W3: METAR observation or model forecast, and when.
+            // METAR observation or model forecast, and when.
             Label {
                 width: parent.width
                 visible: WeatherProvider.weatherSource.length > 0

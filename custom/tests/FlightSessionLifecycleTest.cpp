@@ -154,7 +154,7 @@ void FlightSessionLifecycleTest::testBenchModeCreatesNoFlightOrSessionRows()
     QCOMPARE(_sessionCount(fp), baseSessions);
 }
 
-// (c) Arm, disarm, arm again on the same connection. Since Step 3 the flight
+// (c) Arm, disarm, arm again on the same connection. The flight
 // records (one per arm-to-disarm, RC arms included) belong to SessionRecorder,
 // driven by the vehicle's armed state; that rule is asserted in
 // DatabaseManagerTest::testRecorderFlightFollowsArmedState. FlightSession's

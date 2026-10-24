@@ -1,4 +1,4 @@
-// Step 3 item 7: the operator must name the battery pack in use before every
+// The operator must name the battery pack in use before every
 // flight. Shown as the "Battery pack" item in the preflight Power section; its
 // button opens the pack dialog. The arming gate also refuses a GCS arm with no
 // pack selected (ArmRequest::batteryPackSelected), in every session mode.
@@ -14,7 +14,7 @@
 #include "AbstractCheck.h"
 
 /// Fraction of a pack's rated capacity a flight must use to count as one
-/// charge cycle (user decision, 22 Oct).
+/// charge cycle.
 inline constexpr double kBatteryCycleUsedFraction = 0.20;
 
 /// True when a flight that used @p usedMah counts as one cycle of a pack rated

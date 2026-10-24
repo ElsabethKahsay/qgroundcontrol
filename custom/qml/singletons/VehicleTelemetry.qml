@@ -69,7 +69,7 @@ QtObject {
     property string vehicleType: TelemetryProvider ? TelemetryProvider.vehicleType : ""
     property bool heartbeatReceived: TelemetryProvider ? TelemetryProvider.heartbeatReceived : false
     property real batteryVoltage: TelemetryProvider ? TelemetryProvider.batteryVoltage : 0.0
-    // Battery freshness (F3, display side). TelemetryBridge.batteryDataValid is
+    // Battery freshness, display side. TelemetryBridge.batteryDataValid is
     // false both when BATTERY_STATUS stopped for 5 s and when the FC never
     // reported SOC, so "stale" means: valid data was seen on this connection
     // and has since been lost. Reset on every connect/disconnect.

@@ -57,10 +57,10 @@ constexpr qint64 kBatteryStaleMs = 5000;
 int normalizeBatterySoc(int raw) { return (raw >= 0 && raw <= 100) ? raw : -1; }
 
 // ---------------------------------------------------------------------------
-// Track B (B6/B7): fork-native ArduPilot RTL.
+// Fork-native ArduPilot RTL.
 //
 // The RTL custom-mode numbers come from the real ArduPilot mode enums
-// (B7 citations):
+// (source files in the ArduPilot tree):
 //   - ArduCopter/mode.h   : enum Number { ..., LOITER=5, RTL=6, ... }
 //   - ArduPlane/mode.h    : enum Number { ..., AUTO=10, RTL=11, ... }
 //   - APMrover2/mode.h    : enum Number { ..., AUTO=10, RTL=11, ... }
@@ -107,7 +107,7 @@ bool isArduPilotModeReported(const Vehicle* vehicle, int modeNumber)
     return static_cast<int>(vehicle->customMode()) == modeNumber;
 }
 
-// Name of the child object that tracks a pending RTL confirmation (item 10).
+// Name of the child object that tracks a pending RTL confirmation.
 const char *const kRtlConfirmWaitName = "rtlConfirmWait";
 constexpr int kRtlConfirmTimeoutMs = 5000;
 }  // namespace
@@ -415,7 +415,7 @@ void TelemetryBridge::_connectVehicleSignals() {
     // Subscribe to raw MAVLink messages for servo outputs, ESC telemetry, GPS2, etc.
     connect(_vehicle, &Vehicle::mavlinkMessageReceived, this, &TelemetryBridge::_handleMavlinkMessage);
 
-    // Item 18: gimbal command acks for the gimbal page.
+    // Gimbal command acks for the gimbal page.
     connect(_vehicle, &Vehicle::mavCommandResult, this,
             [this](int, int, int command, int ackResult, int) {
         if (command == MAV_CMD_DO_MOUNT_CONTROL || command == MAV_CMD_DO_GIMBAL_MANAGER_PITCHYAW)
@@ -692,7 +692,7 @@ void TelemetryBridge::_updateFromVehicle() {
         emit batteryDataValidChanged();
     }
 
-    // F4: connection quality decays while autopilot heartbeats are missing,
+    // Connection quality decays while autopilot heartbeats are missing,
     // instead of freezing at the value of the last heartbeat that arrived.
     const qint64 hbAge = streamAgeMs(TelemetryStream::Heartbeat);
     if (hbAge >= 0) {
@@ -709,8 +709,8 @@ void TelemetryBridge::_updateFromVehicle() {
 /// Only fires an emit when the value actually changes (with a small deadband)
 /// to avoid unnecessary QML re-evaluation.
 void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message) {
-    // Per-stream arrival stamps (F1–F3). HEARTBEAT is stamped in its case below,
-    // and only for the autopilot component (F4).
+    // Per-stream arrival stamps. HEARTBEAT is stamped in its case below,
+    // and only for the autopilot component.
     switch (message.msgid) {
     case MAVLINK_MSG_ID_SYS_STATUS:          stampStream(TelemetryStream::SysStatus); break;
     case MAVLINK_MSG_ID_BATTERY_STATUS:      stampStream(TelemetryStream::BatteryStatus); break;
@@ -1104,7 +1104,7 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message) {
                 _gimbalDetected = true;
                 emit gimbalDetectedChanged();
             }
-            // Item 18: the measured attitude the gimbal tests pass or fail on.
+            // The measured attitude the gimbal tests pass or fail on.
             double pitch = 0.0, roll = 0.0, yaw = 0.0;
             if (decodeGimbalAttitude(message, _yaw, pitch, roll, yaw)) {
                 _gimbalPitch = pitch;
@@ -1141,7 +1141,7 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message) {
             if (message.compid != 1 && message.compid != 0) _companionDetected = true;
             if (wasCompanion != _companionDetected) emit companionDetectedChanged();
 
-            // F4: only the autopilot's own heartbeat counts as link liveness. A
+            // Only the autopilot's own heartbeat counts as link liveness. A
             // companion or gimbal heartbeat must not keep the gate fresh while
             // the autopilot is silent.
             if (!_vehicle || !isAutopilotMessage(message.sysid, message.compid,
@@ -1537,7 +1537,7 @@ QString TelemetryBridge::forceArm(const QString &pilotName, const QString &reaso
 /// Command the vehicle to Return To Launch. THE single RTL code path for the
 /// custom layer (RC-primary quad/FW spec): monitoring/backstop authority, never
 /// a duplicate of RC RTL. Mirrors stock QGC's own Return button contract
-/// Track B (B6): fork-native ArduPilot RTL.
+/// Fork-native ArduPilot RTL.
 ///
 /// THIS IS THE REGRESSION: in the fork the stock firmware plugins were disabled,
 /// so the generic FirmwarePlugin knew no ArduPilot modes and the old path
@@ -1598,7 +1598,7 @@ bool TelemetryBridge::returnToLaunch()
                              static_cast<float>(rtlModeId),                         // param2
                              0.0f, 0.0f, 0.0f, 0.0f, 0.0f);                        // param3..7
 
-    // Real feedback, asynchronously (item 10, F15): the heartbeat must report
+    // Real feedback, asynchronously: the heartbeat must report
     // the RTL mode within 5 s and the armed state must be unchanged. No nested
     // event loop and no raw Vehicle* across the wait — Return is most likely
     // pressed during link loss, when the vehicle can be deleted mid-wait.

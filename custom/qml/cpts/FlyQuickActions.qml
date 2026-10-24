@@ -192,7 +192,7 @@ Item {
             enabled:  root.hasVehicle
         }
 
-        // FORK PATCH (Step 3 item 7): battery setup moved to the "Battery pack"
+        // FORK PATCH: battery setup moved to the "Battery pack"
         // item in the preflight Power section (BatteryPackDialog).
 
         // 4. FC Status panel

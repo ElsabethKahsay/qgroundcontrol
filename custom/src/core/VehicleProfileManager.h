@@ -150,7 +150,7 @@ public:
     /// State of charge (%) of the SELECTED pack: 100 × (1 − mAh used ÷ pack
     /// rated mAh), from the flight controller's mAh-consumed counter. The FC's
     /// own battery % is relative to its BATT_CAPACITY parameter, which may not
-    /// match the pack fitted (on the plane, 22 Oct: ~3400 vs a 5000 mAh pack),
+    /// match the pack fitted (e.g. ~3400 set for a 5000 mAh pack),
     /// so it is only the fallback. -1 when neither is known.
     static int packSocPct(int fcSocPct, double mahConsumed, double packCapacityAh)
     {

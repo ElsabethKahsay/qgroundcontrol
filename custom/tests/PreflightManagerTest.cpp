@@ -68,7 +68,7 @@ void PreflightManagerTest::testInitialState()
     QCOMPARE(mgr.failedChecks(), 0);
     QCOMPARE(mgr.pendingChecks(), mgr.totalChecks());
     // No vehicle connected, so no kind is resolved and the mandatory set is
-    // not configured — the gate must stay closed, never trivially pass (R16).
+    // not configured — the gate must stay closed, never trivially pass.
     QVERIFY(!mgr.allMandatoryPassed());
     QCOMPARE(mgr.completionPercent(), 0);
 }
@@ -127,7 +127,7 @@ void PreflightManagerTest::testAllMandatoryPassed()
 {
     PreflightManager mgr;
     // Resolve a kind so the enforcement set is configured; without it the gate
-    // is fail-closed by policy and the exercise below would be meaningless (R16).
+    // is fail-closed by policy and the exercise below would be meaningless.
     mgr.applyVehicleKind(QStringLiteral("MULTIROTOR"));
 
     // Built-in Auto checks need live telemetry and refuse confirm(); keep only
@@ -223,7 +223,7 @@ void PreflightManagerTest::testParamWatchlistSeededOnConnect()
     mgr.setTelemetryBridge(&bridge);
 
     // Before any vehicle connects the watchlist is empty: notifyParamReceived
-    // has nothing to fill and the ParamLoading FSM leg stays dead (R3).
+    // has nothing to fill and the ParamLoading FSM leg stays dead.
     QCOMPARE(mgr.paramManager()->totalCount(), 0);
 
     // Simulate vehicle connect. setWatchlist must seed the full parameter
@@ -232,7 +232,7 @@ void PreflightManagerTest::testParamWatchlistSeededOnConnect()
     QVERIFY(mgr.paramManager()->totalCount() == ParameterWatchlist::names().size());
 
     // Deliver every watched parameter; manager should reach Ready, not hang
-    // in Loading forever (R3 regression guard).
+    // in Loading forever.
     for (const QString &name : ParameterWatchlist::names()) {
         bridge.emitParameterUpdated(name, 1.0f);
     }
@@ -276,13 +276,13 @@ void PreflightManagerTest::testMarkArmedDisarmed()
     QCOMPARE(mgr.state(), PreflightStateMachine::Disconnected);
 
     // Resolve a kind and pass every check so the post-disarm FSM is driven by
-    // real (green) check results rather than an unconfigured gate (R16).
+    // real (green) check results rather than an unconfigured gate.
     mgr.applyVehicleKind(QStringLiteral("MULTIROTOR"));
     for (auto *c : mgr.checks()) {
         c->setMandatory(false);
     }
 
-    // Confirmed arm must drive the FSM to the Armed terminal (R8). Before the
+    // Confirmed arm must drive the FSM to the Armed terminal. Before the
     // fix the Armed state was defined but no caller ever entered it.
     mgr.markArmed();
     QCOMPARE(mgr.state(), PreflightStateMachine::Armed);
@@ -297,7 +297,7 @@ void PreflightManagerTest::testArmedSurvivesTick()
 {
     PreflightManager mgr;
     // Resolve + confirm so the post-disarm expectation is driven by check
-    // results (R16); the Armed-retention assertions are the R8 regressions.
+    // results; the assertions below check that Armed is kept until disarm.
     mgr.applyVehicleKind(QStringLiteral("MULTIROTOR"));
     for (auto *c : mgr.checks()) {
         c->setMandatory(false);
@@ -308,7 +308,7 @@ void PreflightManagerTest::testArmedSurvivesTick()
 
     // A periodic tick must NOT retreat an armed vehicle back to
     // ChecklistInProgress even if check results degrade — leaving Armed is
-    // exclusively owned by markDisarmed() (R8).
+    // exclusively owned by markDisarmed().
     mgr.tick();
     QCOMPARE(mgr.state(), PreflightStateMachine::Armed);
 
@@ -316,7 +316,7 @@ void PreflightManagerTest::testArmedSurvivesTick()
     QCOMPARE(mgr.state(), PreflightStateMachine::ArmingAllowed);
 }
 
-// Step 1.5 (post-flight bypass): after a disarm with post-flight parked, every
+// Post-flight bypass: after a disarm with post-flight parked, every
 // check is Pending again and the gate is closed until preflight is re-run.
 // The old path marked every check Skipped, which allMandatoryPassed() counts
 // as passed, so a re-arm needed no checks at all.
@@ -346,7 +346,7 @@ void PreflightManagerTest::testResetForNextFlightClosesGate()
     QVERIFY(mgr.state() != PreflightStateMachine::ArmingAllowed);
 }
 
-// Step 1.6 (F16): a confirmation stored by an earlier run must not be
+// A confirmation stored by an earlier run must not be
 // re-applied when the next PreflightManager starts.
 void PreflightManagerTest::testConfirmationNotRestoredAtStartup()
 {
@@ -379,7 +379,7 @@ struct ScopedTestClock {
 };
 }
 
-// Step 2.2 (F1, F3): BATTERY_STATUS stops while everything else is fine → the
+// BATTERY_STATUS stops while everything else is fine → the
 // battery check goes Stale within 5 s instead of passing on the cached voltage,
 // and recovers on the first tick after the stream resumes.
 void PreflightManagerTest::testBatteryStreamStopMarksCheckStale()
@@ -412,7 +412,7 @@ void PreflightManagerTest::testBatteryStreamStopMarksCheckStale()
     QCOMPARE(batt->status(), CheckStatus::Passed);   // stream resumed
 }
 
-// Step 2.2 (F2): a Passed check is re-evaluated on every tick, so a value that
+// A Passed check is re-evaluated on every tick, so a value that
 // degrades after passing fails on the next tick.
 void PreflightManagerTest::testPassedCheckReevaluatedEachTick()
 {

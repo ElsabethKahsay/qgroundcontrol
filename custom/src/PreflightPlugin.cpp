@@ -198,7 +198,7 @@ void PreflightPlugin::init()
             FlightSession::instance(), &FlightSession::onVehicleDisarmed);
 
     // Drive the preflight FSM's Armed terminal from confirmed arm/disarm so the
-    // "Ready to Arm"/"Armed" QML state label matches the real vehicle (R8).
+    // "Ready to Arm"/"Armed" QML state label matches the real vehicle.
     connect(_armingGate, &ArmingGate::vehicleArmed,
             _preflightManager, &PreflightManager::markArmed);
     connect(_armingGate, &ArmingGate::vehicleDisarmed,
@@ -241,7 +241,7 @@ void PreflightPlugin::init()
     // The NoFlyZoneModel constructor reloads zones from the database, so the
     // DB must be initialized before the model is created or the dropdown will
     // always be empty.
-    // F13: a database that cannot open or migrate means nothing is logged.
+    // A database that cannot open or migrate means nothing is logged.
     // The Fly view keeps a banner up from Database.startupError; this message
     // tells the operator once at startup.
     if (!DatabaseManager::instance().initialize()) {
@@ -275,10 +275,12 @@ void PreflightPlugin::init()
         }
     });
 
-    // Step 3 item 7: the operator names the fitted pack ("Battery pack" in the
-    // Power section). The synthetic "batt:<sysid>" serial that used to be
-    // assigned on the first voltage reading is gone: it satisfied the pack
-    // requirement without anyone choosing a pack.
+    // The operator names the fitted pack ("Battery pack" in the Power
+    // section). The check reads the selection through this lambda: the pack's
+    // registry row, plus the FC's BATT_CAPACITY once parameters have loaded,
+    // so the check can warn when the two disagree. No serial is ever filled in
+    // automatically, since that would satisfy the requirement without anyone
+    // choosing a pack.
     auto *packCheck = new BatteryPackCheck([this]() -> QVariantMap {
         const QString serial = _vehicleProfileManager ? _vehicleProfileManager->currentBatterySerial() : QString();
         if (serial.isEmpty())
@@ -306,19 +308,19 @@ void PreflightPlugin::init()
             this, &PreflightPlugin::_onKnownVehicleConnected);
 
     // Gate open/close tracks the flight session lifecycle for compliance logging.
-    // Item 11: a refusal is never silent. Gate denials from requestArm() and
+    // A refusal is never silent. Gate denials from requestArm() and
     // autopilot rejections (_surfaceCommandRejection) both arrive here.
     connect(_armingGate, &ArmingGate::commandRejected, this, [](const QString &reason) {
         qgcApp()->showAppMessage(reason);
     });
-    // Item 10/11: Return reports its real outcome (heartbeat-confirmed or not).
+    // Return reports its real outcome (heartbeat-confirmed or not).
     connect(_telemetryBridge, &TelemetryBridge::rtlCommandCompleted, this, [this](bool confirmed) {
         qgcApp()->showAppMessage(confirmed
             ? tr("Return confirmed: the vehicle reports RTL mode")
             : tr("Return NOT confirmed by the vehicle — check its flight mode"));
     });
 
-    // Step 3 item 6: SessionRecorder is the only writer of connection and
+    // SessionRecorder is the only writer of connection and
     // flight rows. It opens the connection once the vehicle UID resolves.
     _sessionRecorder = new SessionRecorder(DatabaseManager::instance(), this);
     _sessionRecorder->setSampleProvider([this]() {
@@ -338,7 +340,7 @@ void PreflightPlugin::init()
         return s;
     });
     _sessionRecorder->setFlightClosedHandler([this](const SessionRecorder::FlightEnd &end) {
-        // Battery cycle: non-bench flights only, >= 20 % of the pack (item 7).
+        // Battery cycle: non-bench flights only, >= 20 % of the pack.
         if (!end.bench && end.mahUsed >= 0
             && DatabaseManager::instance().recordBatteryFlight(end.flightId, end.batterySerial, end.mahUsed)
             && _vehicleProfileManager && _vehicleProfileManager->currentBatterySerial() == end.batterySerial)
@@ -627,7 +629,7 @@ void PreflightPlugin::_onActiveVehicleChanged(Vehicle *vehicle)
         _armStateTracker->setVehicle(vehicle);
     _trainer.reset();   // the first value on the new link is the instructor position
     emit trainerChanged();
-    // Step 3 item 6: link loss keeps the flight open; vehicle removal closes
+    // Link loss keeps the flight open; vehicle removal closes
     // the connection (and a flight still open, as link_lost).
     QObject::disconnect(_linkLostConn);
     if (_sessionRecorder) {
@@ -709,11 +711,8 @@ void PreflightPlugin::_onKnownVehicleConnected(int vehicleId)
     qCDebug(preflightPluginLog) << "Vehicle config loaded for fingerprint" << fingerprint.left(16);
 }
 
-// ---------------------------------------------------------------------------
-// _onGateOpened() — The arming gate just opened (all preflight checks passed
-// and the pilot is cleared to arm). Starts a new flight session in the database
-// for compliance tracking.
-// ---------------------------------------------------------------------------
+// The flight controller's mAh-consumed counter for the first battery, or -1
+// when the vehicle has no battery or has not reported one yet.
 double PreflightPlugin::_batteryMahConsumed() const
 {
     Vehicle *vehicle = _telemetryBridge ? _telemetryBridge->vehicle() : nullptr;
@@ -769,7 +768,10 @@ void PreflightPlugin::_openConnectionSession()
 
 // ---------------------------------------------------------------------------
 // _onGateOpened() — ArmStateTracker saw the vehicle ARM (HEARTBEAT), whoever
-// armed it. SessionRecorder opens the flight row (Step 3 item 6).
+// armed it. Builds the FlightStart (pack, operator, arm source, session mode,
+// bench flag, weather) and hands it to SessionRecorder, which opens the
+// flight row. Also called from _openConnectionSession() to join a flight
+// that was already armed; s_joiningArmedFlight tells the two apart.
 // ---------------------------------------------------------------------------
 void PreflightPlugin::_onGateOpened()
 {
@@ -821,10 +823,8 @@ void PreflightPlugin::_onGateOpened()
     }
 }
 
-// ---------------------------------------------------------------------------
-// _onGateClosed() — ArmStateTracker saw the vehicle DISARM. SessionRecorder
-// closes the flight; its closed-handler does the battery cycle and calibration.
-// ---------------------------------------------------------------------------
+// The chip's "SH high = instructor" box. Saved as "1"/"0" in check config,
+// read back at start-up by trainerHighIsInstructorFromSetting().
 void PreflightPlugin::setTrainerHighIsInstructor(bool v)
 {
     if (v == _trainer.highIsInstructor())
@@ -968,6 +968,10 @@ void PreflightPlugin::_onRcChannels()
     emit trainerChanged();
 }
 
+// ---------------------------------------------------------------------------
+// _onGateClosed() — ArmStateTracker saw the vehicle DISARM. SessionRecorder
+// closes the flight; its closed-handler does the battery cycle and calibration.
+// ---------------------------------------------------------------------------
 void PreflightPlugin::_onGateClosed(const QString &reason)
 {
     Q_UNUSED(reason)
@@ -1291,7 +1295,7 @@ bool PreflightPlugin::mavlinkMessage(Vehicle *vehicle, LinkInterface *link, cons
         mavlink_msg_command_ack_decode(&message, &ack);
 
         if (ack.command == MAV_CMD_COMPONENT_ARM_DISARM) {
-            // Step 2.4 (F5): an ACK never changes armed state; Vehicle::armedChanged
+            // An ACK never changes armed state; Vehicle::armedChanged
             // (HEARTBEAT) is the only source (ArmStateTracker). The ACK only labels
             // the arm source and surfaces rejections.
             if (_armStateTracker)
@@ -1365,7 +1369,7 @@ const QVariantList &PreflightPlugin::toolBarIndicators()
 }
 
 // ---------------------------------------------------------------------------
-// ArmStateTracker (Step 2.4) — see PreflightPlugin.h.
+// ArmStateTracker — see PreflightPlugin.h.
 // ---------------------------------------------------------------------------
 ArmStateTracker::ArmStateTracker(ArmingGate *gate, QObject *parent)
     : QObject(parent), m_gate(gate)

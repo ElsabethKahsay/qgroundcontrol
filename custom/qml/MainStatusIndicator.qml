@@ -200,7 +200,7 @@ if (typeof TelemetryProvider !== 'undefined' && TelemetryProvider) {
         }
 
         Component.onCompleted: updateEstimate()
-        // Stop the estimate ticker on teardown (R13).
+        // Stop the estimate ticker on teardown.
         Component.onDestruction: estimateTimer.stop()
 
         function updateEstimate() {
@@ -341,7 +341,7 @@ if (typeof TelemetryProvider !== 'undefined' && TelemetryProvider) {
                                 return
                             }
                             
-                            // G11 (Step 2.5): one gate decision for every Arm button.
+                            // One gate decision for every Arm button.
                             // allow → requestArm() already sent the arm; needsAck → the
                             // acknowledge dialog; deny → the gate shows the reason.
                             var d = typeof ArmingGate !== 'undefined' && ArmingGate ? ArmingGate.requestArm() : ({ verdict: "deny" })

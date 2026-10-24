@@ -142,7 +142,7 @@ void TelemetryBridgeTest::testHasParameter()
     QVERIFY(!bridge.hasParameter("other_key"));
 }
 
-// Step 2.3 (F4): only the vehicle's own autopilot component counts as link
+// Only the vehicle's own autopilot component counts as link
 // liveness; a companion computer (191) or gimbal (154) heartbeat does not.
 void TelemetryBridgeTest::testOnlyAutopilotHeartbeatCounts()
 {
@@ -152,7 +152,7 @@ void TelemetryBridgeTest::testOnlyAutopilotHeartbeatCounts()
     QVERIFY(!TelemetryBridge::isAutopilotMessage(2, 1, 1, 1));     // another vehicle's autopilot
 }
 
-// Step 2.3 (F4): quality falls to 0 within the 10 s staleness limit when
+// Quality falls to 0 within the 10 s staleness limit when
 // autopilot heartbeats stop, instead of freezing at the last value.
 void TelemetryBridgeTest::testConnectionQualityDecaysWithHeartbeatGap()
 {
@@ -164,7 +164,7 @@ void TelemetryBridgeTest::testConnectionQualityDecaysWithHeartbeatGap()
     QCOMPARE(TelemetryBridge::connectionQualityForGap(0, 30.0), 70);   // drop-rate cap
 }
 
-// Item 18: a quaternion for pitch -30, roll 10, yaw 25 (vehicle frame,
+// A quaternion for pitch -30, roll 10, yaw 25 (vehicle frame,
 // ZYX order) decodes back to those angles.
 static void quatFromEulerDeg(double rollDeg, double pitchDeg, double yawDeg, float q[4])
 {

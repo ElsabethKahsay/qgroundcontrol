@@ -98,7 +98,7 @@ struct VehicleRecord {
 class DatabaseManager : public QObject {
     Q_OBJECT
     /// Non-empty when the database could not be opened or migrated at startup,
-    /// i.e. nothing is being logged (F13). The Fly view shows it as a banner.
+    /// i.e. nothing is being logged. The Fly view shows it as a banner.
     Q_PROPERTY(QString startupError READ startupError NOTIFY startupErrorChanged)
 public:
     static DatabaseManager &instance();
@@ -223,7 +223,7 @@ public:
     Q_INVOKABLE QString getBatteryHealthTrend(const QString &serialNumber);
     Q_INVOKABLE bool incrementBatteryCycle(int flightSessionId, const QString &batterySerial = QString());
 
-    // ── Battery pack registry (Step 3 item 7) ─────────────────────────
+    // ── Battery pack registry ─────────────────────────────────────────
     /// Registered packs, most recently used first: {serial, label, chemistry,
     /// series, parallel, cellMah, ratedMah, cycles, lastSeen}.
     Q_INVOKABLE QVariantList listBatteryPacks();
@@ -249,7 +249,7 @@ public:
     /// Returns {lat, lon, source} for the session, or an empty map when no
     /// target location was saved (or the session id is unknown).
     Q_INVOKABLE QVariantMap getTargetLocation(int sessionId);
-    /// The operator's target location for a vehicle (Step 3): set from the
+    /// The operator's target location for a vehicle: set from the
     /// gimbal page during preflight, before any flight row exists. Saving fails
     /// when the vehicle has no row in vehicles.
     bool saveVehicleTarget(const QString &deviceUid, double lat, double lon, const QString &source);
@@ -447,7 +447,7 @@ public:
     bool recoverOrphanedSessions();
     void reset();
 
-    // ── Session recording (Step 3 item 6) ─────────────────────────────
+    // ── Session recording ─────────────────────────────────────────────
     // SessionRecorder is the only caller. Timestamps are UTC ISO-8601;
     // durations come from the recorder's monotonic clock.
     int openConnectionSession(const QString &deviceUid, const QString &mode,
@@ -464,7 +464,7 @@ public:
     bool closeFlightRecord(int flightId, double durationSec, const QString &endReason,
                            const QString &endedAtUtc, double minVoltage, double mahUsed);
     bool logSessionEvent(int connectionSessionId, int flightId, const QString &event, const QString &detail);
-    /// F8: frozen copy of the pack (batteryPack() map) at arm, with start values.
+    /// Frozen copy of the pack (batteryPack() map) at arm, with start values.
     bool openFlightBattery(int flightId, int slot, const QVariantMap &pack, double startVoltage, int startPercent);
     /// End values; unknown ones (NaN / negative) are stored as NULL, not 0.
     bool closeFlightBattery(int flightId, int slot, double endVoltage, int endPercent,
@@ -479,7 +479,7 @@ public:
     /// How many times the GCS lost the connected vehicle since the app started,
     /// or -1 when no vehicle is connected. See the .cpp for what counts.
     int linkDropsSinceStart() const;
-    /// F11: a check result keyed to the current connection session and flight.
+    /// A check result keyed to the current connection session and flight.
     bool recordCheckResult(const QString &checkId, const QString &status, const QString &message);
 
     QString startupError() const { return m_startupError; }

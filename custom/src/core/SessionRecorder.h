@@ -1,4 +1,4 @@
-// Step 3 item 6 (F6, F11, F12): the ONE writer of connection-session and
+// The ONE writer of connection-session and
 // flight rows. Everything else tells it what happened:
 //
 //   connection  opens when the vehicle's UID is known, closes on vehicle
@@ -16,7 +16,7 @@
 //               recovery (DatabaseManager::recoverOrphanedSessions) closes any
 //               row left open at that time with end_reason = crash_recovered.
 //
-// Durations come from MonotonicClock (F17); timestamps are UTC ISO-8601.
+// Durations come from MonotonicClock; timestamps are UTC ISO-8601.
 // Header-only and without Q_OBJECT (functor connections only), so it needs
 // no CMake or moc change, and tests drive it without a vehicle or MockLink.
 #pragma once
@@ -57,7 +57,7 @@ public:
         bool gateAllowed = false;  ///< the arming gate's verdict at that moment
         QString mode;              ///< session mode: Flight, Testing, Training
         bool bench = false;        ///< motor/servo test or Testing mode: no hours, no cycles
-        QVariantMap pack;          ///< DatabaseManager::batteryPack() of the selected pack (F8 snapshot)
+        QVariantMap pack;          ///< DatabaseManager::batteryPack() of the selected pack, frozen at arm
         int operatorId = -1;       ///< for the Flight History row; -1 = none selected
         int vehicleSysId = 0;
         QString weatherSummary;
@@ -75,7 +75,7 @@ public:
         double whUsed = -1;        ///< -1 = unknown
     };
 
-    /// F10: energy used. The FC's energy counter when it reports one;
+    /// Energy used. The FC's energy counter when it reports one;
     /// otherwise mAh used x mean voltage; -1 when neither is known.
     static double energyUsedWh(double startWh, double endWh, double mahUsed, double startV, double endV)
     {
@@ -174,7 +174,7 @@ public:
         noteVoltage(s.voltage);   // ignores 0 / NaN: no battery reading yet
         m_maxAltitude = s.altitudeM;
         m_maxVoltage = s.voltage;
-        // F8: the pack as it was at arm; editing it later changes no flight.
+        // The pack as it was at arm; editing it later changes no flight.
         if (m_flightId > 0) {
             m_db.openFlightBattery(m_flightId, 1, start.pack, s.voltage, s.percent);
             // The row Flight History, exports and stats read.
@@ -313,7 +313,7 @@ private:
         m_db.closeFlightRecord(m_flightId, end.durationSec, reason, atLinkLoss ? m_linkLostAtUtc : QString(),
                                m_minVoltage, end.mahUsed);
         m_db.closeFlightBattery(m_flightId, 1, s.voltage, s.percent, m_minVoltage, end.mahUsed, end.whUsed);
-        // F10: energy and distance from measurements only; unknown stays unset.
+        // Energy and distance from measurements only; unknown stays unset.
         const double distM = (m_startSample.distanceM >= 0 && s.distanceM >= m_startSample.distanceM)
                 ? s.distanceM - m_startSample.distanceM : -1;
         if (end.whUsed >= 0 || distM >= 0)

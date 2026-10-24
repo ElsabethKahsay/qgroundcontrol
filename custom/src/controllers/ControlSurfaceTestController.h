@@ -44,7 +44,7 @@ class ControlSurfaceTestController : public QObject {
     Q_PROPERTY(QString sweepVerdict READ sweepVerdict NOTIFY sweepVerdictChanged)
     Q_PROPERTY(bool swapElevonLR READ swapElevonLR WRITE setSwapElevonLR NOTIFY swapElevonLRChanged)
     /// Why a surface sweep cannot start right now ("" = it can). The sweep
-    /// force-arms the vehicle, so it needs a Testing session (B5).
+    /// force-arms the vehicle, so it needs a Testing session.
     Q_PROPERTY(QString testBlockedReason READ testBlockedReason NOTIFY testBlockedReasonChanged)
 
 public:
@@ -184,7 +184,7 @@ private:
 
     // QPointer: the vehicle is deleted on every disconnect (USB drop, power
     // cycle). A raw pointer dangled, and the next setVehicle() disconnected
-    // from freed memory (FlightSessionLifecycleTest crash, 22 Oct).
+    // from freed memory and crashed.
     QPointer<Vehicle> m_vehicle;
     QObject *m_armingGate = nullptr;    /// ArmingGate for arm-command override (set by PreflightPlugin)
     class TelemetryBridge *m_telemetryBridge = nullptr; /// Single force-arm funnel (set by PreflightPlugin)

@@ -190,7 +190,7 @@ void PreflightManager::setAlertManager(AlertManager *alertManager) {
 
 void PreflightManager::setDatabaseManager(DatabaseManager *db) {
   m_db = db;
-  // F16: confirmations are NOT re-applied at startup. A stored "props
+  // Confirmations are NOT re-applied at startup. A stored "props
   // inspected" from an earlier day must not carry into today, before any
   // vehicle is connected. persistOverrides() still writes them for history;
   // loadOverrides() stays available but has no startup caller.
@@ -386,7 +386,7 @@ int PreflightManager::countedChecks() const {
 }
 
 bool PreflightManager::allMandatoryPassed() const {
-  // R16: until the vehicle kind resolves, the applicable mandatory set is
+  // Until the vehicle kind resolves, the applicable mandatory set is
   // undefined. Allowing arming here (trivially true while every check is
   // non-mandatory) would open the gate with zero enforcement. Fail closed.
   if (!m_kindResolved)
@@ -514,11 +514,11 @@ void PreflightManager::attemptStateTransition() {
   // Once the autopilot confirms the vehicle is armed, check-result transitions
   // no longer drive the FSM — leaving Armed is owned by markDisarmed(). Without
   // this guard the periodic tick's else-branch (state >= ArmingAllowed) would
-  // retreat an airborne vehicle back to ChecklistInProgress (R8).
+  // retreat an airborne vehicle back to ChecklistInProgress.
   if (m_stateMachine.state() == PreflightStateMachine::Armed)
     return;
 
-  // R16: until the vehicle kind resolves the mandatory set is undefined; never
+  // Until the vehicle kind resolves the mandatory set is undefined; never
   // present the gate as ready before enforcement is configured.
   if (!m_kindResolved) {
     if (m_stateMachine.state() <= PreflightStateMachine::ParamLoading)
@@ -646,7 +646,7 @@ namespace {
 // BATTERY_STATUS limit: matches TelemetryBridge's battery-data validity window.
 constexpr qint64 kBatteryStreamStaleMs = 5000;
 
-// F1–F3: a check is Stale when a stream its evaluate() reads was seen on this
+// A check is Stale when a stream its evaluate() reads was seen on this
 // connection and has since stopped arriving. A stream that never arrived is
 // left to the check's own evaluate() ("waiting for telemetry"), so an autopilot
 // that simply does not send a stream is not reported as stale.
@@ -671,8 +671,8 @@ QString staleStreamReason(const TelemetryBridge *bridge, const AbstractCheck *ch
 // Performs four tasks each tick:
 //   1. Manages the parameter-loading state machine (SYS-001)
 //   2. Propagates autopilot type detection to the parameter manager (SYS-002)
-//   3. Re-evaluates every Auto check (F2), or marks it Stale when a stream it
-//      reads has stopped arriving (F1–F3)
+//   3. Re-evaluates every Auto check, or marks it Stale when a stream it
+//      reads has stopped arriving
 //
 // Emits progressChanged (not modelChanged) to avoid QML delegate destruction.
 void PreflightManager::tick() {
@@ -797,7 +797,7 @@ void PreflightManager::tick() {
   // (staleStreamReason above). The old rule — "status unchanged for
   // m_stalenessThresholdMs" — measured the time since a status CHANGE, not the
   // time since data arrived, and flipped every passed check to Stale on a
-  // ~15 s cycle (F1, F2).
+  // ~15 s cycle.
 
   // Only emit progressChanged — this triggers dataChanged() in the model,
   // which updates bindings without destroying delegates.
@@ -869,7 +869,7 @@ void PreflightManager::applyVehicleKind(const QString &kindString) {
 // Returns true when a resolvable airframe kind was applied (so enforcement is
 // configured). Returns false for UNKNOWN/unresolved kinds, leaving any
 // previously-applied mandatory decisions untouched rather than silently
-// resetting them before the airframe is identified (R16).
+// resetting them before the airframe is identified.
 bool PreflightManager::updateCriticalChecks(const QString &kindString) {
   const QString kind = kindString.toUpper();
 
@@ -996,7 +996,7 @@ void PreflightManager::createPhase1Checks() {
         QStringLiteral("Propeller/motor mounts undamaged")},
       {}, this));
 
-  // F1–F3: the telemetry streams each live-data check reads. Parameter-based
+  // The telemetry streams each live-data check reads. Parameter-based
   // checks (failsafe settings, mode switch, ...) read no stream.
   static const QHash<QString, QList<TelemetryStream>> kCheckStreams = {
     {QStringLiteral("power.battery.voltage"), {TelemetryStream::BatteryStatus}},
@@ -1070,7 +1070,7 @@ void PreflightManager::connectCheckSignals(AbstractCheck *check) {
                 case CheckStatus::Stale:   statusStr = QStringLiteral("Stale"); break;
                 default:                   statusStr = QStringLiteral("Pending"); break;
               }
-              // F11: keyed to SessionRecorder's connection session and
+              // Keyed to SessionRecorder's connection session and
               // flight (no-op until a connection session is open).
               m_db->recordCheckResult(checkId, statusStr, check->message());
             }

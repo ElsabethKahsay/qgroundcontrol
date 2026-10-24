@@ -161,7 +161,7 @@ Item {
             onTriggered:    newVehicleBanner.visible = false
         }
 
-        // Stop the banner timer if the banner is torn down mid-timeout (R13).
+        // Stop the banner timer if the banner is torn down mid-timeout.
         Component.onDestruction: bannerTimer.stop()
 
         // ── Inline rename dialog for new vehicles ──────────────────────
@@ -275,7 +275,7 @@ Item {
             onTriggered:    fcRejectionToast.visible = false
         }
 
-        // Stop the toast timer if the toast is torn down mid-timeout (R13).
+        // Stop the toast timer if the toast is torn down mid-timeout.
         Component.onDestruction: fcToastTimer.stop()
     }
 
@@ -678,7 +678,7 @@ Item {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    //  DATABASE BANNER — flight logging is off (F13); stays until restart
+    //  DATABASE BANNER — flight logging is off; stays until restart
     // ═══════════════════════════════════════════════════════════════════
     Rectangle {
         id: databaseBanner

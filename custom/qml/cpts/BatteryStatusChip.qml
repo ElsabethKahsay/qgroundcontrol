@@ -174,7 +174,7 @@ Rectangle {
         onTriggered: root._flashOn = !root._flashOn
     }
 
-    // Stop repeating timers on teardown (R13).
+    // Stop repeating timers on teardown.
     Component.onDestruction: {
         freshnessTimer.stop()
         lowSocFlashTimer.stop()

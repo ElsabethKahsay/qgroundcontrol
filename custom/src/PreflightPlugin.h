@@ -43,13 +43,13 @@ class SessionRecorder;
 class VehicleListModel;
 class MissionController;
 
-/// Step 2.4 (F5, F6, G10): the single source of the vehicle's armed
+/// The single source of the vehicle's armed
 /// transitions for the preflight side. Armed state comes only from
 /// Vehicle::armedChanged (the autopilot's HEARTBEAT); COMMAND_ACKs only label
 /// WHO armed (arm source) and never change armed state. On every transition
 /// it emits ArmingGate::vehicleArmed/vehicleDisarmed (gate and FSM resets, so
 /// an RC disarm clears an unspent acknowledgment) and gateOpened/gateClosed
-/// (session bookkeeping, until Step 3's SessionRecorder).
+/// (SessionRecorder opens and closes the flight).
 class ArmStateTracker : public QObject
 {
     Q_OBJECT
@@ -196,7 +196,7 @@ private:
     MissionController *_planMissionController = nullptr;    // Plan View's mission controller (zone compliance source)
 
     // --- Flight session tracking ---
-    SessionRecorder *_sessionRecorder = nullptr;  // Step 3 item 6: the only session/flight writer
+    SessionRecorder *_sessionRecorder = nullptr;  // the only session/flight writer
     TrainerSwitchTracker _trainer;                // who has control in two-radio training
     void _onRcChannels();
     TrainerChannelDetector _detector;             // "Detect" on the trainer chip
@@ -212,5 +212,5 @@ private:
     /// Flight controller's mAh-consumed counter for battery 1, -1 when unavailable.
     double _batteryMahConsumed() const;
     QTimer _weatherRefreshTimer;      // Periodic timer that triggers weather data refresh
-    ArmStateTracker *_armStateTracker = nullptr; // Armed transitions from HEARTBEAT only (Step 2.4)
+    ArmStateTracker *_armStateTracker = nullptr; // Armed transitions from HEARTBEAT only
 };

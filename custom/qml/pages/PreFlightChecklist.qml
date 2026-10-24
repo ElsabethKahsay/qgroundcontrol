@@ -30,7 +30,7 @@ Page {
         viewMode: "standalone"
     }
 
-    // Step 3 item 7: opened by the "Battery pack" item (Power & Propulsion).
+    // Opened by the "Battery pack" item (Power & Propulsion).
     CE.ChecklistEngine.BatteryPackDialog {
         id: batteryPackDialog
         parent: Overlay.overlay
@@ -186,7 +186,7 @@ Page {
         }
     }
 
-    // Stop pending single-shot timers when the page is torn down (R13).
+    // Stop pending single-shot timers when the page is torn down.
     Component.onDestruction: {
         flashTimer.stop();
         _motorDialogTimer.stop();

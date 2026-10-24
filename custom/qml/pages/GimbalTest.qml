@@ -35,7 +35,7 @@ Page {
     readonly property bool _gimbalCmdSupported: typeof TelemetryProvider !== "undefined" && TelemetryProvider
                                                 && typeof TelemetryProvider.sendMountControl === "function"
 
-    // ── Item 18: per-axis gimbal tests, passed or failed on MEASURED attitude ──
+    // ── Per-axis gimbal tests, passed or failed on MEASURED attitude ──
     // Each axis: command a target inside its MNT limits, pass only if the
     // gimbal reports within ±3° of it within 3 s, then command centre and
     // confirm it returns within ±3° within 3 s. No gimbal, no feedback or a
@@ -210,7 +210,7 @@ Page {
             DistanceTracker.setTarget(FlightSession.targetLat, FlightSession.targetLon)
         }
     }
-    // FORK PATCH (B2): stopAllSurfaces() force-disarms an armed vehicle, so it
+    // FORK PATCH: stopAllSurfaces() force-disarms an armed vehicle, so it
     // never runs while flying (no surface sweep can be running then).
     readonly property var  _vehicle: QGroundControl.multiVehicleManager.activeVehicle
     readonly property bool _flying: !!_vehicle && _vehicle.armed && _vehicle.flying
@@ -1246,7 +1246,7 @@ Page {
                                             font.bold: true
                                             Layout.preferredHeight: 30
                                             Layout.preferredWidth: 96
-                                            // B4/B5: the controller says why a sweep cannot start (no
+                                            // The controller says why a sweep cannot start (no
                                             // vehicle, armed by another source, no Testing session);
                                             // only one surface sweeps at a time.
                                             enabled: ControlSurfaceTestController.testBlockedReason.length === 0

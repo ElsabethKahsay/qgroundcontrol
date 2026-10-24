@@ -1,14 +1,14 @@
-// Step 3 addition (21 Oct): who is flying in a two-radio (master/slave)
-// training setup. The trainer switch lives in the instructor's transmitter,
-// so the aircraft sees it only on the channel the switch is sent on (on the
-// operator's radios SH already reaches the flight controller). This reads
-// that channel from RC_CHANNELS.
+// Who is flying in a two-radio (master/slave) training setup. The trainer
+// switch lives in the instructor's transmitter, so the aircraft sees it only
+// on the channel the switch is sent on (on the operator's radios SH already
+// reaches the flight controller). This reads that channel from RC_CHANNELS.
 //
-// Rule (operator convention, 23 Oct): the instructor's radio uses switch SH
-// for the handover, and SH is sent on a channel. SH HIGH (> 1600 µs) = the
-// master / instructor is flying; SH LOW (< 1400 µs) = the trainee is flying.
-// Between the two the state does not change (no flicker on a noisy value).
-// A radio wired the other way round is handled by setHighIsInstructor(false).
+// The switch has two clear positions: HIGH (> 1600 µs) and LOW (< 1400 µs).
+// Which one means "instructor flying" is a setting (setHighIsInstructor).
+// The class defaults to high = instructor, but PreflightPlugin loads the
+// operator's saved choice, and with nothing saved that is low = instructor,
+// which is how the operator's radios send SH. Between the two thresholds the
+// state does not change, so a noisy value near the middle cannot flicker.
 // "Verified" = the channel has been seen in both positions on this connection.
 //
 // Header-only and no QObject: no CMake or moc change, testable directly.

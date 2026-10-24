@@ -54,7 +54,7 @@ bool WeatherProvider::metarFresh() const
 
 QString WeatherProvider::weatherDescription() const
 {
-    // W5: METAR data carries a flight category, not a WMO weather code; name it
+    // METAR data carries a flight category, not a WMO weather code; name it
     // directly instead of describing a stand-in code (LIFR used to read
     // "Thunderstorm").
     if (m_flightCategory == QStringLiteral("VFR"))  return QStringLiteral("VFR");
@@ -64,7 +64,7 @@ QString WeatherProvider::weatherDescription() const
     return describeCode(m_weatherCode);
 }
 
-// W6: unknown values print as "--", never as 0.
+// Unknown values print as "--", never as 0.
 static QString num(double v, int decimals, double scale = 1.0)
 {
     return std::isfinite(v) ? QString::number(v * scale, 'f', decimals) : QStringLiteral("--");
@@ -150,7 +150,7 @@ void WeatherProvider::fetchWeather(double latitude, double longitude)
     query.addQueryItem(QStringLiteral("current"),
         QStringLiteral("temperature_2m,relative_humidity_2m,weather_code,"
                        "wind_speed_10m,wind_direction_10m,wind_gusts_10m,visibility"));
-    // W1: Open-Meteo defaults to km/h; m_windSpeed is m/s everywhere else
+    // Open-Meteo defaults to km/h; m_windSpeed is m/s everywhere else
     // (METAR path converts kt -> m/s, display converts m/s -> kt).
     query.addQueryItem(QStringLiteral("wind_speed_unit"), QStringLiteral("ms"));
     query.addQueryItem(QStringLiteral("timezone"), QStringLiteral("auto"));
@@ -180,7 +180,7 @@ void WeatherProvider::fetchWeather(double latitude, double longitude)
     });
 }
 
-// W2/W3/W6: a forecast never stamps the METAR time, never overwrites a fresh
+// A forecast never stamps the METAR time, never overwrites a fresh
 // METAR (an observation beats a model), and a missing field is NaN, not 0.
 void WeatherProvider::handleForecastJson(const QByteArray &data)
 {
@@ -280,7 +280,7 @@ void WeatherProvider::handleMetarJson(const QByteArray &data)
     QJsonObject metar = arr.first().toObject();
     m_metarString = metar.value(QStringLiteral("rawOb")).toString();
 
-    // W2/W4: the observation time; never "now" (that made any METAR fresh).
+    // The observation time; never "now" (that made any METAR fresh).
     m_metarTimestamp = parseObsTime(metar);
     m_fromMetar = true;
 
@@ -289,7 +289,7 @@ void WeatherProvider::handleMetarJson(const QByteArray &data)
         return v.isDouble() ? v.toDouble() : qQNaN();
     };
 
-    // W6: a field the METAR does not carry is unknown (NaN), not 0.
+    // A field the METAR does not carry is unknown (NaN), not 0.
     m_temperature = field("temp");
     m_windSpeed = field("wspd") * 0.514444;                   // knots -> m/s
     // wdir is degrees, or "VRB" for variable wind (NaN).

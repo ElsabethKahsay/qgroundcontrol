@@ -547,14 +547,14 @@ public:
     double batteryCurrentSmoothAmps() const { return _batteryCurrentSmoothAmps; }
     bool batteryDataValid() const { return _batteryDataValid; }
 
-    // ── Per-stream freshness (F1–F4, F17) ──────────────────────────────────
+    // ── Per-stream freshness ───────────────────────────────────────────────
     /// Record that @p stream just arrived (MonotonicClock). Called by the
     /// MAVLink dispatcher; public so test doubles can model a live link.
     void stampStream(TelemetryStream stream);
     /// Milliseconds since @p stream last arrived, or -1 if it never has.
     qint64 streamAgeMs(TelemetryStream stream) const;
     /// True when a message comes from this vehicle's autopilot component.
-    /// Only those heartbeats drive heartbeatTick and connection quality (F4):
+    /// Only those heartbeats drive heartbeatTick and connection quality:
     /// a companion or gimbal heartbeat must not keep the gate fresh.
     static bool isAutopilotMessage(int sysId, int compId, int vehicleId, int autopilotCompId);
     /// Connection quality (0–100) for a gap of @p gapMs since the last
@@ -562,7 +562,7 @@ public:
     /// then 1 point per 50 ms late, 0 from 6 s.
     static int connectionQualityForGap(qint64 gapMs, double dropRatePct);
 
-    /// Item 18: gimbal attitude in degrees, yaw relative to the vehicle nose,
+    /// Gimbal attitude in degrees, yaw relative to the vehicle nose,
     /// from GIMBAL_DEVICE_ATTITUDE_STATUS (quaternion; an earth-frame yaw is
     /// turned into vehicle frame with delta_yaw, else @p vehicleYawRad),
     /// MOUNT_ORIENTATION or ArduPilot MOUNT_STATUS. False for any other message.
@@ -765,7 +765,7 @@ public:
     /// MAV_CMD_DO_SET_MODE command-long (the custom-mode form ArduPilot uses
     /// for flight-mode changes: param1 = MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
     /// param2 = the RTL custom-mode number, copter 6 / plane+rover 11), then
-    /// confirms ASYNCHRONOUSLY (no nested event loop; item 10): returns true when
+    /// confirms ASYNCHRONOUSLY (no nested event loop): returns true when
     /// the request was sent (or one is already pending), false when refused.
     /// The REAL outcome arrives on rtlCommandCompleted(): true only once the
     /// heartbeat shows the RTL mode within 5 s AND armed state is unchanged. A timestamped RTL_TRIGGERED event is
@@ -784,7 +784,7 @@ public:
     /// property so QML bindings react immediately.
     Q_INVOKABLE void setParameterValue(const QString& name, float value);
 
-    /// Item 18: point the gimbal (degrees; yaw relative to the vehicle nose)
+    /// Point the gimbal (degrees; yaw relative to the vehicle nose)
     /// with MAV_CMD_DO_MOUNT_CONTROL, mode 2 = MAVLINK_TARGETING. The ack
     /// arrives as gimbalCommandResult(205, MAV_RESULT).
     Q_INVOKABLE void sendMountControl(double pitchDeg, double rollDeg, double yawDeg, int mode = 2);

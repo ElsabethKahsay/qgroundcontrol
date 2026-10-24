@@ -1,6 +1,6 @@
 /**
  * @file DatabaseMigrationTest.cpp
- * @brief Tests for DatabaseManager schema migration (L5 from TEST_CHECKLIST.md).
+ * @brief Tests for DatabaseManager schema migration.
  *
  * Covers:
  *   - Fresh DB initializes to latest schema
@@ -42,7 +42,7 @@ private slots:
     void testVehicleConfigTableStructure();
     void testNoFlyZonesTableExists();
 
-    // Item 8 (F13, F14)
+    // Migrations run once, roll back on failure, and report why
     void testRestartDoesNotRerunMigrations();
     void testUpgradeFrom18AddsFlightTargetColumns();
     void testFailedStepRollsBackAndStops();
@@ -75,7 +75,7 @@ void DatabaseMigrationTest::downgradeTo18()
     QVERIFY(q.exec(QStringLiteral("DELETE FROM schema_version WHERE version > 18")));
 }
 
-// F14: storedSchemaVersion() answered 0 during initialize(), so every launch
+// storedSchemaVersion() answered 0 during initialize(), so every launch
 // re-ran every step and v12 rebuilt flights, zeroing its summary columns.
 void DatabaseMigrationTest::testRestartDoesNotRerunMigrations()
 {
@@ -100,7 +100,7 @@ void DatabaseMigrationTest::testRestartDoesNotRerunMigrations()
     QVERIFY2(!QFile::exists(path + QStringLiteral(".bak")), "nothing to migrate, so no backup is taken");
 }
 
-// F14: a v18 database (the live one today) gains the v19 flight columns.
+// A v18 database gains the v19 flight columns.
 void DatabaseMigrationTest::testUpgradeFrom18AddsFlightTargetColumns()
 {
     QTemporaryDir dir;
@@ -121,8 +121,8 @@ void DatabaseMigrationTest::testUpgradeFrom18AddsFlightTargetColumns()
     QVERIFY(QFile::exists(path + QStringLiteral(".bak")));
 }
 
-// F14: a failing statement rolls the whole step back, the version is not
-// recorded, and initialize() fails with a reason (F13).
+// A failing statement rolls the whole step back, the version is not
+// recorded, and initialize() fails with a reason.
 void DatabaseMigrationTest::testFailedStepRollsBackAndStops()
 {
     QTemporaryDir dir;
@@ -169,7 +169,7 @@ void DatabaseMigrationTest::testOneDatabaseWhateverTheAppName()
     QVERIFY2(DatabaseManager::defaultDatabasePath() != late, qPrintable(DatabaseManager::defaultDatabasePath()));
 }
 
-// F13: an unopenable path leaves a startup error for the banner.
+// An unopenable path leaves a startup error for the banner.
 void DatabaseMigrationTest::testUnopenablePathSetsStartupError()
 {
     DatabaseManager &db = DatabaseManager::instance();

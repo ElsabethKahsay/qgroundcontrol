@@ -9,8 +9,8 @@
 #include "WeatherProvider.h"
 #include "mocks/MockTelemetryBridge.h"
 
-// Real responses saved 22 Oct 2026 (aviationweather.gov /api/data/metar,
-// api.open-meteo.com current=...). W4: the current METAR JSON format.
+// Real responses (aviationweather.gov /api/data/metar,
+// api.open-meteo.com current=...). The current METAR JSON format.
 static const char kMetarHAAB[] = R"JSON([{"icaoId":"HAAB","receiptTime":"2026-10-22T08:55:58.741Z","obsTime":1792659600,"reportTime":"2026-10-22T09:00:00.000Z","temp":24,"dewp":5,"wdir":60,"wspd":5,"visib":"6+","altim":1028,"qcField":16,"metarType":"METAR","rawOb":"METAR HAAB 220900 06005KT CAVOK 24/05 Q1028 NOSIG","lat":8.978,"lon":38.799,"elev":2319,"name":"Addis Ababa/Bole Intl, AA, ET","cover":"CAVOK","clouds":[],"fltCat":"VFR"}])JSON";
 static const char kMetarKBOS[] = R"JSON([{"icaoId":"KBOS","receiptTime":"2026-10-22T08:58:13.954Z","obsTime":1792659240,"reportTime":"2026-10-22T09:00:00.000Z","temp":8.3,"dewp":2.8,"wdir":340,"wspd":10,"wgst":18,"visib":"10+","altim":1014.6,"slp":1014.5,"qcField":4,"presTend":-1.8,"metarType":"METAR","rawOb":"METAR KBOS 220854Z 34010G18KT 10SM FEW180 BKN250 08/03 A2996 RMK AO2 SLP145 T00830028 56018","lat":42.3606,"lon":-71.0097,"elev":4,"name":"Boston/Logan Intl, MA, US","cover":"BKN","clouds":[{"cover":"FEW","base":18000},{"cover":"BKN","base":25000}],"fltCat":"VFR"}])JSON";
 static const char kMetarENGM[] = R"JSON([{"icaoId":"ENGM","receiptTime":"2026-10-22T08:56:15.828Z","obsTime":1792659000,"reportTime":"2026-10-22T09:00:00.000Z","temp":10,"dewp":9,"wdir":110,"wspd":9,"visib":3.73,"altim":1006,"qcField":0,"wxString":"-RA","metarType":"METAR","rawOb":"METAR ENGM 220850Z 11009KT 6000 -RA BKN005 10/09 Q1006 TEMPO BKN008","lat":60.201,"lon":11.08,"elev":204,"name":"Oslo/Gardermoen Arpt, AK, NO","cover":"BKN","clouds":[{"cover":"BKN","base":500}],"fltCat":"IFR"}])JSON";
@@ -63,7 +63,7 @@ void WeatherProviderTest::testInitialState()
     QVERIFY(!wp->loading());
     QCOMPARE(wp->lastError(), QString());
     QVERIFY(!wp->metarFresh());
-    // W6: nothing fetched yet = unknown, not a real-looking 0.
+    // Nothing fetched yet = unknown, not a real-looking 0.
     QVERIFY(qIsNaN(wp->visibilityKm()));
     QVERIFY(qIsNaN(wp->temperature()));
     QVERIFY(qIsNaN(wp->windSpeed()));
@@ -115,7 +115,7 @@ void WeatherProviderTest::testMetarParsing()
     QVERIFY(parsed[2].contains(QStringLiteral("Ceiling")));
 }
 
-// W5: a METAR flight category is described by name; LIFR must never read as
+// A METAR flight category is described by name; LIFR must never read as
 // "Thunderstorm" (it used to be mapped to WMO code 95).
 void WeatherProviderTest::testFlightCategoryDescription()
 {
@@ -208,7 +208,7 @@ static QByteArray freshMetar(const char *json)
     return QJsonDocument(arr).toJson(QJsonDocument::Compact);
 }
 
-// W4: the live aviationweather.gov format — obsTime in Unix seconds, visib
+// The live aviationweather.gov format — obsTime in Unix seconds, visib
 // as "10+" or a number, gusts in wgst, ceiling from clouds[], fltCat, VRB.
 void WeatherProviderTest::testRealMetarFormat()
 {
@@ -242,7 +242,7 @@ void WeatherProviderTest::testRealMetarFormat()
     QVERIFY(!wp->metarParsed().join(QString()).contains(QStringLiteral("nan"), Qt::CaseInsensitive));
 }
 
-// W2: an Open-Meteo forecast never stamps a METAR time, so the gust check can
+// An Open-Meteo forecast never stamps a METAR time, so the gust check can
 // not auto-pass on forecast data; its source says "Forecast".
 void WeatherProviderTest::testForecastNeverMakesMetarFresh()
 {
@@ -251,14 +251,14 @@ void WeatherProviderTest::testForecastNeverMakesMetarFresh()
     QVERIFY(!wp->metarFresh());
     QVERIFY(!wp->metarTimestamp().isValid());
     QCOMPARE(wp->temperature(), 23.0);
-    QVERIFY(qAbs(wp->windSpeed() - 3.18) < 0.001);          // m/s (W1)
+    QVERIFY(qAbs(wp->windSpeed() - 3.18) < 0.001);          // m/s
     QVERIFY(qAbs(wp->windGust() - 9.30) < 0.001);
     QVERIFY(qAbs(wp->visibilityKm() - 37.5) < 0.001);
     QCOMPARE(wp->ceilingFt(), -1);
     QVERIFY(wp->weatherSource().startsWith(QStringLiteral("Forecast (Open-Meteo)")));
 }
 
-// W3: a fresh METAR (observation) is not overwritten by a later forecast.
+// A fresh METAR (observation) is not overwritten by a later forecast.
 void WeatherProviderTest::testForecastDoesNotOverwriteFreshMetar()
 {
     WeatherProvider *wp = WeatherProvider::instance();
@@ -270,7 +270,7 @@ void WeatherProviderTest::testForecastDoesNotOverwriteFreshMetar()
     QVERIFY(wp->weatherSource().startsWith(QStringLiteral("METAR KBOS")));
 }
 
-// W6: a field the source does not send is unknown (NaN / "--"), not 0.
+// A field the source does not send is unknown (NaN / "--"), not 0.
 void WeatherProviderTest::testMissingFieldsAreUnknown()
 {
     WeatherProvider *wp = WeatherProvider::instance();

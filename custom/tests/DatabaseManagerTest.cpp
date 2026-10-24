@@ -172,7 +172,7 @@ void DatabaseManagerTest::testBatteryCycleCount()
     QCOMPARE(db.getBatteryCycleCount(QStringLiteral("SN-BATT")), 2);
 }
 
-// Step 3 item 7: packs keep their rated config; editing one keeps its cycles.
+// Packs keep their rated config; editing one keeps its cycles.
 void DatabaseManagerTest::testBatteryPackRegistry()
 {
     DatabaseManager &db = DatabaseManager::instance();
@@ -194,7 +194,7 @@ void DatabaseManagerTest::testBatteryPackRegistry()
     QCOMPARE(db.listBatteryPacks().size(), 1);
 }
 
-// Step 3 item 7 (user decision): one cycle = a flight using >= 20 % of rated.
+// One cycle = a flight using >= 20 % of rated.
 void DatabaseManagerTest::testBatteryCycleNeedsTwentyPercent()
 {
     DatabaseManager &db = DatabaseManager::instance();
@@ -214,7 +214,7 @@ void DatabaseManagerTest::testBatteryCycleNeedsTwentyPercent()
     QCOMPARE(q.value(0).toDouble(), 1000.0);
 }
 
-// Step 3: the gimbal-page target is saved during preflight (no flight row
+// The gimbal-page target is saved during preflight (no flight row
 // yet), survives a restart, and is copied onto the next flight session.
 void DatabaseManagerTest::testVehicleTargetSavedBeforeAnyFlight()
 {
@@ -245,7 +245,7 @@ void DatabaseManagerTest::testVehicleTargetSavedBeforeAnyFlight()
     QCOMPARE(q.value(1).toString(), QStringLiteral("map center"));
 }
 
-// ── SessionRecorder (Step 3 item 6) — no vehicle, no MockLink ──────────────
+// ── SessionRecorder — no vehicle, no MockLink ──────────────
 
 namespace {
 struct RecorderFixture {
@@ -287,7 +287,7 @@ SessionRecorder::FlightStart start(const QString &source, bool bench = false)
 }
 } // namespace
 
-// F6: one flight per arm-to-disarm, whoever armed (an RC arm included), with
+// One flight per arm-to-disarm, whoever armed (an RC arm included), with
 // its source, gate state and bench flag stored; durations from the clock.
 void DatabaseManagerTest::testRecorderFlightFollowsArmedState()
 {
@@ -359,7 +359,7 @@ void DatabaseManagerTest::testRecorderLinkLossClosesAtLossTime()
                  .value(QStringLiteral("n")).toInt(), 4);   // lost, restored, lost, restored
 }
 
-// Rule 5 / F12: rows left open by a crash close at the last 10 s summary,
+// Rows left open by a crash close at the last 10 s summary,
 // for flights and connections alike.
 void DatabaseManagerTest::testRecorderCrashRecoveryClosesBothTables()
 {
@@ -400,7 +400,7 @@ void DatabaseManagerTest::testRecorderCrashRecoveryClosesBothTables()
     QCOMPARE(hist.value(QStringLiteral("ended_at")).toString(), summaryAt);
 }
 
-// F11: check results land in check_results keyed to the connection session
+// Check results land in check_results keyed to the connection session
 // and the open flight, with the vehicles-row UID.
 void DatabaseManagerTest::testRecorderCheckResultsKeyedToSession()
 {
@@ -422,7 +422,7 @@ void DatabaseManagerTest::testRecorderCheckResultsKeyedToSession()
     QCOMPARE(r.value(QStringLiteral("flight_session_id")).toInt(), rec.flightId());
 }
 
-// F8: each flight keeps the pack as it was at arm; editing the pack later
+// Each flight keeps the pack as it was at arm; editing the pack later
 // changes no flight. Start/end values and the FC energy counter are stored.
 void DatabaseManagerTest::testRecorderBatterySnapshotIsFrozen()
 {
@@ -462,7 +462,7 @@ void DatabaseManagerTest::testRecorderBatterySnapshotIsFrozen()
     QCOMPARE(fs.value(QStringLiteral("distance_m")).toDouble(), 5000.0);
 }
 
-// F10: no FC energy counter -> mAh x mean voltage; nothing known -> NULL, not 0.
+// No FC energy counter -> mAh x mean voltage; nothing known -> NULL, not 0.
 void DatabaseManagerTest::testRecorderEnergyFromMeasurementsOnly()
 {
     QCOMPARE(SessionRecorder::energyUsedWh(-1, -1, 2000.0, 16.0, 14.0), 30.0);
@@ -578,8 +578,8 @@ void DatabaseManagerTest::testRecorderWritesFlightHistoryAndHandovers()
                  .value(QStringLiteral("n")).toInt(), 3);
 }
 
-// Bench-test results were all written with flight -1 / 0 / NULL (95 such rows
-// on the live database, 22 Oct). They now link to the connection and, when a
+// Bench-test results were all written with flight -1 / 0 / NULL, so they could
+// not be tied to any flight. They now link to the connection and, when a
 // (bench) flight is open, to its Flight History row.
 void DatabaseManagerTest::testBenchTestResultsLinkToFlightAndConnection()
 {
@@ -1443,7 +1443,7 @@ void DatabaseManagerTest::testBackupBeforeMigration()
 
 void DatabaseManagerTest::testEmptyNameUpsertAndSession()
 {
-    // D6/D7 regression: VehicleProfileManager upserts with an empty
+    // Regression: VehicleProfileManager upserts with an empty
     // friendlyName ({}). friendly_name is NOT NULL, and startFlightSession has
     // an FK on device_uid — the empty-name path must still succeed and never
     // orphan the flight session.

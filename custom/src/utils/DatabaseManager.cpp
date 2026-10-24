@@ -89,7 +89,7 @@ void DatabaseManager::setStartupError(const QString &error)
 
 namespace {
 /// QSqlQuery for migrateSchema(): remembers the first failed statement so the
-/// step can be rolled back instead of recorded as applied (F14).
+/// step can be rolled back instead of recorded as applied.
 class MigrationQuery
 {
 public:
@@ -175,7 +175,7 @@ QString DatabaseManager::defaultDatabasePath()
     // One database, whatever the application is called at the moment. The
     // name changes during start-up ("PreflightQGroundControl Daily" ->
     // "Skywin GCS"), and AppDataLocation follows it, so records were split
-    // over two files (found 23 Oct). Unit tests keep their own folder
+    // over two files. Unit tests keep their own folder
     // (application name "..._unittest") so they never touch flight records.
     if (QCoreApplication::applicationName().endsWith(QLatin1String("_unittest")))
         return QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
@@ -323,7 +323,7 @@ bool DatabaseManager::initialize(const QString &dbPath)
 //  20 - battery pack config on batteries (chemistry, S, P, cell mAh) and the
 //       mAh each flight used on battery_cycles; the operator's target location
 //       on vehicles (set in preflight, before any flight row exists)
-//  21 - SessionRecorder (Step 3 item 6): connection_sessions, session_events;
+//  21 - SessionRecorder: connection_sessions, session_events;
 //       flight_sessions becomes the arm-to-disarm flight record (connection,
 //       arm source, gate state, bench flag, end reason, running summary);
 //       check_results keyed to the connection session
@@ -1624,7 +1624,7 @@ bool DatabaseManager::migrateSchema()
             break;
         }
         case 20: {
-            // v20: battery pack registry (Step 3 item 7). Rated capacity is
+            // v20: battery pack registry. Rated capacity is
             // cell_mah * parallel_cells; a flight counts as a cycle when it
             // used at least 20 % of it (used_mah).
             auto addCol = [this, &q](const QString &table, const QString &colDef) {
@@ -1843,7 +1843,7 @@ bool DatabaseManager::recoverOrphanedSessions()
         qCWarning(dbLog) << "Recovered" << armedRecovered + preArmRecovered
                          << "orphaned flight sessions";
 
-    // F12 / item 6: SessionRecorder's rows. A row still open at startup was
+    // SessionRecorder's rows. A row still open at startup was
     // cut off by a crash or power loss: close it at its last running summary
     // (flights) or last-seen time (connections), keeping the duration the
     // last summary recorded.
@@ -1875,7 +1875,7 @@ bool DatabaseManager::recoverOrphanedSessions()
     return true;
 }
 
-// ── Session recording (Step 3 item 6; SessionRecorder is the only caller) ──
+// ── Session recording (SessionRecorder is the only caller) ──────────────────
 
 static QString utcNowIso()
 {
@@ -2130,7 +2130,7 @@ void DatabaseManager::setRecordingContext(int connectionSessionId, int flightId,
 bool DatabaseManager::recordCheckResult(const QString &checkId, const QString &status, const QString &message)
 {
     assertMainThread();
-    // F11: keyed to the recorder's connection session and flight, with the
+    // Keyed to the recorder's connection session and flight, with the
     // vehicles-row UID (the old writer used the MAVLink sysid, which the
     // device_uid foreign key rejects, and flight_session_id = -1).
     if (!m_initialized || m_ctxDeviceUid.isEmpty() || m_ctxConnectionId <= 0) return false;
@@ -4139,7 +4139,7 @@ int DatabaseManager::getBatteryCycleCount(const QString &serialNumber)
     return 0;
 }
 
-// ── Battery pack registry (Step 3 item 7) ──────────────────────────────────
+// ── Battery pack registry ──────────────────────────────────────────────────
 
 static QVariantMap batteryPackRow(const QSqlQuery &q)
 {

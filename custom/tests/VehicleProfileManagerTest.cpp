@@ -1,7 +1,7 @@
 /**
  * @file VehicleProfileManagerTest.cpp
  * @brief Tests for VehicleProfileManager battery config, SOC/time estimation,
- *        and capacity calculation (L3 from TEST_CHECKLIST.md).
+ *        and capacity calculation.
  *
  * Covers:
  *   - Battery config: series, parallel, cell mAh, reserve, type
@@ -188,7 +188,7 @@ void VehicleProfileManagerTest::testUsableAhStopsAtTheReserve()
 }
 
 // The charge comes from the SELECTED pack (rated mAh − FC mAh used), not the
-// FC's own % (relative to BATT_CAPACITY). On the plane (22 Oct) the FC said 81 %
+// FC's own % (relative to BATT_CAPACITY). Example: the FC said 81 %
 // after 621 mAh, i.e. BATT_CAPACITY ≈ 3300 mAh; with a 5000 mAh pack the real
 // charge was ~88 %.
 void VehicleProfileManagerTest::testPackSocFromSelectedPackNotFcCapacity()

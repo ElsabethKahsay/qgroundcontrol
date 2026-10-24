@@ -1,6 +1,6 @@
 /**
  * @file QmlSmokeTest.cpp
- * @brief P2-2 — QML smoke tests for MotorCheckPanel and MainStatusIndicator.
+ * @brief QML smoke tests for MotorCheckPanel and MainStatusIndicator.
  *
  * Instantiates the real QML components (qrc resources) inside the same engine
  * the app builds (PreflightPlugin::createQmlApplicationEngine), so every
@@ -14,9 +14,9 @@
  * themselves before creating the engine, then override the few context
  * properties whose instances need to be test-controlled (e.g. the gate).
  *
- * P2-3 note: the gate-blocked click path asserts that a blocked arm is
+ * Note: the gate-blocked click path asserts that a blocked arm is
  * *not* transmitted to the vehicle — all arm widgets route through the single
- * TelemetryProvider/ArmingGate decision (P0 arm consolidation).
+ * TelemetryProvider/ArmingGate decision.
  */
 
 #include <QTest>
@@ -512,7 +512,7 @@ void MainStatusIndicatorSmokeTest::testArmedStateRendered()
     _loadComponent();
     _armVehicle();
 
-    // Armed branch must ALWAYS render "Armed" (P0: armed overrides the
+    // Armed branch must ALWAYS render "Armed" (armed overrides the
     // pre-arm check report).
     QVERIFY2(pumpUntilQml([](void *ctx) {
         return static_cast<MainStatusIndicatorSmokeTest *>(ctx)->_statusLabel() == QStringLiteral("Armed");
@@ -658,7 +658,7 @@ void MainStatusIndicatorSmokeTest::testBlockedArmRouterDoesNotTransmit()
 // ---------------------------------------------------------------------------
 // FlyQuickActionsSmokeTest
 // ---------------------------------------------------------------------------
-// Phase 1 (RC-primary quad/FW): the Fly view Return action must be present,
+// RC-primary quad/FW: the Fly view Return action must be present,
 // reachable, and wired to exactly ONE function — TelemetryProvider.returnToLaunch() —
 // with the old TelemetryProvider.rtl() entry removed so no dual path can
 // resurrect. Force Arm / Takeoff removal is asserted in later phases.
@@ -943,7 +943,7 @@ void FlyQuickActionsSmokeTest::testNoQmlCallsGateOnlyForceArm()
                 }
             }
             // Any argument list: the funnel is forceArm(pilot, reason) since
-            // Step 1.3; the stock GuidedActionsController still passes none and
+            // now; the stock GuidedActionsController still passes none and
             // is refused at runtime, which is fine (fails closed).
             static const QRegularExpression funnelCall(QStringLiteral("TelemetryProvider\\.forceArm\\("));
             if (code.contains(funnelCall)) {
@@ -968,7 +968,7 @@ void FlyQuickActionsSmokeTest::testNoQmlCallsGateOnlyForceArm()
 }
 
 // ---------------------------------------------------------------------------
-// Step 3 item 7: the "Battery pack" item must be on both checklist pages
+// The "Battery pack" item must be on both checklist pages
 // (Analyze -> Preflight Checklist and the Fly-view checklist page), with its
 // select button. Loads the shipped files from disk.
 // ---------------------------------------------------------------------------

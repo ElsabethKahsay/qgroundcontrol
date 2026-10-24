@@ -38,7 +38,7 @@ Rectangle {
 
     property var _runningChecks: ({})
 
-    // Step 3 item 7: the shared pack dialog (ChecklistEngine.BatteryPackDialog),
+    // The shared pack dialog (ChecklistEngine.BatteryPackDialog),
     // opened by the "Battery pack" item in the Power section.
     CE.ChecklistEngine.BatteryPackDialog {
         id: batteryPackDialog

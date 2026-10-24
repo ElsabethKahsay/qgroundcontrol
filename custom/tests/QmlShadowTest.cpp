@@ -268,7 +268,7 @@ void QmlShadowTest::testNoUndeclaredQmlShadow()
                             .arg(undeclared.join(QStringLiteral("; ")))));
 }
 
-// Phase 1 arm-gate guard (G2/G3/G4): the gate must never be opened from a
+// Arm-gate guard: the gate must never be opened from a
 // single tap. The mode badge is display-only, the old one-tap Override /
 // Override Gate controls are gone, and Force Arm may only be reached through
 // the confirmation dialog. This is a source-text audit of the QML that ships in
@@ -318,7 +318,7 @@ void QmlShadowTest::testArmControlsCannotOpenGateInOneTap()
              "ArmingGate.mode is still writable from QML");
 }
 
-// Item 21: pass / fail / warn / stale must look the same on every screen, so
+// Pass / fail / warn / stale must look the same on every screen, so
 // colours come only from the Colors singleton. Fails on a hex colour literal in
 // any custom QML file outside qml/singletons/, and on a named colour other than
 // "transparent" on the safety screens (checklists, arm gate, Fly-view layer).

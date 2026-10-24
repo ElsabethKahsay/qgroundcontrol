@@ -222,7 +222,7 @@ void FlightSession::startFlightSession(const QString &purpose,
     WeatherProvider *wp = WeatherProvider::instance();
     if (wp) {
         QString desc = wp->weatherDescription();
-        // W6: unknown values read "--"; wind is m/s (it was labelled km/h).
+        // Unknown values read "--"; wind is m/s (it was labelled km/h).
         auto num = [](double v) { return std::isfinite(v) ? QString::number(v, 'f', 1) : QStringLiteral("--"); };
         if (!desc.isEmpty())
             weatherSummary = QStringLiteral("%1°C, %2, wind %3 m/s (%4)")
@@ -268,7 +268,7 @@ bool FlightSession::saveTargetLocation(double lat, double lon, const QString &so
         return false;
     };
 
-    // Step 3: the target is set during preflight, before any flight row
+    // The target is set during preflight, before any flight row
     // exists, so it is kept on the connected vehicle's row (and copied onto
     // each flight session) — and on the flight row too when one is open.
     const QString vehicleKey = currentVehicleKey();

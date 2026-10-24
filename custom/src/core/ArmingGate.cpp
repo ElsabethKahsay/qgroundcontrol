@@ -141,12 +141,11 @@ void ArmingGate::setMode(Mode mode)
 }
 
 // INBOUND arm/disarm COMMAND_LONG from a link peer (companion, another GCS).
-// G7 (user decision 2026-10-21: deny, never mutate): the peer's arm is judged
+// Deny, never mutate: the peer's arm is judged
 // by decide() with token 0, so it can never spend the operator's
 // acknowledgment or a force token, and this path never changes gate state.
 // It is denied when the gate is closed (matters when QGC forwards between
 // links) and every peer arm is logged. Disarm always passes.
-// (processArmRequest(), which production never called, is removed — G12.)
 bool ArmingGate::interceptCommandLong(uint16_t command, const QMap<int, float> &params)
 {
     const bool isArm = qFuzzyCompare(params.value(1, 0.0f), 1.0f);
@@ -173,7 +172,7 @@ bool ArmingGate::acknowledgeOverride(const QString &pilotName, const QString &re
     m_ackReceived = true;
     m_lastAck.pilotName = pilotName.trimmed();
     m_lastAck.reason = reason;
-    m_lastAck.timestamp = QDateTime::currentDateTimeUtc();   // stored: UTC (F17)
+    m_lastAck.timestamp = QDateTime::currentDateTimeUtc();   // stored: UTC
 
     // Mint a fresh non-zero token bound to this acknowledgment. Only the arm
     // command presenting this token (TelemetryBridge::arm() attaches it to the
@@ -185,7 +184,7 @@ bool ArmingGate::acknowledgeOverride(const QString &pilotName, const QString &re
     // Single-shot expiry: an unused ack does not survive the operator's window.
     m_ackTimer->setInterval(m_ackExpiryMs);
     m_ackTimer->start();
-    // G5: the ack covers exactly the checks failing now; a new failure voids it.
+    // The ack covers exactly the checks failing now; a new failure voids it.
     m_ackCheckIds = currentRequest(0).failingMandatoryIds;
     emit overrideKindChanged();
 
@@ -209,7 +208,7 @@ void ArmingGate::resetGate()
     if (m_ackTimer) m_ackTimer->stop();
     m_overrideTimer->stop();
     m_overrideToken = 0;
-    // G9: m_overrideTokenSeq is never reset, so a token value is never reused.
+    // m_overrideTokenSeq is never reset, so a token value is never reused.
     m_forceArmOverride = false;
     m_ackCheckIds.clear();
     emit overrideActiveChanged(false);
@@ -236,7 +235,7 @@ quint32 ArmingGate::setOverrideDuration(int timeoutMs)
     // Close the window automatically so the gate does not stay open forever.
     m_overrideTimer->start(timeoutMs);
     emit overrideKindChanged();
-    updateArmingState();   // G8: a plain arm is still denied during the window
+    updateArmingState();   // a plain arm is still denied during the window
     return token;
 }
 
@@ -266,7 +265,7 @@ quint32 ArmingGate::forceArm()
     // it also closes as soon as the token is used (consumeForceToken).
     m_overrideTimer->start(kForceArmOverrideSec * 1000);
     emit overrideKindChanged();
-    updateArmingState();   // G8: a plain arm is still denied during the window
+    updateArmingState();   // a plain arm is still denied during the window
     return token;
 }
 
@@ -310,7 +309,7 @@ std::function<bool(QString&, quint32)> ArmingGate::makeArmInterceptor()
     };
 }
 
-// G12: a check failure re-runs the single evaluation path instead of writing
+// A check failure re-runs the single evaluation path instead of writing
 // gate state directly.
 void ArmingGate::onCheckFailed(const QString &checkId, const QString &reason)
 {
@@ -325,7 +324,7 @@ void ArmingGate::onAllChecksPassed()
     updateArmingState();
 }
 
-// armingAllowed answers "would a plain arm (token 0) pass now" (G8).
+// armingAllowed answers "would a plain arm (token 0) pass now".
 // Persists the arming status to the database for dashboard display.
 void ArmingGate::updateArmingState()
 {
@@ -368,11 +367,11 @@ ArmingGate::ArmDecision ArmingGate::decide(const ArmRequest &request, const Gate
     if (!request.isArm)
         return allow(ArmDecision::Normal);
 
-    // 2. Training: no GCS arm at all, including the GCS's own buttons (G6).
+    // 2. Training: no GCS arm at all, including the GCS's own buttons.
     if (request.training)
         return deny(QStringLiteral("Arming is disabled in training mode"));
 
-    // 3. Force window: exactly the minted token, once; nothing else passes (G8).
+    // 3. Force window: exactly the minted token, once; nothing else passes.
     if (gate.forceWindowOpen) {
         if (request.callToken != 0 && request.callToken == gate.forceToken)
             return allow(ArmDecision::Force);
@@ -380,11 +379,11 @@ ArmingGate::ArmDecision ArmingGate::decide(const ArmRequest &request, const Gate
                                    "this arm command does not hold the minted token"));
     }
 
-    // 4. Passive mode: test-only (QML cannot set the mode, G2).
+    // 4. Passive mode: test-only (QML cannot set the mode).
     if (gate.mode == Passive)
         return allow(ArmDecision::Normal);
 
-    // 5. Hard blocks — never overridable (G5).
+    // 5. Hard blocks — never overridable.
     if (request.heartbeatAgeMs < 0)
         return deny(QStringLiteral("No telemetry received from the vehicle yet"));
     if (request.heartbeatAgeMs > qint64(kTelemetryStalenessSec) * 1000)
@@ -401,7 +400,7 @@ ArmingGate::ArmDecision ArmingGate::decide(const ArmRequest &request, const Gate
     const QString blocker = request.blocker.isEmpty() ? QStringLiteral("Preflight checks not complete")
                                                       : request.blocker;
     // 7. Overridable failures: the operator's bound, expiring acknowledgment.
-    //    (User decision 2026-10-21: any failing check except the hard blocks.)
+    //    (Any failing check except the hard blocks.)
     if (gate.policy == ALLOW_WITH_ACK) {
         if (gate.ackValid && request.callToken != 0 && request.callToken == gate.ackToken) {
             QStringList newFailures;
@@ -439,7 +438,7 @@ ArmingGate::ArmRequest ArmingGate::currentRequest(quint32 callToken, bool isArm)
             if (st == CheckStatus::Passed || st == CheckStatus::Warning || st == CheckStatus::Skipped)
                 continue;
             r.failingMandatoryIds << c->id();
-            // Step 3 item 7: no pack selected is a hard block, in every mode.
+            // No pack selected is a hard block, in every mode.
             if (c->id() == QLatin1String("power.battery.pack"))
                 r.batteryPackSelected = false;
             if (st == CheckStatus::Stale)

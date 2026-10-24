@@ -64,7 +64,7 @@ class WeatherProvider : public QObject
     Q_PROPERTY(bool windOk READ windOk NOTIFY weatherUpdated)
     Q_PROPERTY(QString lastUpdated READ lastUpdated NOTIFY weatherUpdated)
     Q_PROPERTY(bool isFetching READ isFetching NOTIFY loadingChanged)
-    /// W3: where the shown values come from, e.g. "METAR HAAB, observed 09:00Z"
+    /// Where the shown values come from, e.g. "METAR HAAB, observed 09:00Z"
     /// or "Forecast (Open-Meteo), fetched 12:00Z"; empty before any data.
     Q_PROPERTY(QString weatherSource READ weatherSource NOTIFY weatherUpdated)
 
@@ -132,7 +132,7 @@ private:
     void parsePrecipitation(const QString &metar);
     void handleForecastJson(const QByteArray &data);
 
-    // W4: the current aviationweather.gov METAR JSON format.
+    // The current aviationweather.gov METAR JSON format.
     /// obsTime is Unix seconds (an ISO string is still accepted).
     static QDateTime parseObsTime(const QJsonObject &metar);
     /// visib is statute miles as a number or a string such as "10+"; NaN if absent.
@@ -145,7 +145,7 @@ private:
     QNetworkAccessManager m_nam;
     QNetworkDiskCache *m_cache = nullptr;
 
-    // W6: a value nobody reported is NaN (ceiling -1), never a real-looking 0.
+    // A value nobody reported is NaN (ceiling -1), never a real-looking 0.
     double m_temperature = qQNaN();
     double m_windSpeed = qQNaN();
     double m_windGust = qQNaN();
@@ -161,9 +161,9 @@ private:
     double m_visibilityKm = qQNaN();
     int m_ceilingFt = -1;          ///< -1 = no ceiling reported / unknown
     QString m_metarString;
-    QDateTime m_metarTimestamp;    ///< W2: set ONLY from a METAR's observation time
+    QDateTime m_metarTimestamp;    ///< Set ONLY from a METAR's observation time
     QDateTime m_forecastTimestamp; ///< when the Open-Meteo forecast was fetched
-    bool m_fromMetar = false;      ///< W3: the shown values are the METAR's
+    bool m_fromMetar = false;      ///< The shown values are the METAR's
     QStringList m_metarParsed;
     QStringList m_precipitation;
     QString m_stationId;

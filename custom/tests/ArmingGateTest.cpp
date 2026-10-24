@@ -7,11 +7,9 @@
 #include "core/BatteryPackCheck.h"
 #include "mocks/MockTelemetryBridge.h"
 
-// Step 2.5 / 2.6: ArmingGate::decide() is the single arm decision (G5–G9, G12).
+// ArmingGate::decide() is the single arm decision.
 // Most rules are tested on the pure function; gate-level behaviour (force
 // window, overrideKind, inbound peer arms, token reuse) on a bare ArmingGate.
-// (processArmRequest(), which production never called, was removed with its
-// tests — G12.)
 class ArmingGateTest : public UnitTest {
     Q_OBJECT
 
@@ -48,7 +46,7 @@ ArmingGate::ArmRequest ArmingGateTest::freshFailing(const QStringList &failing)
     return r;
 }
 
-// G5 / test 11: disarm passes in every gate state.
+// Disarm passes in every gate state.
 void ArmingGateTest::testDisarmAlwaysAllowed()
 {
     ArmingGate::GateSnapshot g;
@@ -62,7 +60,7 @@ void ArmingGateTest::testDisarmAlwaysAllowed()
     QCOMPARE(ArmingGate::decide(r, g).verdict, ArmingGate::ArmDecision::Allow);
 }
 
-// G6 / test 6: Training blocks the GCS's own arm, even with everything green.
+// Training blocks the GCS's own arm, even with everything green.
 void ArmingGateTest::testTrainingBlocksGcsArm()
 {
     ArmingGate::ArmRequest r = freshFailing({});
@@ -72,7 +70,7 @@ void ArmingGateTest::testTrainingBlocksGcsArm()
     QVERIFY(d.reason.contains(QStringLiteral("training"), Qt::CaseInsensitive));
 }
 
-// G5 / test 4: no heartbeat, a stale heartbeat, or a Stale mandatory check
+// No heartbeat, a stale heartbeat, or a Stale mandatory check
 // deny even with a valid, matching acknowledgment.
 void ArmingGateTest::testHardBlocksNotOverridableByAck()
 {
@@ -98,7 +96,7 @@ void ArmingGateTest::testHardBlocksNotOverridableByAck()
     QCOMPARE(ArmingGate::decide(staleCheck, g).verdict, ArmingGate::ArmDecision::Deny);
 }
 
-// G5 / tests 1, 3: only the ack's own token spends it, and only while every
+// Only the ack's own token spends it, and only while every
 // failing check is one the pilot acknowledged.
 void ArmingGateTest::testAckAllowsOnlyItsTokenAndItsChecks()
 {
@@ -133,7 +131,7 @@ void ArmingGateTest::testAllPassedAllows()
     QCOMPARE(d.kind, ArmingGate::ArmDecision::Normal);
 }
 
-// G8: inside a force window only the minted token passes; a plain arm (token
+// Inside a force window only the minted token passes; a plain arm (token
 // 0, i.e. armingAllowed) is denied even with every check green.
 void ArmingGateTest::testForceWindowOnlyForMintedToken()
 {
@@ -156,7 +154,7 @@ void ArmingGateTest::testPassiveModeAllows()
     QCOMPARE(ArmingGate::decide(ArmingGate::ArmRequest{}, g).verdict, ArmingGate::ArmDecision::Allow);
 }
 
-// G8 / test 12, gate level.
+// Same rule at gate level: armingAllowed is false inside a force window.
 void ArmingGateTest::testArmingAllowedFalseDuringForceWindow()
 {
     ArmingGate gate;
@@ -167,7 +165,7 @@ void ArmingGateTest::testArmingAllowedFalseDuringForceWindow()
     QVERIFY2(!gate.isArmingAllowed(), "armingAllowed must answer for a plain arm, which a force window denies");
 }
 
-// Step 1.3 remainder: the force window closes as soon as its token is used.
+// The force window closes as soon as its token is used.
 void ArmingGateTest::testForceWindowClosesOnUse()
 {
     ArmingGate gate;
@@ -180,7 +178,7 @@ void ArmingGateTest::testForceWindowClosesOnUse()
     QVERIFY(!interceptor(reason, token));   // spent: and the gate is otherwise closed
 }
 
-// G7 / test 9: a peer's inbound arm is judged read-only with token 0; it can
+// A peer's inbound arm is judged read-only with token 0; it can
 // never spend the operator's acknowledgment.
 void ArmingGateTest::testInboundPeerArmNeverSpendsAck()
 {
@@ -199,7 +197,7 @@ void ArmingGateTest::testInboundPeerArmNeverSpendsAck()
     QCOMPARE(gate.overrideKind(), ArmingGate::AckOverride);
 }
 
-// G9: resetGate() no longer resets the token counter, so a force token from an
+// resetGate() no longer resets the token counter, so a force token from an
 // earlier window can never match a later one.
 void ArmingGateTest::testTokensNeverRepeatAfterReset()
 {
@@ -210,7 +208,7 @@ void ArmingGateTest::testTokensNeverRepeatAfterReset()
     QVERIFY(second != first);
 }
 
-// Step 3 item 7: no pack selected denies even with a valid ack, in Flight
+// No pack selected denies even with a valid ack, in Flight
 // and Testing alike; a force token (bench) is not affected.
 void ArmingGateTest::testNoBatteryPackIsHardBlock()
 {

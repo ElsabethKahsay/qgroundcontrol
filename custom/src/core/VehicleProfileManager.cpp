@@ -656,7 +656,7 @@ void VehicleProfileManager::disarmVehicle(bool force)
                                    MAV_CMD_COMPONENT_ARM_DISARM,
                                    true,    // showError
                                    0.0f,    // 0.0 = disarm
-                                   kForceDisarmParam2); // B7: ArduPilot force-DISARM (21196); 2989 is force-arm
+                                   kForceDisarmParam2); // ArduPilot force-DISARM (21196); 2989 is force-arm
         } else {
             // Disarm, not arm. Prior code erroneously passed `true` which
             // requested arming from a "disarm" entry point and, with the new
@@ -1108,7 +1108,7 @@ void VehicleProfileManager::setPlanLongitude(double lon)
 /// Track arm/disarm transitions.
 /// Tracks the armed timer and the battery % at arm. Battery cycles, energy and
 /// distance per flight are no longer written here: SessionRecorder is their one
-/// writer (F9: the 30 s disarm rule double-counted cycles; F10: the energy guess
+/// writer (a second writer here double-counted cycles, and its energy guess
 /// read PX4's BAT_CAPACITY, so ArduPilot fell back to 0.45 Ah per %).
 void VehicleProfileManager::_onArmedChanged(bool armed)
 {

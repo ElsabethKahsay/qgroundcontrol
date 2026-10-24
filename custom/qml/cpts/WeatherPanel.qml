@@ -179,7 +179,7 @@ Item {
                     }
 
                     Text {
-                        // W6: unknown wind reads "--", variable direction "variable".
+                        // Unknown wind reads "--", variable direction "variable".
                         text: "Wind: " + (isNaN(WeatherProvider.windSpeed) ? "--"
                                           : (WeatherProvider.windSpeed * 3.6).toFixed(1) + " km/h"
                                             + " from " + (isNaN(WeatherProvider.windDirection) ? "variable"
@@ -204,7 +204,7 @@ Item {
                         color: Colors.textSecondary
                     }
 
-                    // W3: which source these values are from.
+                    // Which source these values are from.
                     Text {
                         visible: WeatherProvider.weatherSource.length > 0
                         text: WeatherProvider.weatherSource

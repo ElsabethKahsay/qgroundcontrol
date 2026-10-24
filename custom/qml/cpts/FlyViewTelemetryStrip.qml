@@ -72,7 +72,7 @@ Item {
     readonly property real   _batV:     activeVehicle && activeVehicle.batteries && activeVehicle.batteries.count > 0
                                             ? activeVehicle.batteries.get(0).voltage.rawValue : 0
     readonly property real   _batCur:   _batteryCurrentFact()
-    // BATTERY_STATUS stopped after valid data on this connection (F3): the
+    // BATTERY_STATUS stopped after valid data on this connection: the
     // last values are not current, so the cells say STALE instead.
     readonly property bool   _batStale: !!activeVehicle && VehicleTelemetry.batteryStale
     readonly property real   _distHome:   activeVehicle && activeVehicle.distanceToHome ? activeVehicle.distanceToHome.rawValue : 0

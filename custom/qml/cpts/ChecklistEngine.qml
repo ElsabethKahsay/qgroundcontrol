@@ -231,7 +231,7 @@ QtObject {
             + d.getSeconds().toString().padStart(2, "0")
     }
 
-    // Step 3 item 7: pick (or register) the battery pack fitted for this
+    // Pick (or register) the battery pack fitted for this
     // flight. Used by both checklist pages (PreflightChecklistView and
     // pages/PreFlightChecklist). Choosing a pack stores its rated config,
     // makes it the current pack for the flight log and cycle count, and feeds

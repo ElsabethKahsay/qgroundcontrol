@@ -21,7 +21,7 @@ Item {
 
     signal backClicked()
 
-    // G11 (Step 2.5): every Arm button asks the gate. allow → requestArm()
+    // Every Arm button asks the gate. allow → requestArm()
     // already sent the arm; needsAck → the acknowledge dialog, which arms on
     // accept; deny → the gate shows the reason (no silent no-op).
     function requestArm() {
