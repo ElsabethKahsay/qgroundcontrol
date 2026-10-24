@@ -1072,7 +1072,7 @@ You already proved F1–F2 work on 22 Oct morning: the student's sticks moved th
 5. **Check on the plane, props off:** in QGC look at the RC channels (the monitor sees them too). Hold the trainer switch and move the student's sticks: CH1–CH4 change. Release the switch: the student's sticks do nothing and the instructor's sticks move CH1–CH4.
 
 #### F3. Find the channel SH arrives on (the switch already reaches the plane)
-Operator convention (23 Oct): the instructor's radio uses switch **SH** for the handover, and SH is already sent to the flight controller. **SH high = the instructor (master) is flying; SH low = the trainee is flying.** No new mix is needed; the GCS only needs to know which channel carries SH.
+Operator convention (23 Oct): the instructor's radio uses switch **SH** for the handover, and SH is already sent to the flight controller. **On these radios SH low = the instructor (master) is flying; SH high = the trainee is flying** (measured on the bench 24 Oct; the first description had it the other way round). No new mix is needed; the GCS only needs to know which channel carries SH.
 Easiest: use **Detect** in the GCS (F5) — it finds the channel while you flick SH. By hand instead:
 1. With the plane connected and the instructor's radio on, flick SH a few times.
 2. Find the channel that jumps (e.g. 987 ↔ 2011): on the radio (**SYS → Channel monitor**) or in QGC (Vehicle Setup → Radio).
@@ -1089,15 +1089,15 @@ Easiest: use **Detect** in the GCS (F5) — it finds the channel while you flick
 2. **Tap the chip.** A small window opens: **Trainer switch (SH) channel**.
    - **Detect (recommended):** press **Detect**, then flick SH down and up 2 times within 15 s. The window shows **"Found: CH9"** (for example); press **Use CH9**. If it says "Several channels moved", flick only SH and try again; "No RC data" means the RC is not connected; "Only the flight-mode channel moved" means SH is not sent on its own channel.
    - Or type the channel from F3 into the field.
-   - Leave **SH high = instructor** ticked (untick only for a radio wired the other way round).
+   - Leave **SH high = instructor** unticked (the default for these radios); tick it only for a radio wired the other way round.
 3. The setting is remembered for next time.
 
 #### F6. Test the handover (props off)
-1. Put SH **high**. The chip says **INSTRUCTOR FLYING** in green (with "(flick SH once to confirm the channel)" until both positions have been seen on this connection).
-2. Put SH **low**. Within a second:
+1. Put SH **low**. The chip says **INSTRUCTOR FLYING** in green (with "(flick SH once to confirm the channel)" until both positions have been seen on this connection).
+2. Put SH **high**. Within a second:
    - the chip turns orange: **STUDENT FLYING**;
-   - a message pops up: **"Trainer: STUDENT has control"**.
-3. SH **high** again: chip green **INSTRUCTOR FLYING**, message **"Trainer: INSTRUCTOR has control"**.
+   - a short note **"STUDENT has control"** appears under the chip and fades after 3 seconds (nothing to dismiss).
+3. SH **low** again: chip green **INSTRUCTOR FLYING**, note **"INSTRUCTOR has control"**.
 4. Repeat 2–3 a few times. Each change is recorded.
 5. Arm **from the instructor's radio** (the GCS arm button refuses in Training — that is correct), hold/release the trainer switch once or twice, then disarm from the radio.
 6. Open **Flight History**, open that flight: a **TRAINER HANDOVERS** section lists each "HANDOVER_TO_STUDENT / HANDOVER_TO_INSTRUCTOR" with the time and altitude.
@@ -1109,7 +1109,7 @@ Easiest: use **Detect** in the GCS (F5) — it finds the channel while you flick
 | "not monitored — no CHn trainer mix" | No valid value on that channel | Wrong channel: redo F3 and set the channel that moves with SH |
 | "CH9 is the flight-mode channel (FLTMODE_CH)" | That channel already changes flight modes | Use another free channel in both F3 and F5 |
 | Chip changes but **the plane's flight mode also changes** | The mix is on the mode channel | Stop; move the mix to a free channel |
-| STUDENT / INSTRUCTOR are the wrong way round | This radio sends SH the other way | Untick **SH high = instructor** in the chip's window |
+| STUDENT / INSTRUCTOR are the wrong way round | This radio sends SH the other way | Toggle **SH high = instructor** in the chip's window |
 | Student's sticks do nothing while the switch is held | Trainer cable / master–slave / special function | Recheck F1–F2 (the GCS is not involved in that part) |
 
 Safety rules for real training flights: the instructor keeps a finger on the trainer switch at all times; the student only gets control at a safe height; any doubt → release the switch. The GCS only records — it never switches control itself.

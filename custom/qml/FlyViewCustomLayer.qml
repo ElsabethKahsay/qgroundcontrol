@@ -543,7 +543,7 @@ Item {
                     Layout.preferredWidth: 300
                     wrapMode: Text.WordWrap
                     text: qsTr("The channel the instructor's SH switch reaches the flight controller on. "
-                               + "SH high = instructor (master) flying, SH low = trainee flying. "
+                               + "Default: SH low = instructor (master) flying, SH high = trainee flying. "
                                + "Not the flight-mode channel.")
                     font.pixelSize: Config.fontSizeSmall
                     color: Colors.textSecondary
@@ -601,6 +601,46 @@ Item {
                         onClicked: trainerChip._plugin.cancelTrainerDetect()
                     }
                 }
+            }
+        }
+    }
+
+    // Handover toast under the trainer chip: appears for 3 s on each
+    // instructor <-> trainee switch and fades by itself (no button).
+    Rectangle {
+        id: trainerToast
+        property string text: ""
+        property bool student: false
+        anchors { top: trainerChip.bottom; topMargin: 6; horizontalCenter: trainerChip.horizontalCenter }
+        z: QGroundControl.zOrderWidgets + 4
+        width: toastText.implicitWidth + 28
+        height: toastText.implicitHeight + 14
+        radius: height / 2
+        color: student ? Colors.warning : Colors.success
+        opacity: 0
+        visible: opacity > 0
+        Behavior on opacity { NumberAnimation { duration: 250 } }
+        Text {
+            id: toastText
+            anchors.centerIn: parent
+            text: trainerToast.text
+            font.pixelSize: Config.fontSizeBody
+            font.bold: true
+            color: Colors.background
+        }
+        Timer {
+            id: toastTimer
+            interval: 3000
+            onTriggered: trainerToast.opacity = 0
+        }
+        Connections {
+            target: QGroundControl.corePlugin
+            ignoreUnknownSignals: true
+            function onTrainerHandoverAnnounced(text, student) {
+                trainerToast.text = text
+                trainerToast.student = student
+                trainerToast.opacity = 1
+                toastTimer.restart()
             }
         }
     }

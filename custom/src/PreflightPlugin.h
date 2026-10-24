@@ -125,6 +125,9 @@ public:
     QString trainerChannelConflict() const;
     bool trainerHighIsInstructor() const { return _trainer.highIsInstructor(); }
     void setTrainerHighIsInstructor(bool v);
+    /// The stored "SH high = instructor" box: only "1" means ticked. Unset is
+    /// the default for the operator's radios, SH low = instructor.
+    static bool trainerHighIsInstructorFromSetting(const QString &stored) { return stored == QLatin1String("1"); }
     bool trainerDetectRunning() const { return _detectRunning; }
     int trainerDetectSecondsLeft() const { return _detectSecsLeft; }
     int trainerDetectFound() const { return _detectFound; }
@@ -136,6 +139,8 @@ public:
 signals:
     void trainerChanged();
     void trainerDetectChanged();
+    /// A handover just happened in a Training session (shown as a toast).
+    void trainerHandoverAnnounced(const QString &text, bool student);
 
 public:
 

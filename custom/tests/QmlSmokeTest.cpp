@@ -43,6 +43,7 @@
 #include "UnitTest.h"
 #include "QGCCorePlugin.h"
 #include "PreflightPlugin.h"
+#include "utils/DatabaseManager.h"
 #include "MultiVehicleManager.h"
 #include "Vehicle/Vehicle.h"
 #include "PreflightManager.h"
@@ -981,6 +982,7 @@ private slots:
 
     void testAnalyzeChecklistShowsBatteryPack();
     void testFlyChecklistShowsBatteryPack();
+    void testTrainerDefaultIsShLowInstructor();
 
 private:
     QSharedPointer<QQmlApplicationEngine> _engine;
@@ -1044,6 +1046,16 @@ void ChecklistPagesSmokeTest::testAnalyzeChecklistShowsBatteryPack()
     const QStringList texts = _texts(_root.data());
     QVERIFY2(texts.contains(QStringLiteral("Battery pack")), qPrintable(texts.mid(0, 80).join(QStringLiteral(" | "))));
     QVERIFY2(texts.contains(QStringLiteral("Select battery pack")), qPrintable(texts.join(QStringLiteral(" | "))));
+}
+
+// On the operator's radios SH low = instructor flying, SH high = trainee
+// (measured on the bench), so after start-up "SH high = instructor" is off
+// unless someone ticked it for a radio wired the other way.
+void ChecklistPagesSmokeTest::testTrainerDefaultIsShLowInstructor()
+{
+    QVERIFY(!PreflightPlugin::trainerHighIsInstructorFromSetting(QString()));            // nothing stored
+    QVERIFY(!PreflightPlugin::trainerHighIsInstructorFromSetting(QStringLiteral("0")));
+    QVERIFY(PreflightPlugin::trainerHighIsInstructorFromSetting(QStringLiteral("1")));   // box ticked
 }
 
 void ChecklistPagesSmokeTest::testFlyChecklistShowsBatteryPack()

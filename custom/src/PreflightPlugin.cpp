@@ -387,9 +387,11 @@ void PreflightPlugin::init()
                                                                        QStringLiteral("channel")).toInt(&chOk);
     _trainer.setChannel(chOk && savedChannel >= 1 && savedChannel <= 18 ? savedChannel
                                                                        : TrainerSwitchTracker::kDefaultChannel);
-    // Operator convention: SH high = master / instructor flying (default).
-    _trainer.setHighIsInstructor(DatabaseManager::instance().getCheckConfig(
-        QStringLiteral("trainer"), QStringLiteral("high_is_instructor")) != QLatin1String("0"));
+    // On the operator's radios SH low = master / instructor flying and SH high
+    // = trainee (measured on the bench), so that is the default; the chip's
+    // "SH high = instructor" box stores "1" for a radio wired the other way.
+    _trainer.setHighIsInstructor(trainerHighIsInstructorFromSetting(DatabaseManager::instance().getCheckConfig(
+        QStringLiteral("trainer"), QStringLiteral("high_is_instructor"))));
     connect(_telemetryBridge, &TelemetryBridge::rcChannelValuesChanged, this, &PreflightPlugin::_onRcChannels);
     _detectTimer.setInterval(1000);
     connect(&_detectTimer, &QTimer::timeout, this, [this]() {
@@ -916,9 +918,12 @@ void PreflightPlugin::_onRcChannels()
     if (handover && fs && fs->isTraining() && _sessionRecorder) {
         _sessionRecorder->trainerHandover(now == TrainerSwitchTracker::Control::Student,
                                           QStringLiteral("trainer switch, CH%1").arg(_trainer.channel()));
-        qgcApp()->showAppMessage(now == TrainerSwitchTracker::Control::Student
-                                     ? tr("Trainer: STUDENT has control")
-                                     : tr("Trainer: INSTRUCTOR has control"));
+        // A short toast on the Fly view rather than an app message: a
+        // handover happens many times a lesson and must not need dismissing.
+        emit trainerHandoverAnnounced(now == TrainerSwitchTracker::Control::Student
+                                          ? tr("STUDENT has control")
+                                          : tr("INSTRUCTOR has control"),
+                                      now == TrainerSwitchTracker::Control::Student);
     }
     emit trainerChanged();
 }
