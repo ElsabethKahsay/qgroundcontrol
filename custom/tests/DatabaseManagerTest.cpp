@@ -54,6 +54,7 @@ private slots:
     void testRecorderBatterySnapshotIsFrozen();
     void testRecorderEnergyFromMeasurementsOnly();
     void testRecorderWritesFlightHistoryAndHandovers();
+    void testRecorderJoinsAFlightAlreadyArmed();
     void testBenchTestResultsLinkToFlightAndConnection();
     void testEnergyModelLearnsOnlyFromRealFlights();
     void testLinkDropsCountedSinceAppStart();
@@ -486,6 +487,49 @@ void DatabaseManagerTest::testRecorderEnergyFromMeasurementsOnly()
 
 // Flight History reads the flights table: every recorded flight gets a row
 // there (operator optional), and trainer handovers attach to it.
+// The GCS restarted (or connected) while the vehicle was already armed: no
+// arm transition comes, so joinArmedFlight() opens the flight, counts time
+// and energy from that moment (from the first sample that has battery data,
+// if there was none yet), and refuses a second row or a row with no
+// connection to key it to.
+void DatabaseManagerTest::testRecorderJoinsAFlightAlreadyArmed()
+{
+    RecorderFixture f;
+    QVERIFY(f.init());
+    DatabaseManager &db = DatabaseManager::instance();
+    SessionRecorder rec(db);
+    f.wire(rec);
+    const QString countSql = QStringLiteral("SELECT COUNT(*) AS n FROM flight_sessions WHERE device_uid = 'UID-R'");
+
+    QVERIFY(!rec.joinArmedFlight(start(QStringLiteral("gcs"))));        // no connection yet
+    QCOMPARE(row(countSql).value(QStringLiteral("n")).toInt(), 0);
+
+    rec.connectionOpened(QStringLiteral("UID-R"), QStringLiteral("Flight"), QString(), QString());
+    // Joined right after start-up: no BATTERY_STATUS yet (voltage reads 0).
+    f.sample.voltage = 0.0;
+    f.sample.energyWh = -1;
+    QVERIFY(rec.joinArmedFlight(start(QStringLiteral("gcs"))));
+    const int id = rec.flightId();
+    QVERIFY(id > 0);
+    QVERIFY(!rec.joinArmedFlight(start(QStringLiteral("gcs"))));        // already open
+    QCOMPARE(row(countSql).value(QStringLiteral("n")).toInt(), 1);
+
+    // The first summary with battery data becomes the baseline.
+    f.clock.advance(10000);
+    f.sample.voltage = 16.0;
+    f.sample.energyWh = 5.0;
+    rec.writeSummary();
+    f.clock.advance(50000);
+    f.sample.energyWh = 7.5;
+    rec.disarmed();
+    const QVariantMap fs = row(QStringLiteral("SELECT * FROM flight_sessions WHERE id = %1").arg(id));
+    QCOMPARE(fs.value(QStringLiteral("arm_source")).toString(), SessionRecorder::kArmSourceAlreadyArmed);
+    QCOMPARE(fs.value(QStringLiteral("end_reason")).toString(), QStringLiteral("disarmed"));
+    QCOMPARE(qRound(fs.value(QStringLiteral("duration_seconds")).toDouble()), 60);
+    QCOMPARE(fs.value(QStringLiteral("energy_consumed_wh")).toDouble(), 2.5);
+    QCOMPARE(fs.value(QStringLiteral("min_voltage")).toDouble(), 16.0);   // not the 0 V of no data
+}
+
 void DatabaseManagerTest::testRecorderWritesFlightHistoryAndHandovers()
 {
     RecorderFixture f;

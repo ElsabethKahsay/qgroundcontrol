@@ -74,7 +74,7 @@ Aircraft findings from the 22 Oct bench session (fixed wing, CoreWingF405WingV2,
 • After the RC link was lost, CH3 (throttle) read 1922: check the ELRS receiver failsafe is "No pulses", not a fixed high-throttle position.
 • Battery monitor now reads correctly (23.3 V, 1.13 A, mAh and energy counters): the morning's 0 V / "unhealthy" is resolved.
 Code still open:
-• Item 17 W7 (SITL weather location); item 12 (SITL campaign) and item 14 (real radio and go/no-go). Item 13 (Jetson build and its start script) moved to after Phase 1 on 23 Oct.
+• Item 17 W7 (SITL weather location) and item 14 (real radio and go/no-go; template at the end of this document). Item 12 (SITL campaign) done 24 Oct. Item 13 (Jetson build and its start script) moved to after Phase 1 on 23 Oct.
 
 Flight-time estimate review (23 Oct)
 • A — done (live estimate, Fly-view battery chip): the reserve was taken from what is left (remaining × (1 − reserve)), so the time never reached 0 at the reserve and was overstated most near the end (5 Ah pack, 20 % reserve, 20 A: 2.4 min shown at 20 % SOC instead of 0). Now usable = capacity × (SOC − reserve), 0 at or below the reserve, and the chip shows "RESERVE — LAND" in red. VehicleProfileManagerTest::testUsableAhStopsAtTheReserve (mutant: old rule, caught).
@@ -93,6 +93,7 @@ Recommendations for Phase 1 (23 Oct), easiest to hardest
    Status 24 Oct — software done: the Attitude item names AHRS_ORIENTATION and the accelerometer calibration when a level vehicle reads tilted (threshold unchanged); new Airspeed Sensor item (fixed wing: ARSPD_TYPE set but SYS_STATUS differential-pressure bit 0x10 not healthy → Failed "Airspeed sensor configured but not found — connect it or set ARSPD_TYPE = 0"); new GCS Link Drops item (Communication) counting link losses and vehicle-removed connections since the app started; Radio Failsafe reads ArduPlane's THR_FAILSAFE / THR_FS_VALUE / FS_SHORT_ACTN / FS_LONG_ACTN (it read only ArduCopter's FS_THR_ENABLE, so it was Skipped on the plane) and warns when THR_FS_VALUE is not below the throttle minimum. Parameter facts verified in ~/ardupilot at tags Plane-4.5.7 and Copter-4.5.7 (4.5.7 FS_LONG_ACTN has no 5 = AUTOLAND; Copter 4.5.7 FS_THR_ENABLE ends at 6). Operator procedure: "Bench and SITL checks for Step 3", section H. Physical fixes on the aircraft: open (operator).
 7. Build the field laptop's Release build (about an hour, overnight) once the bench checks pass, then freeze and tag phase1-step3.
 8. Run the SITL campaign (item 12) before the first props-on flight, especially crash recovery, link loss and the 3-hour idle. Scripts can be written now; running them needs ArduPilot SITL on the development machine.
+   Status 24 Oct — run on ArduPlane and ArduCopter SITL (ArduPilot master 4.6.0-beta1-6903, not the plane's 4.5.7): every scenario passes; three GCS recording bugs found and fixed (restart while armed lost the rest of the flight; that flight had no energy baseline; a landing during a link blackout closed as an ordinary disarm). Details, run logs and the remaining notes: section "SITL campaign results" at the end of this document. 3-hour idle: IDLE_RESULT.
 9. Bench the copter: the release gate needs one copter and one plane, and only the plane has been on the bench so far. Plan its bench session (the same checks as the plane).
 
 Earlier notes on the open items (history; statuses above supersede them)
@@ -616,7 +617,7 @@ Field
 SITL campaign, copter and plane
 F18, state analysis items 6 to 9
 On ArduCopter and ArduPlane SITL: force-arm with 2989 against a failing pre-arm, RTL on plane, link loss while armed, netem loss and latency pass watching parserStalled, a 3-hour idle with the quit caller identified, then two clean run-of-show dry runs.
-A written run log per scenario with timestamps and the database rows it produced — Status 20 Oct: open.
+A written run log per scenario with timestamps and the database rows it produced — Status 24 Oct: done. Scripts in custom/tools/sitl/, run logs in custom/tools/sitl/runs/, results and findings in "SITL campaign results" at the end of this document. The netem part is done by a userspace relay (no root); parserStalled does not exist in the code.
 13
 Field
 Jetson build and package
@@ -1216,3 +1217,95 @@ Do:
 
 ### Final report (your last message)
 Commits; per recommendation what changed (files), the tests and their mutants; the ArduPilot parameter facts you verified and where; each SITL scenario's PASS/FAIL with the run-log path; every bug found and whether fixed; anything that needs the operator (decisions, hardware steps). Do not claim hardware results — nothing here is verified on the aircraft.
+
+## SITL campaign results (item 12, 24 Oct)
+
+How it runs: `custom/tools/sitl/run_all.py` (each scenario is also a script of its own, `sc_*.py`; `sitl_common.py` holds the plumbing, its docstring explains it). SITL starts through sim_vehicle.py with --no-mavproxy, so nothing goes to UDP 14550 and an operator's QGC on the same machine is never touched. A Python relay between SITL and the GCS cuts the stream into MAVLink frames and can drop, delay or black out the link (stands in for tc netem, which needs root). The GCS runs offscreen with --allow-multiple and a throw-away HOME / XDG folder whose settings switch every auto-connect off (so it cannot grab a flight controller on USB); its database lives in that folder and is deleted after the run. The script commands the vehicle on SITL's second serial port. ArduPilot in ~/ardupilot is master (4.6.0-beta1-6903), not the plane's 4.5.7.
+
+| Scenario | Plane | Copter | Run logs (custom/tools/sitl/runs/) |
+|---|---|---|---|
+| Force-arm 2989 against a failing pre-arm (BATT_ARM_VOLT = 20 V): normal arm refused, force arm accepted, flight recorded as arm_source = external, closed disarmed | PASS | PASS | 2026-10-24-force-arm-*.md |
+| Plane RTL (stays in RTL, airborne); 20 s link blackout while armed: link_lost then link_restored, flight stays open | PASS | PASS | 2026-10-24-rtl-link-loss-*.md |
+| Copter lands and disarms during a blackout: flight closes as link_lost, ended at the moment of loss | — | PASS (after fix 3) | 2026-10-24-rtl-link-loss-arducopter.md |
+| Lossy link 60 s each at 20 %/150 ms, 40 %/400 ms, 80 %/400 ms: GCS stays up, flight row survives, no link_lost at 20 % | PASS | PASS | 2026-10-24-lossy-link-*.md |
+| Flight Wh against BATTERY_STATUS.energy_consumed (within 5 %) | — | PASS (12.472 / 12.472 Wh) | 2026-10-24-kill9-energy-arducopter.md |
+| kill -9 mid-flight: row closed crash_recovered at next start; rest of the flight recorded | — | PASS (after fixes 1–2) | 2026-10-24-kill9-energy-arducopter.md |
+| Two run-of-show dry runs (connect, fly, RTL, land/disarm, close, restart): two flights closed disarmed, two history rows, no link_lost | PASS | PASS | 2026-10-24-run-of-show-*.md |
+| Gimbal axes, MNT1_TYPE = 1 (servo): pitch −45°, yaw 60°, back to 0°, roll 20° each reported within 1° and the servo outputs move | — | PASS | 2026-10-24-gimbal-arducopter.md |
+| 3-hour idle (RSS every 5 min, quit cause) | IDLE_ROW | — | 2026-10-24-idle-3h-arduplane.md |
+
+GCS bugs found and fixed (each with a test; SITL re-run passes):
+1. Restart while armed lost the rest of the flight. A flight row opened only on an arm transition; a GCS that comes up (or is restarted after a crash) while the vehicle is armed never sees one, and neither does one that gets the arm before the vehicle's UID. Now SessionRecorder::joinArmedFlight() opens the flight when the UID becomes known with the vehicle armed (PreflightPlugin::_openConnectionSession), arm_source = already_armed. Test: DatabaseManagerTest::testRecorderJoinsAFlightAlreadyArmed (mutant: no "already open" guard → caught).
+2. A flight opened before the first BATTERY_STATUS kept energy, mAh and distance unknown for its whole length, and its minimum voltage stuck at 0 V. Now a baseline unknown at open is taken from the first sample that has it, and a 0 V start reading is ignored. Same test (mutants: no late baseline → caught; min voltage seeded from 0 V → caught). Remaining limit: the joined flight counts from when the GCS has set the vehicle up after its restart (about a minute in SITL: 10.7 Wh recorded of 18.3 Wh flown after the join).
+3. A vehicle that disarmed during a link outage was recorded as an ordinary disarm when the link returned. QGC reports the link back on the first message, before the next HEARTBEAT updates the armed flag, so the recorder was told "back, still armed". The plugin now waits 2.5 s (more than one heartbeat) before handling the restore; a disarm heartbeat in between closes the flight as link_lost at the moment of loss. Checked by the SITL scenario (failed before, passes after); no unit test (the timing lives in the plugin's link wiring).
+
+Noted, not changed:
+- Closing the GCS with a vehicle connected (SIGTERM, a laptop shutdown, or the window's close) asks "close anyway?" (upstream QGC). Unanswered, the app keeps running until it is killed, and the next start closes that connection as crash_recovered; flights are not affected. On the field laptop: disconnect the vehicle, or answer the question, before shutting down.
+- The connection rows record app_version "phase1-step0-4-g7aeb4a40d": the version string is fixed when CMake configures, so it is stale. It is corrected by the next configure (the Release build of recommendation 7).
+- parserStalled, which item 12 asked to watch, does not exist in the GCS or upstream QGC. The lossy-link run watches session events, the process and the flight row instead. QGC declares comm lost only after 3.5 s with no message at all, so even 80 % loss gave no link_lost.
+- Weather (W7): SITL sits at its default home, so the weather item reports that location; not fixed here.
+- Not exercised by the scripts (they need the UI): the GCS's own arm button and gate (arms come from the script, arm_source = external), the checklist confirmations, the battery-pack selection (so flight_batteries has no pack), and the gimbal page's own test buttons (the run shows the simulated gimbal answers the commands they send).
+
+## Go/no-go sheet per airframe (item 14 template)
+
+Print one sheet per airframe and fill it at the props-off bench with the real telemetry radio and RC. Values come from the GCS (Vehicle Setup → Parameters, and the preflight checklist) unless marked "measure". Any "No" in the last column means NO-GO until it is fixed or a named person accepts it in writing on this sheet.
+
+**Airframe:** ________ **Type:** plane / copter **Flight controller + firmware:** ________ **Hardware UID (GCS):** ________ **Date:** ________
+
+### 1. Channel map (RC)
+| Channel | Function (from the transmitter and ArduPilot) | Checked moving in the GCS radio page? |
+|---|---|---|
+| CH1–CH4 | roll / pitch / throttle / yaw (RCMAP_ROLL, RCMAP_PITCH, RCMAP_THROTTLE, RCMAP_YAW) | Yes / No |
+| FLTMODE_CH = ___ | flight-mode switch: positions → ______ / ______ / ______ | Yes / No |
+| CH__ | arm/disarm switch (RCx_OPTION = 153/154) or none | Yes / No |
+| CH__ | trainer switch (SH) — must not equal FLTMODE_CH; GCS "Detect" result: CH__ ; SH low = instructor (default) / reversed | Yes / No |
+| CH__ | other switches: ______ | Yes / No |
+
+### 2. GCS-failsafe policy (operator decision)
+Chosen: **RC-primary** (FS_GCS_ENABL / FS_GCS_ENABLE = 0) / **Telemetry-primary** (≥ 1, timeout ___ s, action ______)
+- RC-primary trade-off: a telemetry or USB dropout does not send the aircraft home; if the RC link also fails, only the RC failsafe acts.
+- Telemetry-primary trade-off: any telemetry or USB dropout (as on 22 Oct) triggers the failsafe; the link and cable must be reliable.
+GCS "GCS Failsafe" item shows the same policy and Passed: Yes / No. GCS "GCS Link Drops" item shows 0 drops after 10 min connected: Yes / No.
+
+### 3. RC failsafe
+| Item | Value | OK? |
+|---|---|---|
+| Receiver failsafe (ELRS: "No pulses"; checked by switching the transmitter off — throttle in the GCS radio page drops to 0 / stops) | ______ | Yes / No |
+| Plane: THR_FAILSAFE (1) / THR_FS_VALUE (below RC3_MIN) / FS_SHORT_ACTN / FS_LONG_ACTN / FS_LONG_TIMEOUT | ______ | Yes / No |
+| Copter: FS_THR_ENABLE / FS_THR_VALUE | ______ | Yes / No |
+| GCS "Radio Failsafe" item Passed | ______ | Yes / No |
+
+### 4. Battery
+| Item | Value | OK? |
+|---|---|---|
+| Pack label on the pack matches the GCS pack registry | ______ | Yes / No |
+| BATT_CAPACITY equals the pack's rated mAh (GCS "Battery pack" item not warning) | ______ | Yes / No |
+| BATT_FS_LOW_ACT / BATT_LOW_VOLT / BATT_LOW_MAH, BATT_FS_CRT_ACT / BATT_CRT_VOLT | ______ | Yes / No |
+| Pre-flight estimate on the battery chip (min) | ______ | — |
+
+### 5. Sensors and attitude
+| Item | Value | OK? |
+|---|---|---|
+| Level at rest: roll and pitch within ±5° on the GCS (else AHRS_ORIENTATION + accelerometer calibration) | roll ___ pitch ___ | Yes / No |
+| Plane: airspeed sensor fitted and the GCS "Airspeed Sensor" item Passed, or ARSPD_TYPE = 0 (and flying on the estimate is accepted) | ARSPD_TYPE ___ | Yes / No |
+| Compass and GPS items Passed, satellites ___ , HDOP ___ | | Yes / No |
+| ARMING_CHECK = 1 (all checks) | ______ | Yes / No |
+
+### 6. Site and weather (measure on the day)
+| Item | Value | OK? |
+|---|---|---|
+| Observed wind (hand anemometer) / gusts, m/s | ___ / ___ | Yes / No |
+| GCS weather item (location shown is the field, not a default) | ______ | Yes / No |
+| Airspace / site permission recorded | ______ | Yes / No |
+
+### 7. Software
+| Item | Value | OK? |
+|---|---|---|
+| GCS build (commit / tag) | ______ | — |
+| SITL campaign (item 12) run logs reviewed for this build: custom/tools/sitl/runs/ | ______ | Yes / No |
+| Database backed up after the last field day | ______ | Yes / No |
+
+### Sign-off
+Operator: __________________ Signature: __________ Date: ______
+Safety pilot / instructor: __________________ Signature: __________ Date: ______
+Decision: **GO** / **NO-GO** Reason or accepted exceptions: ______________________________

@@ -119,6 +119,28 @@ public:
         m_summaryTimer.start();
     }
 
+    /// arm_source stored for a flight the GCS joined with the vehicle already armed.
+    static inline const QString kArmSourceAlreadyArmed = QStringLiteral("already_armed");
+
+    /// The vehicle was already armed when the GCS came to know it: the GCS
+    /// was restarted mid-flight (after a crash, its old row is closed as
+    /// crash_recovered at start-up), or the arm arrived before the vehicle's
+    /// UID, when armed() had no row to key the flight to. Neither case gives
+    /// another arm transition, so without this the rest of the flight is
+    /// never recorded. Opens the flight now, counted from this moment (the
+    /// start sample is taken now, so time and energy are the remainder), with
+    /// arm_source = already_armed because who armed it is not known. Does
+    /// nothing when a flight is already open or no connection is open.
+    /// Returns true when a flight was opened.
+    bool joinArmedFlight(FlightStart start)
+    {
+        if (m_flightId > 0 || m_connId <= 0 || m_deviceUid.isEmpty())
+            return false;
+        start.armSource = kArmSourceAlreadyArmed;
+        armed(start);
+        return m_flightId > 0;
+    }
+
     /// Vehicle removed or app exit. An open flight closes first: link_lost if
     /// the link was already gone, else @p reason.
     void connectionClosed(const QString &reason)
@@ -148,7 +170,8 @@ public:
         const Sample s = sample();
         m_startSample = s;
         m_startMah = s.mahConsumed;
-        m_minVoltage = s.voltage;
+        m_minVoltage = std::numeric_limits<double>::quiet_NaN();
+        noteVoltage(s.voltage);   // ignores 0 / NaN: no battery reading yet
         m_maxAltitude = s.altitudeM;
         m_maxVoltage = s.voltage;
         // F8: the pack as it was at arm; editing it later changes no flight.
@@ -223,6 +246,7 @@ public:
         if (m_flightId <= 0 || m_linkLost)
             return;   // during link loss the last summary stays the crash point
         const Sample s = sample();
+        adoptMissingBaseline(s);
         noteVoltage(s.voltage);
         noteAltitude(s.altitudeM);
         m_db.updateFlightRecordSummary(m_flightId, elapsedSec(MonotonicClock::nowMs()), m_minVoltage,
@@ -231,6 +255,25 @@ public:
 
 private:
     Sample sample() const { return m_sample ? m_sample() : Sample{}; }
+
+    /// A counter that was unknown when the flight opened starts counting from
+    /// the first sample that has it. That happens when the flight opens
+    /// before the first BATTERY_STATUS: a flight joined right after the GCS
+    /// started, or a battery monitor that starts reporting late. Without
+    /// this, energy, mAh and distance would stay unknown for the whole
+    /// flight; with it they cover the flight from that first sample on (at
+    /// most one summary interval is missed).
+    void adoptMissingBaseline(const Sample &s)
+    {
+        if (m_startSample.energyWh < 0 && s.energyWh >= 0)
+            m_startSample.energyWh = s.energyWh;
+        if (m_startMah < 0 && s.mahConsumed >= 0)
+            m_startMah = m_startSample.mahConsumed = s.mahConsumed;
+        if (m_startSample.distanceM < 0 && s.distanceM >= 0)
+            m_startSample.distanceM = s.distanceM;
+        if (!(m_startSample.voltage > 0) && s.voltage > 0)
+            m_startSample.voltage = s.voltage;
+    }
 
     void noteVoltage(double v)
     {
@@ -255,6 +298,7 @@ private:
     {
         const bool atLinkLoss = reason == QLatin1String("link_lost") && m_linkLostAtMs >= 0 && m_linkLost;
         const Sample s = sample();
+        adoptMissingBaseline(s);
         if (!atLinkLoss)
             noteVoltage(s.voltage);
         FlightEnd end;

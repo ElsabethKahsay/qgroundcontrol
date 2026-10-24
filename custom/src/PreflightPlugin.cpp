@@ -635,12 +635,26 @@ void PreflightPlugin::_onActiveVehicleChanged(Vehicle *vehicle)
             _sessionRecorder->connectionClosed(QStringLiteral("vehicle_removed"));
         } else if (VehicleLinkManager *links = vehicle->vehicleLinkManager()) {
             QPointer<Vehicle> v(vehicle);
+            // QGC reports the link back on the first message it receives, but
+            // the vehicle's armed flag only changes on the next HEARTBEAT (1 Hz).
+            // Asking "armed?" at once would say armed for a vehicle that landed
+            // and disarmed during the outage, and that flight would then close
+            // as an ordinary disarm at the moment the link returned. So the
+            // restore is handled kLinkRestoreSettleMs later: a disarm heartbeat
+            // in between closes the flight as link_lost at the moment of loss,
+            // and if the link drops again first, nothing is restored.
+            QPointer<VehicleLinkManager> lm(links);
             _linkLostConn = connect(links, &VehicleLinkManager::communicationLostChanged, _sessionRecorder,
-                                    [this, v](bool lost) {
-                if (lost)
+                                    [this, v, lm](bool lost) {
+                if (lost) {
                     _sessionRecorder->linkLost();
-                else
-                    _sessionRecorder->linkRestored(v && v->armed());
+                    return;
+                }
+                constexpr int kLinkRestoreSettleMs = 2500;
+                QTimer::singleShot(kLinkRestoreSettleMs, _sessionRecorder, [this, v, lm]() {
+                    if (lm && !lm->communicationLost())
+                        _sessionRecorder->linkRestored(v && v->armed());
+                });
             });
         }
     }
@@ -721,8 +735,19 @@ static QString sessionModeName()
     return QStringLiteral("None");
 }
 
+// _onGateOpened() opens the connection itself, and _openConnectionSession()
+// may open a flight through _onGateOpened(); these flags stop the two calling
+// each other in a loop and tell _onGateOpened() which kind of start it is.
+static bool s_openingFlight = false;
+static bool s_joiningArmedFlight = false;
+
 // Opens the connection session once the vehicle's UID (the vehicles-row key)
 // is known. A different UID closes the previous connection first.
+//
+// If the vehicle is already armed at that point and no flight is open, the
+// flight is opened here: either the GCS was started (or restarted after a
+// crash) while the vehicle flew, or the arm came before the UID was known.
+// No further arm transition will come in either case.
 void PreflightPlugin::_openConnectionSession()
 {
     if (!_sessionRecorder || !_telemetryBridge || !_telemetryBridge->vehicle())
@@ -733,6 +758,13 @@ void PreflightPlugin::_openConnectionSession()
     OperatorManager *ops = OperatorManager::instance();
     _sessionRecorder->connectionOpened(key, sessionModeName(), ops ? ops->currentOperatorName() : QString(),
                                        QCoreApplication::applicationVersion());
+    if (!s_openingFlight && _telemetryBridge->vehicle()->armed() && !_sessionRecorder->flightOpen()
+        && _sessionRecorder->connectionId() > 0) {
+        qCInfo(preflightPluginLog) << "Vehicle already armed when its UID became known: joining the flight";
+        s_joiningArmedFlight = true;
+        _onGateOpened();
+        s_joiningArmedFlight = false;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -743,7 +775,9 @@ void PreflightPlugin::_onGateOpened()
 {
     if (!_sessionRecorder)
         return;
+    s_openingFlight = true;
     _openConnectionSession();   // no-op when already open for this vehicle
+    s_openingFlight = false;
 
     SessionRecorder::FlightStart start;
     start.batterySerial = _vehicleProfileManager ? _vehicleProfileManager->currentBatterySerial() : QString();
@@ -764,7 +798,13 @@ void PreflightPlugin::_onGateOpened()
     // Bench: Testing mode, a bench force-arm, or a motor test in progress.
     start.bench = start.mode == QLatin1String("Testing") || source == ArmStateTracker::ArmSource::ForceToken
                || (_hardwareTestController && _hardwareTestController->isRunning());
-    _sessionRecorder->armed(start);
+    if (s_joiningArmedFlight) {
+        // Who armed is unknown, so no force-arm bench flag from a stale source.
+        start.bench = start.mode == QLatin1String("Testing");
+        _sessionRecorder->joinArmedFlight(start);
+    } else {
+        _sessionRecorder->armed(start);
+    }
 
     const int flightId = _sessionRecorder->flightId();
     if (flightId > 0) {
