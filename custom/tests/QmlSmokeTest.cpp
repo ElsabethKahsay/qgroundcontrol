@@ -58,6 +58,10 @@
 #include "Comms/MockLink/MockLink.h"
 
 #include <QGeoCoordinate>
+#include <QFontMetricsF>
+#include <QGuiApplication>
+#include <QSqlDatabase>
+#include <QSqlQuery>
 
 // ---------------------------------------------------------------------------
 // Harness: unit-test mode skips the normal app boot, so PreflightPlugin::init()
@@ -1248,6 +1252,8 @@ private slots:
     void testForceArmNeedsPackOrWaiver();
     void testWaiverKeptAcrossBenchArmClearedAfterFlight();
     void testFlyViewTargetDistanceFromVehicle();
+    void testPayloadEnteredIsOnTheFlightRecord();
+    void testToolbarShowsOneSharpLogo();
 
 private:
     bool _connectPlane();
@@ -1413,6 +1419,113 @@ void LivePluginBenchTest::testFlyViewTargetDistanceFromVehicle()
     QVERIFY2(value.startsWith(QString::number(qRound(dist))), qPrintable(value));
 
     strip->setParentItem(nullptr);
+}
+
+// The payload the pilot enters in the checklist is written on the flight
+// record when the vehicle arms, and the entry is forgotten when the vehicle
+// goes away.
+void LivePluginBenchTest::testPayloadEnteredIsOnTheFlightRecord()
+{
+    QVERIFY2(_connectPlane(), "mock plane did not connect / resolve its UID");
+    auto *mgr = _pluginChild<PreflightManager>();
+    QVERIFY(mgr);
+    AbstractCheck *item = nullptr;
+    for (AbstractCheck *c : mgr->checks())
+        if (c && c->id() == QLatin1String("airframe.payload"))
+            item = c;
+    QVERIFY2(item, "no airframe.payload item in the live roster");
+    QVERIFY(!item->mandatory());
+
+    VehicleProfileManager *vpm = VehicleProfileManager::instance();
+    QVERIFY(vpm->enterPayloadWeightKg(1.35));
+    QCOMPARE(item->status(), CheckStatus::Passed);
+
+    const QString uid = vpm->currentDeviceUid();
+    FlightSession::instance()->setMode(QStringLiteral("FLIGHT"));
+    _vehicle->setArmed(true, false);
+    QVERIFY(_waitArmed(true));
+
+    double logged = -1;
+    for (int i = 0; i < 100 && logged < 0; ++i) {
+        QTest::qWait(50);
+        QSqlQuery q(QSqlDatabase::database());
+        q.prepare(QStringLiteral("SELECT payload_weight_kg FROM flight_sessions WHERE device_uid = ? "
+                                 "AND ended_at IS NULL ORDER BY id DESC LIMIT 1"));
+        q.addBindValue(uid);
+        if (q.exec() && q.next())
+            logged = q.value(0).toDouble();
+    }
+    QVERIFY2(qFuzzyCompare(logged, 1.35), qPrintable(QStringLiteral("flight record payload = %1").arg(logged)));
+
+    _vehicle->setArmed(false, false);
+    QVERIFY(_waitArmed(false));
+
+    _disconnectMockLink();
+    for (int i = 0; i < 100 && vpm->payloadEntered(); ++i)
+        QTest::qWait(50);
+    QVERIFY2(!vpm->payloadEntered(), "the payload entry survived the vehicle going away");
+}
+
+// The Fly-view toolbar shows one logo, on the left: the transparent Skywin
+// PNG at qrc:/custom/brand/logo, drawn at its own aspect ratio (the stock
+// button squeezed it into a square). The right-hand brand image is gone.
+// Set SKYWIN_TOOLBAR_GRAB=<file.png> to save a picture of the toolbar.
+static double ScreenTools_defaultFontPixelHeight()
+{
+    return QFontMetricsF(QGuiApplication::font()).height();
+}
+
+static void collectImages(QQuickItem *item, QList<QQuickItem *> &out)
+{
+    if (!item) return;
+    if (item->inherits("QQuickImage")) out << item;
+    for (QQuickItem *c : item->childItems()) collectImages(c, out);
+}
+
+void LivePluginBenchTest::testToolbarShowsOneSharpLogo()
+{
+    QVERIFY2(_connectPlane(), "mock plane did not connect / resolve its UID");
+    QSharedPointer<QQmlApplicationEngine> engine(QGCCorePlugin::instance()->createQmlApplicationEngine(nullptr));
+    QVERIFY(engine);
+    QGCPalette palette;
+    engine->rootContext()->setContextProperty(QStringLiteral("qgcPal"), &palette);
+    QSharedPointer<QQuickWindow> window(createWindow(engine, 1280, 120));
+    QDir src(QCoreApplication::applicationDirPath());
+    const QString rel = QStringLiteral("custom/qml/QGroundControl/Controls/FlyViewToolBar.qml");
+    for (int i = 0; i < 4 && !QFileInfo::exists(src.filePath(rel)); ++i)
+        src.cdUp();
+    QString err;
+    QSharedPointer<QQuickItem> bar(createComponent(engine, window.data(), src.filePath(rel).toUtf8().constData(), &err));
+    QVERIFY2(bar, qPrintable(err));
+    bar->setWidth(1280);
+    pumpQml(800);
+
+    QList<QQuickItem *> images;
+    collectImages(bar.data(), images);
+    QQuickItem *logo = nullptr;
+    QStringList brandSources;
+    for (QQuickItem *img : images) {
+        const QString source = img->property("source").toUrl().toString();
+        if (source == QLatin1String("qrc:/custom/brand/logo"))
+            logo = img;
+        if (source.contains(QLatin1String("brand")) || source.contains(QLatin1String("QGCLogo")))
+            brandSources << source;
+    }
+    QVERIFY2(logo, "no Image showing qrc:/custom/brand/logo in the toolbar");
+    QCOMPARE(brandSources.size(), 1);                                  // one logo, no right-hand brand image
+    QCOMPARE(logo->property("status").toInt(), 1);                     // Image.Ready: the PNG decodes
+    QCOMPARE(logo->property("sourceSize").toSize(), QSize(637, 231));  // the full-resolution file
+    // The button stretches the logo's box to its own height; what is painted
+    // inside keeps the logo's shape.
+    const double pw = logo->property("paintedWidth").toDouble();
+    const double ph = logo->property("paintedHeight").toDouble();
+    QVERIFY2(pw > ph * 2.5 && ph >= ScreenTools_defaultFontPixelHeight(),
+             qPrintable(QStringLiteral("logo painted %1 x %2").arg(pw).arg(ph)));
+
+    const QString grabTo = qEnvironmentVariable("SKYWIN_TOOLBAR_GRAB");
+    if (!grabTo.isEmpty())
+        window->grabWindow().save(grabTo);
+    bar->setParentItem(nullptr);
 }
 
 UT_REGISTER_TEST(MotorCheckPanelSmokeTest)

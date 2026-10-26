@@ -35,6 +35,11 @@ Page {
         id: batteryPackDialog
         parent: Overlay.overlay
     }
+    // Opened by the "Payload" item (Airframe & Physical).
+    CE.ChecklistEngine.PayloadDialog {
+        id: payloadDialog
+        parent: Overlay.overlay
+    }
 
     // ── Vehicle-type gate for the checklist "Next" flow ─────────────────────
     // Explicit enumeration of the airframes that take Next → Gimbal Test.
@@ -599,17 +604,23 @@ Page {
                                                                                     // Confirm when still failing.
                                                                                     Button {
                                                                                         readonly property bool isPackCheck: chk && chk.checkId === "power.battery.pack"
-                                                                                        // The pack item stays clickable once passed, to change the pack.
-                                                                                        visible: ((isManual || isAction) && !isPassed) || isPackCheck
-                                                                                        text: isPackCheck ? (isPassed ? qsTr("Change") : qsTr("Select")) : isManual ? "Confirm" : "Run"
+                                                                                        readonly property bool isPayloadCheck: chk && chk.checkId === "airframe.payload"
+                                                                                        // The pack and payload items stay clickable once passed, to change them.
+                                                                                        visible: ((isManual || isAction) && !isPassed) || isPackCheck || isPayloadCheck
+                                                                                        text: isPackCheck ? (isPassed ? qsTr("Change") : qsTr("Select"))
+                                                                                              : isPayloadCheck ? (isPassed ? qsTr("Change") : qsTr("Enter"))
+                                                                                              : isManual ? "Confirm" : "Run"
                                                                                         highlighted: true
                                                                                         font.pixelSize: Config.fontSizeSmall
                                                                                         Layout.preferredHeight: 26
-                                                                                        Layout.preferredWidth: isPackCheck ? 64 : 54
+                                                                                        Layout.preferredWidth: (isPackCheck || isPayloadCheck) ? 64 : 54
                                                                                         onClicked: {
                                                                                             if (isPackCheck) {
                                                                                                 // Never confirm(): only choosing a pack passes it.
                                                                                                 batteryPackDialog.open();
+                                                                                            } else if (isPayloadCheck) {
+                                                                                                // Only an entered weight passes it.
+                                                                                                payloadDialog.open();
                                                                                             } else if (isAction) {
                                                                                                 var c = PreflightManager.checkById(chk.checkId);
                                                                                                 if (c) {

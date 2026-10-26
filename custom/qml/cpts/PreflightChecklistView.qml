@@ -44,6 +44,11 @@ Rectangle {
         id: batteryPackDialog
         parent: Overlay.overlay
     }
+    // Opened by the "Payload" item (Airframe & Physical).
+    CE.ChecklistEngine.PayloadDialog {
+        id: payloadDialog
+        parent: Overlay.overlay
+    }
     property var _expandedChecks: ({})
 
     // ── Vehicle-type aware "Next → Gimbal Test" flow ───────────────────────
@@ -712,9 +717,11 @@ Rectangle {
                                                     visible: isAction
                                                     check: checkObject
                                                     readonly property bool isPackCheck: checkId === "power.battery.pack"
+                                                    readonly property bool isPayloadCheck: checkId === "airframe.payload"
                                                     actionLabel: isPackCheck ? (status === 1 ? qsTr("Change battery pack") : qsTr("Select battery pack"))
+                                                                 : isPayloadCheck ? (status === 1 ? qsTr("Change payload") : qsTr("Enter payload"))
                                                                  : actionButtonText.length > 0 ? actionButtonText : "Run"
-                                                    repeatable: isPackCheck
+                                                    repeatable: isPackCheck || isPayloadCheck
                                                     running: root._runningChecks[checkId] === true
                                                     Layout.fillWidth: true
                                                     Layout.leftMargin: 8
@@ -723,6 +730,10 @@ Rectangle {
                                                     onActionTriggered: function(cid) {
                                                         if (isPackCheck) {
                                                             batteryPackDialog.open()
+                                                            return
+                                                        }
+                                                        if (isPayloadCheck) {
+                                                            payloadDialog.open()
                                                             return
                                                         }
                                                         root._runningChecks[cid] = true

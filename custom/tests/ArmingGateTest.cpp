@@ -7,6 +7,7 @@
 #include "ArmingGate.h"
 #include "AbstractCheck.h"
 #include "core/BatteryPackCheck.h"
+#include "core/PayloadCheck.h"
 #include "PreflightManager.h"
 #include "VehicleProfileManager.h"
 #include "utils/DatabaseManager.h"
@@ -36,6 +37,7 @@ private slots:
     void testNoBatteryPackIsHardBlock();
     void testBatteryPackCheckFollowsSelection();
     void testBatteryPackWaiverAllowsArmWithoutEstimate();
+    void testPayloadItemNeedsAnEnteredWeight();
     void testBatteryPackWarnsOnFcCapacityMismatch();
 
 private:
@@ -339,6 +341,45 @@ void ArmingGateTest::testBatteryPackWaiverAllowsArmWithoutEstimate()
     QCOMPARE(pack->status(), CheckStatus::Passed);
 
     delete mgr;
+}
+
+// The Payload item passes only once the pilot has entered a weight (0 kg =
+// none); a generic confirm cannot pass it, and it never blocks arming. The
+// profile manager accepts only finite, non-negative weights and forgets the
+// entry on a vehicle change.
+void ArmingGateTest::testPayloadItemNeedsAnEnteredWeight()
+{
+    VehicleProfileManager vpm;
+    PayloadCheck check([&vpm]() -> QVariantMap {
+        return {{QStringLiteral("entered"), vpm.payloadEntered()},
+                {QStringLiteral("kg"), vpm.currentPayloadWeightKg()}};
+    });
+    QObject::connect(&vpm, &VehicleProfileManager::payloadWeightChanged, &check, [&check]() { check.evaluate(); });
+
+    QVERIFY(!check.mandatory());
+    QCOMPARE(check.status(), CheckStatus::Pending);
+    check.confirm(QStringLiteral("Action completed"));
+    QCOMPARE(check.status(), CheckStatus::Pending);
+
+    QVERIFY(!vpm.enterPayloadWeightKg(-0.5));
+    QVERIFY(!vpm.enterPayloadWeightKg(qQNaN()));
+    QVERIFY(!vpm.payloadEntered());
+    QCOMPARE(check.status(), CheckStatus::Pending);
+
+    QVERIFY(vpm.enterPayloadWeightKg(0.0));          // "No payload" is an entry too
+    QVERIFY(vpm.payloadEntered());
+    QCOMPARE(check.status(), CheckStatus::Passed);
+    QCOMPARE(check.message(), QStringLiteral("No payload (0 kg)"));
+
+    QVERIFY(vpm.enterPayloadWeightKg(1.2));
+    QCOMPARE(vpm.currentPayloadWeightKg(), 1.2);
+    QCOMPARE(check.status(), CheckStatus::Passed);
+    QCOMPARE(check.message(), QStringLiteral("1.20 kg payload"));
+
+    vpm.clearPayloadEntry();
+    QVERIFY(!vpm.payloadEntered());
+    QCOMPARE(vpm.currentPayloadWeightKg(), 0.0);
+    QCOMPARE(check.status(), CheckStatus::Pending);
 }
 
 // The FC's BATT_CAPACITY must match the fitted pack, or its % and battery

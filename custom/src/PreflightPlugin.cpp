@@ -52,6 +52,7 @@ int qInitResources_qmlcache_VehicleSetupModule();
 #include "adapters/TelemetryBridge.h"
 #include "core/ArmingGate.h"
 #include "core/BatteryPackCheck.h"
+#include "core/PayloadCheck.h"
 #include "core/SessionRecorder.h"
 #include "Vehicle/VehicleLinkManager.h"
 #include "core/ChecklistEngine.h"
@@ -303,6 +304,19 @@ void PreflightPlugin::init()
     // vehicle's parameters (BATT_CAPACITY) have loaded.
     connect(_telemetryBridge, &TelemetryBridge::parametersReadyChanged,
             packCheck, [packCheck](bool) { packCheck->evaluate(); });
+
+    // What the aircraft carries this flight ("Payload", Airframe & Physical).
+    // The weight goes on the flight record at arm; the item does not block
+    // arming.
+    auto *payloadCheck = new PayloadCheck([this]() -> QVariantMap {
+        if (!_vehicleProfileManager)
+            return {};
+        return {{QStringLiteral("entered"), _vehicleProfileManager->payloadEntered()},
+                {QStringLiteral("kg"), _vehicleProfileManager->currentPayloadWeightKg()}};
+    }, _preflightManager);
+    _preflightManager->addCheck(payloadCheck);
+    connect(_vehicleProfileManager, &VehicleProfileManager::payloadWeightChanged,
+            payloadCheck, [payloadCheck]() { payloadCheck->evaluate(); });
 
     // --- Vehicle registry signals ---
     // knownVehicleConnected: a previously-seen vehicle reconnected; load its saved config.
@@ -634,8 +648,10 @@ void PreflightPlugin::_onActiveVehicleChanged(Vehicle *vehicle)
     // vehicle's failing checks; it must not carry over to the next one.
     if (_armingGate)
         _armingGate->resetGate();
-    if (_vehicleProfileManager)
+    if (_vehicleProfileManager) {
         _vehicleProfileManager->clearBatteryPackWaiver();
+        _vehicleProfileManager->clearPayloadEntry();   // the next aircraft carries its own
+    }
     _trainer.reset();   // the first value on the new link is the instructor position
     emit trainerChanged();
     // Link loss keeps the flight open; vehicle removal closes

@@ -231,6 +231,90 @@ QtObject {
             + d.getSeconds().toString().padStart(2, "0")
     }
 
+    // Enter what the aircraft carries this flight (the "Payload" item, both
+    // checklist pages). Weight only, in kg; the aircraft's own weight is set in
+    // Vehicle Management. 0 = no payload. The weight goes on the flight record
+    // at arm. An inline component, so no new qrc entry.
+    component PayloadDialog: Dialog {
+        id: payloadDialog
+        title:            qsTr("Payload")
+        modal:            true
+        closePolicy:      Popup.CloseOnEscape
+        anchors.centerIn: Overlay.overlay
+        width:            Math.min(380, (parent ? parent.width : 380) - 32)
+
+        readonly property var _vpm: (typeof VehicleProfileManager !== "undefined") ? VehicleProfileManager : null
+        readonly property real _kg: Number(kgField.text.replace(",", "."))
+        readonly property bool _valid: kgField.text.trim().length > 0 && isFinite(_kg) && _kg >= 0 && _kg <= 100
+
+        onAboutToShow: {
+            kgField.text = (_vpm && _vpm.payloadEntered) ? _vpm.currentPayloadWeightKg.toFixed(2) : ""
+            kgField.forceActiveFocus()
+        }
+
+        function _save(kg) {
+            if (_vpm && _vpm.enterPayloadWeightKg(kg))
+                payloadDialog.close()
+        }
+
+        ColumnLayout {
+            width:   parent.width
+            spacing: Config.spacingMedium
+
+            Text {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: qsTr("Weight of what the aircraft carries on this flight (camera, gimbal, cargo), "
+                           + "not the aircraft itself. It is saved on the flight record.")
+                font.pixelSize: Config.fontSizeSmall
+                color: Colors.textPrimary
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Text { font.pixelSize: Config.fontSizeSmall; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Payload (kg):") }
+                TextField {
+                    id: kgField
+                    Layout.fillWidth: true
+                    placeholderText: qsTr("e.g. 1.2")
+                    inputMethodHints: Qt.ImhFormattedNumbersOnly
+                    onAccepted: if (payloadDialog._valid) payloadDialog._save(payloadDialog._kg)
+                }
+            }
+
+            Text {
+                visible: kgField.text.trim().length > 0 && !payloadDialog._valid
+                Layout.fillWidth: true
+                text: qsTr("Enter a weight between 0 and 100 kg.")
+                font.pixelSize: Config.fontSizeSmall
+                color: Colors.error
+                wrapMode: Text.WordWrap
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Config.spacingSmall
+                Button {
+                    text: qsTr("Cancel")
+                    Layout.fillWidth: true
+                    onClicked: payloadDialog.close()
+                }
+                Button {
+                    text: qsTr("No payload")
+                    Layout.fillWidth: true
+                    onClicked: payloadDialog._save(0)
+                }
+                Button {
+                    text: qsTr("Save")
+                    highlighted: true
+                    enabled: payloadDialog._valid
+                    Layout.fillWidth: true
+                    onClicked: payloadDialog._save(payloadDialog._kg)
+                }
+            }
+        }
+    }
+
     // Pick (or register) the battery pack fitted for this
     // flight. Used by both checklist pages (PreflightChecklistView and
     // pages/PreFlightChecklist). Choosing a pack stores its rated config,

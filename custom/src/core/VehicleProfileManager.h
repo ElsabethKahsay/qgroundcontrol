@@ -43,6 +43,8 @@ class VehicleProfileManager : public QObject {
     Q_PROPERTY(QString batteryPackWaivedBy READ batteryPackWaivedBy NOTIFY currentBatteryChanged)
     Q_PROPERTY(int currentFlightSessionId READ currentFlightSessionId NOTIFY currentVehicleChanged)
     Q_PROPERTY(double currentPayloadWeightKg READ currentPayloadWeightKg WRITE setPayloadWeightKg NOTIFY payloadWeightChanged)
+    /// The pilot entered the payload for this connection (0 kg = none).
+    Q_PROPERTY(bool payloadEntered READ payloadEntered NOTIFY payloadWeightChanged)
     Q_PROPERTY(QString currentLocationName READ currentLocationName WRITE setLocationName NOTIFY locationNameChanged)
     Q_PROPERTY(double planLatitude READ planLatitude WRITE setPlanLatitude NOTIFY planLatitudeChanged)
     Q_PROPERTY(double planLongitude READ planLongitude WRITE setPlanLongitude NOTIFY planLongitudeChanged)
@@ -124,6 +126,12 @@ public:
 
     double currentPayloadWeightKg() const { return m_payloadWeightKg; }
     void setPayloadWeightKg(double kg);
+    bool payloadEntered() const { return m_payloadEntered; }
+    /// The pilot's payload entry: sets the weight (kg, >= 0) and marks it
+    /// entered. Returns false (nothing changes) for a negative or non-finite value.
+    Q_INVOKABLE bool enterPayloadWeightKg(double kg);
+    /// Forget the payload entry (vehicle change): weight back to 0, not entered.
+    void clearPayloadEntry();
 
     /// Sets the empty-airframe weight. Accepts "kg" (default) or "lbs" and
     /// converts to kg before persisting to vehicles.uav_weight_kg.
@@ -290,6 +298,7 @@ private:
     QString m_packWaivedBy;             ///< Pilot who waived the pack; empty when not waived.
     int m_flightSessionId = -1;
     double m_payloadWeightKg = 0.0;
+    bool m_payloadEntered = false;      ///< Set by enterPayloadWeightKg(), cleared on vehicle change.
     double m_uavWeightKg = 0.0;
     int m_batterySeriesCells = 6;       ///< N_series (default 6S).
     int m_batteryParallelCells = 1;     ///< N_parallel (default 1P).

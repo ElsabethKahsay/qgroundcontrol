@@ -17,6 +17,7 @@
 #include <QJsonObject>
 #include <QUuid>
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 #include "Vehicle.h"
@@ -600,6 +601,29 @@ void VehicleProfileManager::setPayloadWeightKg(double kg)
     if (m_flightSessionId > 0) {
         DatabaseManager::instance().updateFlightSessionPayload(m_flightSessionId, m_payloadWeightKg);
     }
+    emit payloadWeightChanged();
+}
+
+bool VehicleProfileManager::enterPayloadWeightKg(double kg)
+{
+    if (!std::isfinite(kg) || kg < 0.0)
+        return false;
+    const bool wasEntered = m_payloadEntered;
+    m_payloadEntered = true;
+    // qFuzzyCompare cannot compare against 0, hence the +1.
+    if (!qFuzzyCompare(m_payloadWeightKg + 1.0, kg + 1.0))
+        setPayloadWeightKg(kg);       // emits; also updates an open flight's record
+    else if (!wasEntered)
+        emit payloadWeightChanged();
+    return true;
+}
+
+void VehicleProfileManager::clearPayloadEntry()
+{
+    if (!m_payloadEntered && m_payloadWeightKg == 0.0)
+        return;
+    m_payloadEntered = false;
+    m_payloadWeightKg = 0.0;
     emit payloadWeightChanged();
 }
 
