@@ -17,7 +17,7 @@ public:
     GcsFailsafeCheck(TelemetryBridge *telemetry, QObject *parent = nullptr);
     void evaluate() override;
 
-    /// Policy stored for the current vehicle, or empty when none is stored.
+    /// Policy stored for the current vehicle; "rc_primary" when none is stored.
     QString policy() const;
     /// Store the policy for the current vehicle and re-evaluate.
     Q_INVOKABLE bool setPolicy(const QString &policy);

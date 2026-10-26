@@ -50,7 +50,7 @@ private slots:
     void testGcsFailsafeUsesPlaneParameterName();
     void testGcsFailsafeUsesCopterParameterName();
     void testGcsFailsafePolicyMatrix();
-    void testGcsFailsafeNoPolicyWarnsAndPolicyIsStoredPerVehicle();
+    void testGcsFailsafeDefaultsToRcPrimaryAndPolicyIsStored();
     void testGcsPolicyIsPerAirframeNotPerSystemId();
     void testSafetyCheckParametersAreWatched();
     void testRadioFailsafeReadsPlaneParameters();
@@ -597,9 +597,10 @@ void PreflightManagerTest::testGcsFailsafePolicyMatrix()
     clearGcsPolicy(check.id());
 }
 
-// No stored policy is a Warning; choosing one writes it for the current vehicle
-// and invalid choices are refused.
-void PreflightManagerTest::testGcsFailsafeNoPolicyWarnsAndPolicyIsStoredPerVehicle()
+// With nothing stored the airframe is RC-primary: GCS failsafe off passes, on
+// fails. Choosing a policy writes it for the current vehicle and invalid
+// choices are refused.
+void PreflightManagerTest::testGcsFailsafeDefaultsToRcPrimaryAndPolicyIsStored()
 {
     MockTelemetryBridge bridge;
     bridge.setConnected(true);
@@ -611,10 +612,15 @@ void PreflightManagerTest::testGcsFailsafeNoPolicyWarnsAndPolicyIsStoredPerVehic
                             QVariant(QStringLiteral("FixedWing"))));
     QVERIFY(setTestOverride(check, QStringLiteral("param_FS_GCS_ENABL"), QVariant(0.0)));
 
+    QCOMPARE(check.policy(), QStringLiteral("rc_primary"));
     check.evaluate();
-    QCOMPARE(check.status(), CheckStatus::Warning);
-    QCOMPARE(check.message(),
-             QStringLiteral("GCS-failsafe policy not chosen for this airframe"));
+    QVERIFY2(check.status() == CheckStatus::Passed, qPrintable(check.message()));
+
+    QVERIFY(setTestOverride(check, QStringLiteral("param_FS_GCS_ENABL"), QVariant(1.0)));
+    check.evaluate();
+    QVERIFY2(check.status() == CheckStatus::Failed, qPrintable(check.message()));
+
+    QVERIFY(setTestOverride(check, QStringLiteral("param_FS_GCS_ENABL"), QVariant(0.0)));
 
     QSignalSpy policySpy(&check, &GcsFailsafeCheck::policyChanged);
     QVERIFY(check.setPolicy(QStringLiteral("telemetry_primary")));

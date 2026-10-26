@@ -139,6 +139,10 @@ QString GcsFailsafeCheck::deviceUid() const
 // key the flight records use: key "policy@<uid>", no vehicle id. Until the UID
 // is known, and for a policy chosen before this change, the old key ("policy"
 // with the system id) is used so nothing already chosen is lost.
+//
+// The fleet flies RC-primary, so an airframe with nothing stored is treated as
+// RC-primary (GCS failsafe expected off). Telemetry-primary must be chosen on
+// the check card for that airframe.
 QString GcsFailsafeCheck::policy() const
 {
     QString stored;
@@ -149,9 +153,9 @@ QString GcsFailsafeCheck::policy() const
     if (stored != QLatin1String(kRcPrimary) && stored != QLatin1String(kTelemetryPrimary))
         stored = DatabaseManager::instance().getCheckConfig(m_id, QString::fromLatin1(kPolicyKey),
                                                             currentVehicleId());
-    if (stored == QLatin1String(kRcPrimary) || stored == QLatin1String(kTelemetryPrimary))
+    if (stored == QLatin1String(kTelemetryPrimary))
         return stored;
-    return {};
+    return QString::fromLatin1(kRcPrimary);
 }
 
 bool GcsFailsafeCheck::setPolicy(const QString &policy)
@@ -188,11 +192,6 @@ void GcsFailsafeCheck::evaluate()
     }
 
     const QString chosenPolicy = policy();
-    if (chosenPolicy.isEmpty()) {
-        setStatus(CheckStatus::Warning,
-                  QStringLiteral("GCS-failsafe policy not chosen for this airframe"));
-        return;
-    }
 
     const QString prop = QStringLiteral("param_") + param;
     if (!isParamAvailable(prop)) {
@@ -263,11 +262,6 @@ QStringList GcsFailsafeCheck::getFixSteps() const
         return {QStringLiteral("Connect an ArduPilot Plane or Copter; this check does not apply "
                                "to other vehicle types")};
     }
-    if (chosenPolicy.isEmpty()) {
-        return {QStringLiteral("Choose RC-primary or Telemetry-primary on this check card"),
-                QStringLiteral("Agree the policy for this airframe before changing %1").arg(param)};
-    }
-
     if (chosenPolicy == QLatin1String(kRcPrimary)) {
         return {QStringLiteral("Set %1 = 0 on the aircraft in QGC Parameters").arg(param),
                 QStringLiteral("Or choose Telemetry-primary on this card if the GCS link is the "
