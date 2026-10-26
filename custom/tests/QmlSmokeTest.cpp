@@ -988,6 +988,17 @@ void FlyQuickActionsSmokeTest::testTelemetryStripTargetIsLive()
             problems << QStringLiteral("Tgt row bound to %1").arg(value);
     }
     QVERIFY2(rows >= 2, "expected a Tgt row in both the 3- and 2-column layouts");
+    // The bearing has its own "Brg" row (degrees + compass point), not an
+    // "@" squeezed into the distance.
+    static const QRegularExpression brgRow(QStringLiteral("label:\\s*\"Brg\",\\s*value:\\s*([^,\\s]+),\\s*unit:\\s*([^,\\s]+)"));
+    int brgRows = 0;
+    for (auto it = brgRow.globalMatch(strip); it.hasNext(); ++brgRows) {
+        const auto bm = it.next();
+        if (bm.captured(1) != QLatin1String("_tgtBrgValue") || bm.captured(2) != QLatin1String("_tgtCompass"))
+            problems << QStringLiteral("Brg row bound to %1 / %2").arg(bm.captured(1), bm.captured(2));
+    }
+    QVERIFY2(brgRows >= 2, "expected a Brg row in both the 3- and 2-column layouts");
+    QVERIFY2(problems.isEmpty(), qPrintable(problems.join(QStringLiteral("; "))));
 
     QVERIFY2(gpsGroup.contains(QStringLiteral("Fact *lat ")) && !gpsGroup.contains(QStringLiteral("Fact *latitude")),
              "the stock GPS fact names changed; revisit this test");
@@ -1416,7 +1427,13 @@ void LivePluginBenchTest::testFlyViewTargetDistanceFromVehicle()
     QVERIFY2(qAbs(brg - here.azimuthTo(target)) < 1.0,
              qPrintable(QStringLiteral("strip bearing %1, expected %2").arg(brg).arg(here.azimuthTo(target))));
     QCOMPARE(unit, QStringLiteral("m"));
-    QVERIFY2(value.startsWith(QString::number(qRound(dist))), qPrintable(value));
+    QCOMPARE(value, QString::number(qRound(dist)));
+    // Bearing row: whole degrees and the 8-point compass direction.
+    const QString brgValue = strip->property("_tgtBrgValue").toString();
+    const QString compass = strip->property("_tgtCompass").toString();
+    QCOMPARE(brgValue, QStringLiteral("%1°").arg(qRound(brg) % 360));
+    static const char *const kPoints[] = { "N", "NE", "E", "SE", "S", "SW", "W", "NW" };
+    QCOMPARE(compass, QString::fromLatin1(kPoints[qRound(brg / 45.0) % 8]));
 
     strip->setParentItem(nullptr);
 }

@@ -78,6 +78,7 @@ private slots:
     void testPowerTypeRegistry();
     void testPowerTypeFlightRecords();
     void testPowerTypeUpgradeFromV24();
+    void testComplianceLogKeptWithoutVehicleDetails();
 };
 
 void DatabaseManagerTest::testInitialize()
@@ -1757,6 +1758,29 @@ void DatabaseManagerTest::testPowerTypeUpgradeFromV24()
         names << cols.value(1).toString();
     for (const char *col : { "power_type_id", "hover_min_empty", "charger_mah", "learning_state" })
         QVERIFY2(names.contains(QLatin1String(col)), col);
+}
+
+// The flight-end record is written with the device UID but no vehicle type
+// (the vehicle is often gone by then: link lost, app exit). compliance_logs
+// requires both, so the record must be kept under "unknown", not dropped.
+void DatabaseManagerTest::testComplianceLogKeptWithoutVehicleDetails()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    QTemporaryDir dir;
+    QVERIFY(db.initialize(dir.filePath(QStringLiteral("compliance.db"))));
+
+    QVERIFY(db.saveComplianceLog(QStringLiteral("session-60"), QStringLiteral("UAV-1-35b13a25"), QString(),
+                                 QString(), QStringLiteral("{\"endReason\":\"app_exit\"}"), QString()));
+    QVERIFY(db.saveComplianceLog(QStringLiteral("session-61"), QString(), QString(), QString(), QString(), QString()));
+
+    QSqlQuery q(QSqlDatabase::database());
+    QVERIFY(q.exec(QStringLiteral("SELECT log_id, vehicle_id, vehicle_type FROM compliance_logs ORDER BY log_id")));
+    QVERIFY(q.next());
+    QCOMPARE(q.value(0).toString(), QStringLiteral("session-60"));
+    QCOMPARE(q.value(1).toString(), QStringLiteral("UAV-1-35b13a25"));
+    QCOMPARE(q.value(2).toString(), QStringLiteral("unknown"));
+    QVERIFY(q.next());
+    QCOMPARE(q.value(1).toString(), QStringLiteral("unknown"));
 }
 
 UT_REGISTER_TEST(DatabaseManagerTest)

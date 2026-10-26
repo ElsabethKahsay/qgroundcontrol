@@ -741,11 +741,16 @@ bool DatabaseManager::saveComplianceLog(const QString &logId, const QString &veh
     query.prepare("INSERT INTO compliance_logs "
                   "(log_id, vehicle_id, vehicle_type, operator_id, checklist_json, telemetry_snapshot) "
                   "VALUES (?, ?, ?, ?, ?, ?)");
+    // vehicle_id, vehicle_type and checklist_json are NOT NULL, and an empty
+    // QString binds as NULL: a record written with no vehicle details (a
+    // flight closed after the link dropped or at app exit) would be refused
+    // and lost. It is kept under "unknown" instead.
+    const QString unknown = QStringLiteral("unknown");
     query.addBindValue(logId);
-    query.addBindValue(vehicleId);
-    query.addBindValue(vehicleType);
+    query.addBindValue(vehicleId.trimmed().isEmpty() ? unknown : vehicleId);
+    query.addBindValue(vehicleType.trimmed().isEmpty() ? unknown : vehicleType);
     query.addBindValue(operatorId);
-    query.addBindValue(logJson);
+    query.addBindValue(logJson.isEmpty() ? QStringLiteral("{}") : logJson);
     query.addBindValue(telemetrySnapshot);
     
     if (!query.exec()) {

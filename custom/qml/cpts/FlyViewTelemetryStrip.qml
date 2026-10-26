@@ -97,8 +97,9 @@ Item {
 
     // Target: the location saved on the gimbal page (FlightSession keeps it on
     // the vehicle's row, and on the flight's once one is open). The cell shows
-    // the live great-circle distance from the vehicle's GPS position, and the
-    // bearing to it; "--" with no target saved or no GPS fix.
+    // the live great-circle distance from the vehicle's GPS position ("Tgt",
+    // m below 1 km, then km) and the bearing to it ("Brg", degrees true plus
+    // the 8-point compass direction); "--" with no target saved or no GPS fix.
     readonly property real   _tgtLat:  FlightSession.targetLat
     readonly property real   _tgtLon:  FlightSession.targetLon
     readonly property bool   _hasTgt:  !isNaN(_tgtLat) && !isNaN(_tgtLon)
@@ -106,8 +107,9 @@ Item {
     readonly property real   _tgtBrg:  _tgtDist >= 0 ? _bearing(_currLat, _currLon, _tgtLat, _tgtLon) : -1
     readonly property string _tgtValue: _tgtDist < 0 ? "--"
                                         : (_tgtDist < 1000 ? _tgtDist.toFixed(0) : (_tgtDist / 1000).toFixed(2))
-                                          + (_tgtBrg >= 0 ? " @" + _tgtBrg.toFixed(0) + "°" : "")
     readonly property string _tgtUnit:  _tgtDist < 0 ? "" : _tgtDist < 1000 ? "m" : "km"
+    readonly property string _tgtBrgValue: _tgtBrg < 0 ? "--" : Math.round(_tgtBrg) % 360 + "°"
+    readonly property string _tgtCompass:  _tgtBrg < 0 ? "" : _compassPoint(_tgtBrg)
 
     // The saved target is read from the database for the vehicle that is
     // connected, so reload it when the vehicle (or the open flight) changes.
@@ -119,6 +121,11 @@ Item {
     Connections {
         target: FlightSession
         function onFlightIdChanged() { FlightSession.reloadTargetLocation() }
+    }
+
+    // 8-point compass direction for a bearing: each point covers ±22.5°.
+    function _compassPoint(deg) {
+        return ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][Math.round(deg / 45) % 8]
     }
 
     // Initial bearing (degrees true, 0 = North) from point 1 to point 2.
@@ -322,6 +329,8 @@ Item {
                     { label: "Plan",  value: _planDist > 0 ? _formatVal(_planDist, 0) : "--",
                       unit: _planDist > 0 ? "m" : "", vcolor: Colors.accentCyan },
                     { label: "Tgt",  value: _tgtValue, unit: _tgtUnit,
+                      vcolor: _tgtDist >= 0 ? Colors.accentCyan : Colors.textSecondary },
+                    { label: "Brg",  value: _tgtBrgValue, unit: _tgtCompass,
                       vcolor: _tgtDist >= 0 ? Colors.accentCyan : Colors.textSecondary }
                 ]
             }
@@ -370,6 +379,9 @@ Item {
                       unit: "m",    vcolor: Colors.accentCyan },
                     { label: "Tgt",
                       value: _tgtValue, unit: _tgtUnit,
+                      vcolor: _tgtDist >= 0 ? Colors.accentCyan : Colors.textSecondary },
+                    { label: "Brg",
+                      value: _tgtBrgValue, unit: _tgtCompass,
                       vcolor: _tgtDist >= 0 ? Colors.accentCyan : Colors.textSecondary }
                 ]
             }
