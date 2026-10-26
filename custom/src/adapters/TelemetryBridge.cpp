@@ -1455,7 +1455,9 @@ QString TelemetryBridge::forceArm(const QString &pilotName, const QString &reaso
         entry[QStringLiteral("timestamp")] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
         DatabaseManager::instance().saveComplianceLog(
             QStringLiteral("force-arm-%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)),
-            _vehicle ? QString::number(_vehicle->id()) : QString(),
+            // compliance_logs.vehicle_id is NOT NULL: a refusal with no
+            // vehicle connected is still kept, under "unknown".
+            _vehicle ? QString::number(_vehicle->id()) : QStringLiteral("unknown"),
             _vehicle ? _vehicle->vehicleTypeString() : QStringLiteral("unknown"), pilot,
             QString::fromUtf8(QJsonDocument(entry).toJson(QJsonDocument::Compact)), QString());
     };
@@ -1500,9 +1502,7 @@ QString TelemetryBridge::forceArm(const QString &pilotName, const QString &reaso
     // consumes it — any other arm inside the window (the stock force-arm chain
     // included) is denied. This is the only gate relevant to the outbound
     // force-arm path. PreflightPlugin's mavlinkMessage() intercepts only INBOUND
-    // commands from link peers and does not see this locally-sent command. If no
-    // gate is registered, the command is sent unconditionally (legacy behavior
-    // for mock testing).
+    // commands from link peers and does not see this locally-sent command.
     // A token left over from an earlier attempt must never authorize this one.
     _vehicle->setArmOverrideToken(0);
 

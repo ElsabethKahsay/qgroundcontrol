@@ -52,6 +52,12 @@
 #include "HardwareTestController.h"
 #include "mocks/MockTelemetryBridge.h"
 #include "QGCPalette.h"
+#include "FlightSession.h"
+#include "TelemetryBridge.h"
+#include "VehicleProfileManager.h"
+#include "Comms/MockLink/MockLink.h"
+
+#include <QGeoCoordinate>
 
 // ---------------------------------------------------------------------------
 // Harness: unit-test mode skips the normal app boot, so PreflightPlugin::init()
@@ -1215,9 +1221,204 @@ void ChecklistPagesSmokeTest::testFlyChecklistShowsBatteryPack()
     QVERIFY2(texts.contains(QStringLiteral("Select")), qPrintable(texts.join(QStringLiteral(" | "))));
 }
 
+// ===========================================================================
+// LivePluginBenchTest — the real PreflightPlugin (gate, bridge, checks,
+// session recorder) against QGC's mock ArduPilot plane: the pack rule on the
+// real force-arm path, the pack waiver across a bench arm, and the Fly-view
+// info box's target distance from the vehicle's live position.
+//
+// Under the unit-test harness the bridge does not install the gate's arm
+// interceptor on mock vehicles, so the test installs the live gate's own.
+// ===========================================================================
+class LivePluginBenchTest : public UnitTest {
+    Q_OBJECT
+
+private slots:
+    void init() override { UnitTest::init(); preflightInitOnce(); }
+    void cleanup() override
+    {
+        if (_vehicle)
+            _vehicle->setArmCommandInterceptor({});
+        if (auto *vpm = VehicleProfileManager::instance())
+            vpm->clearBatteryPackWaiver();
+        _disconnectMockLink();
+        UnitTest::cleanup();
+    }
+
+    void testForceArmNeedsPackOrWaiver();
+    void testWaiverKeptAcrossBenchArmClearedAfterFlight();
+    void testFlyViewTargetDistanceFromVehicle();
+
+private:
+    bool _connectPlane();
+    bool _waitArmed(bool armed, int ms = 10000);
+    template <typename T> static T *_pluginChild()
+    {
+        const auto all = PreflightPlugin::instance()->findChildren<T *>();
+        return all.size() == 1 ? all.first() : nullptr;
+    }
+};
+
+bool LivePluginBenchTest::_connectPlane()
+{
+    _connectMockLink(MAV_AUTOPILOT_ARDUPILOTMEGA);
+    if (!_vehicle || !_mockLink)
+        return false;
+    // The plugin resolves the device UID and the airframe kind after connect.
+    for (int i = 0; i < 100 && VehicleProfileManager::instance()->currentDeviceUid().isEmpty(); ++i)
+        QTest::qWait(50);
+    return !VehicleProfileManager::instance()->currentDeviceUid().isEmpty();
+}
+
+bool LivePluginBenchTest::_waitArmed(bool armed, int ms)
+{
+    for (int waited = 0; waited < ms; waited += 50) {
+        if (_vehicle->armed() == armed)
+            return true;
+        QTest::qWait(50);
+    }
+    return _vehicle->armed() == armed;
+}
+
+// The bench Force Arm button calls TelemetryBridge::forceArm(). With no pack
+// and no waiver the gate refuses it and nothing reaches the vehicle; once the
+// pilot waives the pack the same call arms.
+void LivePluginBenchTest::testForceArmNeedsPackOrWaiver()
+{
+    QVERIFY2(_connectPlane(), "mock plane did not connect / resolve its UID");
+    auto *gate = _pluginChild<ArmingGate>();
+    auto *bridge = _pluginChild<TelemetryBridge>();
+    auto *mgr = _pluginChild<PreflightManager>();
+    QVERIFY(gate && bridge && mgr);
+    VehicleProfileManager *vpm = VehicleProfileManager::instance();
+    vpm->setBatterySerial(QString());
+    vpm->clearBatteryPackWaiver();
+    FlightSession::instance()->setMode(QStringLiteral("TESTING"));
+    _vehicle->setArmCommandInterceptor(gate->makeArmInterceptor());
+
+    // The live roster must hold the pack item as a mandatory, failing check;
+    // otherwise the gate never sees a missing pack at all.
+    AbstractCheck *pack = nullptr;
+    for (AbstractCheck *c : mgr->checks())
+        if (c && c->id() == QLatin1String("power.battery.pack"))
+            pack = c;
+    QVERIFY2(pack, "no power.battery.pack check in the live roster");
+    for (int i = 0; i < 100 && !mgr->property("kindResolved").toBool() && !pack->mandatory(); ++i)
+        QTest::qWait(50);
+    QVERIFY2(pack->mandatory(), "the Battery pack item is not mandatory on the live roster");
+    QVERIFY(!gate->currentRequest(0).batteryPackSelected);
+
+    _mockLink->clearReceivedMavCommandCounts();
+    bridge->forceArm(QStringLiteral("Bench Pilot"), QStringLiteral("live pack test"));
+    QTest::qWait(1500);
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 0);
+    QVERIFY(!_vehicle->armed());
+
+    QVERIFY(vpm->waiveBatteryPack(QStringLiteral("Bench Pilot")));
+    QCOMPARE(pack->status(), CheckStatus::Warning);
+    QVERIFY(gate->currentRequest(0).batteryPackSelected);
+    const QString refusal = bridge->forceArm(QStringLiteral("Bench Pilot"), QStringLiteral("live pack test"));
+    QVERIFY2(_waitArmed(true), qPrintable(QStringLiteral("force arm with a waiver did not arm: ") + refusal));
+    QVERIFY(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM) >= 1);
+
+    _vehicle->setArmed(false, false);
+    QVERIFY(_waitArmed(false));
+}
+
+// The control-surface and motor tests force-arm and disarm on their own. Those
+// bench disarms keep the waiver; the disarm that ends a non-bench flight
+// clears it.
+void LivePluginBenchTest::testWaiverKeptAcrossBenchArmClearedAfterFlight()
+{
+    QVERIFY2(_connectPlane(), "mock plane did not connect / resolve its UID");
+    auto *gate = _pluginChild<ArmingGate>();
+    auto *bridge = _pluginChild<TelemetryBridge>();
+    QVERIFY(gate && bridge);
+    VehicleProfileManager *vpm = VehicleProfileManager::instance();
+    vpm->setBatterySerial(QString());
+    FlightSession::instance()->setMode(QStringLiteral("TESTING"));
+    _vehicle->setArmCommandInterceptor(gate->makeArmInterceptor());
+    QVERIFY(vpm->waiveBatteryPack(QStringLiteral("Bench Pilot")));
+
+    // Bench: a force arm and its disarm, twice (one per surface checked).
+    for (int i = 0; i < 2; ++i) {
+        const QString refusal = bridge->forceArm(QStringLiteral("Bench Pilot"), QStringLiteral("surface check"));
+        QVERIFY2(_waitArmed(true), qPrintable(refusal));
+        QTest::qWait(300);
+        _vehicle->setArmed(false, false);
+        QVERIFY(_waitArmed(false));
+        QTest::qWait(300);
+        QVERIFY2(vpm->batteryPackWaived(), "a bench disarm dropped the pack waiver");
+    }
+
+    // A flight: Flight mode, armed from the RC (no GCS gate on that path).
+    FlightSession::instance()->setMode(QStringLiteral("FLIGHT"));
+    _vehicle->setArmCommandInterceptor({});
+    _vehicle->setArmed(true, false);
+    QVERIFY(_waitArmed(true));
+    QTest::qWait(300);
+    _vehicle->setArmed(false, false);
+    QVERIFY(_waitArmed(false));
+    QTest::qWait(300);
+    QVERIFY2(!vpm->batteryPackWaived(), "the disarm after a flight kept the pack waiver");
+}
+
+// The Fly-view info box (the real FlyViewTelemetryStrip.qml) shows the
+// distance and bearing from the vehicle's live position to the target saved
+// on the gimbal page.
+void LivePluginBenchTest::testFlyViewTargetDistanceFromVehicle()
+{
+    QVERIFY2(_connectPlane(), "mock plane did not connect / resolve its UID");
+    for (int i = 0; i < 200 && !_vehicle->coordinate().isValid(); ++i)
+        QTest::qWait(50);
+    const QGeoCoordinate here = _vehicle->coordinate();
+    QVERIFY2(here.isValid(), "the mock vehicle reported no position");
+
+    // About 400 m to the north-east.
+    const QGeoCoordinate target(here.latitude() + 0.0025, here.longitude() + 0.0035);
+    QVERIFY2(FlightSession::instance()->saveTargetLocation(target.latitude(), target.longitude(),
+                                                           QStringLiteral("typed")),
+             qPrintable(FlightSession::instance()->lastTargetError()));
+
+    QSharedPointer<QQmlApplicationEngine> engine(QGCCorePlugin::instance()->createQmlApplicationEngine(nullptr));
+    QVERIFY(engine);
+    QGCPalette palette;
+    engine->rootContext()->setContextProperty(QStringLiteral("qgcPal"), &palette);
+    QSharedPointer<QQuickWindow> window(createWindow(engine, 1100, 700));
+    QDir src(QCoreApplication::applicationDirPath());
+    for (int i = 0; i < 4 && !QFileInfo::exists(src.filePath(QStringLiteral("custom/qml/cpts/FlyViewTelemetryStrip.qml"))); ++i)
+        src.cdUp();
+    const QString path = src.filePath(QStringLiteral("custom/qml/cpts/FlyViewTelemetryStrip.qml"));
+    QString err;
+    QSharedPointer<QQuickItem> strip(createComponent(engine, window.data(), path.toUtf8().constData(), &err));
+    QVERIFY2(strip, qPrintable(err));
+    strip->setProperty("activeVehicle", QVariant::fromValue(static_cast<QObject *>(_vehicle)));
+
+    double dist = -1;
+    for (int i = 0; i < 100 && dist < 0; ++i) {
+        pumpQml(50);
+        dist = strip->property("_tgtDist").toDouble();
+    }
+    const double expected = here.distanceTo(target);
+    const double brg = strip->property("_tgtBrg").toDouble();
+    const QString value = strip->property("_tgtValue").toString();
+    const QString unit = strip->property("_tgtUnit").toString();
+    QVERIFY2(dist > 0, qPrintable(QStringLiteral("Tgt shows %1 (GPS lock %2)")
+                                      .arg(value).arg(_vehicle->gpsFactGroup()->getFact(QStringLiteral("lock"))->rawValue().toInt())));
+    QVERIFY2(qAbs(dist - expected) < expected * 0.01,
+             qPrintable(QStringLiteral("strip %1 m, expected %2 m").arg(dist).arg(expected)));
+    QVERIFY2(qAbs(brg - here.azimuthTo(target)) < 1.0,
+             qPrintable(QStringLiteral("strip bearing %1, expected %2").arg(brg).arg(here.azimuthTo(target))));
+    QCOMPARE(unit, QStringLiteral("m"));
+    QVERIFY2(value.startsWith(QString::number(qRound(dist))), qPrintable(value));
+
+    strip->setParentItem(nullptr);
+}
+
 UT_REGISTER_TEST(MotorCheckPanelSmokeTest)
 UT_REGISTER_TEST(MainStatusIndicatorSmokeTest)
 UT_REGISTER_TEST(FlyQuickActionsSmokeTest)
 UT_REGISTER_TEST(ChecklistPagesSmokeTest)
+UT_REGISTER_TEST(LivePluginBenchTest)
 
 #include "QmlSmokeTest.moc"
