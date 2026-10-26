@@ -378,7 +378,8 @@ QtObject {
 
             // No registered pack for this flight: the pilot can waive the pack
             // and fly without a flight-time estimate. The waiver is logged
-            // with the pilot's name and lasts until disarm.
+            // with the pilot's name and lasts until the flight ends (bench
+            // motor and control-surface test arms keep it).
             RowLayout {
                 Layout.fillWidth: true
                 CheckBox { id: waiveBox }

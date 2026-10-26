@@ -691,6 +691,7 @@ private slots:
     void testNoQmlCallsGateOnlyForceArm();
     void testDisarmIsNeverForced();
     void testGuidedActionsOffExceptRtlAndLand();
+    void testTelemetryStripTargetIsLive();
 
 private:
     QSharedPointer<QQmlApplicationEngine> _engine;
@@ -940,6 +941,55 @@ void FlyQuickActionsSmokeTest::testDisarmIsNeverForced()
     }
     QVERIFY2(calls > 0, "expected the Fly-view Disarm to call VehicleProfileManager.disarmVehicle");
     QVERIFY2(offenders.isEmpty(), qPrintable(offenders.join(QLatin1Char('\n'))));
+}
+
+// The Fly-view info box's "Tgt" cells show the distance to the target saved
+// on the gimbal page. They read FlightSession's saved target and the vehicle's
+// position; every Tgt row must bind the computed value, not a fixed "--".
+// The stock GPS fact group names its position facts lat/lon, so a
+// gps.latitude / gps.longitude read (undefined) anywhere in the custom QML
+// leaves a distance cell blank.
+void FlyQuickActionsSmokeTest::testTelemetryStripTargetIsLive()
+{
+    _loadComponent();   // establishes the custom/ source root via _filePath
+
+    QDir root = QFileInfo(_filePath).dir();
+    QVERIFY2(root.cdUp() && root.cdUp(), "cannot locate custom/ source root");
+
+    auto readAll = [](const QString &path) {
+        QFile f(path);
+        return f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.readAll()) : QString();
+    };
+    const QString strip = readAll(root.filePath(QStringLiteral("qml/cpts/FlyViewTelemetryStrip.qml")));
+    const QString gpsGroup = readAll(root.filePath(QStringLiteral("../src/Vehicle/FactGroups/VehicleGPSFactGroup.h")));
+    QVERIFY2(!strip.isEmpty() && !gpsGroup.isEmpty(), "cannot read FlyViewTelemetryStrip.qml or VehicleGPSFactGroup.h");
+
+    QVERIFY2(strip.contains(QStringLiteral("FlightSession.targetLat"))
+                 && strip.contains(QStringLiteral("FlightSession.targetLon")),
+             "the Tgt cell no longer reads the saved target");
+    static const QRegularExpression tgtRow(QStringLiteral("label:\\s*\"Tgt\",\\s*value:\\s*([^,\\s]+)"));
+    int rows = 0;
+    QStringList problems;
+    auto m = tgtRow.globalMatch(strip);
+    while (m.hasNext()) {
+        const QString value = m.next().captured(1);
+        ++rows;
+        if (value != QLatin1String("_tgtValue"))
+            problems << QStringLiteral("Tgt row bound to %1").arg(value);
+    }
+    QVERIFY2(rows >= 2, "expected a Tgt row in both the 3- and 2-column layouts");
+
+    QVERIFY2(gpsGroup.contains(QStringLiteral("Fact *lat ")) && !gpsGroup.contains(QStringLiteral("Fact *latitude")),
+             "the stock GPS fact names changed; revisit this test");
+    QDirIterator it(root.filePath(QStringLiteral("qml")), QStringList{QStringLiteral("*.qml")},
+                    QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        const QString path = it.next();
+        const QString text = readAll(path);
+        if (text.contains(QStringLiteral("gps.latitude")) || text.contains(QStringLiteral("gps.longitude")))
+            problems << QStringLiteral("%1 reads gps.latitude/longitude (the facts are lat/lon)").arg(path);
+    }
+    QVERIFY2(problems.isEmpty(), qPrintable(problems.join(QLatin1Char('\n'))));
 }
 
 // RC-primary: in the Fly view the GCS may only send RTL or Land. Our FlyView.qml

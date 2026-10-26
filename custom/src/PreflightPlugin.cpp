@@ -748,6 +748,9 @@ static QString sessionModeName()
 // each other in a loop and tell _onGateOpened() which kind of start it is.
 static bool s_openingFlight = false;
 static bool s_joiningArmedFlight = false;
+// The arm that opened the current flight was a bench arm (Testing mode, force
+// arm, motor test). Read on disarm: a bench arm does not use up a pack waiver.
+static bool s_benchArm = false;
 
 // Opens the connection session once the vehicle's UID (the vehicles-row key)
 // is known. A different UID closes the previous connection first.
@@ -809,9 +812,11 @@ void PreflightPlugin::_onGateOpened()
     // Bench: Testing mode, a bench force-arm, or a motor test in progress.
     start.bench = start.mode == QLatin1String("Testing") || source == ArmStateTracker::ArmSource::ForceToken
                || (_hardwareTestController && _hardwareTestController->isRunning());
+    s_benchArm = start.bench;
     if (s_joiningArmedFlight) {
         // Who armed is unknown, so no force-arm bench flag from a stale source.
         start.bench = start.mode == QLatin1String("Testing");
+        s_benchArm = start.bench;
         _sessionRecorder->joinArmedFlight(start);
     } else {
         _sessionRecorder->armed(start);
@@ -986,9 +991,12 @@ void PreflightPlugin::_onGateClosed(const QString &reason)
     Q_UNUSED(reason)
     if (_sessionRecorder)
         _sessionRecorder->disarmed();
-    // A pack waiver covers one flight; the next one needs a pack or a new waiver.
-    if (_vehicleProfileManager)
+    // A pack waiver covers one flight; the next one needs a pack or a new
+    // waiver. Bench arms (the control-surface and motor tests force-arm and
+    // disarm on their own) keep it.
+    if (_vehicleProfileManager && !s_benchArm)
         _vehicleProfileManager->clearBatteryPackWaiver();
+    s_benchArm = false;
 }
 
 // ---------------------------------------------------------------------------

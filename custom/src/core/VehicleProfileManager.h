@@ -37,8 +37,8 @@ class VehicleProfileManager : public QObject {
     Q_PROPERTY(QString currentVehicleHistoryJson READ currentVehicleHistoryJson NOTIFY currentVehicleChanged)
     Q_PROPERTY(QString currentBatterySerial READ currentBatterySerial NOTIFY currentBatteryChanged)
     /// The pilot chose to fly without a registered pack and gave up the
-    /// battery flight-time estimate. Cleared by choosing a pack, by disarm and
-    /// by a vehicle change.
+    /// battery flight-time estimate. Cleared by choosing a pack, by the disarm
+    /// that ends a flight (bench test arms keep it) and by a vehicle change.
     Q_PROPERTY(bool batteryPackWaived READ batteryPackWaived NOTIFY currentBatteryChanged)
     Q_PROPERTY(QString batteryPackWaivedBy READ batteryPackWaivedBy NOTIFY currentBatteryChanged)
     Q_PROPERTY(int currentFlightSessionId READ currentFlightSessionId NOTIFY currentVehicleChanged)
@@ -236,7 +236,7 @@ public:
     /// waiver is written to compliance_logs. Returns false (nothing changes)
     /// when @p pilot is blank.
     Q_INVOKABLE bool waiveBatteryPack(const QString &pilot);
-    /// Drop the waiver (after disarm, or when the vehicle changes).
+    /// Drop the waiver (after a flight, or when the vehicle changes).
     void clearBatteryPackWaiver();
     Q_INVOKABLE QString loadVehicleHistory(const QString &deviceUid);
     Q_INVOKABLE QStringList knownVehicles();

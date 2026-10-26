@@ -77,8 +77,11 @@ Item {
     readonly property bool   _batStale: !!activeVehicle && VehicleTelemetry.batteryStale
     readonly property real   _distHome:   activeVehicle && activeVehicle.distanceToHome ? activeVehicle.distanceToHome.rawValue : 0
     readonly property real   _flightDist: activeVehicle && activeVehicle.flightDistance ? activeVehicle.flightDistance.rawValue : 0
-    readonly property real   _currLat:    activeVehicle && activeVehicle.gps ? activeVehicle.gps.latitude.rawValue : 0
-    readonly property real   _currLon:    activeVehicle && activeVehicle.gps ? activeVehicle.gps.longitude.rawValue : 0
+    // The vehicle's position (GLOBAL_POSITION_INT). The GPS fact group names
+    // its facts lat/lon, not latitude/longitude; NaN until a position arrives.
+    readonly property bool   _posValid:   !!activeVehicle && activeVehicle.coordinate.isValid
+    readonly property real   _currLat:    _posValid ? activeVehicle.coordinate.latitude  : NaN
+    readonly property real   _currLon:    _posValid ? activeVehicle.coordinate.longitude : NaN
     // ATTITUDE column: the gimbal's measured angles when a gimbal reports,
     // otherwise the UAV's own (ATTITUDE, radians -> degrees; yaw as heading).
     readonly property var    _tel:          (typeof TelemetryProvider !== "undefined" && TelemetryProvider) ? TelemetryProvider : null
@@ -91,6 +94,42 @@ Item {
         _currLat, _currLon,
         VehicleProfileManager.planLatitude,
         VehicleProfileManager.planLongitude)
+
+    // Target: the location saved on the gimbal page (FlightSession keeps it on
+    // the vehicle's row, and on the flight's once one is open). The cell shows
+    // the live great-circle distance from the vehicle's GPS position, and the
+    // bearing to it; "--" with no target saved or no GPS fix.
+    readonly property real   _tgtLat:  FlightSession.targetLat
+    readonly property real   _tgtLon:  FlightSession.targetLon
+    readonly property bool   _hasTgt:  !isNaN(_tgtLat) && !isNaN(_tgtLon)
+    readonly property real   _tgtDist: _hasTgt && _posValid && _lock >= 2 ? _haversine(_currLat, _currLon, _tgtLat, _tgtLon) : -1
+    readonly property real   _tgtBrg:  _tgtDist >= 0 ? _bearing(_currLat, _currLon, _tgtLat, _tgtLon) : -1
+    readonly property string _tgtValue: _tgtDist < 0 ? "--"
+                                        : (_tgtDist < 1000 ? _tgtDist.toFixed(0) : (_tgtDist / 1000).toFixed(2))
+                                          + (_tgtBrg >= 0 ? " @" + _tgtBrg.toFixed(0) + "°" : "")
+    readonly property string _tgtUnit:  _tgtDist < 0 ? "" : _tgtDist < 1000 ? "m" : "km"
+
+    // The saved target is read from the database for the vehicle that is
+    // connected, so reload it when the vehicle (or the open flight) changes.
+    Component.onCompleted: FlightSession.reloadTargetLocation()
+    Connections {
+        target: typeof VehicleProfileManager !== "undefined" ? VehicleProfileManager : null
+        function onCurrentVehicleChanged() { FlightSession.reloadTargetLocation() }
+    }
+    Connections {
+        target: FlightSession
+        function onFlightIdChanged() { FlightSession.reloadTargetLocation() }
+    }
+
+    // Initial bearing (degrees true, 0 = North) from point 1 to point 2.
+    function _bearing(lat1, lon1, lat2, lon2) {
+        var p1 = lat1 * Math.PI / 180
+        var p2 = lat2 * Math.PI / 180
+        var dl = (lon2 - lon1) * Math.PI / 180
+        var y = Math.sin(dl) * Math.cos(p2)
+        var x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl)
+        return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360
+    }
 
     // ── Haversine distance (meters) between two lat/lon points ─────
     function _haversine(lat1, lon1, lat2, lon2) {
@@ -282,8 +321,8 @@ Item {
                       unit: "m",    vcolor: Colors.accentCyan },
                     { label: "Plan",  value: _planDist > 0 ? _formatVal(_planDist, 0) : "--",
                       unit: _planDist > 0 ? "m" : "", vcolor: Colors.accentCyan },
-                    { label: "Tgt",  value: "--",
-                      vcolor: Colors.textSecondary }
+                    { label: "Tgt",  value: _tgtValue, unit: _tgtUnit,
+                      vcolor: _tgtDist >= 0 ? Colors.accentCyan : Colors.textSecondary }
                 ]
             }
 
@@ -330,8 +369,8 @@ Item {
                       value: _formatVal(_distHome, 0),
                       unit: "m",    vcolor: Colors.accentCyan },
                     { label: "Tgt",
-                      value: "--",
-                      vcolor: Colors.textSecondary }
+                      value: _tgtValue, unit: _tgtUnit,
+                      vcolor: _tgtDist >= 0 ? Colors.accentCyan : Colors.textSecondary }
                 ]
             }
 
