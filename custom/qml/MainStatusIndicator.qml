@@ -212,6 +212,12 @@ if (typeof TelemetryProvider !== 'undefined' && TelemetryProvider) {
                 _estRangeText = ""
                 return
             }
+            if (typeof VehicleProfileManager !== 'undefined' && VehicleProfileManager
+                    && VehicleProfileManager.batteryPackWaived) {
+                _estLabelColor = Colors.textDisabled
+                _estRangeText = "Est. \u2014 pack waived, no estimate"
+                return
+            }
             var deviceUid = typeof VehicleProfileManager !== 'undefined' && VehicleProfileManager
                 ? VehicleProfileManager.currentDeviceUid : ""
             var payloadKg = typeof VehicleProfileManager !== 'undefined' && VehicleProfileManager

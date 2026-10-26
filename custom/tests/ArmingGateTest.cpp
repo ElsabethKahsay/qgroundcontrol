@@ -1,10 +1,15 @@
 #include <QTest>
 #include <QSignalSpy>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 #include "UnitTest.h"
 #include "ArmingGate.h"
 #include "AbstractCheck.h"
 #include "core/BatteryPackCheck.h"
+#include "PreflightManager.h"
+#include "VehicleProfileManager.h"
+#include "utils/DatabaseManager.h"
 #include "mocks/MockTelemetryBridge.h"
 
 // ArmingGate::decide() is the single arm decision.
@@ -30,6 +35,7 @@ private slots:
     void testTokensNeverRepeatAfterReset();
     void testNoBatteryPackIsHardBlock();
     void testBatteryPackCheckFollowsSelection();
+    void testBatteryPackWaiverAllowsArmWithoutEstimate();
     void testBatteryPackWarnsOnFcCapacityMismatch();
 
 private:
@@ -208,8 +214,8 @@ void ArmingGateTest::testTokensNeverRepeatAfterReset()
     QVERIFY(second != first);
 }
 
-// No pack selected denies even with a valid ack, in Flight
-// and Testing alike; a force token (bench) is not affected.
+// No pack selected denies even with a valid ack, in Flight and Testing
+// alike, and a bench force token does not get past it either.
 void ArmingGateTest::testNoBatteryPackIsHardBlock()
 {
     ArmingGate::GateSnapshot g;
@@ -227,6 +233,12 @@ void ArmingGateTest::testNoBatteryPackIsHardBlock()
     force.forceWindowOpen = true;
     force.forceToken = 9;
     r.callToken = 9;
+    const auto f = ArmingGate::decide(r, force);
+    QCOMPARE(f.verdict, ArmingGate::ArmDecision::Deny);
+    QVERIFY2(f.reason.contains(QStringLiteral("battery pack"), Qt::CaseInsensitive), qPrintable(f.reason));
+
+    // With the pack chosen (or waived) the same force token passes.
+    r.batteryPackSelected = true;
     QCOMPARE(ArmingGate::decide(r, force).verdict, ArmingGate::ArmDecision::Allow);
 }
 
@@ -256,6 +268,77 @@ void ArmingGateTest::testBatteryPackCheckFollowsSelection()
     QVERIFY(!batteryFlightCountsAsCycle(1199.0, 6000));
     QVERIFY(batteryFlightCountsAsCycle(1200.0, 6000));
     QVERIFY(!batteryFlightCountsAsCycle(5000.0, 0));
+}
+
+// The pilot can waive the pack for one flight. The waiver needs a name, is
+// logged, turns the "Battery pack" item into a warning (so the gate no longer
+// sees a missing pack), and is dropped by choosing a pack or by
+// clearBatteryPackWaiver() (disarm, vehicle change).
+void ArmingGateTest::testBatteryPackWaiverAllowsArmWithoutEstimate()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    db.reset();
+    QVERIFY(db.initialize());
+    const QStringList before = db.listComplianceLogs(QStringLiteral("unknown"), 100000);
+
+    VehicleProfileManager vpm;
+    // The same provider shape PreflightPlugin gives the check.
+    auto *pack = new BatteryPackCheck([&vpm]() -> QVariantMap {
+        if (!vpm.currentBatterySerial().isEmpty())
+            return {{QStringLiteral("serial"), vpm.currentBatterySerial()}};
+        if (vpm.batteryPackWaived())
+            return {{QStringLiteral("waivedBy"), vpm.batteryPackWaivedBy()}};
+        return {};
+    });
+    QObject::connect(&vpm, &VehicleProfileManager::currentBatteryChanged, pack, [pack]() { pack->evaluate(); });
+
+    ArmingGate gate;
+    PreflightManager *mgr = new PreflightManager(1, &gate);
+    gate.setPreflightManager(mgr);
+    for (auto *c : mgr->checks())
+        c->setMandatory(false);
+    mgr->addCheck(pack);
+    pack->setMandatory(true);
+
+    QCOMPARE(pack->status(), CheckStatus::Pending);
+    QVERIFY(!gate.currentRequest(0).batteryPackSelected);
+
+    QVERIFY(!vpm.waiveBatteryPack(QStringLiteral("   ")));   // a name is required
+    QVERIFY(!vpm.batteryPackWaived());
+    QVERIFY(!gate.currentRequest(0).batteryPackSelected);
+
+    QVERIFY(vpm.waiveBatteryPack(QStringLiteral("Waiver Pilot")));
+    QVERIFY(vpm.batteryPackWaived());
+    QCOMPARE(vpm.batteryPackWaivedBy(), QStringLiteral("Waiver Pilot"));
+    QCOMPARE(pack->status(), CheckStatus::Warning);
+    QVERIFY2(pack->message().contains(QStringLiteral("Waiver Pilot"))
+                 && pack->message().contains(QStringLiteral("no flight-time estimate")),
+             qPrintable(pack->message()));
+    QVERIFY(gate.currentRequest(0).batteryPackSelected);
+
+    bool logged = false;
+    for (const QString &id : db.listComplianceLogs(QStringLiteral("unknown"), 100000)) {
+        if (before.contains(id))
+            continue;
+        const QJsonObject e = QJsonDocument::fromJson(db.loadComplianceLog(id).toUtf8()).object();
+        logged |= e.value(QStringLiteral("event")).toString() == QLatin1String("battery_pack_waived")
+                  && e.value(QStringLiteral("pilot")).toString() == QLatin1String("Waiver Pilot");
+    }
+    QVERIFY2(logged, "the pack waiver was not written to compliance_logs");
+
+    // Disarm (or a vehicle change) drops it: the next flight needs a pack again.
+    vpm.clearBatteryPackWaiver();
+    QVERIFY(!vpm.batteryPackWaived());
+    QCOMPARE(pack->status(), CheckStatus::Pending);
+    QVERIFY(!gate.currentRequest(0).batteryPackSelected);
+
+    // Choosing a pack also replaces a waiver.
+    QVERIFY(vpm.waiveBatteryPack(QStringLiteral("Waiver Pilot")));
+    vpm.setBatterySerial(QStringLiteral("PK-WAIVER-TEST"));
+    QVERIFY(!vpm.batteryPackWaived());
+    QCOMPARE(pack->status(), CheckStatus::Passed);
+
+    delete mgr;
 }
 
 // The FC's BATT_CAPACITY must match the fitted pack, or its % and battery

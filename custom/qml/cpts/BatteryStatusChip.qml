@@ -32,6 +32,9 @@ Rectangle {
     readonly property var _profile: typeof VehicleProfileManager !== "undefined" ? VehicleProfileManager : null
 
     readonly property bool _connected: _tel ? _tel.isConnected : false
+    // Pack waived for this flight: the stored S/P/mAh may be another pack's,
+    // so no flight-time estimate is shown, only the charge.
+    readonly property bool _packWaived: _profile ? _profile.batteryPackWaived : false
     // SOC + estimated time come from VehicleProfileManager (the shared live
     // estimate refreshed every 2 s) so the chip always agrees with the panel.
     readonly property int _soc: {
@@ -68,7 +71,7 @@ Rectangle {
     // minute, learned from its past flights or a per-airframe default.
     // It is refreshed every few seconds while connected and disarmed.
     property var _preEst: null
-    readonly property bool _preEstShown: _connected && !_armed && !!_preEst && _preEst.configured
+    readonly property bool _preEstShown: _connected && !_armed && !_packWaived && !!_preEst && _preEst.configured
                                          && !_preEst.atReserve
     function _refreshPreEst() {
         if (typeof PowerModel === "undefined" || !PowerModel || !_profile || !_connected || _armed) {
@@ -137,17 +140,19 @@ Rectangle {
         if (!_connected)            return "— · —"   // no vehicle
         if (!_fresh)                return "STALE"   // stale / no BATTERY_STATUS
         if (_soc < 0)               return "? · —"   // FC not configured
+        if (_packWaived)            return _soc + "% · no est."
         if (_preEstShown)           return _soc + "% · est ~" + Math.round(_preEst.flightTimeMin) + " min"
         if (!_gateOk || _timeMin < 0) return _soc + "% · —"
         if (_timeMin <= 0)          return _soc + "% · RESERVE \u2014 LAND"
         return _soc + "% · ~" + Math.round(_timeMin) + " min"
     }
-    readonly property bool _timeShown: _socKnown && _timeMin >= 0
+    readonly property bool _timeShown: _socKnown && _timeMin >= 0 && !_packWaived
 
     readonly property string _tooltip: {
         if (!_connected)            return "No vehicle connected"
         if (!_fresh)                return "No battery telemetry (stale)"
         if (_soc < 0)               return "Battery SOC not reported by flight controller"
+        if (_packWaived)            return "Battery pack waived by " + _profile.batteryPackWaivedBy + " \u2014 no flight-time estimate for this flight"
         if (_preEstShown)           return "Pre-flight estimate for the selected pack (" + _preEst.sourceLabel + ") \u2014 the live estimate starts once armed"
         if (!_gateOk)               return "Arm and draw ≥ " + kMinGateA.toFixed(1) + " A to estimate flight time"
         if (!_canComputeTime)       return "Configure battery pack (N_S · N_P · mAh) to estimate flight time"

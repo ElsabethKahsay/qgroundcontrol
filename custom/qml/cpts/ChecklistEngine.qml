@@ -282,7 +282,12 @@ QtObject {
             capacitySpin.value = p.cellMah > 0 ? p.cellMah : 5000
         }
 
-        onAboutToShow: _reload()
+        onAboutToShow: {
+            waiveBox.checked = false
+            waivePilotField.text = (typeof OperatorManager !== "undefined" && OperatorManager)
+                    ? OperatorManager.currentOperatorName : ""
+            _reload()
+        }
 
         ColumnLayout {
             width:   parent.width
@@ -371,6 +376,34 @@ QtObject {
                 color: Colors.textSecondary
             }
 
+            // No registered pack for this flight: the pilot can waive the pack
+            // and fly without a flight-time estimate. The waiver is logged
+            // with the pilot's name and lasts until disarm.
+            RowLayout {
+                Layout.fillWidth: true
+                CheckBox { id: waiveBox }
+                Text {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: qsTr("Fly without a registered pack. I accept that there is no battery "
+                               + "flight-time estimate and no cycle is counted.")
+                    font.pixelSize: Config.fontSizeSmall
+                    color: Colors.textPrimary
+                    MouseArea { anchors.fill: parent; onClicked: waiveBox.toggle() }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                visible: waiveBox.checked
+                Text { font.pixelSize: Config.fontSizeSmall; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Pilot:") }
+                TextField {
+                    id: waivePilotField
+                    Layout.fillWidth: true
+                    placeholderText: qsTr("pilot name")
+                }
+            }
+
             RowLayout {
                 Layout.fillWidth: true
                 spacing: Config.spacingSmall
@@ -381,6 +414,17 @@ QtObject {
                     onClicked: packDialog.close()
                 }
                 Button {
+                    visible: waiveBox.checked
+                    text: qsTr("Fly without a pack")
+                    enabled: waivePilotField.text.trim().length > 0
+                    Layout.fillWidth: true
+                    onClicked: {
+                        if (VehicleProfileManager.waiveBatteryPack(waivePilotField.text.trim()))
+                            packDialog.close()
+                    }
+                }
+                Button {
+                    visible: !waiveBox.checked
                     text: packDialog.isNew ? qsTr("Save && use this pack") : qsTr("Use this pack")
                     highlighted: true
                     enabled: packDialog.canUse

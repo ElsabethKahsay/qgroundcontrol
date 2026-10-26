@@ -283,8 +283,11 @@ void PreflightPlugin::init()
     // choosing a pack.
     auto *packCheck = new BatteryPackCheck([this]() -> QVariantMap {
         const QString serial = _vehicleProfileManager ? _vehicleProfileManager->currentBatterySerial() : QString();
-        if (serial.isEmpty())
+        if (serial.isEmpty()) {
+            if (_vehicleProfileManager && _vehicleProfileManager->batteryPackWaived())
+                return {{QStringLiteral("waivedBy"), _vehicleProfileManager->batteryPackWaivedBy()}};
             return {};
+        }
         QVariantMap pack = DatabaseManager::instance().batteryPack(serial);
         if (pack.isEmpty())
             pack[QStringLiteral("serial")] = serial;   // database off: still selected
@@ -631,6 +634,8 @@ void PreflightPlugin::_onActiveVehicleChanged(Vehicle *vehicle)
     // vehicle's failing checks; it must not carry over to the next one.
     if (_armingGate)
         _armingGate->resetGate();
+    if (_vehicleProfileManager)
+        _vehicleProfileManager->clearBatteryPackWaiver();
     _trainer.reset();   // the first value on the new link is the instructor position
     emit trainerChanged();
     // Link loss keeps the flight open; vehicle removal closes
@@ -981,6 +986,9 @@ void PreflightPlugin::_onGateClosed(const QString &reason)
     Q_UNUSED(reason)
     if (_sessionRecorder)
         _sessionRecorder->disarmed();
+    // A pack waiver covers one flight; the next one needs a pack or a new waiver.
+    if (_vehicleProfileManager)
+        _vehicleProfileManager->clearBatteryPackWaiver();
 }
 
 // ---------------------------------------------------------------------------

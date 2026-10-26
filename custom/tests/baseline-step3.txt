@@ -9,7 +9,7 @@ Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 691ms
 == ArmingGateExtendedTest (exit 0)
 Totals: 9 passed, 0 failed, 0 skipped, 0 blacklisted, 52ms
 == ArmingGateTest (exit 0)
-Totals: 16 passed, 0 failed, 0 skipped, 0 blacklisted, 49ms
+Totals: 17 passed, 0 failed, 0 skipped, 0 blacklisted, 49ms
 == ArmSendTest (exit 0)
 Totals: 25 passed, 0 failed, 0 skipped, 0 blacklisted, 71683ms   (re-run after testForceArmRefusedWithoutGate was added)
 == BatteryEstimatorTest (exit 0)

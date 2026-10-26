@@ -1,7 +1,10 @@
 // The operator must name the battery pack in use before every
 // flight. Shown as the "Battery pack" item in the preflight Power section; its
 // button opens the pack dialog. The arming gate also refuses a GCS arm with no
-// pack selected (ArmRequest::batteryPackSelected), in every session mode.
+// pack selected (ArmRequest::batteryPackSelected), in every session mode and
+// for a bench force arm too. The pilot can instead waive the pack for one
+// flight, giving up the battery flight-time estimate; the item then shows a
+// warning, which does not block arming.
 //
 // Header-only and without Q_OBJECT (it adds no signals, slots or properties),
 // so it needs no CMake or moc change.
@@ -31,8 +34,8 @@ public:
     static constexpr double kCapacityTolerance = 0.05;
 
     /// @p currentPack returns the selected pack as {serial, label, ratedMah,
-    /// cycles, fcCapacityMah (the FC's BATT_CAPACITY, optional)}, or an empty
-    /// map when none is selected.
+    /// cycles, fcCapacityMah (the FC's BATT_CAPACITY, optional)}, or, with no
+    /// pack, {waivedBy} when the pilot waived it, or an empty map.
     using PackProvider = std::function<QVariantMap()>;
 
     explicit BatteryPackCheck(PackProvider currentPack, QObject *parent = nullptr)
@@ -45,7 +48,8 @@ public:
         // Only a selected pack passes: a generic confirm() from a checklist
         // button (or an override) is undone at once.
         QObject::connect(this, &AbstractCheck::statusChanged, this, [this]() {
-            if (status() == CheckStatus::Passed && !hasPack())
+            if ((status() == CheckStatus::Passed || status() == CheckStatus::Warning) && !hasPack()
+                && !isWaived())
                 evaluate();
         });
         evaluate();
@@ -56,10 +60,23 @@ public:
         return m_currentPack && !m_currentPack().value(QStringLiteral("serial")).toString().isEmpty();
     }
 
+    bool isWaived() const
+    {
+        return m_currentPack && !m_currentPack().value(QStringLiteral("waivedBy")).toString().isEmpty();
+    }
+
     void evaluate() override
     {
         const QVariantMap pack = m_currentPack ? m_currentPack() : QVariantMap();
         const QString serial = pack.value(QStringLiteral("serial")).toString();
+        const QString waivedBy = pack.value(QStringLiteral("waivedBy")).toString();
+        if (serial.isEmpty() && !waivedBy.isEmpty()) {
+            setCurrentValue(QVariant());
+            setStatus(CheckStatus::Warning,
+                      QStringLiteral("No pack \u2014 waived by %1: no flight-time estimate, "
+                                     "no cycle counted").arg(waivedBy));
+            return;
+        }
         if (serial.isEmpty()) {
             setCurrentValue(QVariant());
             setStatus(CheckStatus::Pending,

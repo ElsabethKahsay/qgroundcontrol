@@ -88,7 +88,7 @@ public:
         QStringList failingMandatoryIds;  ///< mandatory checks not Passed/Warning/Skipped
         bool anyMandatoryStale = false;
         bool training = false;
-        bool batteryPackSelected = true;  ///< TODO(step3): battery-pack registry
+        bool batteryPackSelected = true;  ///< False while the "Battery pack" item is failing (no pack, no waiver)
     };
     /// Gate-owned state decide() reads.
     struct GateSnapshot {
@@ -110,15 +110,16 @@ public:
     };
     /// The single arm decision, pure. Rules in order:
     ///  1. disarm → Allow;  2. Training → Deny;
-    ///  3. force window open → Allow (Force) only for the minted token, else Deny;
-    ///  4. Passive mode (tests only; QML cannot set it) → Allow;
-    ///  5. hard blocks → Deny: no / stale autopilot heartbeat, any mandatory
-    ///     check Stale, no battery pack;
-    ///  6. all mandatory checks pass → Allow;
-    ///  7. ALLOW_WITH_ACK: a valid ack whose token the call carries and that
+    ///  3. no battery pack (and no waiver) → Deny, even with a force token;
+    ///  4. force window open → Allow (Force) only for the minted token, else Deny;
+    ///  5. Passive mode (tests only; QML cannot set it) → Allow;
+    ///  6. hard blocks → Deny: no / stale autopilot heartbeat, any mandatory
+    ///     check Stale;
+    ///  7. all mandatory checks pass → Allow;
+    ///  8. ALLOW_WITH_ACK: a valid ack whose token the call carries and that
     ///     names every currently failing check → Allow (Ack); a new failure
     ///     since the ack → Deny; otherwise NeedsAck;
-    ///  8. else Deny.
+    ///  9. else Deny.
     static ArmDecision decide(const ArmRequest &request, const GateSnapshot &gate);
     /// Live inputs for decide().
     ArmRequest currentRequest(quint32 callToken, bool isArm = true) const;

@@ -36,6 +36,11 @@ class VehicleProfileManager : public QObject {
     Q_PROPERTY(QString currentDeviceUid READ currentDeviceUid NOTIFY currentVehicleChanged)
     Q_PROPERTY(QString currentVehicleHistoryJson READ currentVehicleHistoryJson NOTIFY currentVehicleChanged)
     Q_PROPERTY(QString currentBatterySerial READ currentBatterySerial NOTIFY currentBatteryChanged)
+    /// The pilot chose to fly without a registered pack and gave up the
+    /// battery flight-time estimate. Cleared by choosing a pack, by disarm and
+    /// by a vehicle change.
+    Q_PROPERTY(bool batteryPackWaived READ batteryPackWaived NOTIFY currentBatteryChanged)
+    Q_PROPERTY(QString batteryPackWaivedBy READ batteryPackWaivedBy NOTIFY currentBatteryChanged)
     Q_PROPERTY(int currentFlightSessionId READ currentFlightSessionId NOTIFY currentVehicleChanged)
     Q_PROPERTY(double currentPayloadWeightKg READ currentPayloadWeightKg WRITE setPayloadWeightKg NOTIFY payloadWeightChanged)
     Q_PROPERTY(QString currentLocationName READ currentLocationName WRITE setLocationName NOTIFY locationNameChanged)
@@ -109,6 +114,8 @@ public:
     QString currentDeviceUid() const { return m_currentDeviceUid; }
     QString currentVehicleHistoryJson() const { return m_currentVehicleHistoryJson; }
     QString currentBatterySerial() const { return m_batterySerial; }
+    bool batteryPackWaived() const { return !m_packWaivedBy.isEmpty(); }
+    QString batteryPackWaivedBy() const { return m_packWaivedBy; }
     int currentFlightSessionId() const { return m_flightSessionId; }
     /// Adopt / release the flight_sessions row opened by the arming-gate flow.
     /// PreflightPlugin owns the session lifecycle; this controller only writes
@@ -225,6 +232,12 @@ public:
 
     /// Record battery serial for cycle tracking and persist to the battery table.
     Q_INVOKABLE void setBatterySerial(const QString &serial, const QString &operatorLabel = {});
+    /// Fly this flight without a registered pack. Needs the pilot's name; the
+    /// waiver is written to compliance_logs. Returns false (nothing changes)
+    /// when @p pilot is blank.
+    Q_INVOKABLE bool waiveBatteryPack(const QString &pilot);
+    /// Drop the waiver (after disarm, or when the vehicle changes).
+    void clearBatteryPackWaiver();
     Q_INVOKABLE QString loadVehicleHistory(const QString &deviceUid);
     Q_INVOKABLE QStringList knownVehicles();
 
@@ -274,6 +287,7 @@ private:
     QString m_currentDeviceUid;
     QString m_currentVehicleHistoryJson;
     QString m_batterySerial;
+    QString m_packWaivedBy;             ///< Pilot who waived the pack; empty when not waived.
     int m_flightSessionId = -1;
     double m_payloadWeightKg = 0.0;
     double m_uavWeightKg = 0.0;

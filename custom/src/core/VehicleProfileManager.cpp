@@ -15,6 +15,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QUuid>
 #include <algorithm>
 #include <limits>
 
@@ -516,7 +517,46 @@ void VehicleProfileManager::setBatterySerial(const QString &serial, const QStrin
     m_batterySerial = serial;
     if (!serial.isEmpty()) {
         DatabaseManager::instance().upsertBattery(serial, operatorLabel);
+        m_packWaivedBy.clear();   // a chosen pack replaces any waiver
     }
+    emit currentBatteryChanged();
+}
+
+// The waiver satisfies the "Battery pack" item (as a warning) so the gate
+// lets the arm through, and the Fly-view battery chip shows no flight-time
+// estimate: the stored S/P/mAh may belong to some other pack. A flight with
+// no serial is never counted against any pack's cycles.
+bool VehicleProfileManager::waiveBatteryPack(const QString &pilot)
+{
+    const QString name = pilot.trimmed();
+    if (name.isEmpty())
+        return false;
+    m_packWaivedBy = name;
+
+    Vehicle *v = m_telemetry ? m_telemetry->vehicle() : nullptr;
+    QJsonObject entry;
+    entry[QStringLiteral("event")] = QStringLiteral("battery_pack_waived");
+    entry[QStringLiteral("pilot")] = name;
+    entry[QStringLiteral("reason")] = QStringLiteral("No registered pack; no flight-time estimate");
+    entry[QStringLiteral("checks")] = QJsonArray{QStringLiteral("power.battery.pack")};
+    entry[QStringLiteral("timestamp")] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+    DatabaseManager::instance().saveComplianceLog(
+        QStringLiteral("gate-battery_pack_waived-%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces)),
+        // compliance_logs.vehicle_id is NOT NULL: a waiver given before the
+        // vehicle connects is still kept, under "unknown".
+        v ? QString::number(v->id()) : QStringLiteral("unknown"),
+        v ? v->vehicleTypeString() : QStringLiteral("unknown"), name,
+        QString::fromUtf8(QJsonDocument(entry).toJson(QJsonDocument::Compact)), QString());
+
+    emit currentBatteryChanged();
+    return true;
+}
+
+void VehicleProfileManager::clearBatteryPackWaiver()
+{
+    if (m_packWaivedBy.isEmpty())
+        return;
+    m_packWaivedBy.clear();
     emit currentBatteryChanged();
 }
 

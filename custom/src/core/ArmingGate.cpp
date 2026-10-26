@@ -46,7 +46,9 @@ static void recordGateEvent(const TelemetryBridge *telemetry, const QString &eve
     entry[QStringLiteral("timestamp")] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
     DatabaseManager::instance().saveComplianceLog(
         QStringLiteral("gate-%1-%2").arg(event, QUuid::createUuid().toString(QUuid::WithoutBraces)),
-        v ? QString::number(v->id()) : QString(),
+        // compliance_logs.vehicle_id is NOT NULL: an event with no vehicle
+        // connected is still kept, under "unknown".
+        v ? QString::number(v->id()) : QStringLiteral("unknown"),
         v ? v->vehicleTypeString() : QStringLiteral("unknown"), pilot,
         QString::fromUtf8(QJsonDocument(entry).toJson(QJsonDocument::Compact)), QString());
 }
@@ -408,7 +410,12 @@ ArmingGate::ArmDecision ArmingGate::decide(const ArmRequest &request, const Gate
     if (request.training)
         return deny(QStringLiteral("Arming is disabled in training mode"));
 
-    // 3. Force window: exactly the minted token, once; nothing else passes.
+    // 3. No pack (and no waiver): refused even with a force token. A bench
+    //    force arm is still a powered arm, logged against a pack.
+    if (!request.batteryPackSelected)
+        return deny(QStringLiteral("Select the battery pack (or waive it) before arming"));
+
+    // 4. Force window: exactly the minted token, once; nothing else passes.
     if (gate.forceWindowOpen) {
         if (request.callToken != 0 && request.callToken == gate.forceToken)
             return allow(ArmDecision::Force);
@@ -416,27 +423,25 @@ ArmingGate::ArmDecision ArmingGate::decide(const ArmRequest &request, const Gate
                                    "this arm command does not hold the minted token"));
     }
 
-    // 4. Passive mode: test-only (QML cannot set the mode).
+    // 5. Passive mode: test-only (QML cannot set the mode).
     if (gate.mode == Passive)
         return allow(ArmDecision::Normal);
 
-    // 5. Hard blocks — never overridable.
+    // 6. Hard blocks — never overridable.
     if (request.heartbeatAgeMs < 0)
         return deny(QStringLiteral("No telemetry received from the vehicle yet"));
     if (request.heartbeatAgeMs > qint64(kTelemetryStalenessSec) * 1000)
         return deny(QStringLiteral("Telemetry stale — last update %1s ago").arg(request.heartbeatAgeMs / 1000));
     if (request.anyMandatoryStale)
         return deny(request.blocker.isEmpty() ? QStringLiteral("Telemetry data stale") : request.blocker);
-    if (!request.batteryPackSelected)
-        return deny(QStringLiteral("Select the battery pack before arming"));
 
-    // 6. Everything required passes.
+    // 7. Everything required passes.
     if (request.allMandatoryPassed)
         return allow(ArmDecision::Normal);
 
     const QString blocker = request.blocker.isEmpty() ? QStringLiteral("Preflight checks not complete")
                                                       : request.blocker;
-    // 7. Overridable failures: the operator's bound, expiring acknowledgment.
+    // 8. Overridable failures: the operator's bound, expiring acknowledgment.
     //    (Any failing check except the hard blocks.)
     if (gate.policy == ALLOW_WITH_ACK) {
         if (gate.ackValid && request.callToken != 0 && request.callToken == gate.ackToken) {
@@ -455,7 +460,7 @@ ArmingGate::ArmDecision ArmingGate::decide(const ArmRequest &request, const Gate
         return d;
     }
 
-    // 8. Everything else.
+    // 9. Everything else.
     return deny(blocker);
 }
 
