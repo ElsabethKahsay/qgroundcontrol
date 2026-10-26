@@ -75,6 +75,9 @@ private slots:
     void testGetFlightStats();
     void testBackupBeforeMigration();
     void testEmptyNameUpsertAndSession();
+    void testPowerTypeRegistry();
+    void testPowerTypeFlightRecords();
+    void testPowerTypeUpgradeFromV24();
 };
 
 void DatabaseManagerTest::testInitialize()
@@ -1605,6 +1608,155 @@ void DatabaseManagerTest::testOrphanedSessionRecoveredOnRelaunch()
                  .count(QStringLiteral("interrupted")), 1);
 
     db.reset();
+}
+
+// Power types: one row per build (frame + props + cells), never two alike;
+// aircraft link to one; a type in use cannot be deleted.
+void DatabaseManagerTest::testPowerTypeRegistry()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    QTemporaryDir dir;
+    QVERIFY(db.initialize(dir.filePath(QStringLiteral("powertypes.db"))));
+
+    QCOMPARE(db.savePowerType(0, QStringLiteral(" "), 15.0, 5.5, 6, {}), -1);
+    QCOMPARE(db.savePowerType(0, QStringLiteral("Quad X"), 0.0, 5.5, 6, {}), -1);
+    QCOMPARE(db.savePowerType(0, QStringLiteral("Quad X"), 15.0, -1.0, 6, {}), -1);
+    QCOMPARE(db.savePowerType(0, QStringLiteral("Quad X"), 15.0, 5.5, 0, {}), -1);
+
+    const int quad = db.savePowerType(0, QStringLiteral("Quad X"), 15.0, 5.5, 6, QStringLiteral("MN4014 400KV"));
+    QVERIFY(quad > 0);
+    QVariantMap t = db.powerType(quad);
+    QCOMPARE(t.value(QStringLiteral("name")).toString(), QStringLiteral("Quad X · 15×5.5 · 6S"));
+    QCOMPARE(t.value(QStringLiteral("motorNote")).toString(), QStringLiteral("MN4014 400KV"));
+
+    // Same build again: refused. Different props: a different type.
+    QCOMPARE(db.savePowerType(0, QStringLiteral("Quad X"), 15.0, 5.5, 6, {}), -1);
+    const int bigProps = db.savePowerType(0, QStringLiteral("Quad X"), 16.0, 5.5, 6, {});
+    QVERIFY(bigProps > 0 && bigProps != quad);
+    // Editing one into the other's identity is refused too; a note edit is fine.
+    QCOMPARE(db.savePowerType(bigProps, QStringLiteral("Quad X"), 15.0, 5.5, 6, {}), -1);
+    QCOMPARE(db.savePowerType(quad, QStringLiteral("Quad X"), 15.0, 5.5, 6, QStringLiteral("new motors")), quad);
+    QCOMPARE(db.powerType(quad).value(QStringLiteral("motorNote")).toString(), QStringLiteral("new motors"));
+    QCOMPARE(db.listPowerTypes().size(), 2);
+
+    // Links: one type per aircraft; relinking replaces; ≤ 0 unlinks.
+    QCOMPARE(db.vehiclePowerTypeId(QStringLiteral("SKY-03")), -1);
+    QVERIFY(!db.linkVehiclePowerType(QStringLiteral("SKY-03"), 999));
+    QVERIFY(db.linkVehiclePowerType(QStringLiteral("SKY-03"), quad));
+    QVERIFY(db.linkVehiclePowerType(QStringLiteral("SKY-05"), quad));
+    QCOMPARE(db.powerType(quad).value(QStringLiteral("vehicles")).toInt(), 2);
+    QVERIFY(db.linkVehiclePowerType(QStringLiteral("SKY-03"), bigProps));
+    QCOMPARE(db.vehiclePowerTypeId(QStringLiteral("SKY-03")), bigProps);
+
+    QVERIFY(!db.deletePowerType(quad));            // SKY-05 still linked
+    QVERIFY(db.linkVehiclePowerType(QStringLiteral("SKY-05"), 0));
+    QCOMPARE(db.vehiclePowerTypeId(QStringLiteral("SKY-05")), -1);
+    QVERIFY(db.deletePowerType(quad));
+    QVERIFY(db.powerType(quad).isEmpty());
+}
+
+// The recorder's numbers land on the flight; a flight that did not start on a
+// full pack is excluded from learning; "used" needs a charger number; a later
+// recorder update never undoes the pilot's choice; a type with flights cannot
+// be deleted.
+void DatabaseManagerTest::testPowerTypeFlightRecords()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    QTemporaryDir dir;
+    QVERIFY(db.initialize(dir.filePath(QStringLiteral("powerflights.db"))));
+    const QString uid = QStringLiteral("SKY-03");
+    QVERIFY(db.upsertVehicleEx(uid, QStringLiteral("Sky 3"), QStringLiteral("ArduPilot"), QStringLiteral("MultiRotor")));
+    const int type = db.savePowerType(0, QStringLiteral("Quad X"), 15.0, 5.5, 6, {});
+    QVERIFY(type > 0);
+
+    const int s1 = db.startFlightSession(uid, QString(), 0.8);
+    const int s2 = db.startFlightSession(uid, QString(), 0.0);
+    QVERIFY(s1 > 0 && s2 > 0);
+
+    FlightPowerRecord r;
+    r.powerTypeId = type;
+    r.hoverMinEmpty = 1.0; r.hoverMinLoaded = 3.0; r.cruiseMinEmpty = 5.5; r.cruiseMinLoaded = 5.6;
+    r.cruiseSpeedMs = 14.8; r.fcMah = 5458.0; r.synthHoverA = 30.1; r.synthCruiseA = 20.2;
+    r.refThrottleHover = 0.39; r.refThrottleCruise = 0.29; r.armCellV = 4.18;
+    r.startedFull = true; r.telemetryCoverage = 0.97; r.timeAtTargetMin = 2.0;
+    QVERIFY(db.saveFlightPowerRecord(s1, r));
+    r.startedFull = false;                          // pack not full at arming
+    QVERIFY(db.saveFlightPowerRecord(s2, r));
+    QVERIFY(!db.saveFlightPowerRecord(9999, r));
+
+    QVariantList rows = db.powerTypeFlights(type);
+    QCOMPARE(rows.size(), 2);
+    QVariantMap f1 = rows[0].toMap();
+    QCOMPARE(f1.value(QStringLiteral("sessionId")).toInt(), s1);
+    QCOMPARE(f1.value(QStringLiteral("payloadKg")).toDouble(), 0.8);
+    QCOMPARE(f1.value(QStringLiteral("hoverMinLoaded")).toDouble(), 3.0);
+    QCOMPARE(f1.value(QStringLiteral("cruiseMinEmpty")).toDouble(), 5.5);
+    QCOMPARE(f1.value(QStringLiteral("fcMah")).toDouble(), 5458.0);
+    QCOMPARE(f1.value(QStringLiteral("timeAtTargetMin")).toDouble(), 2.0);
+    QCOMPARE(f1.value(QStringLiteral("chargerMah")).toDouble(), -1.0);
+    QCOMPARE(f1.value(QStringLiteral("learningState")).toString(), QStringLiteral("pending"));
+    QCOMPARE(rows[1].toMap().value(QStringLiteral("learningState")).toString(), QStringLiteral("excluded"));
+
+    // "used" needs a charger number; the charger number must be sane.
+    QVERIFY(!db.setFlightLearningState(s1, QStringLiteral("used")));
+    QVERIFY(!db.setFlightChargerMah(s1, 0.0));
+    QVERIFY(!db.setFlightChargerMah(s1, 300000.0));
+    QVERIFY(db.setFlightChargerMah(s1, 6550.0));
+    QVERIFY(!db.setFlightLearningState(s1, QStringLiteral("maybe")));
+    QVERIFY(db.setFlightLearningState(s1, QStringLiteral("used")));
+    // An excluded flight never joins the model, even with a charger number.
+    QVERIFY(db.setFlightChargerMah(s2, 5100.0));
+    QVERIFY(!db.setFlightLearningState(s2, QStringLiteral("used")));
+
+    // The recorder writing again (running summary) keeps the pilot's choice.
+    r.startedFull = true;
+    QVERIFY(db.saveFlightPowerRecord(s1, r));
+    f1 = db.powerTypeFlights(type)[0].toMap();
+    QCOMPARE(f1.value(QStringLiteral("learningState")).toString(), QStringLiteral("used"));
+    QCOMPARE(f1.value(QStringLiteral("chargerMah")).toDouble(), 6550.0);
+
+    QCOMPARE(db.powerType(type).value(QStringLiteral("flights")).toInt(), 2);
+    QVERIFY(!db.deletePowerType(type));
+}
+
+// A database written before version 25 gains the power-type tables and the
+// flight columns when it is opened.
+void DatabaseManagerTest::testPowerTypeUpgradeFromV24()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("v24.db"));
+    QVERIFY(db.initialize(path));
+    QCOMPARE(db.storedSchemaVersion(), 25);
+    db.reset();
+
+    // Roll the file back to its v24 shape.
+    {
+        QSqlDatabase raw = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("v24rollback"));
+        raw.setDatabaseName(path);
+        QVERIFY(raw.open());
+        QSqlQuery q(raw);
+        QVERIFY(q.exec(QStringLiteral("DROP TABLE vehicle_power_type")));
+        QVERIFY(q.exec(QStringLiteral("DROP TABLE power_types")));
+        QVERIFY(q.exec(QStringLiteral("DROP INDEX idx_flight_sessions_power_type")));
+        for (const char *col : { "power_type_id", "hover_min_empty", "charger_mah", "learning_state" })
+            QVERIFY2(q.exec(QStringLiteral("ALTER TABLE flight_sessions DROP COLUMN %1").arg(QLatin1String(col))),
+                     qPrintable(q.lastError().text()));
+        QVERIFY(q.exec(QStringLiteral("DELETE FROM schema_version WHERE version = 25")));
+        raw.close();
+    }
+    QSqlDatabase::removeDatabase(QStringLiteral("v24rollback"));
+
+    QVERIFY(db.initialize(path));
+    QCOMPARE(db.storedSchemaVersion(), 25);
+    QVERIFY(db.savePowerType(0, QStringLiteral("Quad X"), 15.0, 5.5, 6, {}) > 0);
+    QSqlQuery cols(QSqlDatabase::database());
+    QVERIFY(cols.exec(QStringLiteral("PRAGMA table_info(flight_sessions)")));
+    QStringList names;
+    while (cols.next())
+        names << cols.value(1).toString();
+    for (const char *col : { "power_type_id", "hover_min_empty", "charger_mah", "learning_state" })
+        QVERIFY2(names.contains(QLatin1String(col)), col);
 }
 
 UT_REGISTER_TEST(DatabaseManagerTest)

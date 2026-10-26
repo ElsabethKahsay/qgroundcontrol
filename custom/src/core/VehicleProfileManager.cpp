@@ -26,6 +26,7 @@
 #include "detection/VehicleRegistry.h"
 #include "DatabaseManager.h"
 #include "PowerModel.h"
+#include "PowerTypeModel.h"
 #include "TelemetryBridge.h"
 #include "MultiVehicleManager.h"
 #include "MAVLink/QGCMAVLink.h"
@@ -284,6 +285,10 @@ void VehicleProfileManager::onConnectionChanged()
         emit batteryConfigChanged();
         // No vehicle connected — fall back to the built-in table.
         _applyDefaultThrustTable();
+        if (m_powerTypeId != -1) {
+            m_powerTypeId = -1;
+            emit powerTypeChanged();
+        }
         emit currentVehicleChanged();
         return;
     }
@@ -342,6 +347,9 @@ void VehicleProfileManager::onConnectionChanged()
 
     // Restore the persisted thrust→current datasheet (or the default table)
     _loadPersistedThrustTable(m_currentDeviceUid);
+
+    m_powerTypeId = DatabaseManager::instance().vehiclePowerTypeId(m_currentDeviceUid);
+    emit powerTypeChanged();
 
     // The flight session itself is opened by the arming-gate flow
     // (PreflightPlugin::_onGateOpened) — the single session owner — which
@@ -1186,3 +1194,178 @@ void VehicleProfileManager::_onArmedChanged(bool armed)
 }
 
 
+
+// ── Power types ──────────────────────────────────────────────────────────
+// Rows come from DatabaseManager; the model is fitted on demand from the
+// flights the pilot marked "used" (each has a charger number). Until there
+// are enough of them, the FC's synthetic current per phase × the charger
+// factor gives a starting model, labelled "synthetic".
+
+namespace {
+
+PowerTypeModel::Flight toModelFlight(const QVariantMap &row)
+{
+    PowerTypeModel::Flight f;
+    f.hoverMinEmpty   = std::max(0.0, row.value(QStringLiteral("hoverMinEmpty")).toDouble());
+    f.hoverMinLoaded  = std::max(0.0, row.value(QStringLiteral("hoverMinLoaded")).toDouble());
+    f.cruiseMinEmpty  = std::max(0.0, row.value(QStringLiteral("cruiseMinEmpty")).toDouble());
+    f.cruiseMinLoaded = std::max(0.0, row.value(QStringLiteral("cruiseMinLoaded")).toDouble());
+    f.payloadKg       = std::max(0.0, row.value(QStringLiteral("payloadKg")).toDouble());
+    const double charger = row.value(QStringLiteral("chargerMah")).toDouble();
+    const double fc      = row.value(QStringLiteral("fcMah")).toDouble();
+    f.chargerAh = charger > 0.0 ? charger / 1000.0 : -1.0;
+    f.fcAh      = fc > 0.0 ? fc / 1000.0 : -1.0;
+    return f;
+}
+
+bool isUsed(const QVariantMap &row)
+{
+    return row.value(QStringLiteral("learningState")).toString() == QLatin1String("used")
+        && row.value(QStringLiteral("chargerMah")).toDouble() > 0.0;
+}
+
+QString statusName(PowerTypeModel::FitStatus s)
+{
+    switch (s) {
+    case PowerTypeModel::FitStatus::TooAlike:            return QStringLiteral("tooAlike");
+    case PowerTypeModel::FitStatus::PayloadNotModelled:  return QStringLiteral("payloadNotModelled");
+    case PowerTypeModel::FitStatus::PayloadProportional: return QStringLiteral("payloadProportional");
+    case PowerTypeModel::FitStatus::Full:                return QStringLiteral("full");
+    case PowerTypeModel::FitStatus::NotEnoughFlights:    break;
+    }
+    return QStringLiteral("none");
+}
+
+struct FittedType {
+    PowerTypeModel::Model model;
+    QVector<PowerTypeModel::Flight> used;
+    bool fromCharger = false;
+    double factor = 1.0;
+    int pending = 0;
+};
+
+FittedType fitType(const QVariantList &rows)
+{
+    FittedType t;
+    double synthHover = 0.0, synthCruise = 0.0;
+    int synthN = 0;
+    for (const QVariant &v : rows) {
+        const QVariantMap row = v.toMap();
+        if (isUsed(row))
+            t.used << toModelFlight(row);
+        const QString state = row.value(QStringLiteral("learningState")).toString();
+        if (state == QLatin1String("pending"))
+            ++t.pending;
+        const double h = row.value(QStringLiteral("synthHoverA")).toDouble();
+        const double c = row.value(QStringLiteral("synthCruiseA")).toDouble();
+        if (state != QLatin1String("excluded") && h > 0.0 && c > 0.0) {
+            synthHover += h; synthCruise += c; ++synthN;
+        }
+    }
+    t.factor = PowerTypeModel::chargerFactor(t.used);
+    t.model = PowerTypeModel::fit(t.used);
+    t.fromCharger = t.model.usable();
+    if (!t.fromCharger && synthN > 0) {
+        const QString advice = t.model.advice;
+        t.model = PowerTypeModel::seedFromSynthetic(synthHover / synthN, synthCruise / synthN, t.factor);
+        t.model.advice = advice.isEmpty() ? t.model.advice : advice;
+    }
+    return t;
+}
+
+} // namespace
+
+QString VehicleProfileManager::currentPowerTypeName() const
+{
+    if (m_powerTypeId <= 0) return {};
+    return DatabaseManager::instance().powerType(m_powerTypeId).value(QStringLiteral("name")).toString();
+}
+
+QVariantList VehicleProfileManager::listPowerTypes()
+{
+    return DatabaseManager::instance().listPowerTypes();
+}
+
+int VehicleProfileManager::savePowerType(int id, const QString &frame, double propDiameterIn,
+                                         double propPitchIn, int cells, const QString &motorNote)
+{
+    const int saved = DatabaseManager::instance().savePowerType(id, frame, propDiameterIn,
+                                                                propPitchIn, cells, motorNote);
+    if (saved > 0)
+        emit powerTypeChanged();
+    return saved;
+}
+
+bool VehicleProfileManager::deletePowerType(int id)
+{
+    if (!DatabaseManager::instance().deletePowerType(id))
+        return false;
+    emit powerTypeChanged();
+    return true;
+}
+
+bool VehicleProfileManager::linkCurrentVehiclePowerType(int powerTypeId)
+{
+    if (m_currentDeviceUid.isEmpty()
+        || !DatabaseManager::instance().linkVehiclePowerType(m_currentDeviceUid, powerTypeId))
+        return false;
+    m_powerTypeId = DatabaseManager::instance().vehiclePowerTypeId(m_currentDeviceUid);
+    emit powerTypeChanged();
+    return true;
+}
+
+QVariantMap VehicleProfileManager::powerTypeSummary(int powerTypeId)
+{
+    QVariantMap out;
+    const QVariantMap type = DatabaseManager::instance().powerType(powerTypeId);
+    if (type.isEmpty()) return out;
+    const FittedType t = fitType(DatabaseManager::instance().powerTypeFlights(powerTypeId));
+    out[QStringLiteral("id")]             = powerTypeId;
+    out[QStringLiteral("name")]           = type.value(QStringLiteral("name"));
+    out[QStringLiteral("status")]         = statusName(t.model.status);
+    out[QStringLiteral("source")]         = t.fromCharger ? QStringLiteral("charger")
+                                          : t.model.usable() ? QStringLiteral("synthetic")
+                                                             : QStringLiteral("none");
+    out[QStringLiteral("hover0")]         = t.model.hover0;
+    out[QStringLiteral("hoverK")]         = t.model.hoverK;
+    out[QStringLiteral("cruise0")]        = t.model.cruise0;
+    out[QStringLiteral("cruiseK")]        = t.model.cruiseK;
+    out[QStringLiteral("advice")]         = t.model.advice;
+    out[QStringLiteral("validated")]      = t.fromCharger && PowerTypeModel::isValidated(t.model, t.used);
+    out[QStringLiteral("chargerFactor")]  = t.factor;
+    out[QStringLiteral("usedFlights")]    = t.used.size();
+    out[QStringLiteral("pendingFlights")] = t.pending;
+    return out;
+}
+
+QVariantList VehicleProfileManager::powerTypeFlights(int powerTypeId)
+{
+    QVariantList rows = DatabaseManager::instance().powerTypeFlights(powerTypeId);
+    const FittedType t = fitType(rows);
+    if (!t.fromCharger)
+        return rows;
+    for (QVariant &v : rows) {
+        QVariantMap row = v.toMap();
+        const PowerTypeModel::Flight f = toModelFlight(row);
+        row[QStringLiteral("predictedMah")] = t.model.predictAh(f) * 1000.0;
+        row[QStringLiteral("outlier")]      = PowerTypeModel::isOutlier(t.model, f);
+        v = row;
+    }
+    return rows;
+}
+
+bool VehicleProfileManager::setFlightChargerMah(int sessionId, double chargerMah)
+{
+    if (!DatabaseManager::instance().setFlightChargerMah(sessionId, chargerMah))
+        return false;
+    emit powerTypeChanged();
+    return true;
+}
+
+bool VehicleProfileManager::setFlightLearningState(int sessionId, const QString &state)
+{
+    if (!DatabaseManager::instance().setFlightLearningState(sessionId, state))
+        return false;
+    emit powerTypeChanged();
+    return true;
+}

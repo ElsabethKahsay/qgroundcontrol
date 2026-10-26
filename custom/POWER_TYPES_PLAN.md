@@ -1,8 +1,8 @@
 # Power Types and Mission Check
 
-Skywin GCS · copter only · designed 26 Oct 2026 with the operator · **step 1 of 6 built**
+Skywin GCS · copter only · designed 26 Oct 2026 with the operator · **steps 1–2 of 6 built**
 
-Status: step 1 (the maths, `src/core/PowerTypeModel.h`) built and tested 26 Oct; steps 2–6 not started. Each step starts on the operator's go (see "Implementation plan"). Planes keep the existing rough flight-time estimate.
+Status: step 1 (the maths) and step 2 (storage) built and tested 26 Oct; steps 3–6 not started. Each step starts on the operator's go (see "Implementation plan"). Planes keep the existing rough flight-time estimate.
 
 Method (decided 26 Oct): **combined**. The flight controller estimates current from throttle (`BATT_MONITOR = 25`, synthetic current), the charger provides the real total after each flight, and the GCS learns a hover/cruise/payload model from both.
 
@@ -208,7 +208,7 @@ The operator approves each step before the next one starts.
 | Step | What | Time |
 |---|---|---|
 | 1. Maths **(done 26 Oct)** | Header-only `src/core/PowerTypeModel.h` (pure maths, no Qt object): least-squares fit (2–4 unknowns, too-alike detection, outliers, validation rule), charger factor and suggested `BATT_AMP_PERVLT`, leg sum, max distance, in-flight sum (FC mAh × factor, live-ratio scaling, throttle fallback), cell-count check. Tests reproduce every number in section 6 | ½ day |
-| 2. Storage | Next database version step: tables `power_types` and `vehicle_power_type`. New flight_sessions columns: power type, hover/cruise minutes with/without payload, cruise speed, FC synthetic mAh, synthetic current per phase, reference throttles, cell volts at arming, telemetry coverage, time at target, charger mAh, learning state. Q_INVOKABLEs on VehicleProfileManager (count the recompiles first; ask if 300 or more) | ½ day |
+| 2. Storage **(done 26 Oct)** | Next database version step: tables `power_types` and `vehicle_power_type`. New flight_sessions columns: power type, hover/cruise minutes with/without payload, cruise speed, FC synthetic mAh, synthetic current per phase, reference throttles, cell volts at arming, telemetry coverage, time at target, charger mAh, learning state. Q_INVOKABLEs on VehicleProfileManager (count the recompiles first; ask if 300 or more) | ½ day |
 | 3. Flight recorder | Per-second hover/cruise and payload-aboard accounting; FC mAh and synthetic current per phase; telemetry coverage; full-pack test at arming; `BATT_MONITOR` / `BATT_AMP_PERVLT` read on connect | ½ day |
 | 4. Checklist and arming | `PowerTypeCheck.h` and `MissionCheck.h` (header-only, no Q_OBJECT; the mission check blocks when validated, amber otherwise); `BATT_MONITOR` warning; time-at-target field in the payload dialog; one arming-gate rule + waiver. Unit tests + LivePluginBenchTest | 1 day |
 | 5. Screens | Vehicle Management: power types, link, the type's flights (charger status, Use/Dismiss, "fly next" advice, Validated badge), built as inline QML in the existing page. Post-flight page: charger mAh entry, FC vs charger comparison and suggested `BATT_AMP_PERVLT`. Fly view: battery chip, info box, RETURN NOW | 1 day |
@@ -229,6 +229,39 @@ The operator approves each step before the next one starts.
   - full-pack check without tolerance.
 - One bug found and fixed while testing: 4.15 V × 6 is 24.900000000000002 in floating point, so a pack at exactly 24.9 V counted as not full. The check is now per cell, with a tiny tolerance.
 - Nothing is wired into the app yet; steps 2–5 do that.
+
+**Step 2 result (26 Oct):**
+- **Database version 25** (`DatabaseManager.cpp`) adds:
+  - table `power_types`: frame, prop diameter, prop pitch, cells, motor note; the build columns are UNIQUE;
+  - table `vehicle_power_type`: device UID → type;
+  - 17 columns on `flight_sessions`: power type, hover/cruise minutes with and without payload, cruise speed, FC mAh, synthetic current per phase, reference throttles, cell volts at arming, full-at-arming flag, telemetry coverage, time at target, charger mAh, learning state.
+- **Learning states:**
+  - The recorder marks a flight `pending`, or `excluded` when it did not start on a full pack or had under 90 % telemetry.
+  - The pilot sets `used` or `dismissed`. `used` needs a charger number, and an excluded flight can never be used.
+  - A later recorder write never undoes the pilot's choice.
+- **Storage API** (`DatabaseManager`): `savePowerType`, `listPowerTypes`, `powerType`, `deletePowerType`, `linkVehiclePowerType`, `vehiclePowerTypeId`, `saveFlightPowerRecord`, `setFlightChargerMah`, `setFlightLearningState`, `powerTypeFlights`.
+  - A duplicate build is refused.
+  - A type cannot be deleted while it is linked or has flights; the database's foreign key refuses it too.
+- **For the screens** (`VehicleProfileManager`):
+  - properties `currentPowerTypeId` and `currentPowerTypeName`, reloaded on connect and cleared on disconnect;
+  - `listPowerTypes`, `savePowerType`, `deletePowerType` and `linkCurrentVehiclePowerType`;
+  - `powerTypeSummary`: the fitted model from the `used` flights, or a starting model from the FC's synthetic current, marked "synthetic", until there are enough; plus validated, charger factor, used and pending counts;
+  - `powerTypeFlights`, with the predicted mAh and the outlier flag;
+  - `setFlightChargerMah` and `setFlightLearningState`.
+- **Build:** 42 incremental steps. 16 objects include `VehicleProfileManager.h` and 39 include `DatabaseManager.h`, well under the 300 limit.
+- **Tests:**
+  - DatabaseManagerTest: `testPowerTypeRegistry`, `testPowerTypeFlightRecords`, and `testPowerTypeUpgradeFromV24` (a v24 file gains the tables and columns when opened). 41/41 pass.
+  - BatteryEstimatorTest: `testPowerTypeSummaryFromStoredFlights` (the worked example's four flights stored, then fitted back to 32 + 6 A/kg and 21 + 4 A/kg, factor 1.20, validated). 21/21 pass.
+- **Mutants:** 7 of 8 caught:
+  - an edited type refused against itself;
+  - an under-filled pack not excluded;
+  - the recorder overwriting the pilot's choice;
+  - `used` without a charger number;
+  - v25 adding no columns;
+  - fitting every flight instead of `used` only;
+  - no synthetic seed.
+- **Survivor:** "a linked type can be deleted". Removing the explicit check changes nothing, because the foreign key on `vehicle_power_type` still refuses the delete.
+- **Not pinned by a test:** `currentPowerTypeId` reloading on connect and clearing on disconnect, because that needs a live vehicle. Step 4's live bench test will cover it.
 
 Build rules (as for all Skywin work):
 - No CMake re-run and no `custom.qrc` change; incremental builds only.

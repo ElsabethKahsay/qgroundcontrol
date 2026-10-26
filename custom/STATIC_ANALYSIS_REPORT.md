@@ -97,7 +97,7 @@ Recommendations for Phase 1 (23 Oct), easiest to hardest
 8. Run the SITL campaign (item 12) before the first props-on flight, especially crash recovery, link loss and the 3-hour idle. Scripts can be written now; running them needs ArduPilot SITL on the development machine.
    Status 24 Oct — run on ArduPlane and ArduCopter SITL (ArduPilot master 4.6.0-beta1-6903, not the plane's 4.5.7): every scenario passes; three GCS recording bugs found and fixed (restart while armed lost the rest of the flight; that flight had no energy baseline; a landing during a link blackout closed as an ordinary disarm). Details, run logs and the remaining notes: section "SITL campaign results" at the end of this document. 3-hour idle: PASS (3 h 1 min connected, memory 212 → 213 MB, no quit, no link loss).
 9. Bench the copter: the release gate needs one copter and one plane, and only the plane has been on the bench so far. Plan its bench session (the same checks as the plane).
-10. Power types and mission check (copter; designed 26 Oct; step 1 of 6, the maths, built and tested 26 Oct): its own document, custom/POWER_TYPES_PLAN.md (goal, definitions, decisions, worked example, implementation plan).
+10. Power types and mission check (copter; designed 26 Oct; steps 1–2 of 6, the maths and storage, built and tested 26 Oct): its own document, custom/POWER_TYPES_PLAN.md (goal, definitions, decisions, worked example, implementation plan).
 
 Earlier notes on the open items (history; statuses above supersede them)
 • Items 6–8: SessionRecorder, battery pack registry and snapshot (including moving the pack modal into the Power section), database startup and migration fixes.

@@ -1,5 +1,6 @@
 #include <QTest>
 #include <QTemporaryFile>
+#include <QTemporaryDir>
 #include <QDir>
 #include <QFile>
 #include <QJsonArray>
@@ -489,6 +490,83 @@ private slots:
         drift.last().chargerAh = flights.last().chargerAh * 1.30;   // 23 % off the charger number
         QVERIFY(isOutlier(m, drift.last()));
         QVERIFY(!isOutlier(m, flights.first()));
+    }
+
+    // Stored flights → the model the screens show: only flights marked "used"
+    // (with a charger number) are fitted; until there are enough, the FC's
+    // synthetic current seeds a model labelled "synthetic".
+    void testPowerTypeSummaryFromStoredFlights()
+    {
+        DatabaseManager &db = DatabaseManager::instance();
+        QTemporaryDir dir;
+        QVERIFY(db.initialize(dir.filePath(QStringLiteral("summary.db"))));
+        const QString uid = QStringLiteral("SKY-03");
+        QVERIFY(db.upsertVehicleEx(uid, QStringLiteral("Sky 3"), QStringLiteral("ArduPilot"), QStringLiteral("MultiRotor")));
+        const int type = mgr()->savePowerType(0, QStringLiteral("Quad X"), 15.0, 5.5, 6, {});
+        QVERIFY(type > 0);
+
+        // Nothing recorded yet.
+        QVariantMap sum = mgr()->powerTypeSummary(type);
+        QCOMPARE(sum.value(QStringLiteral("status")).toString(), QStringLiteral("none"));
+        QCOMPARE(sum.value(QStringLiteral("source")).toString(), QStringLiteral("none"));
+
+        // The worked example's four flights, recorded and marked "used".
+        QList<int> sessions;
+        for (const PowerTypeModel::Flight &f : sky03Flights()) {
+            const int id = db.startFlightSession(uid, QString(), f.payloadKg);
+            FlightPowerRecord r;
+            r.powerTypeId = type;
+            r.hoverMinEmpty = f.hoverMinEmpty; r.hoverMinLoaded = f.hoverMinLoaded;
+            r.cruiseMinEmpty = f.cruiseMinEmpty; r.cruiseMinLoaded = f.cruiseMinLoaded;
+            r.fcMah = f.fcAh * 1000.0; r.synthHoverA = 26.7; r.synthCruiseA = 17.5;
+            r.startedFull = true; r.telemetryCoverage = 1.0;
+            QVERIFY(db.saveFlightPowerRecord(id, r));
+            sessions << id;
+        }
+
+        // Recorded but no charger numbers yet: seeded from the synthetic current.
+        sum = mgr()->powerTypeSummary(type);
+        QCOMPARE(sum.value(QStringLiteral("source")).toString(), QStringLiteral("synthetic"));
+        QCOMPARE(sum.value(QStringLiteral("pendingFlights")).toInt(), 4);
+        QVERIFY(near(sum.value(QStringLiteral("hover0")).toDouble(), 26.7, 0.001));
+        QVERIFY(!sum.value(QStringLiteral("validated")).toBool());
+
+        const QVector<PowerTypeModel::Flight> flights = sky03Flights();
+        for (int i = 0; i < sessions.size(); ++i) {
+            QVERIFY(mgr()->setFlightChargerMah(sessions[i], flights[i].chargerAh * 1000.0));
+            QVERIFY(mgr()->setFlightLearningState(sessions[i], QStringLiteral("used")));
+        }
+        sum = mgr()->powerTypeSummary(type);
+        const QString got = QStringLiteral("%1 hover %2+%3 cruise %4+%5 factor %6")
+                                .arg(sum.value(QStringLiteral("status")).toString())
+                                .arg(sum.value(QStringLiteral("hover0")).toDouble())
+                                .arg(sum.value(QStringLiteral("hoverK")).toDouble())
+                                .arg(sum.value(QStringLiteral("cruise0")).toDouble())
+                                .arg(sum.value(QStringLiteral("cruiseK")).toDouble())
+                                .arg(sum.value(QStringLiteral("chargerFactor")).toDouble());
+        QCOMPARE(sum.value(QStringLiteral("status")).toString(), QStringLiteral("full"));
+        QCOMPARE(sum.value(QStringLiteral("source")).toString(), QStringLiteral("charger"));
+        QVERIFY2(near(sum.value(QStringLiteral("hover0")).toDouble(), 32.0, 0.01)
+                     && near(sum.value(QStringLiteral("hoverK")).toDouble(), 6.0, 0.01)
+                     && near(sum.value(QStringLiteral("cruise0")).toDouble(), 21.0, 0.01)
+                     && near(sum.value(QStringLiteral("cruiseK")).toDouble(), 4.0, 0.01), qPrintable(got));
+        QVERIFY2(near(sum.value(QStringLiteral("chargerFactor")).toDouble(), 1.2, 0.001), qPrintable(got));
+        QVERIFY(sum.value(QStringLiteral("validated")).toBool());
+        QCOMPARE(sum.value(QStringLiteral("usedFlights")).toInt(), 4);
+        QCOMPARE(sum.value(QStringLiteral("pendingFlights")).toInt(), 0);
+
+        // Dismissing a flight takes it out of the model.
+        QVERIFY(mgr()->setFlightLearningState(sessions[3], QStringLiteral("dismissed")));
+        sum = mgr()->powerTypeSummary(type);
+        QCOMPARE(sum.value(QStringLiteral("status")).toString(), QStringLiteral("payloadProportional"));
+        QCOMPARE(sum.value(QStringLiteral("usedFlights")).toInt(), 3);
+
+        const QVariantList rows = mgr()->powerTypeFlights(type);
+        QCOMPARE(rows.size(), 4);
+        QVERIFY(near(rows[0].toMap().value(QStringLiteral("predictedMah")).toDouble(), 5100.0, 1.0));
+        QVERIFY(!rows[0].toMap().value(QStringLiteral("outlier")).toBool());
+
+        db.reset();
     }
 
     // What the recorder decides each second and at arming.

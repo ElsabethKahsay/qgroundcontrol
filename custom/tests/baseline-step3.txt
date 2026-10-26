@@ -1,72 +1,72 @@
-Full run of ALL registered test classes — 2026-10-26T09:12:46Z
+Full run of ALL registered test classes — 2026-10-26T13:06:50Z
 One class per process, QT_QPA_PLATFORM=offscreen, --allow-multiple. MainStatusIndicatorSmokeTest left out (known teardown crash; that indicator never loads).
 Known, deliberate skips: LinkStressTest (2) and MavLinkFuzzTest (5), parser limitation documented in the tests.
 
 == ArmGateResilienceTest (exit 0)
-Totals: 14 passed, 0 failed, 0 skipped, 0 blacklisted, 70725ms
+Totals: 14 passed, 0 failed, 0 skipped, 0 blacklisted, 70783ms
 == ArmingFlowIntegrationTest (exit 0)
-Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 647ms
+Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 658ms
 == ArmingGateExtendedTest (exit 0)
-Totals: 9 passed, 0 failed, 0 skipped, 0 blacklisted, 39ms
+Totals: 9 passed, 0 failed, 0 skipped, 0 blacklisted, 49ms
 == ArmingGateTest (exit 0)
-Totals: 18 passed, 0 failed, 0 skipped, 0 blacklisted, 60ms
+Totals: 18 passed, 0 failed, 0 skipped, 0 blacklisted, 62ms
 == ArmSendTest (exit 0)
-Totals: 25 passed, 0 failed, 0 skipped, 0 blacklisted, 73638ms
+Totals: 25 passed, 0 failed, 0 skipped, 0 blacklisted, 71299ms
 == BatteryEstimatorTest (exit 0)
-Totals: 14 passed, 0 failed, 0 skipped, 0 blacklisted, 117ms
+Totals: 21 passed, 0 failed, 0 skipped, 0 blacklisted, 137ms
 == ChecklistEngineTest (exit 0)
-Totals: 12 passed, 0 failed, 0 skipped, 0 blacklisted, 49ms
+Totals: 12 passed, 0 failed, 0 skipped, 0 blacklisted, 55ms
 == ChecklistItemModelTest (exit 0)
-Totals: 10 passed, 0 failed, 0 skipped, 0 blacklisted, 37ms
+Totals: 10 passed, 0 failed, 0 skipped, 0 blacklisted, 46ms
 == ChecklistPagesSmokeTest (exit 0)
-Totals: 5 passed, 0 failed, 0 skipped, 0 blacklisted, 3059ms
+Totals: 5 passed, 0 failed, 0 skipped, 0 blacklisted, 2388ms
 == CheckSmokeTest (exit 0)
-Totals: 13 passed, 0 failed, 0 skipped, 0 blacklisted, 80ms
+Totals: 13 passed, 0 failed, 0 skipped, 0 blacklisted, 97ms
 == ControlSurfaceTestControllerTest (exit 0)
-Totals: 16 passed, 0 failed, 0 skipped, 0 blacklisted, 52091ms
+Totals: 16 passed, 0 failed, 0 skipped, 0 blacklisted, 52786ms
 == DatabaseManagerTest (exit 0)
-Totals: 38 passed, 0 failed, 0 skipped, 0 blacklisted, 2358ms
+Totals: 41 passed, 0 failed, 0 skipped, 0 blacklisted, 5203ms
 == DatabaseMigrationTest (exit 0)
-Totals: 15 passed, 0 failed, 0 skipped, 0 blacklisted, 310ms
+Totals: 15 passed, 0 failed, 0 skipped, 0 blacklisted, 843ms
 == FlightHistoryModelTest (exit 0)
-Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 634ms
+Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 881ms
 == FlightSessionLifecycleTest (exit 0)
-Totals: 5 passed, 0 failed, 0 skipped, 0 blacklisted, 5152ms
+Totals: 5 passed, 0 failed, 0 skipped, 0 blacklisted, 5215ms
 == FlightSessionTest (exit 0)
-Totals: 10 passed, 0 failed, 0 skipped, 0 blacklisted, 160ms
+Totals: 10 passed, 0 failed, 0 skipped, 0 blacklisted, 209ms
 == FlyQuickActionsSmokeTest (exit 0)
-Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 582ms
+Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 698ms
 == HardwareTestControllerTest (exit 0)
-Totals: 13 passed, 0 failed, 0 skipped, 0 blacklisted, 19398ms
+Totals: 13 passed, 0 failed, 0 skipped, 0 blacklisted, 19981ms
 == LinkStressTest (exit 0)
-Totals: 8 passed, 0 failed, 2 skipped, 0 blacklisted, 39398ms
+Totals: 8 passed, 0 failed, 2 skipped, 0 blacklisted, 39412ms
 == MavLinkFuzzTest (exit 0)
-Totals: 8 passed, 0 failed, 5 skipped, 0 blacklisted, 23890ms
+Totals: 8 passed, 0 failed, 5 skipped, 0 blacklisted, 24080ms
 == MavLinkInterceptTest (exit 0)
-Totals: 19 passed, 0 failed, 0 skipped, 0 blacklisted, 39ms
+Totals: 19 passed, 0 failed, 0 skipped, 0 blacklisted, 63ms
 == MotorCheckPanelSmokeTest (exit 0)
-Totals: 5 passed, 0 failed, 0 skipped, 0 blacklisted, 2848ms
+Totals: 5 passed, 0 failed, 0 skipped, 0 blacklisted, 3172ms
 == MotorSpinCheckTest (exit 0)
-Totals: 7 passed, 0 failed, 0 skipped, 0 blacklisted, 629ms
+Totals: 7 passed, 0 failed, 0 skipped, 0 blacklisted, 645ms
 == PreflightManagerTest (exit 0)
-Totals: 32 passed, 0 failed, 0 skipped, 0 blacklisted, 233ms
+Totals: 32 passed, 0 failed, 0 skipped, 0 blacklisted, 416ms
 == QmlShadowTest (exit 0)
-Totals: 7 passed, 0 failed, 0 skipped, 0 blacklisted, 82ms
+Totals: 7 passed, 0 failed, 0 skipped, 0 blacklisted, 102ms
 == RcCalibrationCheckTest (exit 0)
-Totals: 12 passed, 0 failed, 0 skipped, 0 blacklisted, 31ms
+Totals: 12 passed, 0 failed, 0 skipped, 0 blacklisted, 61ms
 == ReturnToLaunchTest (exit 0)
-Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 20183ms
+Totals: 11 passed, 0 failed, 0 skipped, 0 blacklisted, 21439ms
 == StateMachineTest (exit 0)
-Totals: 6 passed, 0 failed, 0 skipped, 0 blacklisted, 30ms
+Totals: 6 passed, 0 failed, 0 skipped, 0 blacklisted, 55ms
 == TelemetryBridgeTest (exit 0)
-Totals: 14 passed, 0 failed, 0 skipped, 0 blacklisted, 31ms
+Totals: 14 passed, 0 failed, 0 skipped, 0 blacklisted, 121ms
 == UavParameterManagerTest (exit 0)
-Totals: 10 passed, 0 failed, 0 skipped, 0 blacklisted, 34ms
+Totals: 10 passed, 0 failed, 0 skipped, 0 blacklisted, 131ms
 == VehicleProfileManagerTest (exit 0)
-Totals: 13 passed, 0 failed, 0 skipped, 0 blacklisted, 53ms
+Totals: 13 passed, 0 failed, 0 skipped, 0 blacklisted, 58ms
 == WeatherProviderTest (exit 0)
-Totals: 12 passed, 0 failed, 0 skipped, 0 blacklisted, 1693ms
+Totals: 12 passed, 0 failed, 0 skipped, 0 blacklisted, 2571ms
 == ZoneComplianceTest (exit 0)
-Totals: 9 passed, 0 failed, 0 skipped, 0 blacklisted, 114ms
+Totals: 9 passed, 0 failed, 0 skipped, 0 blacklisted, 165ms
 == LivePluginBenchTest (exit 0)
-Totals: 7 passed, 0 failed, 0 skipped, 0 blacklisted, 23019ms
+Totals: 7 passed, 0 failed, 0 skipped, 0 blacklisted, 23927ms

@@ -52,6 +52,10 @@ class VehicleProfileManager : public QObject {
     Q_PROPERTY(QString vehicleKind READ vehicleKindString NOTIFY vehicleTypeResolved)
     Q_PROPERTY(int motorCount READ motorCount NOTIFY vehicleTypeResolved)
     Q_PROPERTY(bool typeResolved READ typeResolved NOTIFY vehicleTypeResolved)
+    /// The connected aircraft's power type (frame + props + cells), -1 when
+    /// it is not linked or no aircraft is connected.
+    Q_PROPERTY(int currentPowerTypeId READ currentPowerTypeId NOTIFY powerTypeChanged)
+    Q_PROPERTY(QString currentPowerTypeName READ currentPowerTypeName NOTIFY powerTypeChanged)
 
     /// Empty-airframe weight in kg (persisted per vehicle, used by the
     /// payload/battery flight-time estimate).
@@ -255,10 +259,34 @@ public:
                                            const QString &notes);
     Q_INVOKABLE bool updateVehicleFirmware(const QString &fingerprint, const QString &firmwareVersion);
 
+    // ── Power types (storage in DatabaseManager, maths in PowerTypeModel.h) ──
+    int currentPowerTypeId() const { return m_powerTypeId; }
+    QString currentPowerTypeName() const;
+    Q_INVOKABLE QVariantList listPowerTypes();
+    /// Creates (@p id ≤ 0) or updates a type; returns its id or -1.
+    Q_INVOKABLE int savePowerType(int id, const QString &frame, double propDiameterIn,
+                                  double propPitchIn, int cells, const QString &motorNote);
+    Q_INVOKABLE bool deletePowerType(int id);
+    /// Links the connected aircraft to a type (≤ 0 unlinks). False with no aircraft.
+    Q_INVOKABLE bool linkCurrentVehiclePowerType(int powerTypeId);
+    /// The type's learned model: {status, source, hover0, hoverK, cruise0,
+    /// cruiseK, advice, validated, chargerFactor, usedFlights, pendingFlights}.
+    /// status: "none", "tooAlike", "payloadNotModelled", "payloadProportional",
+    /// "full"; source: "charger" (fitted from charger numbers), "synthetic"
+    /// (seeded from the FC's current until enough flights) or "none".
+    Q_INVOKABLE QVariantMap powerTypeSummary(int powerTypeId);
+    /// The type's flights (DatabaseManager::powerTypeFlights) plus, once the
+    /// model is usable, predictedMah and outlier for each.
+    Q_INVOKABLE QVariantList powerTypeFlights(int powerTypeId);
+    Q_INVOKABLE bool setFlightChargerMah(int sessionId, double chargerMah);
+    /// "used" adds the flight to its type's model, "dismissed" leaves it out.
+    Q_INVOKABLE bool setFlightLearningState(int sessionId, const QString &state);
+
 signals:
     void currentVehicleChanged();
     void uavWeightChanged();
     void batteryConfigChanged();
+    void powerTypeChanged();
     void liveDataChanged();
     void thrustTableChanged();
     void currentBatteryChanged();
@@ -297,6 +325,7 @@ private:
     QString m_batterySerial;
     QString m_packWaivedBy;             ///< Pilot who waived the pack; empty when not waived.
     int m_flightSessionId = -1;
+    int m_powerTypeId = -1;             ///< Connected aircraft's power type; -1 = none.
     double m_payloadWeightKg = 0.0;
     bool m_payloadEntered = false;      ///< Set by enterPayloadWeightKg(), cleared on vehicle change.
     double m_uavWeightKg = 0.0;

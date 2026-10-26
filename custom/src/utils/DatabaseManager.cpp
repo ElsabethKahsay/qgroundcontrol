@@ -19,6 +19,8 @@ Q_LOGGING_CATEGORY(dbLog, "database.manager")
 #include <QSqlError>
 #include <QSqlQuery>
 #include "core/BatteryPackCheck.h"
+#include "core/PowerTypeModel.h"
+#include <QSet>
 #include <QStandardPaths>
 #include <QThread>
 #include <QTimer>
@@ -334,7 +336,11 @@ bool DatabaseManager::initialize(const QString &dbPath)
 //  24 - connection_session_id on hardware_test_events, surface_test_results
 //       and motor_test_results (+ flight_id there): bench tests link to the
 //       connection and the open flight instead of -1 / 0 / NULL
-static const int kLatestSchemaVersion = 24;
+//  25 - power_types + vehicle_power_type; flight_sessions gains what the
+//       power-type model learns from (hover/cruise minutes with and without
+//       payload, FC mAh and current, throttle, cell volts at arm, telemetry
+//       coverage, time at target, the charger number and its learning state)
+static const int kLatestSchemaVersion = 25;
 
 bool DatabaseManager::createTables()
 {
@@ -1751,6 +1757,42 @@ bool DatabaseManager::migrateSchema()
             addCol(QStringLiteral("surface_test_results"), QStringLiteral("connection_session_id INTEGER"));
             addCol(QStringLiteral("motor_test_results"), QStringLiteral("connection_session_id INTEGER"));
             addCol(QStringLiteral("motor_test_results"), QStringLiteral("flight_id INTEGER"));
+            break;
+        }
+        case 25: {
+            q.exec("CREATE TABLE IF NOT EXISTS power_types ("
+                   "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                   "frame TEXT NOT NULL,"
+                   "prop_diameter_in REAL NOT NULL,"
+                   "prop_pitch_in REAL NOT NULL,"
+                   "cells INTEGER NOT NULL,"
+                   "motor_note TEXT NOT NULL DEFAULT '',"
+                   "created_at TEXT NOT NULL,"
+                   "UNIQUE(frame, prop_diameter_in, prop_pitch_in, cells))");
+            q.exec("CREATE TABLE IF NOT EXISTS vehicle_power_type ("
+                   "device_uid TEXT PRIMARY KEY,"
+                   "power_type_id INTEGER NOT NULL REFERENCES power_types(id),"
+                   "linked_at TEXT NOT NULL)");
+            QSet<QString> have;
+            {
+                QSqlQuery pragma(m_db);
+                pragma.exec(QStringLiteral("PRAGMA table_info(flight_sessions)"));
+                while (pragma.next())
+                    have.insert(pragma.value(1).toString());
+            }
+            static const char *const kCols[] = {
+                "power_type_id INTEGER", "hover_min_empty REAL", "hover_min_loaded REAL",
+                "cruise_min_empty REAL", "cruise_min_loaded REAL", "cruise_speed_ms REAL",
+                "fc_mah REAL", "synth_hover_a REAL", "synth_cruise_a REAL",
+                "ref_throttle_hover REAL", "ref_throttle_cruise REAL", "arm_cell_v REAL",
+                "started_full INTEGER", "telemetry_coverage REAL", "time_at_target_min REAL",
+                "charger_mah REAL", "learning_state TEXT" };
+            for (const char *col : kCols) {
+                const QString def = QString::fromLatin1(col);
+                if (!have.contains(def.section(QLatin1Char(' '), 0, 0)))
+                    q.exec(QStringLiteral("ALTER TABLE flight_sessions ADD COLUMN %1").arg(def));
+            }
+            q.exec("CREATE INDEX IF NOT EXISTS idx_flight_sessions_power_type ON flight_sessions(power_type_id)");
             break;
         }
         default:
@@ -5119,4 +5161,272 @@ QList<QVariantMap> DatabaseManager::getComplianceHistory(int limit)
         records.append(r);
     }
     return records;
+}
+
+// ── Power types ──────────────────────────────────────────────────────────
+// A power type is a copter power system (frame + props + cells). Every flight
+// of every aircraft linked to it is recorded with the type id, and the type's
+// hover/cruise model is learned from those flights' charger numbers
+// (core/PowerTypeModel.h). The identity columns are UNIQUE, so two types can
+// never describe the same build.
+
+QString DatabaseManager::powerTypeName(const QString &frame, double propDiameterIn,
+                                       double propPitchIn, int cells)
+{
+    return QStringLiteral("%1 · %2×%3 · %4S")
+        .arg(frame.trimmed(), QString::number(propDiameterIn, 'g', 4),
+             QString::number(propPitchIn, 'g', 4))
+        .arg(cells);
+}
+
+static const char kPowerTypeColumns[] =
+    "pt.id, pt.frame, pt.prop_diameter_in, pt.prop_pitch_in, pt.cells, pt.motor_note, "
+    "(SELECT COUNT(*) FROM vehicle_power_type v WHERE v.power_type_id = pt.id), "
+    "(SELECT COUNT(*) FROM flight_sessions f WHERE f.power_type_id = pt.id) "
+    "FROM power_types pt";
+
+static QVariantMap powerTypeRow(const QSqlQuery &q)
+{
+    QVariantMap t;
+    t[QStringLiteral("id")]             = q.value(0).toInt();
+    t[QStringLiteral("frame")]          = q.value(1).toString();
+    t[QStringLiteral("propDiameterIn")] = q.value(2).toDouble();
+    t[QStringLiteral("propPitchIn")]    = q.value(3).toDouble();
+    t[QStringLiteral("cells")]          = q.value(4).toInt();
+    t[QStringLiteral("motorNote")]      = q.value(5).toString();
+    t[QStringLiteral("vehicles")]       = q.value(6).toInt();
+    t[QStringLiteral("flights")]        = q.value(7).toInt();
+    t[QStringLiteral("name")] = DatabaseManager::powerTypeName(q.value(1).toString(), q.value(2).toDouble(),
+                                                               q.value(3).toDouble(), q.value(4).toInt());
+    return t;
+}
+
+int DatabaseManager::savePowerType(int id, const QString &frame, double propDiameterIn,
+                                   double propPitchIn, int cells, const QString &motorNote)
+{
+    assertMainThread();
+    const QString f = frame.trimmed();
+    if (!m_initialized || f.isEmpty()
+        || !(propDiameterIn > 0.0 && propDiameterIn <= 100.0)
+        || !(propPitchIn > 0.0 && propPitchIn <= 100.0)
+        || cells < 1 || cells > 24)
+        return -1;
+
+    // Checked here rather than left to the UNIQUE constraint, so a duplicate
+    // is a plain refusal and not a logged SQL error.
+    QSqlQuery dup(m_db);
+    dup.prepare("SELECT id FROM power_types WHERE frame = ? AND prop_diameter_in = ? "
+                "AND prop_pitch_in = ? AND cells = ? AND id <> ?");
+    dup.addBindValue(f);
+    dup.addBindValue(propDiameterIn);
+    dup.addBindValue(propPitchIn);
+    dup.addBindValue(cells);
+    dup.addBindValue(id);
+    if (!execOrWarn(dup, "savePowerType duplicate") || dup.next())
+        return -1;
+
+    QSqlQuery q(m_db);
+    if (id > 0) {
+        q.prepare("UPDATE power_types SET frame = ?, prop_diameter_in = ?, prop_pitch_in = ?, "
+                  "cells = ?, motor_note = ? WHERE id = ?");
+    } else {
+        q.prepare("INSERT INTO power_types (frame, prop_diameter_in, prop_pitch_in, cells, "
+                  "motor_note, created_at) VALUES (?, ?, ?, ?, ?, ?)");
+    }
+    q.addBindValue(f);
+    q.addBindValue(propDiameterIn);
+    q.addBindValue(propPitchIn);
+    q.addBindValue(cells);
+    q.addBindValue(motorNote.trimmed().isEmpty() ? QStringLiteral("") : motorNote.trimmed());
+    if (id > 0)
+        q.addBindValue(id);
+    else
+        q.addBindValue(QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+    if (!execOrWarn(q, "savePowerType"))
+        return -1;
+    if (id > 0)
+        return q.numRowsAffected() == 1 ? id : -1;
+    return q.lastInsertId().toInt();
+}
+
+QVariantList DatabaseManager::listPowerTypes()
+{
+    assertMainThread();
+    QVariantList out;
+    if (!m_initialized) return out;
+    QSqlQuery q(m_db);
+    if (!q.exec(QStringLiteral("SELECT %1 ORDER BY pt.frame, pt.prop_diameter_in, pt.prop_pitch_in, pt.cells")
+                    .arg(QLatin1String(kPowerTypeColumns))))
+        return out;
+    while (q.next())
+        out.append(powerTypeRow(q));
+    return out;
+}
+
+QVariantMap DatabaseManager::powerType(int id)
+{
+    assertMainThread();
+    if (!m_initialized || id <= 0) return {};
+    QSqlQuery q(m_db);
+    q.prepare(QStringLiteral("SELECT %1 WHERE pt.id = ?").arg(QLatin1String(kPowerTypeColumns)));
+    q.addBindValue(id);
+    if (!execOrWarn(q, "powerType") || !q.next()) return {};
+    return powerTypeRow(q);
+}
+
+bool DatabaseManager::deletePowerType(int id)
+{
+    assertMainThread();
+    const QVariantMap t = powerType(id);
+    if (t.isEmpty() || t.value(QStringLiteral("vehicles")).toInt() > 0
+        || t.value(QStringLiteral("flights")).toInt() > 0)
+        return false;
+    QSqlQuery q(m_db);
+    q.prepare("DELETE FROM power_types WHERE id = ?");
+    q.addBindValue(id);
+    return execOrWarn(q, "deletePowerType") && q.numRowsAffected() == 1;
+}
+
+bool DatabaseManager::linkVehiclePowerType(const QString &deviceUid, int powerTypeId)
+{
+    assertMainThread();
+    if (!m_initialized || deviceUid.trimmed().isEmpty()) return false;
+    QSqlQuery q(m_db);
+    if (powerTypeId <= 0) {
+        q.prepare("DELETE FROM vehicle_power_type WHERE device_uid = ?");
+        q.addBindValue(deviceUid.trimmed());
+        return execOrWarn(q, "linkVehiclePowerType unlink");
+    }
+    if (powerType(powerTypeId).isEmpty()) return false;
+    q.prepare("INSERT INTO vehicle_power_type (device_uid, power_type_id, linked_at) VALUES (?, ?, ?) "
+              "ON CONFLICT(device_uid) DO UPDATE SET power_type_id = excluded.power_type_id, "
+              "linked_at = excluded.linked_at");
+    q.addBindValue(deviceUid.trimmed());
+    q.addBindValue(powerTypeId);
+    q.addBindValue(QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+    return execOrWarn(q, "linkVehiclePowerType");
+}
+
+int DatabaseManager::vehiclePowerTypeId(const QString &deviceUid)
+{
+    assertMainThread();
+    if (!m_initialized || deviceUid.trimmed().isEmpty()) return -1;
+    QSqlQuery q(m_db);
+    q.prepare("SELECT power_type_id FROM vehicle_power_type WHERE device_uid = ?");
+    q.addBindValue(deviceUid.trimmed());
+    if (!execOrWarn(q, "vehiclePowerTypeId") || !q.next()) return -1;
+    return q.value(0).toInt();
+}
+
+bool DatabaseManager::saveFlightPowerRecord(int sessionId, const FlightPowerRecord &r)
+{
+    assertMainThread();
+    if (!m_initialized || sessionId <= 0) return false;
+    const bool learnable = r.startedFull && r.telemetryCoverage >= PowerTypeModel::kMinTelemetryCoverage;
+    QSqlQuery q(m_db);
+    q.prepare(R"(
+        UPDATE flight_sessions SET
+            power_type_id = ?, hover_min_empty = ?, hover_min_loaded = ?,
+            cruise_min_empty = ?, cruise_min_loaded = ?, cruise_speed_ms = ?,
+            fc_mah = ?, synth_hover_a = ?, synth_cruise_a = ?,
+            ref_throttle_hover = ?, ref_throttle_cruise = ?, arm_cell_v = ?,
+            started_full = ?, telemetry_coverage = ?, time_at_target_min = ?,
+            learning_state = CASE WHEN learning_state IN ('used', 'dismissed') THEN learning_state
+                                  ELSE ? END
+        WHERE id = ?
+    )");
+    q.addBindValue(r.powerTypeId > 0 ? QVariant(r.powerTypeId) : QVariant(QMetaType::fromType<int>()));
+    q.addBindValue(r.hoverMinEmpty);
+    q.addBindValue(r.hoverMinLoaded);
+    q.addBindValue(r.cruiseMinEmpty);
+    q.addBindValue(r.cruiseMinLoaded);
+    q.addBindValue(r.cruiseSpeedMs);
+    q.addBindValue(r.fcMah);
+    q.addBindValue(r.synthHoverA);
+    q.addBindValue(r.synthCruiseA);
+    q.addBindValue(r.refThrottleHover);
+    q.addBindValue(r.refThrottleCruise);
+    q.addBindValue(r.armCellV);
+    q.addBindValue(r.startedFull ? 1 : 0);
+    q.addBindValue(r.telemetryCoverage);
+    q.addBindValue(r.timeAtTargetMin);
+    q.addBindValue(learnable ? QStringLiteral("pending") : QStringLiteral("excluded"));
+    q.addBindValue(sessionId);
+    return execOrWarn(q, "saveFlightPowerRecord") && q.numRowsAffected() == 1;
+}
+
+bool DatabaseManager::setFlightChargerMah(int sessionId, double chargerMah)
+{
+    assertMainThread();
+    if (!m_initialized || sessionId <= 0 || !std::isfinite(chargerMah)
+        || chargerMah < 1.0 || chargerMah > 200000.0)
+        return false;
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE flight_sessions SET charger_mah = ? WHERE id = ?");
+    q.addBindValue(chargerMah);
+    q.addBindValue(sessionId);
+    return execOrWarn(q, "setFlightChargerMah") && q.numRowsAffected() == 1;
+}
+
+bool DatabaseManager::setFlightLearningState(int sessionId, const QString &state)
+{
+    assertMainThread();
+    if (!m_initialized || sessionId <= 0) return false;
+    if (state != QLatin1String("pending") && state != QLatin1String("used")
+        && state != QLatin1String("dismissed"))
+        return false;
+    // "used" only for a flight with a charger number that started full with
+    // enough telemetry; the WHERE makes the refusal atomic.
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE flight_sessions SET learning_state = ? WHERE id = ? "
+              "AND learning_state IS NOT NULL AND learning_state <> 'excluded' "
+              "AND (? <> 'used' OR charger_mah > 0)");
+    q.addBindValue(state);
+    q.addBindValue(sessionId);
+    q.addBindValue(state);
+    return execOrWarn(q, "setFlightLearningState") && q.numRowsAffected() == 1;
+}
+
+QVariantList DatabaseManager::powerTypeFlights(int powerTypeId)
+{
+    assertMainThread();
+    QVariantList out;
+    if (!m_initialized || powerTypeId <= 0) return out;
+    QSqlQuery q(m_db);
+    q.prepare(R"(
+        SELECT id, device_uid, started_at, payload_weight_kg,
+               hover_min_empty, hover_min_loaded, cruise_min_empty, cruise_min_loaded,
+               cruise_speed_ms, fc_mah, synth_hover_a, synth_cruise_a,
+               ref_throttle_hover, ref_throttle_cruise, arm_cell_v, started_full,
+               telemetry_coverage, time_at_target_min, charger_mah, learning_state
+        FROM flight_sessions WHERE power_type_id = ? ORDER BY started_at, id
+    )");
+    q.addBindValue(powerTypeId);
+    if (!execOrWarn(q, "powerTypeFlights")) return out;
+    auto num = [&q](int col) { return q.value(col).isNull() ? -1.0 : q.value(col).toDouble(); };
+    while (q.next()) {
+        QVariantMap f;
+        f[QStringLiteral("sessionId")]         = q.value(0).toInt();
+        f[QStringLiteral("deviceUid")]         = q.value(1).toString();
+        f[QStringLiteral("startedAt")]         = q.value(2).toString();
+        f[QStringLiteral("payloadKg")]         = q.value(3).isNull() ? 0.0 : q.value(3).toDouble();
+        f[QStringLiteral("hoverMinEmpty")]     = num(4);
+        f[QStringLiteral("hoverMinLoaded")]    = num(5);
+        f[QStringLiteral("cruiseMinEmpty")]    = num(6);
+        f[QStringLiteral("cruiseMinLoaded")]   = num(7);
+        f[QStringLiteral("cruiseSpeedMs")]     = num(8);
+        f[QStringLiteral("fcMah")]             = num(9);
+        f[QStringLiteral("synthHoverA")]       = num(10);
+        f[QStringLiteral("synthCruiseA")]      = num(11);
+        f[QStringLiteral("refThrottleHover")]  = num(12);
+        f[QStringLiteral("refThrottleCruise")] = num(13);
+        f[QStringLiteral("armCellV")]          = num(14);
+        f[QStringLiteral("startedFull")]       = q.value(15).toInt() != 0;
+        f[QStringLiteral("telemetryCoverage")] = num(16);
+        f[QStringLiteral("timeAtTargetMin")]   = num(17);
+        f[QStringLiteral("chargerMah")]        = num(18);
+        f[QStringLiteral("learningState")]     = q.value(19).toString();
+        out.append(f);
+    }
+    return out;
 }
