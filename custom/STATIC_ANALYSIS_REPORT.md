@@ -2,7 +2,7 @@ Skywin GCS Phase 1 Readiness Plan
 20 Oct 2026 · @Arsema
 
 Implementation status (read this first)
-First written 20 Oct 2026; status updated 22 Oct 2026 (Step 3). Steps 1–2 are tagged phase1-step1 / phase1-step2; Step 3 is committed and unit-tested but not yet verified on the aircraft (see "Still open"). The findings further down are left as originally written; this section says which are fixed, which were wrong, and what is still open. Each finding, defect and work item below also carries a "Status 20 Oct" note. Step-by-step instructions for the remaining Steps 0–2 work are in the last section, "Agent instructions: Steps 0–2".
+First written 20 Oct 2026; status updated 22 Oct 2026 (Step 3); latest additions 26 Oct 2026 (GCS failsafe decision, battery-pack waiver, payload item, Fly-view target; the power-type design is in custom/POWER_TYPES_PLAN.md). Steps 1–2 are tagged phase1-step1 / phase1-step2; Step 3 is committed and unit-tested but not yet verified on the aircraft (see "Still open"). The findings further down are left as originally written; this section says which are fixed, which were wrong, and what is still open. Each finding, defect and work item below also carries a "Status 20 Oct" note. Step-by-step instructions for the remaining Steps 0–2 work are in the last section, "Agent instructions: Steps 0–2".
 
 Corrections to this report after checking the current code
 • G1: the token-bound, expiring acknowledgment was implemented in commit 2fd409b49 and then removed by 0a71b8d22 ("Simplify preflight roster"). The project copy was not stale; the fix was lost. Restore those hunks rather than rewrite them.
@@ -97,6 +97,7 @@ Recommendations for Phase 1 (23 Oct), easiest to hardest
 8. Run the SITL campaign (item 12) before the first props-on flight, especially crash recovery, link loss and the 3-hour idle. Scripts can be written now; running them needs ArduPilot SITL on the development machine.
    Status 24 Oct — run on ArduPlane and ArduCopter SITL (ArduPilot master 4.6.0-beta1-6903, not the plane's 4.5.7): every scenario passes; three GCS recording bugs found and fixed (restart while armed lost the rest of the flight; that flight had no energy baseline; a landing during a link blackout closed as an ordinary disarm). Details, run logs and the remaining notes: section "SITL campaign results" at the end of this document. 3-hour idle: PASS (3 h 1 min connected, memory 212 → 213 MB, no quit, no link loss).
 9. Bench the copter: the release gate needs one copter and one plane, and only the plane has been on the bench so far. Plan its bench session (the same checks as the plane).
+10. Power types and mission check (copter; designed 26 Oct; step 1 of 6, the maths, built and tested 26 Oct): its own document, custom/POWER_TYPES_PLAN.md (goal, definitions, decisions, worked example, implementation plan).
 
 Earlier notes on the open items (history; statuses above supersede them)
 • Items 6–8: SessionRecorder, battery pack registry and snapshot (including moving the pack modal into the Power section), database startup and migration fixes.

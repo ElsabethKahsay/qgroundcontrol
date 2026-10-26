@@ -13,6 +13,7 @@
 #include "VehicleProfileManager.h"
 #include "DatabaseManager.h"
 #include "PowerModel.h"
+#include "PowerTypeModel.h"
 
 /**
  * Battery time estimator math: thrust→current interpolation, the known
@@ -65,6 +66,26 @@ private:
         root.insert(QStringLiteral("points"), pts);
         return QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Compact));
     }
+
+    /// The four learning flights of the worked example in POWER_TYPES_PLAN.md
+    /// (SKY-03: hover 32 A + 6 A/kg, cruise 21 A + 4 A/kg; the FC's synthetic
+    /// current reads 1/1.2 of the charger).
+    static QVector<PowerTypeModel::Flight> sky03Flights()
+    {
+        auto flight = [](double hover, double cruise, double kg, double chargerMah) {
+            PowerTypeModel::Flight f;
+            if (kg > 0.0) { f.hoverMinLoaded = hover; f.cruiseMinLoaded = cruise; }
+            else          { f.hoverMinEmpty  = hover; f.cruiseMinEmpty  = cruise; }
+            f.payloadKg = kg;
+            f.chargerAh = chargerMah / 1000.0;
+            f.fcAh      = chargerMah / 1.2 / 1000.0;
+            return f;
+        };
+        return { flight(3, 10, 0.0, 5100.0), flight(8, 4, 0.0, 5666.7),
+                 flight(3, 10, 1.5, 6550.0), flight(8, 4, 1.5, 7266.7) };
+    }
+
+    static bool near(double a, double b, double tol) { return std::abs(a - b) <= tol; }
 
 private slots:
     void init() override { UnitTest::init(); }
@@ -318,6 +339,178 @@ private slots:
 
         QFile::remove(path);
         QFile::remove(path + QStringLiteral(".bak"));
+    }
+    // ── Power types (PowerTypeModel.h) ───────────────────────────────────
+    // Hover and cruise current per kg are learned from charger numbers: two
+    // payload-free flights with a different hover/cruise mix give the 0 kg
+    // currents, payload flights give the extra per kg.
+    void testPowerTypeFitFromChargerFlights()
+    {
+        using namespace PowerTypeModel;
+        const QVector<Flight> all = sky03Flights();
+
+        Model m = fit(all.mid(0, 1));
+        QCOMPARE(m.status, FitStatus::NotEnoughFlights);
+        QVERIFY(!m.usable());
+
+        m = fit(all.mid(0, 2));
+        QCOMPARE(m.status, FitStatus::PayloadNotModelled);
+        QVERIFY2(near(m.hover0, 32.0, 0.01) && near(m.cruise0, 21.0, 0.01),
+                 qPrintable(QStringLiteral("hover %1 cruise %2").arg(m.hover0).arg(m.cruise0)));
+        QCOMPARE(m.hoverK, 0.0);
+
+        // One payload flight: same percentage in both phases (+19 %/kg here).
+        m = fit(all.mid(0, 3));
+        QCOMPARE(m.status, FitStatus::PayloadProportional);
+        QVERIFY2(near(m.hoverK, 6.07, 0.02) && near(m.cruiseK, 3.98, 0.02),
+                 qPrintable(QStringLiteral("hoverK %1 cruiseK %2").arg(m.hoverK).arg(m.cruiseK)));
+
+        m = fit(all);
+        QCOMPARE(m.status, FitStatus::Full);
+        QVERIFY2(near(m.hoverK, 6.0, 0.01) && near(m.cruiseK, 4.0, 0.01),
+                 qPrintable(QStringLiteral("hoverK %1 cruiseK %2").arg(m.hoverK).arg(m.cruiseK)));
+        QVERIFY(near(m.hoverA(0.8), 36.8, 0.01));
+        QVERIFY(near(m.cruiseA(0.8), 24.2, 0.01));
+
+        // Two near-identical mixes cannot separate hover from cruise; both
+        // are mostly cruise, so the advice is a mostly-hover flight.
+        QVector<Flight> alike = all.mid(0, 1);
+        Flight f2 = all[0];
+        f2.hoverMinEmpty = 3.3; f2.cruiseMinEmpty = 11.0; f2.chargerAh = 5.61;
+        alike << f2;
+        m = fit(alike);
+        QCOMPARE(m.status, FitStatus::TooAlike);
+        QVERIFY2(m.advice.contains(QStringLiteral("mostly-hover")), qPrintable(m.advice));
+    }
+
+    // The worked example: 0.8 kg to a 5 km target, 2 min there, dropped,
+    // back empty, on 12.8 Ah usable (16 Ah, 20 % reserve).
+    void testPowerTypeMissionCheck()
+    {
+        using namespace PowerTypeModel;
+        const Model m = fit(sky03Flights());
+        Mission x;
+        x.payloadKg = 0.8; x.targetKm = 5.0; x.minAtTarget = 2.0;
+        x.outSpeedMs = 15.0; x.backSpeedMs = 15.0; x.usableAh = 12.8;
+
+        MissionResult r = checkMission(m, x);
+        const QString got = QStringLiteral("legs %1 %2 %3 %4 %5 total %6 Ah %7 min max %8 km")
+                                .arg(r.takeoffAh).arg(r.outAh).arg(r.targetAh).arg(r.backAh).arg(r.landAh)
+                                .arg(r.totalAh).arg(r.totalMin).arg(r.maxTargetKm);
+        QVERIFY2(near(r.takeoffAh, 0.613, 0.002) && near(r.outAh, 2.241, 0.002)
+                     && near(r.targetAh, 1.227, 0.002), qPrintable(got));
+        // The way back and the landing are costed without the dropped payload.
+        QVERIFY2(near(r.backAh, 1.944, 0.002) && near(r.landAh, 0.533, 0.002), qPrintable(got));
+        QVERIFY2(near(r.totalAh, 6.559, 0.003) && near(r.totalMin, 15.11, 0.01), qPrintable(got));
+        QVERIFY(r.fits);
+        QVERIFY(near(r.spareAh, 6.24, 0.01));
+        QVERIFY2(near(r.maxTargetKm, 12.46, 0.01), qPrintable(got));
+
+        // A 5 m/s headwind on the way out: 10 m/s out, 20 m/s back.
+        x.outSpeedMs = 10.0; x.backSpeedMs = 20.0;
+        r = checkMission(m, x);
+        QVERIFY2(near(r.totalAh, 7.193, 0.003), qPrintable(QString::number(r.totalAh)));
+
+        // Not enough charge: the check fails and says by how much.
+        x.outSpeedMs = 15.0; x.backSpeedMs = 15.0; x.usableAh = 6.0;
+        r = checkMission(m, x);
+        QVERIFY(!r.fits);
+        QVERIFY(near(r.spareAh, -0.559, 0.003));
+    }
+
+    // The FC's synthetic current is corrected by charger mAh ÷ FC mAh, and the
+    // suggested BATT_AMP_PERVLT follows ArduPilot's recalibration formula.
+    void testPowerTypeChargerFactorAndAmpPerVolt()
+    {
+        using namespace PowerTypeModel;
+        QVERIFY(near(chargerFactor(sky03Flights()), 1.20, 0.001));
+        QCOMPARE(chargerFactor({}), 1.0);
+        QVERIFY(near(suggestedAmpPerVolt(120.0, 5100.0, 4250.0), 144.0, 0.01));
+        QCOMPARE(suggestedAmpPerVolt(120.0, -1.0, 4250.0), 120.0);
+
+        const Model seed = seedFromSynthetic(26.7, 17.5, 1.2);
+        QCOMPARE(seed.status, FitStatus::PayloadNotModelled);
+        QVERIFY(near(seed.hover0, 32.04, 0.01) && near(seed.cruise0, 21.0, 0.01));
+        QVERIFY(!seedFromSynthetic(0.0, 17.5, 1.2).usable());
+    }
+
+    // In flight: charge used from the FC × factor, the model current scaled by
+    // the live current within ±30 %, and RETURN NOW when the rest of the trip
+    // needs more than is left above the reserve.
+    void testPowerTypeInFlight()
+    {
+        using namespace PowerTypeModel;
+        const Model m = fit(sky03Flights());
+
+        QVERIFY(near(chargeUsedAh(4.333, 1.2), 5.2, 0.001));
+        QVERIFY(chargeUsedAh(-1.0, 1.2) < 0.0);
+
+        QVERIFY(near(liveRatio(23.3, 1.2, 24.2), 1.155, 0.001));
+        QCOMPARE(liveRatio(40.0, 1.2, 24.2), kLiveRatioMax);
+        QCOMPARE(liveRatio(5.0, 1.2, 24.2), kLiveRatioMin);
+        QCOMPARE(liveRatio(0.0, 1.2, 24.2), 1.0);
+        QVERIFY(near(throttleRatio(0.297, 0.27), std::pow(1.1, 1.5), 0.001));
+        QCOMPARE(throttleRatio(0.9, 0.27), kLiveRatioMax);
+
+        // Half way out: 2.5 km to go with 0.8 kg, 2 min there, 5 km home.
+        RemainingTrip t;
+        t.kmToTarget = 2.5; t.minAtTargetLeft = 2.0; t.kmHome = 5.0;
+        t.payloadAboard = true; t.payloadKg = 0.8;
+        t.outSpeedMs = 15.0; t.backSpeedMs = 15.0;
+        const double plain = remainingTripAh(m, t);
+        QVERIFY2(near(plain, 1.120 + 1.227 + 1.944 + 0.533, 0.003), qPrintable(QString::number(plain)));
+        t.ratio = 1.155;
+        QVERIFY(near(remainingTripAh(m, t), plain * 1.155, 1e-9));
+
+        QCOMPARE(returnShortAh(7.6, 4.8), 0.0);
+        QVERIFY(near(returnShortAh(4.0, 4.4), 0.4, 1e-9));
+
+        // On the way back the payload is gone.
+        RemainingTrip back;
+        back.kmHome = 3.0; back.backSpeedMs = 15.0; back.payloadKg = 0.8;
+        QVERIFY(near(remainingTripAh(m, back), 21.0 * 3.333 / 60.0 + 32.0 / 60.0, 0.003));
+    }
+
+    // Validated = the last three flights each predicted within 10 %; a flight
+    // more than 20 % off is flagged.
+    void testPowerTypeValidationAndOutliers()
+    {
+        using namespace PowerTypeModel;
+        QVector<Flight> flights = sky03Flights();
+        const Model m = fit(flights);
+        QVERIFY(isValidated(m, flights));
+        QVERIFY(!isValidated(m, flights.mid(0, 2)));
+
+        QVector<Flight> drift = flights;
+        drift.last().chargerAh *= 1.15;   // last flight 15 % over the model
+        QVERIFY(!isValidated(m, drift));
+        QVERIFY(!isOutlier(m, drift.last()));
+
+        drift.last().chargerAh = flights.last().chargerAh * 1.30;   // 23 % off the charger number
+        QVERIFY(isOutlier(m, drift.last()));
+        QVERIFY(!isOutlier(m, flights.first()));
+    }
+
+    // What the recorder decides each second and at arming.
+    void testPowerTypeRecorderHelpers()
+    {
+        using namespace PowerTypeModel;
+        QVERIFY(isHover(2.9));
+        QVERIFY(!isHover(3.0));
+
+        QVERIFY(cellsPlausible(22.2, 6));
+        QVERIFY(!cellsPlausible(16.4, 6));   // looks like 4S on a 6S type
+        QVERIFY(cellsPlausible(16.4, 4));
+
+        QVERIFY(fullAtArm(24.9, 6));
+        QVERIFY(!fullAtArm(24.8, 6));
+
+        Flight f; f.chargerAh = 5.1;
+        QVERIFY(usableForLearning(f, true, 0.95));
+        QVERIFY(!usableForLearning(f, false, 0.95));
+        QVERIFY(!usableForLearning(f, true, 0.89));
+        f.chargerAh = -1.0;
+        QVERIFY(!usableForLearning(f, true, 0.95));
     }
 };
 
