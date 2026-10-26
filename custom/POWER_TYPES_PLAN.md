@@ -252,6 +252,7 @@ The operator approves each step before the next one starts.
 - **Tests:**
   - DatabaseManagerTest: `testPowerTypeRegistry`, `testPowerTypeFlightRecords`, and `testPowerTypeUpgradeFromV24` (a v24 file gains the tables and columns when opened). 41/41 pass.
   - BatteryEstimatorTest: `testPowerTypeSummaryFromStoredFlights` (the worked example's four flights stored, then fitted back to 32 + 6 A/kg and 21 + 4 A/kg, factor 1.20, validated). 21/21 pass.
+- **Full suite:** 34 classes, 440 passed, 0 failed, 7 skipped (the known ones), written to `tests/baseline-step3.txt`.
 - **Mutants:** 7 of 8 caught:
   - an edited type refused against itself;
   - an under-filled pack not excluded;
