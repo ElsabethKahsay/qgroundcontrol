@@ -245,15 +245,23 @@ QtObject {
 
         readonly property var _vpm: (typeof VehicleProfileManager !== "undefined") ? VehicleProfileManager : null
         readonly property real _kg: Number(kgField.text.replace(",", "."))
-        readonly property bool _valid: kgField.text.trim().length > 0 && isFinite(_kg) && _kg >= 0 && _kg <= 100
+        readonly property bool _valid: kgField.text.trim().length > 0 && isFinite(_kg) && _kg >= 0 && _kg <= 100 && _minValid
+        // Time at the target (copters' mission check): optional; empty = not entered.
+        readonly property real _min: Number(minField.text.replace(",", "."))
+        readonly property bool _minValid: minField.text.trim().length === 0 || (isFinite(_min) && _min >= 0 && _min <= 600)
 
         onAboutToShow: {
             kgField.text = (_vpm && _vpm.payloadEntered) ? _vpm.currentPayloadWeightKg.toFixed(2) : ""
+            minField.text = (_vpm && _vpm.timeAtTargetMin >= 0) ? String(_vpm.timeAtTargetMin) : ""
             kgField.forceActiveFocus()
         }
 
         function _save(kg) {
-            if (_vpm && _vpm.enterPayloadWeightKg(kg))
+            if (!_vpm || !_minValid)
+                return
+            if (minField.text.trim().length > 0 && !_vpm.enterTimeAtTargetMin(_min))
+                return
+            if (_vpm.enterPayloadWeightKg(kg))
                 payloadDialog.close()
         }
 
@@ -275,6 +283,7 @@ QtObject {
                 Text { font.pixelSize: Config.fontSizeSmall; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Payload (kg):") }
                 TextField {
                     id: kgField
+                    objectName: "payloadKgField"
                     Layout.fillWidth: true
                     placeholderText: qsTr("e.g. 1.2")
                     inputMethodHints: Qt.ImhFormattedNumbersOnly
@@ -282,8 +291,37 @@ QtObject {
                 }
             }
 
+            RowLayout {
+                Layout.fillWidth: true
+                Text { font.pixelSize: Config.fontSizeSmall; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Time at target (min):") }
+                TextField {
+                    id: minField
+                    objectName: "payloadMinField"
+                    Layout.fillWidth: true
+                    placeholderText: qsTr("copters: e.g. 2")
+                    inputMethodHints: Qt.ImhFormattedNumbersOnly
+                }
+            }
+
             Text {
-                visible: kgField.text.trim().length > 0 && !payloadDialog._valid
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: qsTr("The payload is dropped at the target; the mission check costs the way back without it.")
+                font.pixelSize: Config.fontSizeSmall
+                color: Colors.textSecondary
+            }
+
+            Text {
+                visible: !payloadDialog._minValid
+                Layout.fillWidth: true
+                text: qsTr("Enter a time at target between 0 and 600 minutes (or leave it empty).")
+                font.pixelSize: Config.fontSizeSmall
+                color: Colors.error
+                wrapMode: Text.WordWrap
+            }
+
+            Text {
+                visible: kgField.text.trim().length > 0 && !payloadDialog._valid && payloadDialog._minValid
                 Layout.fillWidth: true
                 text: qsTr("Enter a weight between 0 and 100 kg.")
                 font.pixelSize: Config.fontSizeSmall
@@ -310,6 +348,248 @@ QtObject {
                     enabled: payloadDialog._valid
                     Layout.fillWidth: true
                     onClicked: payloadDialog._save(payloadDialog._kg)
+                }
+            }
+        }
+    }
+
+    // The "Power type" item (copters): link the copter to its power type,
+    // confirm the props fitted are the type's (every flight), or waive it for
+    // the flight (logged). New types are created in Vehicle Management.
+    component PowerTypeDialog: Dialog {
+        id: ptDialog
+        title:            qsTr("Power Type")
+        modal:            true
+        closePolicy:      Popup.CloseOnEscape
+        anchors.centerIn: Overlay.overlay
+        width:            Math.min(440, (parent ? parent.width : 440) - 32)
+
+        readonly property var _vpm: (typeof VehicleProfileManager !== "undefined") ? VehicleProfileManager : null
+        property var _types: []
+
+        function _reload() {
+            _types = _vpm ? _vpm.listPowerTypes() : []
+            var idx = -1
+            for (var i = 0; i < _types.length; ++i)
+                if (_vpm && _types[i].id === _vpm.currentPowerTypeId) idx = i
+            typeCombo.currentIndex = idx
+        }
+
+        onAboutToShow: {
+            ptWaiveBox.checked = false
+            ptPilotField.text = (typeof OperatorManager !== "undefined" && OperatorManager)
+                    ? OperatorManager.currentOperatorName : ""
+            _reload()
+        }
+
+        ColumnLayout {
+            width:   parent.width
+            spacing: Config.spacingMedium
+
+            Text {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: qsTr("The power type (frame + props + cells) is what the flight-time estimate and the "
+                           + "mission check learn from. Confirm on every flight that the props fitted are the "
+                           + "type's: the flight controller cannot see them.")
+                font.pixelSize: Config.fontSizeSmall
+                color: Colors.textPrimary
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Text { font.pixelSize: Config.fontSizeSmall; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Power type:") }
+                ComboBox {
+                    id: typeCombo
+                    Layout.fillWidth: true
+                    model: ptDialog._types
+                    textRole: "name"
+                    displayText: currentIndex >= 0 ? currentText : qsTr("Not linked")
+                    onActivated: function(index) {
+                        if (ptDialog._vpm && index >= 0)
+                            ptDialog._vpm.linkCurrentVehiclePowerType(ptDialog._types[index].id)
+                    }
+                }
+            }
+
+            Text {
+                visible: ptDialog._types.length === 0
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: qsTr("No power types yet: create one in Vehicle Management.")
+                font.pixelSize: Config.fontSizeSmall
+                color: Colors.textSecondary
+            }
+
+            Text {
+                visible: ptDialog._vpm && ptDialog._vpm.powerTypePropsConfirmed
+                Layout.fillWidth: true
+                text: qsTr("Props confirmed for this flight.")
+                font.pixelSize: Config.fontSizeSmall
+                color: Colors.statusPass
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                CheckBox { id: ptWaiveBox }
+                Text {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: qsTr("Fly without a power type. I accept a rough flight-time estimate and no mission check.")
+                    font.pixelSize: Config.fontSizeSmall
+                    color: Colors.textPrimary
+                    MouseArea { anchors.fill: parent; onClicked: ptWaiveBox.toggle() }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                visible: ptWaiveBox.checked
+                Text { font.pixelSize: Config.fontSizeSmall; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Pilot:") }
+                TextField { id: ptPilotField; Layout.fillWidth: true; placeholderText: qsTr("pilot name") }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Config.spacingSmall
+                Button { text: qsTr("Cancel"); Layout.fillWidth: true; onClicked: ptDialog.close() }
+                Button {
+                    visible: ptWaiveBox.checked
+                    text: qsTr("Fly without a type")
+                    enabled: ptPilotField.text.trim().length > 0
+                    Layout.fillWidth: true
+                    onClicked: if (ptDialog._vpm && ptDialog._vpm.waivePowerType(ptPilotField.text.trim())) ptDialog.close()
+                }
+                Button {
+                    visible: !ptWaiveBox.checked
+                    objectName: "ptConfirmButton"
+                    text: qsTr("Props fitted match")
+                    highlighted: true
+                    enabled: ptDialog._vpm && ptDialog._vpm.currentPowerTypeId > 0
+                    Layout.fillWidth: true
+                    onClicked: if (ptDialog._vpm && ptDialog._vpm.confirmPowerTypeProps()) ptDialog.close()
+                }
+            }
+        }
+    }
+
+    // The "Mission check" item (copters): the trip to the saved target, leg
+    // by leg, as VehicleProfileManager.missionCheck() costs it. When it comes
+    // out short the pilot can waive it for the flight (logged).
+    component MissionCheckDialog: Dialog {
+        id: mcDialog
+        title:            qsTr("Mission Check")
+        modal:            true
+        closePolicy:      Popup.CloseOnEscape
+        anchors.centerIn: Overlay.overlay
+        width:            Math.min(460, (parent ? parent.width : 460) - 32)
+
+        readonly property var _vpm: (typeof VehicleProfileManager !== "undefined") ? VehicleProfileManager : null
+        property var _r: ({})
+        readonly property bool _costed: _r.modelUsable === true && _r.hasTarget === true && _r.positionKnown === true
+
+        function _ah(v) { return (v === undefined || isNaN(v)) ? "--" : Number(v).toFixed(2) + " Ah" }
+
+        onAboutToShow: {
+            mcWaiveBox.checked = false
+            mcPilotField.text = (typeof OperatorManager !== "undefined" && OperatorManager)
+                    ? OperatorManager.currentOperatorName : ""
+            _r = _vpm ? _vpm.missionCheck() : ({})
+        }
+
+        ColumnLayout {
+            width:   parent.width
+            spacing: Config.spacingMedium
+
+            Text {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: !mcDialog._r.applicable ? qsTr("Copters only.")
+                    : !mcDialog._r.linked ? qsTr("Link a power type first (Power type item).")
+                    : mcDialog._r.modelUsable !== true ? qsTr("Not enough learned flights yet. %1").arg(mcDialog._r.advice || "")
+                    : mcDialog._r.hasTarget !== true ? qsTr("No target saved. Furthest out-and-back with %1 kg: %2 km.")
+                                                       .arg(Number(mcDialog._r.payloadKg).toFixed(1)).arg(Number(mcDialog._r.maxTargetKm).toFixed(1))
+                    : mcDialog._r.positionKnown !== true ? qsTr("Waiting for the GPS position.")
+                    : qsTr("%1 · target %2 km · %3 kg dropped · %4 min at target · cruise %5 m/s%6")
+                          .arg(mcDialog._r.typeName).arg(Number(mcDialog._r.targetKm).toFixed(2))
+                          .arg(Number(mcDialog._r.payloadKg).toFixed(1)).arg(Number(mcDialog._r.minAtTarget).toFixed(0))
+                          .arg(Number(mcDialog._r.cruiseSpeedMs).toFixed(0)).arg(mcDialog._r.speedAssumed ? qsTr(" (assumed)") : "")
+                font.pixelSize: Config.fontSizeSmall
+                color: Colors.textPrimary
+            }
+
+            // The legs as one small table. (A Repeater here crashed the
+            // checklist pages in Qt 6.8: a delegate inside an inline
+            // component of a page-level dialog.)
+            Text {
+                visible: mcDialog._costed
+                Layout.fillWidth: true
+                textFormat: Text.RichText
+                font.pixelSize: Config.fontSizeSmall
+                color: Colors.textSecondary
+                text: {
+                    var r = mcDialog._r
+                    var rows = [
+                        [qsTr("Take-off and climb (with payload)"), r.takeoffAh],
+                        [qsTr("Cruise out (with payload)"),         r.outAh],
+                        [qsTr("At the target (with payload)"),      r.targetAh],
+                        [qsTr("Cruise back (empty)"),               r.backAh],
+                        [qsTr("Landing (empty)"),                   r.landAh],
+                        [qsTr("Total needed"),                      r.totalAh],
+                        [qsTr("Usable above the reserve"),          r.usableAh]
+                    ]
+                    var html = "<table width='100%'>"
+                    for (var i = 0; i < rows.length; ++i)
+                        html += "<tr><td>" + rows[i][0] + "</td><td align='right'><tt>" + mcDialog._ah(rows[i][1]) + "</tt></td></tr>"
+                    return html + "</table>"
+                }
+            }
+
+            Text {
+                visible: mcDialog._costed
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: mcDialog._r.fits ? qsTr("OK: %1 Ah spare. Furthest target with this payload: %2 km.")
+                                             .arg(Number(mcDialog._r.spareAh).toFixed(1)).arg(Number(mcDialog._r.maxTargetKm).toFixed(1))
+                                       : qsTr("Short by %1 Ah. Furthest target with this payload: %2 km.%3")
+                                             .arg((-Number(mcDialog._r.spareAh)).toFixed(1)).arg(Number(mcDialog._r.maxTargetKm).toFixed(1))
+                                             .arg(mcDialog._r.validated ? "" : qsTr(" (estimate not yet validated: a warning only)"))
+                font.pixelSize: Config.fontSizeSmall
+                font.weight: Font.DemiBold
+                color: mcDialog._r.fits ? Colors.statusPass : (mcDialog._r.validated ? Colors.statusFail : Colors.statusWarn)
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                visible: mcDialog._costed && !mcDialog._r.fits
+                CheckBox { id: mcWaiveBox }
+                Text {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: qsTr("Fly this trip anyway. I accept the estimate says the battery is short.")
+                    font.pixelSize: Config.fontSizeSmall
+                    color: Colors.textPrimary
+                    MouseArea { anchors.fill: parent; onClicked: mcWaiveBox.toggle() }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                visible: mcWaiveBox.checked
+                Text { font.pixelSize: Config.fontSizeSmall; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Pilot:") }
+                TextField { id: mcPilotField; Layout.fillWidth: true; placeholderText: qsTr("pilot name") }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Config.spacingSmall
+                Button { text: qsTr("Close"); Layout.fillWidth: true; onClicked: mcDialog.close() }
+                Button {
+                    visible: mcWaiveBox.checked
+                    text: qsTr("Fly anyway")
+                    enabled: mcPilotField.text.trim().length > 0
+                    Layout.fillWidth: true
+                    onClicked: if (mcDialog._vpm && mcDialog._vpm.waiveMissionCheck(mcPilotField.text.trim())) mcDialog.close()
                 }
             }
         }

@@ -40,6 +40,15 @@ Page {
         id: payloadDialog
         parent: Overlay.overlay
     }
+    // Opened by the "Power type" and "Mission check" items (Power section, copters).
+    CE.ChecklistEngine.PowerTypeDialog {
+        id: powerTypeDialog
+        parent: Overlay.overlay
+    }
+    CE.ChecklistEngine.MissionCheckDialog {
+        id: missionCheckDialog
+        parent: Overlay.overlay
+    }
 
     // ── Vehicle-type gate for the checklist "Next" flow ─────────────────────
     // Explicit enumeration of the airframes that take Next → Gimbal Test.
@@ -605,15 +614,20 @@ Page {
                                                                                     Button {
                                                                                         readonly property bool isPackCheck: chk && chk.checkId === "power.battery.pack"
                                                                                         readonly property bool isPayloadCheck: chk && chk.checkId === "airframe.payload"
-                                                                                        // The pack and payload items stay clickable once passed, to change them.
-                                                                                        visible: ((isManual || isAction) && !isPassed) || isPackCheck || isPayloadCheck
+                                                                                        readonly property bool isPowerTypeCheck: chk && chk.checkId === "power.power_type"
+                                                                                        readonly property bool isMissionCheck: chk && chk.checkId === "power.mission"
+                                                                                        readonly property bool hasDialog: isPackCheck || isPayloadCheck || isPowerTypeCheck || isMissionCheck
+                                                                                        // Items with a dialog stay clickable once passed, to change or review them.
+                                                                                        visible: ((isManual || isAction) && !isPassed) || hasDialog
                                                                                         text: isPackCheck ? (isPassed ? qsTr("Change") : qsTr("Select"))
                                                                                               : isPayloadCheck ? (isPassed ? qsTr("Change") : qsTr("Enter"))
+                                                                                              : isPowerTypeCheck ? (isPassed ? qsTr("Change") : qsTr("Confirm"))
+                                                                                              : isMissionCheck ? qsTr("Details")
                                                                                               : isManual ? "Confirm" : "Run"
                                                                                         highlighted: true
                                                                                         font.pixelSize: Config.fontSizeSmall
                                                                                         Layout.preferredHeight: 26
-                                                                                        Layout.preferredWidth: (isPackCheck || isPayloadCheck) ? 64 : 54
+                                                                                        Layout.preferredWidth: hasDialog ? 64 : 54
                                                                                         onClicked: {
                                                                                             if (isPackCheck) {
                                                                                                 // Never confirm(): only choosing a pack passes it.
@@ -621,6 +635,12 @@ Page {
                                                                                             } else if (isPayloadCheck) {
                                                                                                 // Only an entered weight passes it.
                                                                                                 payloadDialog.open();
+                                                                                            } else if (isPowerTypeCheck) {
+                                                                                                // Only a confirmed type (or a waiver) passes it.
+                                                                                                powerTypeDialog.open();
+                                                                                            } else if (isMissionCheck) {
+                                                                                                // Computed, never confirmed by hand.
+                                                                                                missionCheckDialog.open();
                                                                                             } else if (isAction) {
                                                                                                 var c = PreflightManager.checkById(chk.checkId);
                                                                                                 if (c) {

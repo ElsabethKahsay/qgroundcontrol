@@ -14,7 +14,9 @@
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QHash>
 #include <QJsonObject>
+#include <QSettings>
 #include <QUuid>
 #include <algorithm>
 #include <cmath>
@@ -628,11 +630,21 @@ bool VehicleProfileManager::enterPayloadWeightKg(double kg)
 
 void VehicleProfileManager::clearPayloadEntry()
 {
-    if (!m_payloadEntered && m_payloadWeightKg == 0.0)
+    if (!m_payloadEntered && m_payloadWeightKg == 0.0 && m_timeAtTargetMin < 0.0)
         return;
     m_payloadEntered = false;
     m_payloadWeightKg = 0.0;
+    m_timeAtTargetMin = -1.0;
     emit payloadWeightChanged();
+}
+
+bool VehicleProfileManager::enterTimeAtTargetMin(double minutes)
+{
+    if (!std::isfinite(minutes) || minutes < 0.0 || minutes > 600.0)
+        return false;
+    m_timeAtTargetMin = minutes;
+    emit payloadWeightChanged();
+    return true;
 }
 
 void VehicleProfileManager::setUavWeight(double value, const QString &unit)
@@ -1309,7 +1321,10 @@ bool VehicleProfileManager::linkCurrentVehiclePowerType(int powerTypeId)
     if (m_currentDeviceUid.isEmpty()
         || !DatabaseManager::instance().linkVehiclePowerType(m_currentDeviceUid, powerTypeId))
         return false;
-    m_powerTypeId = DatabaseManager::instance().vehiclePowerTypeId(m_currentDeviceUid);
+    const int linked = DatabaseManager::instance().vehiclePowerTypeId(m_currentDeviceUid);
+    if (linked != m_powerTypeId)
+        m_propsConfirmed = false;   // the confirmation was for the other type's props
+    m_powerTypeId = linked;
     emit powerTypeChanged();
     return true;
 }
@@ -1368,4 +1383,185 @@ bool VehicleProfileManager::setFlightLearningState(int sessionId, const QString 
         return false;
     emit powerTypeChanged();
     return true;
+}
+
+// ── Per-flight power-type state and the mission check ────────────────────
+// The "Power type" and "Mission check" checklist items read this state; it
+// lasts one flight (PreflightPlugin clears it after a non-bench flight and on
+// a vehicle change), like the battery-pack waiver.
+
+bool VehicleProfileManager::recordWaiver(const QString &event, const QString &pilot,
+                                         const QString &reason, const QString &checkId)
+{
+    const QString name = pilot.trimmed();
+    if (name.isEmpty())
+        return false;
+    Vehicle *v = m_telemetry ? m_telemetry->vehicle() : nullptr;
+    QJsonObject entry;
+    entry[QStringLiteral("event")] = event;
+    entry[QStringLiteral("pilot")] = name;
+    entry[QStringLiteral("reason")] = reason;
+    entry[QStringLiteral("checks")] = QJsonArray{checkId};
+    entry[QStringLiteral("timestamp")] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+    return DatabaseManager::instance().saveComplianceLog(
+        QStringLiteral("gate-%1-%2").arg(event, QUuid::createUuid().toString(QUuid::WithoutBraces)),
+        v ? QString::number(v->id()) : QStringLiteral("unknown"),
+        v ? v->vehicleTypeString() : QStringLiteral("unknown"), name,
+        QString::fromUtf8(QJsonDocument(entry).toJson(QJsonDocument::Compact)), QString());
+}
+
+bool VehicleProfileManager::confirmPowerTypeProps()
+{
+    if (m_powerTypeId <= 0)
+        return false;
+    m_propsConfirmed = true;
+    emit powerTypeChanged();
+    return true;
+}
+
+bool VehicleProfileManager::waivePowerType(const QString &pilot)
+{
+    if (!recordWaiver(QStringLiteral("power_type_waived"), pilot,
+                      QStringLiteral("No power type; rough flight-time estimate, no mission check"),
+                      QStringLiteral("power.power_type")))
+        return false;
+    m_powerTypeWaivedBy = pilot.trimmed();
+    emit powerTypeChanged();
+    return true;
+}
+
+bool VehicleProfileManager::waiveMissionCheck(const QString &pilot)
+{
+    const QVariantMap r = missionCheck();
+    const QString reason = QStringLiteral("Trip short by %1 Ah (target %2 km, payload %3 kg)")
+                               .arg(-r.value(QStringLiteral("spareAh")).toDouble(), 0, 'f', 1)
+                               .arg(r.value(QStringLiteral("targetKm")).toDouble(), 0, 'f', 1)
+                               .arg(r.value(QStringLiteral("payloadKg")).toDouble(), 0, 'f', 1);
+    if (!recordWaiver(QStringLiteral("mission_check_waived"), pilot, reason, QStringLiteral("power.mission")))
+        return false;
+    m_missionWaivedBy = pilot.trimmed();
+    emit powerTypeChanged();
+    return true;
+}
+
+void VehicleProfileManager::clearPowerTypeFlightState()
+{
+    if (!m_propsConfirmed && m_powerTypeWaivedBy.isEmpty() && m_missionWaivedBy.isEmpty())
+        return;
+    m_propsConfirmed = false;
+    m_powerTypeWaivedBy.clear();
+    m_missionWaivedBy.clear();
+    emit powerTypeChanged();
+}
+
+QString VehicleProfileManager::frameName(int frameClass, int frameType)
+{
+    static const QHash<int, QString> classes = {
+        {1, QStringLiteral("Quad")}, {2, QStringLiteral("Hexa")}, {3, QStringLiteral("Octa")},
+        {4, QStringLiteral("OctaQuad")}, {5, QStringLiteral("Y6")}, {7, QStringLiteral("Tri")},
+        {12, QStringLiteral("DodecaHexa")}, {14, QStringLiteral("Deca")}};
+    static const QHash<int, QString> types = {
+        {0, QStringLiteral("Plus")}, {1, QStringLiteral("X")}, {2, QStringLiteral("V")},
+        {3, QStringLiteral("H")}};
+    if (!classes.contains(frameClass))
+        return {};
+    const QString t = types.value(frameType);
+    return t.isEmpty() ? classes.value(frameClass) : QStringLiteral("%1 %2").arg(classes.value(frameClass), t);
+}
+
+QString VehicleProfileManager::currentFrameName() const
+{
+    if (!m_telemetry || !m_telemetry->hasParameter(QStringLiteral("FRAME_CLASS")))
+        return {};
+    return frameName(qRound(m_telemetry->parameterValue(QStringLiteral("FRAME_CLASS"), -1.0f)),
+                     qRound(m_telemetry->parameterValue(QStringLiteral("FRAME_TYPE"), -1.0f)));
+}
+
+QVariantMap VehicleProfileManager::missionCheck()
+{
+    QVariantMap out;
+    out[QStringLiteral("applicable")] = m_kind == VehicleKind::Multirotor;
+    if (m_kind != VehicleKind::Multirotor)
+        return out;
+    out[QStringLiteral("linked")] = m_powerTypeId > 0;
+    out[QStringLiteral("powerTypeWaivedBy")] = m_powerTypeWaivedBy;
+    out[QStringLiteral("packWaived")] = batteryPackWaived();
+    out[QStringLiteral("waivedBy")] = m_missionWaivedBy;
+    if (m_powerTypeId <= 0 || !m_powerTypeWaivedBy.isEmpty() || batteryPackWaived())
+        return out;
+
+    const QVariantMap sum = powerTypeSummary(m_powerTypeId);
+    out[QStringLiteral("typeName")] = sum.value(QStringLiteral("name"));
+    out[QStringLiteral("source")] = sum.value(QStringLiteral("source"));
+    out[QStringLiteral("advice")] = sum.value(QStringLiteral("advice"));
+    out[QStringLiteral("validated")] = sum.value(QStringLiteral("validated"));
+    const bool usable = sum.value(QStringLiteral("source")).toString() != QLatin1String("none");
+    out[QStringLiteral("modelUsable")] = usable;
+    if (!usable)
+        return out;
+
+    PowerTypeModel::Model model;
+    model.hover0  = sum.value(QStringLiteral("hover0")).toDouble();
+    model.hoverK  = sum.value(QStringLiteral("hoverK")).toDouble();
+    model.cruise0 = sum.value(QStringLiteral("cruise0")).toDouble();
+    model.cruiseK = sum.value(QStringLiteral("cruiseK")).toDouble();
+
+    // Cruise speed: what the type's used flights flew at (the currents were
+    // learned at that speed); 10 m/s, said so, before any flight has one.
+    double speedSum = 0.0;
+    int speedN = 0;
+    for (const QVariant &v : DatabaseManager::instance().powerTypeFlights(m_powerTypeId)) {
+        const QVariantMap f = v.toMap();
+        const double spd = f.value(QStringLiteral("cruiseSpeedMs")).toDouble();
+        if (f.value(QStringLiteral("learningState")).toString() == QLatin1String("used") && spd > 0.0) {
+            speedSum += spd;
+            ++speedN;
+        }
+    }
+    const double cruise = speedN > 0 ? speedSum / speedN : 10.0;
+    out[QStringLiteral("cruiseSpeedMs")] = cruise;
+    out[QStringLiteral("speedAssumed")] = speedN == 0;
+
+    QSettings settings;
+    settings.beginGroup(QStringLiteral("PowerTypes"));
+    PowerTypeModel::Mission x;
+    x.payloadKg = m_payloadEntered ? m_payloadWeightKg : 0.0;
+    x.minAtTarget = m_timeAtTargetMin >= 0.0 ? m_timeAtTargetMin : 0.0;
+    x.outSpeedMs = cruise;
+    x.backSpeedMs = cruise;
+    x.takeoffMin = settings.value(QStringLiteral("takeoffMin"), 1.0).toDouble();
+    x.landMin = settings.value(QStringLiteral("landMin"), 1.0).toDouble();
+    const int soc = m_telemetry ? m_telemetry->batteryPercent() : -1;
+    x.usableAh = usableAhAboveReserveFor(soc >= 0 && soc <= 100 ? soc : 100);
+    out[QStringLiteral("payloadEntered")] = m_payloadEntered;
+    out[QStringLiteral("payloadKg")] = x.payloadKg;
+    out[QStringLiteral("timeAtTargetEntered")] = m_timeAtTargetMin >= 0.0;
+    out[QStringLiteral("minAtTarget")] = x.minAtTarget;
+    out[QStringLiteral("usableAh")] = x.usableAh;
+
+    // Distance from where the copter is now (on the ground: home) to the
+    // target saved on the gimbal page.
+    const QVariantMap target = DatabaseManager::instance().vehicleTarget(m_currentDeviceUid);
+    const double lat = m_telemetry ? m_telemetry->gpsLatitude() : 0.0;
+    const double lon = m_telemetry ? m_telemetry->gpsLongitude() : 0.0;
+    const bool positionKnown = std::abs(lat) > 1e-6 || std::abs(lon) > 1e-6;
+    out[QStringLiteral("hasTarget")] = !target.isEmpty();
+    out[QStringLiteral("positionKnown")] = positionKnown;
+    if (!target.isEmpty() && positionKnown)
+        x.targetKm = PowerTypeModel::distanceM(lat, lon, target.value(QStringLiteral("lat")).toDouble(),
+                                               target.value(QStringLiteral("lon")).toDouble()) / 1000.0;
+    out[QStringLiteral("targetKm")] = x.targetKm;
+
+    const PowerTypeModel::MissionResult r = PowerTypeModel::checkMission(model, x);
+    out[QStringLiteral("takeoffAh")] = r.takeoffAh;
+    out[QStringLiteral("outAh")] = r.outAh;
+    out[QStringLiteral("targetAh")] = r.targetAh;
+    out[QStringLiteral("backAh")] = r.backAh;
+    out[QStringLiteral("landAh")] = r.landAh;
+    out[QStringLiteral("totalAh")] = r.totalAh;
+    out[QStringLiteral("totalMin")] = r.totalMin;
+    out[QStringLiteral("spareAh")] = r.spareAh;
+    out[QStringLiteral("maxTargetKm")] = r.maxTargetKm;
+    out[QStringLiteral("fits")] = r.fits;
+    return out;
 }

@@ -28,6 +28,7 @@ inline const QVector<ParameterDef> &all()
         {"BAT1_V_DIV",      "POW", "Voltage divider",                 0.0f,   100.0f,  10.0f},
         {"BATT_MONITOR",    "POW", "Battery monitor enable",          0.0f,   1.0f,    1.0f},
         {"BATT_CAPACITY",   "POW", "Battery full capacity (mAh)",     0.0f,   100000.0f, 5000.0f},
+        {"BATT_AMP_PERVLT", "POW", "Current at full throttle / per volt (A)", 0.0f, 1000.0f, 17.0f},
         {"BATT_CELL_COUNT", "POW", "Battery cell count",              0.0f,   16.0f,   6.0f},
         {"BATT_LOW_VOLT",   "POW", "Battery empty voltage per cell",  0.0f,   5.0f,    3.5f},
 

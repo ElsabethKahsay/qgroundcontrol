@@ -1266,6 +1266,8 @@ private slots:
     void testPayloadEnteredIsOnTheFlightRecord();
     void testToolbarShowsOneSharpLogo();
     void testPowerTypeFlightRecordedLive();
+    void testPowerTypeAndMissionItemsLive();
+    void testPowerDialogsDriveTheItems();
 
 private:
     bool _connectPlane();
@@ -1608,6 +1610,213 @@ void LivePluginBenchTest::testPowerTypeFlightRecordedLive()
                                                          .arg(q.value(0).toDouble())));
     QVERIFY(!q.value(1).toString().isEmpty());
 
+    QVERIFY(vpm->linkCurrentVehiclePowerType(0));
+}
+
+// The real plugin's "Power type" and "Mission check" items on the mock copter:
+// Pending until linked and the props are confirmed; with a validated type
+// (the worked example's four flights) a target far beyond reach fails the
+// mission check, which blocks the gate until waived; a near one passes; an
+// RC flight's disarm clears the props confirmation and the waiver.
+void LivePluginBenchTest::testPowerTypeAndMissionItemsLive()
+{
+    QVERIFY2(_connectPlane(), "mock copter did not connect / resolve its UID");
+    auto *mgr = _pluginChild<PreflightManager>();
+    auto *gate = _pluginChild<ArmingGate>();
+    QVERIFY(mgr && gate);
+    AbstractCheck *typeItem = mgr->checkById(QStringLiteral("power.power_type"));
+    AbstractCheck *tripItem = mgr->checkById(QStringLiteral("power.mission"));
+    QVERIFY2(typeItem && tripItem, "the two items are not registered");
+    VehicleProfileManager *vpm = VehicleProfileManager::instance();
+    for (int i = 0; i < 100 && vpm->kind() != VehicleKind::Multirotor; ++i)
+        QTest::qWait(50);
+    QCOMPARE(vpm->kind(), VehicleKind::Multirotor);
+    for (int i = 0; i < 200 && !_vehicle->coordinate().isValid(); ++i)
+        QTest::qWait(50);
+    QVERIFY(_vehicle->coordinate().isValid());
+
+    // Start unlinked (the test database persists between runs).
+    QVERIFY(vpm->linkCurrentVehiclePowerType(0));
+    QCOMPARE(typeItem->status(), CheckStatus::Pending);
+    QVERIFY(gate->currentRequest(0).failingMandatoryIds.contains(QStringLiteral("power.power_type")));
+    QCOMPARE(tripItem->status(), CheckStatus::Skipped);
+
+    // A type validated by the worked example's four flights (hover 32 + 6 A/kg,
+    // cruise 21 + 4 A/kg), recorded on this copter.
+    DatabaseManager &db = DatabaseManager::instance();
+    const QString uid = vpm->currentDeviceUid();
+    int type = -1;
+    for (const QVariant &t : vpm->listPowerTypes())
+        if (t.toMap().value(QStringLiteral("name")).toString() == QStringLiteral("Quad X · 15×5.5 · 6S"))
+            type = t.toMap().value(QStringLiteral("id")).toInt();
+    if (type <= 0)
+        type = vpm->savePowerType(0, QStringLiteral("Quad X"), 15.0, 5.5, 6, {});
+    QVERIFY(type > 0);
+    struct F { double hover, cruise, kg, mah; };
+    for (const F &f : { F{3, 10, 0.0, 5100.0}, F{8, 4, 0.0, 5666.7}, F{3, 10, 1.5, 6550.0}, F{8, 4, 1.5, 7266.7} }) {
+        const int id = db.startFlightSession(uid, QString(), f.kg);
+        FlightPowerRecord r;
+        r.powerTypeId = type;
+        (f.kg > 0 ? r.hoverMinLoaded : r.hoverMinEmpty) = f.hover;
+        (f.kg > 0 ? r.cruiseMinLoaded : r.cruiseMinEmpty) = f.cruise;
+        r.cruiseSpeedMs = 15.0;
+        r.startedFull = true;
+        r.telemetryCoverage = 1.0;
+        QVERIFY(db.saveFlightPowerRecord(id, r));
+        QVERIFY(db.setFlightChargerMah(id, f.mah));
+        QVERIFY(db.setFlightLearningState(id, QStringLiteral("used")));
+    }
+    QVERIFY(vpm->powerTypeSummary(type).value(QStringLiteral("validated")).toBool());
+
+    QVERIFY(vpm->linkCurrentVehiclePowerType(type));
+    QCOMPARE(typeItem->status(), CheckStatus::Pending);
+    QVERIFY(vpm->confirmPowerTypeProps());
+    QVERIFY2(typeItem->status() == CheckStatus::Passed || typeItem->status() == CheckStatus::Warning,
+             qPrintable(typeItem->message()));
+    QVERIFY(!gate->currentRequest(0).failingMandatoryIds.contains(QStringLiteral("power.power_type")));
+    // Linking another type drops the confirmation: it was for these props.
+    QVERIFY(vpm->linkCurrentVehiclePowerType(0));
+    QVERIFY(vpm->linkCurrentVehiclePowerType(type));
+    QVERIFY(!vpm->powerTypePropsConfirmed());
+    QCOMPARE(typeItem->status(), CheckStatus::Pending);
+    QVERIFY(vpm->confirmPowerTypeProps());
+
+    // A pack, a payload and a target 60 km away: far beyond any pack.
+    QVERIFY(vpm->enterPayloadWeightKg(0.8));
+    QVERIFY(vpm->enterTimeAtTargetMin(2.0));
+    const QGeoCoordinate here = _vehicle->coordinate();
+    QVERIFY(FlightSession::instance()->saveTargetLocation(here.latitude() + 60.0 / 111.195, here.longitude(),
+                                                          QStringLiteral("typed")));
+    tripItem->evaluate();
+    QCOMPARE(tripItem->status(), CheckStatus::Failed);
+    QVERIFY2(tripItem->message().contains(QStringLiteral("short by")), qPrintable(tripItem->message()));
+    QVERIFY(gate->currentRequest(0).failingMandatoryIds.contains(QStringLiteral("power.mission")));
+
+    QVERIFY(vpm->waiveMissionCheck(QStringLiteral("Live Pilot")));
+    QCOMPARE(tripItem->status(), CheckStatus::Warning);
+    QVERIFY(!gate->currentRequest(0).failingMandatoryIds.contains(QStringLiteral("power.mission")));
+
+    // 50 m away: the trip fits whatever the mock battery reads (about 2.4 Ah).
+    QVERIFY(FlightSession::instance()->saveTargetLocation(here.latitude() + 0.05 / 111.195, here.longitude(),
+                                                          QStringLiteral("typed")));
+    vpm->clearPowerTypeFlightState();
+    QVERIFY(vpm->confirmPowerTypeProps());
+    tripItem->evaluate();
+    QVERIFY2(tripItem->status() == CheckStatus::Passed || tripItem->status() == CheckStatus::Failed,
+             qPrintable(tripItem->message()));
+    const QVariantMap near = vpm->missionCheck();
+    QCOMPARE(tripItem->status() == CheckStatus::Passed, near.value(QStringLiteral("fits")).toBool());
+
+    // An RC flight in Flight mode: its disarm ends the confirmation.
+    FlightSession::instance()->setMode(QStringLiteral("FLIGHT"));
+    _vehicle->setArmed(true, false);
+    QVERIFY(_waitArmed(true));
+    QTest::qWait(300);
+    _vehicle->setArmed(false, false);
+    QVERIFY(_waitArmed(false));
+    QTest::qWait(300);
+    QVERIFY2(!vpm->powerTypePropsConfirmed(), "the disarm after a flight kept the props confirmation");
+    QCOMPARE(typeItem->status(), CheckStatus::Pending);
+
+    QVERIFY(vpm->linkCurrentVehiclePowerType(0));
+}
+
+// The three dialogs the checklist pages open (ChecklistEngine inline
+// components, through the same "cpts" import the pages use), driven like a
+// pilot would: the payload dialog saves the weight and the time at target;
+// "Props fitted match" confirms the type; the mission dialog shows the trip
+// VehicleProfileManager costs.
+void LivePluginBenchTest::testPowerDialogsDriveTheItems()
+{
+    QVERIFY2(_connectPlane(), "mock copter did not connect / resolve its UID");
+    VehicleProfileManager *vpm = VehicleProfileManager::instance();
+    for (int i = 0; i < 100 && vpm->kind() != VehicleKind::Multirotor; ++i)
+        QTest::qWait(50);
+    int type = -1;
+    for (const QVariant &t : vpm->listPowerTypes())
+        if (t.toMap().value(QStringLiteral("name")).toString() == QStringLiteral("Quad X · 15×5.5 · 6S"))
+            type = t.toMap().value(QStringLiteral("id")).toInt();
+    if (type <= 0)
+        type = vpm->savePowerType(0, QStringLiteral("Quad X"), 15.0, 5.5, 6, {});
+    QVERIFY(type > 0);
+    QVERIFY(vpm->linkCurrentVehiclePowerType(type));
+    QVERIFY(!vpm->powerTypePropsConfirmed());
+
+    QSharedPointer<QQmlApplicationEngine> engine(QGCCorePlugin::instance()->createQmlApplicationEngine(nullptr));
+    QVERIFY(engine);
+    QGCPalette palette;
+    engine->rootContext()->setContextProperty(QStringLiteral("qgcPal"), &palette);
+    QSharedPointer<QQuickWindow> window(createWindow(engine, 1100, 800));
+    QQmlComponent component(engine.data());
+    component.setData(QByteArrayLiteral(
+        "import QtQuick\n"
+        "import cpts 1.0 as CE\n"
+        "Item {\n"
+        "    width: 1000; height: 760\n"
+        "    property alias payload: payload\n"
+        "    property alias powerType: powerType\n"
+        "    property alias mission: mission\n"
+        "    CE.ChecklistEngine.PayloadDialog { id: payload }\n"
+        "    CE.ChecklistEngine.PowerTypeDialog { id: powerType }\n"
+        "    CE.ChecklistEngine.MissionCheckDialog { id: mission }\n"
+        "}\n"), QUrl(QStringLiteral("qrc:/qml/cpts/PowerDialogsTest.qml")));
+    QVERIFY2(component.status() == QQmlComponent::Ready, qPrintable(component.errorString()));
+    QScopedPointer<QObject> rootObj(component.create());
+    auto *root = qobject_cast<QQuickItem *>(rootObj.data());
+    QVERIFY2(root, qPrintable(component.errorString()));
+    root->setParentItem(window->contentItem());
+
+    auto dialog = [&](const char *name) { return root->property(name).value<QObject *>(); };
+    // A Dialog's declared content is owned by the dialog object itself.
+    auto contentChild = [&](QObject *dlg, const QString &objName) -> QObject * {
+        return dlg->findChild<QObject *>(objName);
+    };
+
+    // Payload: 0.8 kg, 2 min at target.
+    QObject *payload = dialog("payload");
+    QVERIFY(payload);
+    QMetaObject::invokeMethod(payload, "open");
+    pumpQml(200);
+    QObject *kg = contentChild(payload, QStringLiteral("payloadKgField"));
+    QObject *min = contentChild(payload, QStringLiteral("payloadMinField"));
+    QVERIFY2(kg && min, "payload fields not found");
+    kg->setProperty("text", QStringLiteral("0.8"));
+    min->setProperty("text", QStringLiteral("2"));
+    pumpQml(50);
+    QVERIFY(QMetaObject::invokeMethod(payload, "_save", Q_ARG(QVariant, 0.8)));
+    pumpQml(100);
+    QVERIFY(vpm->payloadEntered());
+    QCOMPARE(vpm->currentPayloadWeightKg(), 0.8);
+    QCOMPARE(vpm->timeAtTargetMin(), 2.0);
+    QVERIFY(!payload->property("visible").toBool());
+
+    // Power type: "Props fitted match".
+    QObject *pt = dialog("powerType");
+    QVERIFY(pt);
+    QMetaObject::invokeMethod(pt, "open");
+    pumpQml(200);
+    QObject *confirm = contentChild(pt, QStringLiteral("ptConfirmButton"));
+    QVERIFY2(confirm, "Props fitted match button not found");
+    QVERIFY(confirm->property("enabled").toBool());
+    QVERIFY(QMetaObject::invokeMethod(confirm, "clicked"));
+    pumpQml(100);
+    QVERIFY(vpm->powerTypePropsConfirmed());
+    QVERIFY(!pt->property("visible").toBool());
+
+    // Mission check: shows what VehicleProfileManager costs.
+    QObject *mc = dialog("mission");
+    QVERIFY(mc);
+    QMetaObject::invokeMethod(mc, "open");
+    pumpQml(200);
+    const QVariantMap shown = mc->property("_r").toMap();
+    QVERIFY(shown.value(QStringLiteral("applicable")).toBool());
+    QVERIFY(shown.value(QStringLiteral("linked")).toBool());
+    QCOMPARE(shown.value(QStringLiteral("payloadKg")).toDouble(), 0.8);
+    QCOMPARE(shown.value(QStringLiteral("minAtTarget")).toDouble(), 2.0);
+    QMetaObject::invokeMethod(mc, "close");
+
+    vpm->clearPowerTypeFlightState();
+    vpm->clearPayloadEntry();
     QVERIFY(vpm->linkCurrentVehiclePowerType(0));
 }
 

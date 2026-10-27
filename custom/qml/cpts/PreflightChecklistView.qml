@@ -49,6 +49,15 @@ Rectangle {
         id: payloadDialog
         parent: Overlay.overlay
     }
+    // Opened by the "Power type" and "Mission check" items (Power section, copters).
+    CE.ChecklistEngine.PowerTypeDialog {
+        id: powerTypeDialog
+        parent: Overlay.overlay
+    }
+    CE.ChecklistEngine.MissionCheckDialog {
+        id: missionCheckDialog
+        parent: Overlay.overlay
+    }
     property var _expandedChecks: ({})
 
     // ── Vehicle-type aware "Next → Gimbal Test" flow ───────────────────────
@@ -718,10 +727,14 @@ Rectangle {
                                                     check: checkObject
                                                     readonly property bool isPackCheck: checkId === "power.battery.pack"
                                                     readonly property bool isPayloadCheck: checkId === "airframe.payload"
+                                                    readonly property bool isPowerTypeCheck: checkId === "power.power_type"
+                                                    readonly property bool isMissionCheck: checkId === "power.mission"
                                                     actionLabel: isPackCheck ? (status === 1 ? qsTr("Change battery pack") : qsTr("Select battery pack"))
                                                                  : isPayloadCheck ? (status === 1 ? qsTr("Change payload") : qsTr("Enter payload"))
+                                                                 : isPowerTypeCheck ? (status === 1 ? qsTr("Change power type") : qsTr("Confirm power type"))
+                                                                 : isMissionCheck ? qsTr("Mission check details")
                                                                  : actionButtonText.length > 0 ? actionButtonText : "Run"
-                                                    repeatable: isPackCheck || isPayloadCheck
+                                                    repeatable: isPackCheck || isPayloadCheck || isPowerTypeCheck || isMissionCheck
                                                     running: root._runningChecks[checkId] === true
                                                     Layout.fillWidth: true
                                                     Layout.leftMargin: 8
@@ -734,6 +747,14 @@ Rectangle {
                                                         }
                                                         if (isPayloadCheck) {
                                                             payloadDialog.open()
+                                                            return
+                                                        }
+                                                        if (isPowerTypeCheck) {
+                                                            powerTypeDialog.open()
+                                                            return
+                                                        }
+                                                        if (isMissionCheck) {
+                                                            missionCheckDialog.open()
                                                             return
                                                         }
                                                         root._runningChecks[cid] = true

@@ -1,8 +1,8 @@
 # Power Types and Mission Check
 
-Skywin GCS · copter only · designed 26 Oct 2026 with the operator · **steps 1–3 of 6 built**
+Skywin GCS · copter only · designed 26 Oct 2026 with the operator · **steps 1–4 of 6 built**
 
-Status: step 1 (the maths) and step 2 (storage) built and tested 26 Oct, step 3 (flight recorder) 27 Oct; steps 4–6 not started. Each step starts on the operator's go (see "Implementation plan"). Planes keep the existing rough flight-time estimate.
+Status: step 1 (the maths) and step 2 (storage) built and tested 26 Oct, step 3 (flight recorder) and step 4 (checklist items and arming) 27 Oct; steps 5–6 not started. Each step starts on the operator's go (see "Implementation plan"). Planes keep the existing rough flight-time estimate.
 
 Method (decided 26 Oct): **combined**. The flight controller estimates current from throttle (`BATT_MONITOR = 25`, synthetic current), the charger provides the real total after each flight, and the GCS learns a hover/cruise/payload model from both.
 
@@ -210,7 +210,7 @@ The operator approves each step before the next one starts.
 | 1. Maths **(done 26 Oct)** | Header-only `src/core/PowerTypeModel.h` (pure maths, no Qt object): least-squares fit (2–4 unknowns, too-alike detection, outliers, validation rule), charger factor and suggested `BATT_AMP_PERVLT`, leg sum, max distance, in-flight sum (FC mAh × factor, live-ratio scaling, throttle fallback), cell-count check. Tests reproduce every number in section 6 | ½ day |
 | 2. Storage **(done 26 Oct)** | Next database version step: tables `power_types` and `vehicle_power_type`. New flight_sessions columns: power type, hover/cruise minutes with/without payload, cruise speed, FC synthetic mAh, synthetic current per phase, reference throttles, cell volts at arming, telemetry coverage, time at target, charger mAh, learning state. Q_INVOKABLEs on VehicleProfileManager (count the recompiles first; ask if 300 or more) | ½ day |
 | 3. Flight recorder **(done 27 Oct)** | Per-second hover/cruise and payload-aboard accounting; FC mAh and synthetic current per phase; telemetry coverage; full-pack test at arming; `BATT_MONITOR` / `BATT_AMP_PERVLT` read on connect | ½ day |
-| 4. Checklist and arming | `PowerTypeCheck.h` and `MissionCheck.h` (header-only, no Q_OBJECT; the mission check blocks when validated, amber otherwise); `BATT_MONITOR` warning; time-at-target field in the payload dialog; one arming-gate rule + waiver. Unit tests + LivePluginBenchTest | 1 day |
+| 4. Checklist and arming **(done 27 Oct)** | `PowerTypeCheck.h` and `MissionCheck.h` (header-only, no Q_OBJECT; the mission check blocks when validated, amber otherwise); `BATT_MONITOR` warning; time-at-target field in the payload dialog; one arming-gate rule + waiver. Unit tests + LivePluginBenchTest | 1 day |
 | 5. Screens | Vehicle Management: power types, link, the type's flights (charger status, Use/Dismiss, "fly next" advice, Validated badge), built as inline QML in the existing page. Post-flight page: charger mAh entry, FC vs charger comparison and suggested `BATT_AMP_PERVLT`. Fly view: battery chip, info box, RETURN NOW | 1 day |
 | 6. Final check | SITL flight with `BATT_MONITOR = 25` (this proves the logic only, since SITL's current is simulated); full test suite; report | ½–1 day |
 
@@ -303,6 +303,58 @@ The operator approves each step before the next one starts.
 - **Known limits:**
   - Before the first BATTERY_STATUS, TelemetryBridge reports 0 A rather than "unknown", so a flight with no current data averages 0 A. The synthetic-current starting model ignores averages of 0.
   - Ground idle current is not modelled, so the hover current comes out slightly high, which is the safe direction.
+
+**Step 4 result (27 Oct):**
+- **"Power type" item** (`src/core/PowerTypeCheck.h`, Power section; mandatory Action item; copters only, Skipped on other airframes):
+  - **Pending** until the copter is linked to a type and the pilot confirms "props fitted match" for this flight.
+  - **Warning** (does not block) when the type is waived, or when the flight controller disagrees:
+    - its frame (FRAME_CLASS) is not the type's frame;
+    - the battery voltage does not fit the type's cell count;
+    - `BATT_MONITOR` is 0 or 3, i.e. no current is reported.
+  - A generic confirm from a checklist button is undone.
+- **"Mission check" item** (`src/core/MissionCheck.h`, Power section; mandatory Action item; copters only):
+  - **What it costs:** the trip to the saved target with `VehicleProfileManager::missionCheck()`:
+    - the type's fitted model;
+    - cruise speed from its used flights, or 10 m/s, stated as assumed;
+    - usable charge from the pack config and live charge;
+    - take-off and landing minutes from the settings (`PowerTypes/takeoffMin`, `landMin`; default 1).
+  - **Failed (blocks arming)** only when the trip is short and the type is validated; a logged waiver turns that into a Warning.
+  - **Warning** when the trip is short and the type is not yet validated, or when the model is not usable yet.
+  - **Pending** for a validated type until the payload is entered and the GPS position is known, so the check cannot be dodged.
+  - **No target:** Passed, with the furthest out-and-back distance.
+  - **No power type or no pack:** Skipped.
+- **Per-flight state** (`VehicleProfileManager`):
+  - props confirmed, power-type waiver and mission waiver; both waivers go to compliance_logs (`power_type_waived` / `mission_check_waived`);
+  - time at target (0–600 min, with the payload entry).
+  - Cleared by the disarm that ends a non-bench flight and by a vehicle change. Linking another type drops the props confirmation.
+  - `currentFrameName()` maps FRAME_CLASS/FRAME_TYPE to "Quad X" etc.
+- **Dialogs** (inline components in `ChecklistEngine.qml`, opened from both checklist pages):
+  - The payload dialog gains "Time at target (min)".
+  - The Power Type dialog: link a type, confirm "Props fitted match", or waive.
+  - The Mission Check dialog: the legs as a table, the result, and a waiver when short.
+- **Arming:** no new gate code. Both items are mandatory, so the existing rule refuses while either is Pending or the mission check is Failed.
+- **Also:**
+  - `BATT_AMP_PERVLT` is added to the parameter watchlist, for step 5's suggestion.
+  - The 5 s timer and the input signals re-evaluate both items.
+- **Found and fixed while testing:** a `Repeater` inside the Mission Check dialog crashed both checklist pages on load (ChecklistPagesSmokeTest, SIGSEGV in Qt's QML object creator). The legs are now one rich-text table.
+- **Tests:**
+  - ArmingGateTest: `testPowerTypeItemNeedsConfirmedProps`, `testMissionCheckBlocksOnlyWhenValidated` and `testPowerTypeWaiversAndTimeAtTarget`, including the gate's failing list. 21/21 pass.
+  - LivePluginBenchTest (real plugin, mock copter): 10/10 pass.
+    - `testPowerTypeAndMissionItemsLive`: Pending → linked → confirmed; relinking drops the confirmation; a 60 km target fails and holds the gate; the waiver releases it; an RC flight's disarm clears the confirmation.
+    - `testPowerDialogsDriveTheItems`: the real dialogs are instantiated and driven. The payload and time are saved, the button confirms, and the mission dialog shows the costed trip.
+- **Full suite:** 34 classes, 449 passed, 0 failed, 7 skipped (the known ones).
+- **Mutants: all 10 caught:**
+  - props never required;
+  - a generic confirm passing the item;
+  - a short validated trip only warning;
+  - the payload dodge;
+  - the mission waiver ignored;
+  - the confirmation surviving a flight;
+  - waivers logged under the wrong event;
+  - relinking keeping the confirmation;
+  - the payload dialog dropping the time;
+  - the button confirming nothing.
+- **Not pinned by a test:** the frame, cell-count and `BATT_MONITOR` warnings. They are built in the plugin's provider from live parameters the mock does not let the test choose. Usable in the app only once step 5 adds the screen to create power types; until then the Power type item can only be waived.
 
 Build rules (as for all Skywin work):
 - No CMake re-run and no `custom.qrc` change; incremental builds only.

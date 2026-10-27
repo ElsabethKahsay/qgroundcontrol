@@ -56,6 +56,15 @@ class VehicleProfileManager : public QObject {
     /// it is not linked or no aircraft is connected.
     Q_PROPERTY(int currentPowerTypeId READ currentPowerTypeId NOTIFY powerTypeChanged)
     Q_PROPERTY(QString currentPowerTypeName READ currentPowerTypeName NOTIFY powerTypeChanged)
+    /// Per flight: the pilot confirmed the props fitted match the power type,
+    /// or waived the type, or waived a mission check that came out short.
+    /// Cleared by the disarm that ends a flight (bench arms keep them) and by
+    /// a vehicle change; a different type also clears the confirmation.
+    Q_PROPERTY(bool powerTypePropsConfirmed READ powerTypePropsConfirmed NOTIFY powerTypeChanged)
+    Q_PROPERTY(QString powerTypeWaivedBy READ powerTypeWaivedBy NOTIFY powerTypeChanged)
+    Q_PROPERTY(QString missionCheckWaivedBy READ missionCheckWaivedBy NOTIFY powerTypeChanged)
+    /// Minutes the copter stays at the target this flight; -1 = not entered.
+    Q_PROPERTY(double timeAtTargetMin READ timeAtTargetMin NOTIFY payloadWeightChanged)
 
     /// Empty-airframe weight in kg (persisted per vehicle, used by the
     /// payload/battery flight-time estimate).
@@ -282,6 +291,33 @@ public:
     /// "used" adds the flight to its type's model, "dismissed" leaves it out.
     Q_INVOKABLE bool setFlightLearningState(int sessionId, const QString &state);
 
+    bool powerTypePropsConfirmed() const { return m_propsConfirmed; }
+    QString powerTypeWaivedBy() const { return m_powerTypeWaivedBy; }
+    QString missionCheckWaivedBy() const { return m_missionWaivedBy; }
+    double timeAtTargetMin() const { return m_timeAtTargetMin; }
+    /// 0–600 min; false (nothing changes) outside that.
+    Q_INVOKABLE bool enterTimeAtTargetMin(double minutes);
+    /// The props fitted are the linked type's. False with no type linked.
+    Q_INVOKABLE bool confirmPowerTypeProps();
+    /// Fly this flight without a power type / with a mission check that came
+    /// out short. Need the pilot's name; written to compliance_logs.
+    Q_INVOKABLE bool waivePowerType(const QString &pilot);
+    Q_INVOKABLE bool waiveMissionCheck(const QString &pilot);
+    /// End of a (non-bench) flight or a vehicle change.
+    void clearPowerTypeFlightState();
+    /// The connected copter's FRAME_CLASS/FRAME_TYPE as a name ("Quad X"),
+    /// empty when not reported; prefills a new power type's frame.
+    Q_INVOKABLE QString currentFrameName() const;
+    static QString frameName(int frameClass, int frameType);
+    /// What the "Mission check" item and its dialog show: the trip to the
+    /// saved target costed with the linked type's model. {applicable, linked,
+    /// typeName, powerTypeWaivedBy, packWaived, modelUsable, validated,
+    /// source, advice, payloadEntered, payloadKg, timeAtTargetEntered,
+    /// minAtTarget, cruiseSpeedMs, speedAssumed, usableAh, hasTarget,
+    /// positionKnown, targetKm, takeoffAh, outAh, targetAh, backAh, landAh,
+    /// totalAh, totalMin, spareAh, maxTargetKm, fits, waivedBy}.
+    Q_INVOKABLE QVariantMap missionCheck();
+
 signals:
     void currentVehicleChanged();
     void uavWeightChanged();
@@ -326,6 +362,11 @@ private:
     QString m_packWaivedBy;             ///< Pilot who waived the pack; empty when not waived.
     int m_flightSessionId = -1;
     int m_powerTypeId = -1;             ///< Connected aircraft's power type; -1 = none.
+    bool m_propsConfirmed = false;
+    QString m_powerTypeWaivedBy;
+    QString m_missionWaivedBy;
+    double m_timeAtTargetMin = -1.0;
+    bool recordWaiver(const QString &event, const QString &pilot, const QString &reason, const QString &checkId);
     double m_payloadWeightKg = 0.0;
     bool m_payloadEntered = false;      ///< Set by enterPayloadWeightKg(), cleared on vehicle change.
     double m_uavWeightKg = 0.0;
