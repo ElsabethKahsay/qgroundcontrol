@@ -15,6 +15,11 @@
 //               used are written, and the connection's last-seen time; crash
 //               recovery (DatabaseManager::recoverOrphanedSessions) closes any
 //               row left open at that time with end_reason = crash_recovered.
+//   power type  once a second, a non-bench flight of an aircraft linked to a
+//               power type is split into hover/cruise and loaded/empty time
+//               with the FC current and throttle per phase
+//               (PowerTypeModel::FlightTracker); the result is written with
+//               each summary and at close, for the model to learn from.
 //
 // Durations come from MonotonicClock; timestamps are UTC ISO-8601.
 // Header-only and without Q_OBJECT (functor connections only), so it needs
@@ -30,12 +35,14 @@
 #include <QObject>
 #include <QTimer>
 
+#include "PowerTypeModel.h"
 #include "utils/DatabaseManager.h"
 #include "utils/MonotonicClock.h"
 
 class SessionRecorder : public QObject {
 public:
     static constexpr int kSummaryIntervalMs = 10000;
+    static constexpr int kPowerTickMs = 1000;
 
     /// Live values the running summary reads.
     struct Sample {
@@ -47,6 +54,11 @@ public:
         double altitudeM = std::numeric_limits<double>::quiet_NaN();   ///< relative altitude
         int gpsSats = -1;
         QString flightMode;
+        double groundSpeedMs = std::numeric_limits<double>::quiet_NaN();
+        double currentA = -1;      ///< FC current (synthetic or measured); -1 = unknown
+        double throttle = -1;      ///< 0–1; -1 = unknown
+        double lat = std::numeric_limits<double>::quiet_NaN();
+        double lon = std::numeric_limits<double>::quiet_NaN();
     };
 
     /// What is known at the arm transition.
@@ -61,6 +73,11 @@ public:
         int operatorId = -1;       ///< for the Flight History row; -1 = none selected
         int vehicleSysId = 0;
         QString weatherSummary;
+        int powerTypeId = -1;      ///< aircraft's power type; -1 = not linked (no power record)
+        int cells = 0;             ///< the power type's cell count, for the full-pack test
+        double timeAtTargetMin = -1;
+        double targetLat = std::numeric_limits<double>::quiet_NaN();
+        double targetLon = std::numeric_limits<double>::quiet_NaN();
     };
 
     /// What a closed flight was, for the caller's follow-up (battery cycle...).
@@ -91,6 +108,12 @@ public:
     {
         m_summaryTimer.setInterval(kSummaryIntervalMs);
         QObject::connect(&m_summaryTimer, &QTimer::timeout, this, [this]() { writeSummary(); });
+        m_powerTimer.setInterval(kPowerTickMs);
+        QObject::connect(&m_powerTimer, &QTimer::timeout, this, [this]() {
+            const qint64 now = MonotonicClock::nowMs();
+            powerTick((now - m_lastPowerTickMs) / 1000.0);
+            m_lastPowerTickMs = now;
+        });
     }
 
     ~SessionRecorder() override { connectionClosed(QStringLiteral("app_exit")); }
@@ -174,6 +197,15 @@ public:
         noteVoltage(s.voltage);   // ignores 0 / NaN: no battery reading yet
         m_maxAltitude = s.altitudeM;
         m_maxVoltage = s.voltage;
+        // Power-type tracking. A flight joined already armed started before
+        // the GCS saw it, so its charger number would cover time the tracker
+        // never saw: it is recorded but never counts as started full.
+        m_armVoltage = start.armSource == kArmSourceAlreadyArmed ? -1.0 : s.voltage;
+        if (m_flightId > 0 && powerTracking()) {
+            m_tracker.start(start.targetLat, start.targetLon);
+            m_lastPowerTickMs = MonotonicClock::nowMs();
+            m_powerTimer.start();
+        }
         // The pack as it was at arm; editing it later changes no flight.
         if (m_flightId > 0) {
             m_db.openFlightBattery(m_flightId, 1, start.pack, s.voltage, s.percent);
@@ -251,7 +283,27 @@ public:
         noteAltitude(s.altitudeM);
         m_db.updateFlightRecordSummary(m_flightId, elapsedSec(MonotonicClock::nowMs()), m_minVoltage,
                                        mahUsed(s.mahConsumed));
+        writePowerRecord(s);
     }
+
+    /// One power-type tick (the 1 s timer calls it; tests call it directly).
+    void powerTick(double dtSec)
+    {
+        if (m_flightId <= 0 || !powerTracking())
+            return;
+        const Sample s = sample();
+        PowerTypeModel::TrackSample t;
+        t.groundSpeedMs = s.groundSpeedMs;
+        t.altitudeM = s.altitudeM;
+        t.currentA = s.currentA;
+        t.throttle = s.throttle;
+        t.lat = s.lat;
+        t.lon = s.lon;
+        t.linkUp = !m_linkLost;
+        m_tracker.tick(dtSec, t);
+    }
+
+    const PowerTypeModel::FlightTracker &powerTracker() const { return m_tracker; }
 
 private:
     Sample sample() const { return m_sample ? m_sample() : Sample{}; }
@@ -318,6 +370,8 @@ private:
                 ? s.distanceM - m_startSample.distanceM : -1;
         if (end.whUsed >= 0 || distM >= 0)
             m_db.updateFlightSessionEnergy(m_flightId, qMax(0.0, end.whUsed), qMax(0.0, distM));
+        writePowerRecord(s);
+        m_powerTimer.stop();
         if (m_historyId > 0) {
             if (!atLinkLoss)
                 noteAltitude(s.altitudeM);
@@ -340,10 +394,40 @@ private:
 
     void updateContext() { m_db.setRecordingContext(m_connId, m_flightId, m_deviceUid, m_historyId); }
 
+    /// Bench arms (motor/servo tests, Testing mode) teach the model nothing.
+    bool powerTracking() const { return m_start.powerTypeId > 0 && !m_start.bench; }
+
+    void writePowerRecord(const Sample &s)
+    {
+        if (m_flightId <= 0 || !powerTracking())
+            return;
+        FlightPowerRecord r;
+        r.powerTypeId = m_start.powerTypeId;
+        r.hoverMinEmpty = m_tracker.hoverMinEmpty();
+        r.hoverMinLoaded = m_tracker.hoverMinLoaded();
+        r.cruiseMinEmpty = m_tracker.cruiseMinEmpty();
+        r.cruiseMinLoaded = m_tracker.cruiseMinLoaded();
+        r.cruiseSpeedMs = m_tracker.cruiseSpeedMs();
+        r.fcMah = mahUsed(s.mahConsumed);
+        r.synthHoverA = m_tracker.hoverCurrentA();
+        r.synthCruiseA = m_tracker.cruiseCurrentA();
+        r.refThrottleHover = m_tracker.hoverThrottle();
+        r.refThrottleCruise = m_tracker.cruiseThrottle();
+        r.armCellV = (m_armVoltage > 0 && m_start.cells > 0) ? m_armVoltage / m_start.cells : -1.0;
+        r.startedFull = m_armVoltage > 0 && PowerTypeModel::fullAtArm(m_armVoltage, m_start.cells);
+        r.telemetryCoverage = m_tracker.coverage();
+        r.timeAtTargetMin = m_start.timeAtTargetMin;
+        m_db.saveFlightPowerRecord(m_flightId, r);
+    }
+
     DatabaseManager &m_db;
     std::function<Sample()> m_sample;
     std::function<void(const FlightEnd &)> m_onFlightClosed;
     QTimer m_summaryTimer;
+    QTimer m_powerTimer;
+    PowerTypeModel::FlightTracker m_tracker;
+    qint64 m_lastPowerTickMs = MonotonicClock::kNever;
+    double m_armVoltage = -1;      ///< pack voltage at arm; -1 = unknown or joined mid-flight
 
     int m_connId = -1;
     QString m_deviceUid;

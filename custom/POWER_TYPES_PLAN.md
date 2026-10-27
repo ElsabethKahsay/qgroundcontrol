@@ -1,8 +1,8 @@
 # Power Types and Mission Check
 
-Skywin GCS · copter only · designed 26 Oct 2026 with the operator · **steps 1–2 of 6 built**
+Skywin GCS · copter only · designed 26 Oct 2026 with the operator · **steps 1–3 of 6 built**
 
-Status: step 1 (the maths) and step 2 (storage) built and tested 26 Oct; steps 3–6 not started. Each step starts on the operator's go (see "Implementation plan"). Planes keep the existing rough flight-time estimate.
+Status: step 1 (the maths) and step 2 (storage) built and tested 26 Oct, step 3 (flight recorder) 27 Oct; steps 4–6 not started. Each step starts on the operator's go (see "Implementation plan"). Planes keep the existing rough flight-time estimate.
 
 Method (decided 26 Oct): **combined**. The flight controller estimates current from throttle (`BATT_MONITOR = 25`, synthetic current), the charger provides the real total after each flight, and the GCS learns a hover/cruise/payload model from both.
 
@@ -209,7 +209,7 @@ The operator approves each step before the next one starts.
 |---|---|---|
 | 1. Maths **(done 26 Oct)** | Header-only `src/core/PowerTypeModel.h` (pure maths, no Qt object): least-squares fit (2–4 unknowns, too-alike detection, outliers, validation rule), charger factor and suggested `BATT_AMP_PERVLT`, leg sum, max distance, in-flight sum (FC mAh × factor, live-ratio scaling, throttle fallback), cell-count check. Tests reproduce every number in section 6 | ½ day |
 | 2. Storage **(done 26 Oct)** | Next database version step: tables `power_types` and `vehicle_power_type`. New flight_sessions columns: power type, hover/cruise minutes with/without payload, cruise speed, FC synthetic mAh, synthetic current per phase, reference throttles, cell volts at arming, telemetry coverage, time at target, charger mAh, learning state. Q_INVOKABLEs on VehicleProfileManager (count the recompiles first; ask if 300 or more) | ½ day |
-| 3. Flight recorder | Per-second hover/cruise and payload-aboard accounting; FC mAh and synthetic current per phase; telemetry coverage; full-pack test at arming; `BATT_MONITOR` / `BATT_AMP_PERVLT` read on connect | ½ day |
+| 3. Flight recorder **(done 27 Oct)** | Per-second hover/cruise and payload-aboard accounting; FC mAh and synthetic current per phase; telemetry coverage; full-pack test at arming; `BATT_MONITOR` / `BATT_AMP_PERVLT` read on connect | ½ day |
 | 4. Checklist and arming | `PowerTypeCheck.h` and `MissionCheck.h` (header-only, no Q_OBJECT; the mission check blocks when validated, amber otherwise); `BATT_MONITOR` warning; time-at-target field in the payload dialog; one arming-gate rule + waiver. Unit tests + LivePluginBenchTest | 1 day |
 | 5. Screens | Vehicle Management: power types, link, the type's flights (charger status, Use/Dismiss, "fly next" advice, Validated badge), built as inline QML in the existing page. Post-flight page: charger mAh entry, FC vs charger comparison and suggested `BATT_AMP_PERVLT`. Fly view: battery chip, info box, RETURN NOW | 1 day |
 | 6. Final check | SITL flight with `BATT_MONITOR = 25` (this proves the logic only, since SITL's current is simulated); full test suite; report | ½–1 day |
@@ -262,7 +262,47 @@ The operator approves each step before the next one starts.
   - fitting every flight instead of `used` only;
   - no synthetic seed.
 - **Survivor:** "a linked type can be deleted". Removing the explicit check changes nothing, because the foreign key on `vehicle_power_type` still refuses the delete.
-- **Not pinned by a test:** `currentPowerTypeId` reloading on connect and clearing on disconnect, because that needs a live vehicle. Step 4's live bench test will cover it.
+- **Not pinned by a test:** `currentPowerTypeId` reloading on connect and clearing on disconnect, because that needs a live vehicle. Step 3's live test now covers it.
+
+**Step 3 result (27 Oct):**
+- **`PowerTypeModel::FlightTracker`** (header-only) takes one tick per second of the flight:
+  - **Airborne:** above 1 m or at cruise speed. Time armed on the ground draws idle current, so it is left out.
+  - **Hover or cruise:** below or above 3 m/s.
+  - **Loaded or empty:** the payload counts as aboard until the copter first comes within 20 m of the target. With no target it stays aboard.
+  - **Averages:** FC current, throttle and cruise speed are time-weighted per phase; a phase with no data averages to -1.
+  - **Telemetry coverage:** seconds with telemetry ÷ all seconds.
+- **`SessionRecorder`:**
+  - A 1 s timer feeds the tracker while a non-bench flight of a linked aircraft is open.
+  - The power record (`saveFlightPowerRecord`) is written with every 10 s summary and at close: minutes, FC mAh used, current and throttle per phase, cell volts at arm, full-at-arm, coverage, time at target.
+  - A flight joined already armed never counts as started full. It started before the GCS saw it, so its charger number would cover unseen time.
+  - The sample has five new fields: ground speed, FC current, throttle, latitude and longitude.
+  - The flight start has five new fields: power type, cells, time at target, and the target's latitude and longitude.
+- **`PreflightPlugin`:**
+  - It fills the new sample fields from TelemetryBridge, with throttle from QGC's `VFR_HUD` throttle %.
+  - At arming it passes the aircraft's power type, its cell count and the saved target.
+  - Time at target stays -1 until step 4 adds the field to the payload dialog.
+- **Moved to step 4:** reading `BATT_MONITOR` / `BATT_AMP_PERVLT`. It belongs with the connect-time warning check, which receives parameter updates.
+- **Tests (all pass):**
+  - `BatteryEstimatorTest::testPowerTypeTrackerWithoutTarget`. BatteryEstimatorTest 22/22.
+  - `DatabaseManagerTest::testRecorderPowerTypeFlight` flies a whole mission through the recorder: ground time, take-off, cruise out, drop at the target, a link loss, cruise back, then a bench arm and a joined flight. DatabaseManagerTest 43/43.
+  - `LivePluginBenchTest::testPowerTypeFlightRecordedLive` uses the real plugin against QGC's mock vehicle, and reruns safely on the persistent test database. LivePluginBenchTest 8/8. It checks that:
+    - the type is cleared on disconnect;
+    - another aircraft gets its own type from the database;
+    - an RC-armed flight is recorded with the type and with the 1 s tracker's coverage.
+- **Full suite:** 34 classes, 444 passed, 0 failed, 7 skipped (the known ones).
+- **Mutants: all 8 caught:**
+  - payload never dropped;
+  - ground time counted as hover;
+  - link-lost seconds counted as seen;
+  - bench arms tracked;
+  - joined flight counted as started full;
+  - record not written at close;
+  - plugin never passing the power type;
+  - 1 s timer never started.
+- **The first run of the live test had a gap, now fixed:** it found an earlier run's flight in the test database, which let "plugin never passing the power type" through. It now counts only the flight it creates.
+- **Known limits:**
+  - Before the first BATTERY_STATUS, TelemetryBridge reports 0 A rather than "unknown", so a flight with no current data averages 0 A. The synthetic-current starting model ignores averages of 0.
+  - Ground idle current is not modelled, so the hover current comes out slightly high, which is the safe direction.
 
 Build rules (as for all Skywin work):
 - No CMake re-run and no `custom.qrc` change; incremental builds only.

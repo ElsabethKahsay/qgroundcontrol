@@ -377,4 +377,104 @@ inline bool usableForLearning(const Flight &f, bool startedFull, double telemetr
     return startedFull && f.chargerAh > 0.0 && telemetryCoverage >= kMinTelemetryCoverage;
 }
 
+/// Above this relative altitude (or at cruise speed) the copter is airborne.
+/// Time armed on the ground draws idle current, not hover current, so it is
+/// left out of the hover and cruise minutes.
+constexpr double kAirborneAltM = 1.0;
+
+/// Great-circle distance in metres.
+inline double distanceM(double lat1, double lon1, double lat2, double lon2)
+{
+    constexpr double kEarthRadiusM = 6371000.0;
+    constexpr double kRad = 3.14159265358979323846 / 180.0;
+    const double dLat = (lat2 - lat1) * kRad;
+    const double dLon = (lon2 - lon1) * kRad;
+    const double a = std::sin(dLat / 2) * std::sin(dLat / 2)
+                   + std::cos(lat1 * kRad) * std::cos(lat2 * kRad) * std::sin(dLon / 2) * std::sin(dLon / 2);
+    return 2.0 * kEarthRadiusM * std::asin(std::min(1.0, std::sqrt(a)));
+}
+
+/// What the recorder knows about the copter for one tick.
+struct TrackSample {
+    double groundSpeedMs = std::nan("");
+    double altitudeM     = std::nan("");  ///< Relative to home
+    double currentA      = -1.0;          ///< FC current (synthetic or measured); < 0 = none
+    double throttle      = -1.0;          ///< 0–1; < 0 = none
+    double lat           = std::nan("");
+    double lon           = std::nan("");
+    bool   linkUp        = true;          ///< false while telemetry is lost
+};
+
+/// Splits a flight into what the power-type model learns from, one tick at a
+/// time: airborne seconds go to hover (below kHoverMaxSpeedMs) or cruise, and
+/// to "loaded" until the copter first comes within kDropRadiusM of the target
+/// (the payload is dropped there; with no target it stays aboard). Current,
+/// throttle and cruise speed are time-weighted averages over the seconds that
+/// had them. Seconds without telemetry count against the coverage only.
+class FlightTracker {
+public:
+    void start(double targetLat, double targetLon)
+    {
+        *this = FlightTracker();
+        m_targetLat = targetLat;
+        m_targetLon = targetLon;
+    }
+
+    void tick(double dtSec, const TrackSample &s)
+    {
+        if (!(dtSec > 0.0))
+            return;
+        m_totalSec += dtSec;
+        if (!s.linkUp)
+            return;
+        m_seenSec += dtSec;
+
+        const bool posValid = std::isfinite(s.lat) && std::isfinite(s.lon);
+        if (m_loaded && posValid && std::isfinite(m_targetLat) && std::isfinite(m_targetLon)
+            && distanceM(s.lat, s.lon, m_targetLat, m_targetLon) <= kDropRadiusM)
+            m_loaded = false;
+
+        const double gs = std::isfinite(s.groundSpeedMs) ? s.groundSpeedMs : 0.0;
+        const bool airborne = (std::isfinite(s.altitudeM) && s.altitudeM > kAirborneAltM) || !isHover(gs);
+        if (!airborne)
+            return;
+
+        const double min = dtSec / 60.0;
+        Phase &p = isHover(gs) ? m_hover : m_cruise;
+        (m_loaded ? p.minLoaded : p.minEmpty) += min;
+        if (s.currentA >= 0.0) { p.currentSum += s.currentA * dtSec; p.currentSec += dtSec; }
+        if (s.throttle >= 0.0) { p.throttleSum += s.throttle * dtSec; p.throttleSec += dtSec; }
+        if (!isHover(gs)) { m_speedSum += gs * dtSec; m_speedSec += dtSec; }
+    }
+
+    double hoverMinEmpty()   const { return m_hover.minEmpty; }
+    double hoverMinLoaded()  const { return m_hover.minLoaded; }
+    double cruiseMinEmpty()  const { return m_cruise.minEmpty; }
+    double cruiseMinLoaded() const { return m_cruise.minLoaded; }
+    bool   payloadDropped()  const { return !m_loaded; }
+    /// Averages; -1 when the phase had no such data.
+    double hoverCurrentA()   const { return avg(m_hover.currentSum, m_hover.currentSec); }
+    double cruiseCurrentA()  const { return avg(m_cruise.currentSum, m_cruise.currentSec); }
+    double hoverThrottle()   const { return avg(m_hover.throttleSum, m_hover.throttleSec); }
+    double cruiseThrottle()  const { return avg(m_cruise.throttleSum, m_cruise.throttleSec); }
+    double cruiseSpeedMs()   const { return avg(m_speedSum, m_speedSec); }
+    /// Share of the flight with telemetry (0 before the first tick).
+    double coverage()        const { return m_totalSec > 0.0 ? m_seenSec / m_totalSec : 0.0; }
+
+private:
+    struct Phase {
+        double minEmpty = 0.0, minLoaded = 0.0;
+        double currentSum = 0.0, currentSec = 0.0;
+        double throttleSum = 0.0, throttleSec = 0.0;
+    };
+    static double avg(double sum, double sec) { return sec > 0.0 ? sum / sec : -1.0; }
+
+    double m_targetLat = std::nan("");
+    double m_targetLon = std::nan("");
+    bool   m_loaded = true;
+    Phase  m_hover, m_cruise;
+    double m_speedSum = 0.0, m_speedSec = 0.0;
+    double m_totalSec = 0.0, m_seenSec = 0.0;
+};
+
 } // namespace PowerTypeModel

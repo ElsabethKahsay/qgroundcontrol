@@ -79,6 +79,7 @@ private slots:
     void testPowerTypeFlightRecords();
     void testPowerTypeUpgradeFromV24();
     void testComplianceLogKeptWithoutVehicleDetails();
+    void testRecorderPowerTypeFlight();
 };
 
 void DatabaseManagerTest::testInitialize()
@@ -1781,6 +1782,95 @@ void DatabaseManagerTest::testComplianceLogKeptWithoutVehicleDetails()
     QCOMPARE(q.value(2).toString(), QStringLiteral("unknown"));
     QVERIFY(q.next());
     QCOMPARE(q.value(1).toString(), QStringLiteral("unknown"));
+}
+
+// A copter linked to a power type flies a mission through the recorder:
+// ground time is left out, take-off and the time at the target are hover,
+// the payload counts as aboard until the copter reaches the target, a link
+// loss lowers the coverage, and the FC current/throttle are averaged per
+// phase. A bench arm and a flight joined already armed teach nothing.
+void DatabaseManagerTest::testRecorderPowerTypeFlight()
+{
+    RecorderFixture f;
+    QVERIFY(f.init());
+    DatabaseManager &db = DatabaseManager::instance();
+    const int type = db.savePowerType(0, QStringLiteral("Quad X"), 15.0, 5.5, 6, {});
+    QVERIFY(type > 0);
+    SessionRecorder rec(db);
+    f.wire(rec);
+    rec.connectionOpened(QStringLiteral("UID-R"), QStringLiteral("Flight"), QString(), QString());
+
+    const double homeLat = -35.3632, homeLon = 149.1652;
+    const double tgtLat = homeLat + 500.0 / 111195.0;      // 500 m north
+    SessionRecorder::FlightStart st = start(QStringLiteral("external"));
+    st.payloadKg = 0.8;
+    st.powerTypeId = type;
+    st.cells = 6;
+    st.timeAtTargetMin = 1.0;
+    st.targetLat = tgtLat;
+    st.targetLon = homeLon;
+
+    auto fly = [&](int seconds, double gs, double alt, double amps, double thr, double lat) {
+        f.sample.groundSpeedMs = gs; f.sample.altitudeM = alt;
+        f.sample.currentA = amps; f.sample.throttle = thr;
+        f.sample.lat = lat; f.sample.lon = homeLon;
+        for (int i = 0; i < seconds; ++i)
+            rec.powerTick(1.0);
+    };
+    f.sample = SessionRecorder::Sample{25.0, 0.0, 100, -1, -1};   // 4.17 V/cell: full
+    rec.armed(st);
+    const int id = rec.flightId();
+    fly(30, 0.0, 0.0, 2.0, 0.0, homeLat);              // armed on the ground: not counted
+    fly(60, 0.5, 20.0, 36.0, 0.39, homeLat);           // take-off/hover with the payload
+    fly(120, 15.0, 30.0, 24.0, 0.30, homeLat + 0.002); // cruise out with the payload
+    fly(60, 1.0, 30.0, 37.0, 0.40, tgtLat);            // at the target: dropped on arrival
+    rec.linkLost();
+    fly(30, 15.0, 30.0, 21.0, 0.28, tgtLat);           // no telemetry: coverage only
+    rec.linkRestored(true);
+    fly(120, 15.0, 30.0, 21.0, 0.28, homeLat + 0.002); // cruise back, empty
+    f.sample.mahConsumed = 5200.0;
+    rec.disarmed();
+
+    const QVariantMap r = row(QStringLiteral("SELECT * FROM flight_sessions WHERE id = %1").arg(id));
+    const auto num = [&r](const char *col) { return r.value(QLatin1String(col)).toDouble(); };
+    const QString got = QStringLiteral("hover %1+%2 cruise %3+%4 A %5/%6 thr %7/%8 spd %9 cov %10")
+                            .arg(num("hover_min_loaded")).arg(num("hover_min_empty"))
+                            .arg(num("cruise_min_loaded")).arg(num("cruise_min_empty"))
+                            .arg(num("synth_hover_a")).arg(num("synth_cruise_a"))
+                            .arg(num("ref_throttle_hover")).arg(num("ref_throttle_cruise"))
+                            .arg(num("cruise_speed_ms")).arg(num("telemetry_coverage"));
+    QCOMPARE(r.value(QStringLiteral("power_type_id")).toInt(), type);
+    QVERIFY2(qFuzzyCompare(num("hover_min_loaded"), 1.0) && qFuzzyCompare(num("hover_min_empty"), 1.0), qPrintable(got));
+    QVERIFY2(qFuzzyCompare(num("cruise_min_loaded"), 2.0) && qFuzzyCompare(num("cruise_min_empty"), 2.0), qPrintable(got));
+    QVERIFY2(qFuzzyCompare(num("synth_hover_a"), 36.5) && qFuzzyCompare(num("synth_cruise_a"), 22.5), qPrintable(got));
+    QVERIFY2(qFuzzyCompare(num("ref_throttle_hover"), 0.395) && qFuzzyCompare(num("ref_throttle_cruise"), 0.29), qPrintable(got));
+    QVERIFY2(qFuzzyCompare(num("cruise_speed_ms"), 15.0), qPrintable(got));
+    QVERIFY2(qAbs(num("telemetry_coverage") - 390.0 / 420.0) < 1e-6, qPrintable(got));
+    QCOMPARE(num("fc_mah"), 5200.0);
+    QCOMPARE(num("time_at_target_min"), 1.0);
+    QVERIFY(qAbs(num("arm_cell_v") - 25.0 / 6.0) < 1e-6);
+    QCOMPARE(r.value(QStringLiteral("started_full")).toInt(), 1);
+    QCOMPARE(r.value(QStringLiteral("learning_state")).toString(), QStringLiteral("pending"));
+
+    // A bench arm of a linked aircraft records no power data.
+    SessionRecorder::FlightStart benchSt = start(QStringLiteral("force_token"), /*bench*/ true);
+    benchSt.powerTypeId = type;
+    benchSt.cells = 6;
+    rec.armed(benchSt);
+    const int benchId = rec.flightId();
+    rec.powerTick(1.0);
+    rec.disarmed();
+    QVERIFY(row(QStringLiteral("SELECT power_type_id FROM flight_sessions WHERE id = %1").arg(benchId))
+                .value(QStringLiteral("power_type_id")).isNull());
+
+    // A flight joined already armed never counts as started on a full pack.
+    rec.joinArmedFlight(st);
+    const int joinedId = rec.flightId();
+    fly(60, 0.5, 20.0, 36.0, 0.39, homeLat);
+    rec.disarmed();
+    const QVariantMap j = row(QStringLiteral("SELECT started_full, learning_state FROM flight_sessions WHERE id = %1").arg(joinedId));
+    QCOMPARE(j.value(QStringLiteral("started_full")).toInt(), 0);
+    QCOMPARE(j.value(QStringLiteral("learning_state")).toString(), QStringLiteral("excluded"));
 }
 
 UT_REGISTER_TEST(DatabaseManagerTest)

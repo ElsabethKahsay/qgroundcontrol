@@ -353,6 +353,13 @@ void PreflightPlugin::init()
             s.altitudeM = _telemetryBridge->altitudeRelative();
             s.gpsSats = _telemetryBridge->gpsSatellites();
             s.flightMode = _telemetryBridge->flightMode();
+            // For the power-type tracker (hover/cruise split, FC current).
+            s.groundSpeedMs = _telemetryBridge->groundSpeed();
+            s.currentA = _telemetryBridge->batteryCurrentAmps();
+            const QVariant thr = v->throttlePct()->rawValue();
+            s.throttle = thr.isValid() ? thr.toDouble() / 100.0 : -1.0;
+            s.lat = _telemetryBridge->gpsLatitude();
+            s.lon = _telemetryBridge->gpsLongitude();
         }
         return s;
     });
@@ -825,6 +832,17 @@ void PreflightPlugin::_onGateOpened()
                     : QStringLiteral("external");
     start.gateAllowed = _armingGate && _armingGate->isArmingAllowed();
     start.mode = sessionModeName();
+    // Power type: what the flight's minutes and current are learned for, its
+    // cell count (full-pack test) and the target the payload is dropped at.
+    if (_vehicleProfileManager && _vehicleProfileManager->currentPowerTypeId() > 0) {
+        start.powerTypeId = _vehicleProfileManager->currentPowerTypeId();
+        start.cells = DatabaseManager::instance().powerType(start.powerTypeId).value(QStringLiteral("cells")).toInt();
+        const QVariantMap target = DatabaseManager::instance().vehicleTarget(_vehicleProfileManager->currentDeviceUid());
+        if (!target.isEmpty()) {
+            start.targetLat = target.value(QStringLiteral("lat")).toDouble();
+            start.targetLon = target.value(QStringLiteral("lon")).toDouble();
+        }
+    }
     // Bench: Testing mode, a bench force-arm, or a motor test in progress.
     start.bench = start.mode == QLatin1String("Testing") || source == ArmStateTracker::ArmSource::ForceToken
                || (_hardwareTestController && _hardwareTestController->isRunning());

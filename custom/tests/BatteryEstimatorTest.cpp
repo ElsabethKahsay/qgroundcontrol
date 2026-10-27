@@ -569,6 +569,37 @@ private slots:
         db.reset();
     }
 
+    // The tracker on its own: with no target the payload stays aboard for the
+    // whole flight; ground time counts for coverage but not as hover; a phase
+    // with no current reported averages to -1, not 0.
+    void testPowerTypeTrackerWithoutTarget()
+    {
+        using namespace PowerTypeModel;
+        FlightTracker t;
+        t.start(std::nan(""), std::nan(""));
+        TrackSample s;
+        s.lat = -35.0; s.lon = 149.0;
+        s.groundSpeedMs = 0.0; s.altitudeM = 0.2;
+        for (int i = 0; i < 30; ++i) t.tick(1.0, s);          // on the ground
+        s.altitudeM = 15.0; s.currentA = 30.0;
+        for (int i = 0; i < 60; ++i) t.tick(1.0, s);          // hover
+        s.groundSpeedMs = 12.0;  s.currentA = -1.0;
+        for (int i = 0; i < 60; ++i) t.tick(1.0, s);          // cruise, no current
+        QVERIFY(!t.payloadDropped());
+        QCOMPARE(t.hoverMinLoaded(), 1.0);
+        QCOMPARE(t.hoverMinEmpty(), 0.0);
+        QCOMPARE(t.cruiseMinLoaded(), 1.0);
+        QCOMPARE(t.hoverCurrentA(), 30.0);
+        QCOMPARE(t.cruiseCurrentA(), -1.0);
+        QCOMPARE(t.cruiseSpeedMs(), 12.0);
+        QCOMPARE(t.coverage(), 1.0);
+        // A fast-moving copter at low altitude is airborne (cruise).
+        s.altitudeM = 0.5;
+        t.tick(60.0, s);
+        QCOMPARE(t.cruiseMinLoaded(), 2.0);
+        QVERIFY(std::abs(distanceM(-35.0, 149.0, -35.0 + 500.0 / 111195.0, 149.0) - 500.0) < 1.0);
+    }
+
     // What the recorder decides each second and at arming.
     void testPowerTypeRecorderHelpers()
     {

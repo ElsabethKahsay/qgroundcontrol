@@ -1265,6 +1265,7 @@ private slots:
     void testFlyViewTargetDistanceFromVehicle();
     void testPayloadEnteredIsOnTheFlightRecord();
     void testToolbarShowsOneSharpLogo();
+    void testPowerTypeFlightRecordedLive();
 
 private:
     bool _connectPlane();
@@ -1549,6 +1550,67 @@ UT_REGISTER_TEST(MotorCheckPanelSmokeTest)
 UT_REGISTER_TEST(MainStatusIndicatorSmokeTest)
 UT_REGISTER_TEST(FlyQuickActionsSmokeTest)
 UT_REGISTER_TEST(ChecklistPagesSmokeTest)
+// The real plugin against the mock vehicle: the aircraft's power type is
+// cleared on disconnect and not carried over to another aircraft, and an armed flight of
+// a linked aircraft gets the power type and the 1 s tracker's data on its
+// flight record (the mock sits on the ground, so only the coverage moves).
+void LivePluginBenchTest::testPowerTypeFlightRecordedLive()
+{
+    QVERIFY2(_connectPlane(), "mock vehicle did not connect / resolve its UID");
+    VehicleProfileManager *vpm = VehicleProfileManager::instance();
+    // The unit-test database persists between runs: reuse the type if an
+    // earlier run created it (a second save of the same build is refused).
+    int type = -1;
+    for (const QVariant &t : vpm->listPowerTypes())
+        if (t.toMap().value(QStringLiteral("name")).toString() == QStringLiteral("Live Quad · 13×4.5 · 4S"))
+            type = t.toMap().value(QStringLiteral("id")).toInt();
+    if (type <= 0)
+        type = vpm->savePowerType(0, QStringLiteral("Live Quad"), 13.0, 4.5, 4, {});
+    QVERIFY(type > 0);
+    QVERIFY(vpm->linkCurrentVehiclePowerType(type));
+    QCOMPARE(vpm->currentPowerTypeId(), type);
+
+    _disconnectMockLink();
+    for (int i = 0; i < 100 && vpm->currentPowerTypeId() != -1; ++i)
+        QTest::qWait(50);
+    QCOMPARE(vpm->currentPowerTypeId(), -1);
+    // The mock comes back with a new system id, i.e. another aircraft: its
+    // type is whatever the database holds for its own UID (an earlier run may
+    // have linked it), never the previous aircraft's.
+    QVERIFY2(_connectPlane(), "mock vehicle did not reconnect");
+    QTest::qWait(500);
+    QCOMPARE(vpm->currentPowerTypeId(), DatabaseManager::instance().vehiclePowerTypeId(vpm->currentDeviceUid()));
+    QVERIFY(vpm->linkCurrentVehiclePowerType(0));
+    QCOMPARE(vpm->currentPowerTypeId(), -1);
+    QVERIFY(vpm->linkCurrentVehiclePowerType(type));
+    QCOMPARE(vpm->currentPowerTypeId(), type);
+    QCOMPARE(vpm->currentPowerTypeName(), QStringLiteral("Live Quad · 13×4.5 · 4S"));
+
+    // Only the flight this test creates counts (the database persists).
+    QSqlQuery maxId(QSqlDatabase::database());
+    QVERIFY(maxId.exec(QStringLiteral("SELECT COALESCE(MAX(id), 0) FROM flight_sessions")) && maxId.next());
+    const int before = maxId.value(0).toInt();
+
+    // A flight armed from the RC in Flight mode.
+    FlightSession::instance()->setMode(QStringLiteral("FLIGHT"));
+    _vehicle->setArmed(true, false);
+    QVERIFY(_waitArmed(true));
+    QTest::qWait(3500);
+    _vehicle->setArmed(false, false);
+    QVERIFY(_waitArmed(false));
+    QTest::qWait(300);
+
+    QSqlQuery q(QSqlDatabase::database());
+    QVERIFY(q.exec(QStringLiteral("SELECT telemetry_coverage, learning_state FROM flight_sessions "
+                                  "WHERE power_type_id = %1 AND id > %2 ORDER BY id DESC LIMIT 1").arg(type).arg(before)));
+    QVERIFY2(q.next(), "the flight was not recorded with the aircraft's power type");
+    QVERIFY2(q.value(0).toDouble() > 0.5, qPrintable(QStringLiteral("coverage %1: the 1 s tracker did not run")
+                                                         .arg(q.value(0).toDouble())));
+    QVERIFY(!q.value(1).toString().isEmpty());
+
+    QVERIFY(vpm->linkCurrentVehiclePowerType(0));
+}
+
 UT_REGISTER_TEST(LivePluginBenchTest)
 
 #include "QmlSmokeTest.moc"
