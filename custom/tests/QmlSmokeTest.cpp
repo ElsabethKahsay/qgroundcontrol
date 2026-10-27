@@ -989,16 +989,19 @@ void FlyQuickActionsSmokeTest::testTelemetryStripTargetIsLive()
             problems << QStringLiteral("Tgt row bound to %1").arg(value);
     }
     QVERIFY2(rows >= 2, "expected a Tgt row in both the 3- and 2-column layouts");
-    // The bearing has its own "Brg" row (degrees + compass point), not an
-    // "@" squeezed into the distance.
-    static const QRegularExpression brgRow(QStringLiteral("label:\\s*\"Brg\",\\s*value:\\s*([^,\\s]+),\\s*unit:\\s*([^,\\s]+)"));
-    int brgRows = 0;
-    for (auto it = brgRow.globalMatch(strip); it.hasNext(); ++brgRows) {
-        const auto bm = it.next();
-        if (bm.captured(1) != QLatin1String("_tgtBrgValue") || bm.captured(2) != QLatin1String("_tgtCompass"))
-            problems << QStringLiteral("Brg row bound to %1 / %2").arg(bm.captured(1), bm.captured(2));
+    // The target row is optional: shown only when a target is saved.
+    static const QRegularExpression optionalTgt(QStringLiteral("_hasTgt\\s*\\?\\s*\\[\\s*\\{\\s*label:\\s*\"Tgt\""));
+    int optional = 0;
+    for (auto it = optionalTgt.globalMatch(strip); it.hasNext(); it.next())
+        ++optional;
+    if (optional != rows)
+        problems << QStringLiteral("%1 of %2 Tgt rows are not conditional on a saved target").arg(rows - optional).arg(rows);
+    // Removed as redundant with the toolbar and the battery chip (operator,
+    // 27 Oct): the bearing row and the battery-percent row.
+    for (const char *gone : { "\"Brg\"", "\"Bat\"", "\"Sats\"" }) {
+        if (strip.contains(QStringLiteral("label: ") + QLatin1String(gone)))
+            problems << QStringLiteral("row %1 is back").arg(QLatin1String(gone));
     }
-    QVERIFY2(brgRows >= 2, "expected a Brg row in both the 3- and 2-column layouts");
     // The power-type rows: time/distance left and the rest of the trip.
     for (const auto &[label, value] : { std::pair<QString, QString>{QStringLiteral("Left"), QStringLiteral("_leftValue")},
                                         std::pair<QString, QString>{QStringLiteral("Trip"), QStringLiteral("_tripValue")} }) {
@@ -1471,23 +1474,32 @@ void LivePluginBenchTest::testFlyViewTargetDistanceFromVehicle()
         dist = strip->property("_tgtDist").toDouble();
     }
     const double expected = here.distanceTo(target);
-    const double brg = strip->property("_tgtBrg").toDouble();
     const QString value = strip->property("_tgtValue").toString();
     const QString unit = strip->property("_tgtUnit").toString();
     QVERIFY2(dist > 0, qPrintable(QStringLiteral("Tgt shows %1 (GPS lock %2)")
                                       .arg(value).arg(_vehicle->gpsFactGroup()->getFact(QStringLiteral("lock"))->rawValue().toInt())));
     QVERIFY2(qAbs(dist - expected) < expected * 0.01,
              qPrintable(QStringLiteral("strip %1 m, expected %2 m").arg(dist).arg(expected)));
-    QVERIFY2(qAbs(brg - here.azimuthTo(target)) < 1.0,
-             qPrintable(QStringLiteral("strip bearing %1, expected %2").arg(brg).arg(here.azimuthTo(target))));
     QCOMPARE(unit, QStringLiteral("m"));
     QCOMPARE(value, QString::number(qRound(dist)));
-    // Bearing row: whole degrees and the 8-point compass direction.
-    const QString brgValue = strip->property("_tgtBrgValue").toString();
-    const QString compass = strip->property("_tgtCompass").toString();
-    QCOMPARE(brgValue, QStringLiteral("%1°").arg(qRound(brg) % 360));
-    static const char *const kPoints[] = { "N", "NE", "E", "SE", "S", "SW", "W", "NW" };
-    QCOMPARE(compass, QString::fromLatin1(kPoints[qRound(brg / 45.0) % 8]));
+
+    // The rows shown: Tgt (a target is saved), not the ones removed as
+    // redundant (GPS, Sats, Hdg, Brg in NAVIGATION; Bat in SYSTEM).
+    auto labels = [&](const char *column) {
+        QStringList out;
+        QObject *col = strip->findChild<QObject *>(QLatin1String(column));
+        if (col)
+            for (const QVariant &row : col->property("rows").toList())
+                out << row.toMap().value(QStringLiteral("label")).toString();
+        return out;
+    };
+    const QStringList nav = labels("navColumn");
+    const QStringList sys = labels("systemColumn");
+    QVERIFY2(nav.contains(QStringLiteral("Tgt")) || sys.contains(QStringLiteral("Tgt")),
+             qPrintable(nav.join(QLatin1Char(',')) + QStringLiteral(" | ") + sys.join(QLatin1Char(','))));
+    for (const QString &gone : { QStringLiteral("GPS"), QStringLiteral("Sats"), QStringLiteral("Hdg"), QStringLiteral("Brg") })
+        QVERIFY2(!nav.contains(gone), qPrintable(QStringLiteral("NAVIGATION still has %1").arg(gone)));
+    QVERIFY2(!sys.contains(QStringLiteral("Bat")) && !sys.contains(QStringLiteral("Brg")), qPrintable(sys.join(QLatin1Char(','))));
 
     strip->setParentItem(nullptr);
 }

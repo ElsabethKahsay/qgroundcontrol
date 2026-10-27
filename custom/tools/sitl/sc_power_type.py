@@ -175,6 +175,8 @@ def run(vehicle="ArduCopter", instance=5):
             if "power-type estimate" in line or "RETURN NOW" in line:
                 r.note("GCS log: " + line.strip()[:220])
         r.check("RETURN NOW announced while airborne", "RETURN NOW on" in log)
+        # BATT_MONITOR = 25 on a copter: the GCS counts the charge itself.
+        r.check("charge used counted by the GCS (synthetic current ignored)", "charge used from gcs" in log)
         qml_errors = [line for line in log.splitlines()
                       if any(q in line for q in QML_FILES)
                       and any(w in line for w in ("Error", "error", "Unable to assign", "undefined", "Cannot"))]

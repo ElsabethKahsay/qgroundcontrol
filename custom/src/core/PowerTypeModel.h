@@ -499,6 +499,9 @@ struct LiveInput {
     double cruiseSpeedMs = 10.0;    ///< The type's learned cruise speed
     double landMin       = 1.0;
     bool   armed         = false;
+    /// Correction from the throttle instead of the FC current (when the FC
+    /// reports no current that follows throttle); < 0 = not used.
+    double throttleRatio = -1.0;
 };
 
 struct LiveResult {
@@ -546,7 +549,12 @@ inline LiveResult liveEstimate(const LiveInput &in)
     r.airborne = (std::isfinite(in.altitudeM) && in.altitudeM > kAirborneAltM) || !r.hover;
     const double kg = in.payloadAboard ? in.payloadKg : 0.0;
     const double modelA = r.hover ? in.model.hoverA(kg) : in.model.cruiseA(kg);
-    r.ratio = (in.armed && r.airborne) ? liveRatio(in.currentA, in.factor, modelA) : 1.0;
+    if (!(in.armed && r.airborne))
+        r.ratio = 1.0;
+    else if (in.throttleRatio > 0.0)
+        r.ratio = std::clamp(in.throttleRatio, kLiveRatioMin, kLiveRatioMax);
+    else
+        r.ratio = liveRatio(in.currentA, in.factor, modelA);
     r.currentA = modelA * r.ratio;
     if (r.currentA > 0.0) {
         r.timeLeftMin = r.usableAh / r.currentA * 60.0;
@@ -583,6 +591,29 @@ inline LiveResult liveEstimate(const LiveInput &in)
     r.tripShortAh = returnShortAh(r.usableAh, r.tripNeedAh);
     r.returnNow = in.armed && r.airborne && r.tripShortAh > 0.0;
     return r;
+}
+
+/// A current that does not change between hover and cruise is not a
+/// measurement: ArduPilot's synthetic current (BATT_MONITOR = 25) on a
+/// multicopter stays at BATT_AMP_OFFSET, because it reads the k_throttle
+/// servo output, which a multicopter does not use.
+inline bool currentFollowsThrottle(double hoverA, double cruiseA)
+{
+    if (hoverA <= 0.0 || cruiseA <= 0.0)
+        return false;
+    return std::abs(hoverA - cruiseA) / std::max(hoverA, cruiseA) > 0.02;
+}
+
+/// One step of the GCS's own count of the charge used, for an FC that reports
+/// no current that follows throttle: the model current for the phase and the
+/// payload aboard × the throttle correction (±30 %) × the time, in Ah. The
+/// caller sums the steps from the arm.
+inline double chargeStepAh(const Model &m, bool hover, double payloadKg, double ratio, double dtSec)
+{
+    if (!(dtSec > 0.0) || !m.usable())
+        return 0.0;
+    const double a = hover ? m.hoverA(payloadKg) : m.cruiseA(payloadKg);
+    return std::max(0.0, a) * std::clamp(ratio > 0.0 ? ratio : 1.0, kLiveRatioMin, kLiveRatioMax) * dtSec / 3600.0;
 }
 
 } // namespace PowerTypeModel

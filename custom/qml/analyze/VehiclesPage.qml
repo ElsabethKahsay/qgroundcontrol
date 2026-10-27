@@ -593,10 +593,14 @@ AnalyzePage {
                                 wrapMode: Text.Wrap
                                 font.pixelSize: fs(11)
                                 color: Colors.textSecondary
-                                text: qsTr("%1 flights used, %2 waiting. Charger ÷ FC mAh: %3.%4")
-                                        .arg(_ptPane.summary.usedFlights).arg(_ptPane.summary.pendingFlights)
-                                        .arg(Number(_ptPane.summary.chargerFactor).toFixed(2))
-                                        .arg(_ptPane.summary.advice ? " " + _ptPane.summary.advice + "." : "")
+                                // The charger ÷ FC factor only means something when the
+                                // FC current follows throttle (a current sensor); on a
+                                // copter's synthetic current the GCS counts the charge.
+                                text: qsTr("%1 flights used, %2 waiting.").arg(_ptPane.summary.usedFlights).arg(_ptPane.summary.pendingFlights)
+                                      + (_ptPane.summary.fcCurrentFollowsThrottle === false
+                                         ? qsTr(" The flight controller's current does not follow throttle: the GCS counts the charge in flight.")
+                                         : qsTr(" Charger ÷ FC mAh: %1.").arg(Number(_ptPane.summary.chargerFactor).toFixed(2)))
+                                      + (_ptPane.summary.advice ? " " + _ptPane.summary.advice + "." : "")
                             }
 
                             // BATT_AMP_PERVLT (connected copter on this type).

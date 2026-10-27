@@ -97,19 +97,16 @@ Item {
 
     // Target: the location saved on the gimbal page (FlightSession keeps it on
     // the vehicle's row, and on the flight's once one is open). The cell shows
-    // the live great-circle distance from the vehicle's GPS position ("Tgt",
-    // m below 1 km, then km) and the bearing to it ("Brg", degrees true plus
-    // the 8-point compass direction); "--" with no target saved or no GPS fix.
+    // the live great-circle distance from the vehicle's GPS position (m below
+    // 1 km, then km); "--" with no GPS fix. With no target saved the row is
+    // not shown.
     readonly property real   _tgtLat:  FlightSession.targetLat
     readonly property real   _tgtLon:  FlightSession.targetLon
     readonly property bool   _hasTgt:  !isNaN(_tgtLat) && !isNaN(_tgtLon)
     readonly property real   _tgtDist: _hasTgt && _posValid && _lock >= 2 ? _haversine(_currLat, _currLon, _tgtLat, _tgtLon) : -1
-    readonly property real   _tgtBrg:  _tgtDist >= 0 ? _bearing(_currLat, _currLon, _tgtLat, _tgtLon) : -1
     readonly property string _tgtValue: _tgtDist < 0 ? "--"
                                         : (_tgtDist < 1000 ? _tgtDist.toFixed(0) : (_tgtDist / 1000).toFixed(2))
     readonly property string _tgtUnit:  _tgtDist < 0 ? "" : _tgtDist < 1000 ? "m" : "km"
-    readonly property string _tgtBrgValue: _tgtBrg < 0 ? "--" : Math.round(_tgtBrg) % 360 + "°"
-    readonly property string _tgtCompass:  _tgtBrg < 0 ? "" : _compassPoint(_tgtBrg)
 
     // Power-type estimate (VehicleProfileManager.powerLive; copters linked to
     // a type with a learned model). "Left": time and distance left (before the
@@ -143,21 +140,6 @@ Item {
     Connections {
         target: FlightSession
         function onFlightIdChanged() { FlightSession.reloadTargetLocation() }
-    }
-
-    // 8-point compass direction for a bearing: each point covers ±22.5°.
-    function _compassPoint(deg) {
-        return ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][Math.round(deg / 45) % 8]
-    }
-
-    // Initial bearing (degrees true, 0 = North) from point 1 to point 2.
-    function _bearing(lat1, lon1, lat2, lon2) {
-        var p1 = lat1 * Math.PI / 180
-        var p2 = lat2 * Math.PI / 180
-        var dl = (lon2 - lon1) * Math.PI / 180
-        var y = Math.sin(dl) * Math.cos(p2)
-        var x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl)
-        return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360
     }
 
     // ── Haversine distance (meters) between two lat/lon points ─────
@@ -201,13 +183,6 @@ Item {
         if (!activeVehicle || l === undefined || l === null || isNaN(l)) return "No GPS"
         var m = { 0:"No GPS", 1:"No Fix", 2:"2D Fix", 3:"3D Fix", 4:"DGPS", 5:"RTK Float", 6:"RTK Fixed" }
         return m[l] !== undefined ? m[l] : "No GPS"
-    }
-
-    // Compass arrow symbol for heading direction
-    function _hdgArrow(deg) {
-        if (!activeVehicle || deg === undefined || deg === null || isNaN(deg)) return "↑"
-        var arrows = ["↑","↗","→","↘","↓","↙","←","↖"]
-        return arrows[Math.round(deg / 45) % 8]
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -334,30 +309,26 @@ Item {
 
             // ── Column 2: NAVIGATION (only shown in 3-column mode) ──
             TelColumn {
+                objectName: "navColumn"
                 visible: _settings.threeColumns
                 header: "NAVIGATION"
+                // GPS, satellites and heading are on the toolbar already; the
+                // target row only shows when a target is saved.
                 rows: [
-                    { label: "GPS",
-                      value: activeVehicle && _sats > 0 ? (_fixStr(_lock)) : "No Fix",
-                      vcolor: _gpsColor(_lock) },
-                    { label: "Sats",  value: activeVehicle ? _sats.toString() : "--", unit: "sat", vcolor: _gpsColor(_lock) },
-                    { label: "Hdg",
-                      value: _hdgArrow(_hdg) + " " + _formatVal(_hdg, 0),
-                      unit: "°",    vcolor: Colors.accentCyan },
                     { label: "Dist",  value: _formatVal(_distHome, 0),
                       unit: "m",    vcolor: Colors.textPrimary },
                     { label: "Flight", value: _formatVal(_flightDist, 0),
                       unit: "m",    vcolor: Colors.accentCyan },
                     { label: "Plan",  value: _planDist > 0 ? _formatVal(_planDist, 0) : "--",
-                      unit: _planDist > 0 ? "m" : "", vcolor: Colors.accentCyan },
+                      unit: _planDist > 0 ? "m" : "", vcolor: Colors.accentCyan }
+                ].concat(_hasTgt ? [
                     { label: "Tgt",  value: _tgtValue, unit: _tgtUnit,
-                      vcolor: _tgtDist >= 0 ? Colors.accentCyan : Colors.textSecondary },
-                    { label: "Brg",  value: _tgtBrgValue, unit: _tgtCompass,
-                      vcolor: _tgtDist >= 0 ? Colors.accentCyan : Colors.textSecondary },
+                      vcolor: _tgtDist >= 0 ? Colors.accentCyan : Colors.textSecondary }
+                ] : []).concat([
                     { label: "Left", value: _leftValue, unit: "",
                       vcolor: _plActive ? Colors.textPrimary : Colors.textSecondary },
                     { label: "Trip", value: _tripValue, unit: _tripUnit, vcolor: _tripColor }
-                ]
+                ])
             }
 
             // Vertical divider 2 (only shown in 3-column mode)
@@ -374,11 +345,10 @@ Item {
 
             // ── Column 3: SYSTEM ─────────────────────────────────────
             TelColumn {
+                objectName: "systemColumn"
                 header: "SYSTEM"
+                // The charge % is on the battery chip already.
                 rows: _settings.threeColumns ? [
-                    { label: "Bat",
-                      value: _batStale ? "STALE" : activeVehicle && _batPct >= 0 ? _batPct.toFixed(0) : "--",
-                      unit: _batStale ? "" : "%",    vcolor: _batStale ? Colors.statusStale : _battColor(_batPct) },
                     { label: "Volt",
                       value: _batStale ? "STALE" : _formatVal(_batV, 1),
                       unit: _batStale ? "" : "V",    vcolor: _batStale ? Colors.statusStale : _battColor(_batPct) },
@@ -390,9 +360,6 @@ Item {
                       value: activeVehicle && _batCur > 0 ? _formatVal(_batCur, 1) : "--",
                       unit: activeVehicle && _batCur > 0 ? "A" : "",    vcolor: Colors.textPrimary }
                 ] : [
-                    { label: "Bat",
-                      value: _batStale ? "STALE" : activeVehicle && _batPct >= 0 ? _batPct.toFixed(0) + "% (" + _formatVal(_batV, 1) + "V)" : "--",
-                      vcolor: _batStale ? Colors.statusStale : _battColor(_batPct) },
                     { label: "GPS",
                       value: activeVehicle ? _sats + " sat (" + _fixStr(_lock) + ")" : "--",
                       vcolor: _gpsColor(_lock) },
@@ -401,19 +368,18 @@ Item {
                       vcolor: _rssiColor(_rssi) },
                     { label: "Home",
                       value: _formatVal(_distHome, 0),
-                      unit: "m",    vcolor: Colors.accentCyan },
+                      unit: "m",    vcolor: Colors.accentCyan }
+                ].concat(_hasTgt ? [
                     { label: "Tgt",
                       value: _tgtValue, unit: _tgtUnit,
-                      vcolor: _tgtDist >= 0 ? Colors.accentCyan : Colors.textSecondary },
-                    { label: "Brg",
-                      value: _tgtBrgValue, unit: _tgtCompass,
-                      vcolor: _tgtDist >= 0 ? Colors.accentCyan : Colors.textSecondary },
+                      vcolor: _tgtDist >= 0 ? Colors.accentCyan : Colors.textSecondary }
+                ] : []).concat([
                     { label: "Left",
                       value: _leftValue, unit: "",
                       vcolor: _plActive ? Colors.textPrimary : Colors.textSecondary },
                     { label: "Trip",
                       value: _tripValue, unit: _tripUnit, vcolor: _tripColor }
-                ]
+                ])
             }
 
             // Vertical divider 3

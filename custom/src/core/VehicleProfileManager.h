@@ -414,6 +414,13 @@ private:
     double m_powerCruiseSpeedMs = 10.0; ///< Its used flights' average cruise speed.
     bool m_liveWasArmed = false;
     bool m_livePayloadAboard = false;   ///< This flight's payload, until the target is reached.
+    /// The GCS's own count of the charge used this flight (copters whose FC
+    /// reports no current that follows throttle), from the arm.
+    double m_gcsUsedAh = 0.0;
+    bool m_gcsCounting = false;         ///< Counting since an arm seen on this connection.
+    bool m_gcsCountKnown = false;       ///< The count covers the whole flight (false when joined armed).
+    bool m_liveSeenDisarmed = false;    ///< The vehicle was seen disarmed on this connection.
+    qint64 m_gcsLastMs = -1;
     QTimer m_liveTimer;                 ///< Drives the 2 s live-estimate refresh.
     QString m_locationName;
     double m_planLat = 0.0;

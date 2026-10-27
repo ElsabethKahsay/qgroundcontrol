@@ -53,9 +53,9 @@ Rectangle {
 
         // FORK PATCH: the Skywin logo replaces QGC's. The stock button draws
         // its icon in a small square, which squeezes a wide logo; this draws
-        // the logo at its own aspect ratio. qrc:/custom/brand/logo is a
-        // transparent PNG (white lettering, teal accent), so it sits on the
-        // status band with no box of its own.
+        // the logo at its own aspect ratio, 2.6 text lines tall.
+        // qrc:/custom/brand/logo is a transparent PNG (white lettering, teal
+        // accent), so it sits on the status band with no box of its own.
         QGCToolBarButton {
             id:                     currentButton
             Layout.preferredHeight: viewButtonRow.height
@@ -63,7 +63,7 @@ Rectangle {
             onClicked:              mainWindow.showToolSelectDialog()
 
             contentItem: Item {
-                implicitHeight: ScreenTools.defaultFontPixelHeight * 2.2
+                implicitHeight: ScreenTools.defaultFontPixelHeight * 2.6
                 implicitWidth:  implicitHeight * _logoAspect
 
                 readonly property real _logoAspect: _logo.sourceSize.height > 0

@@ -353,9 +353,10 @@ void PreflightPlugin::init()
         }
         if (_telemetryBridge && _telemetryBridge->hasParameter(QStringLiteral("BATT_MONITOR"))) {
             const int monitor = qRound(_telemetryBridge->parameterValue(QStringLiteral("BATT_MONITOR"), -1.0f));
-            if (monitor == 0 || monitor == 3)
-                warnings << tr("BATT_MONITOR = %1: the flight controller reports no current "
-                               "(set 25 for the synthetic estimate, or fit a current sensor)").arg(monitor);
+            // Without a current reading (3, or 25 on a copter) the GCS counts
+            // the charge itself; it still needs the voltage, which 0 turns off.
+            if (monitor == 0)
+                warnings << tr("BATT_MONITOR = 0: no battery voltage (the full-pack test and the cell check need it)");
         }
         st[QStringLiteral("warnings")] = warnings;
         return st;

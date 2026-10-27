@@ -1,8 +1,8 @@
 # Power Types and Mission Check
 
-Skywin GCS · copter only · designed 26 Oct 2026 with the operator · **all 6 steps built; one open decision (synthetic current on copters, section 9)**
+Skywin GCS · copter only · designed 26 Oct 2026 with the operator · **all 6 steps built; copters' in-flight charge counted by the GCS (section 9)**
 
-Status: step 1 (the maths) and step 2 (storage) built and tested 26 Oct, step 3 (flight recorder) and step 4 (checklist items and arming) 27 Oct; step 5 (the Power types page and the Fly view) 27 Oct; step 6 (SITL check) 27 Oct. Open: the synthetic current does not work on copters (section 9). Each step starts on the operator's go (see "Implementation plan"). Planes keep the existing rough flight-time estimate.
+Status: step 1 (the maths) and step 2 (storage) built and tested 26 Oct, step 3 (flight recorder) and step 4 (checklist items and arming) 27 Oct; step 5 (the Power types page and the Fly view) 27 Oct; step 6 (SITL check) 27 Oct. Decided 27 Oct: on copters the GCS counts the in-flight charge itself (section 9). Each step starts on the operator's go (see "Implementation plan"). Planes keep the existing rough flight-time estimate.
 
 Method (decided 26 Oct): **combined**. The flight controller estimates current from throttle (`BATT_MONITOR = 25`, synthetic current), the charger provides the real total after each flight, and the GCS learns a hover/cruise/payload model from both.
 
@@ -465,7 +465,7 @@ The operator approves each step before the next one starts.
 - **Full suite after step 6:** 34 classes, 453 passed, 0 failed, 7 skipped (the known ones).
 - **Finding: the synthetic current does not work on copters** (section 9).
 
-## 9. Open decision: the synthetic current on copters
+## 9. The synthetic current on copters (decided 27 Oct)
 
 The SITL flight read **0.30 A in hover and in cruise**, exactly `BATT_AMP_OFFSET`. ArduPilot computes it as:
 
@@ -490,6 +490,29 @@ Options (the operator decides):
 1. **The GCS's own charge count** (the plan's "no current sensor" path). The GCS integrates model current × (throttle ÷ the phase's reference throttle)^1.5 every second, and ignores the FC current on a copter with `BATT_MONITOR = 25`. About half a day.
 2. **Current sensors** (`BATT_MONITOR = 4`, a power module) on the copters. Real current; everything built works as designed. Hardware cost and setup.
 3. **Both:** option 1 now, sensors later.
+
+**Decision (operator, 27 Oct): option 1, the GCS counts the charge.** Built and checked the same day:
+- **When the GCS counts.** The GCS ignores the FC current and counts the charge itself when either:
+  - the FC reports no current that follows throttle (`BATT_MONITOR` 0, 3 or 25); or
+  - the type's recorded flights show the same FC current in hover and cruise (`PowerTypeModel::currentFollowsThrottle`).
+
+  With a real current sensor the FC's mAh × the charger factor is used as before.
+- **How it counts.** Each update adds the model current (phase, payload aboard) × (throttle now ÷ the phase's learned reference throttle)^1.5, limited to ±30 %, × the time (`PowerTypeModel::chargeStepAh`).
+  - The reference throttles are the used flights' averages.
+  - The count starts at an arm seen on this connection. Ground time armed is not counted, as in the recorder.
+  - When the GCS joined a flight already armed, the FC's charge % is used instead, because what was used before is unknown.
+  - Before the first arm the pack is taken as full.
+- **Constant FC current ignored:** it seeds no starting model. The `BATT_AMP_PERVLT` suggestion is withheld on copters, with the reason. The page says the GCS counts the charge instead of showing a meaningless charger ÷ FC factor.
+- **"Power type" item:** warns only for `BATT_MONITOR = 0` (no voltage), no longer for 3 or 25.
+- **Log:** "power-type estimate on (…, charge used from gcs | fc | fcPercent)".
+- **Tests:**
+  - `BatteryEstimatorTest::testPowerTypeGcsChargeCount` covers the constant-current test, the counting step and its limit, and the throttle correction in the live estimate.
+  - `testPowerTypeSummaryFromStoredFlights` covers a constant synthetic current seeding no model, and the reference throttles. BatteryEstimatorTest 24/24.
+  - SITL (`sc_power_type.py`, `BATT_MONITOR = 25`):
+    - "charge used from gcs";
+    - RETURN NOW on 25 s after take-off (needs 0.53 Ah, 0.18 Ah left);
+    - the counted charge had used the whole small pack by the landing. The FC's constant 0.3 A had shown 0.18 Ah still left.
+- **Accuracy:** the count is as good as the learned model and the throttle law. The charger numbers keep correcting the model flight by flight; real current sensors would give about ±3 %.
 
 Build rules (as for all Skywin work):
 - No CMake re-run and no `custom.qrc` change; incremental builds only.

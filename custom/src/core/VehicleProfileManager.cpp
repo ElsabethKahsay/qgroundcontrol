@@ -268,6 +268,11 @@ void VehicleProfileManager::onConnectionChanged()
         m_liveWasArmed = false;
         m_livePayloadAboard = false;
         m_powerModelDirty = true;
+        m_liveSeenDisarmed = false;
+        m_gcsCounting = false;
+        m_gcsCountKnown = false;
+        m_gcsUsedAh = 0.0;
+        m_gcsLastMs = -1;
         // The arming-gate flow owns flight sessions end-to-end (opens on gate
         // up, closes on disarm / check failure) and owns the per-flight
         // counters; the session id is reset here for the next connect.
@@ -917,8 +922,22 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
 
     const QVariantMap target = applicable ? DatabaseManager::instance().vehicleTarget(m_currentDeviceUid) : QVariantMap();
     const QGeoCoordinate pos = v ? v->coordinate() : QGeoCoordinate();
-    if (armed && !m_liveWasArmed)
+    // An arm seen on this connection starts a new flight: the payload is
+    // aboard and the GCS's charge count starts at 0. An armed vehicle first
+    // seen armed (the GCS joined mid-flight) gives no count: what was used
+    // before is unknown.
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    if (!armed)
+        m_liveSeenDisarmed = true;
+    if (armed && !m_liveWasArmed) {
         m_livePayloadAboard = m_payloadEntered && m_payloadWeightKg > 0.0;
+        m_gcsUsedAh = 0.0;
+        m_gcsCounting = true;
+        m_gcsCountKnown = m_liveSeenDisarmed;
+        m_gcsLastMs = nowMs;
+    }
+    if (!armed)
+        m_gcsCounting = false;
     m_liveWasArmed = armed;
     if (m_livePayloadAboard && !target.isEmpty() && pos.isValid()
         && PowerTypeModel::distanceM(pos.latitude(), pos.longitude(), target.value(QStringLiteral("lat")).toDouble(),
@@ -932,13 +951,55 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         in.model.cruise0 = m_powerSummary.value(QStringLiteral("cruise0")).toDouble();
         in.model.cruiseK = m_powerSummary.value(QStringLiteral("cruiseK")).toDouble();
         in.model.status = PowerTypeModel::FitStatus::PayloadNotModelled;   // usable; the numbers above are the model
-        in.factor = m_powerSummary.value(QStringLiteral("chargerFactor"), 1.0).toDouble();
         in.capacityAh = capacityAh();
         in.reserve = m_batteryReserve;
-        in.fcMahUsed = fcMahUsed;
         in.socPct = socPct;
-        in.currentA = m_liveSmoothAmps > 0.0 ? m_liveSmoothAmps : -1.0;
         in.groundSpeedMs = m_telemetry->groundSpeed();
+
+        // Where the charge used comes from. An FC current that follows
+        // throttle (a current sensor): its mAh × the charger factor, and its
+        // live current corrects the model. None (BATT_MONITOR 0 or 3), or
+        // ArduPilot's synthetic current, which on a copter stays at its idle
+        // offset (BATT_MONITOR 25, or a recorded current that is the same in
+        // hover and cruise): the GCS counts it itself, the model current ×
+        // (throttle now ÷ the phase's learned throttle)^1.5, from the arm.
+        const int monitor = m_telemetry->hasParameter(QStringLiteral("BATT_MONITOR"))
+            ? qRound(m_telemetry->parameterValue(QStringLiteral("BATT_MONITOR"), -1.0f)) : -1;
+        const bool gcsCount = monitor == 0 || monitor == 3 || monitor == 25
+                              || !m_powerSummary.value(QStringLiteral("fcCurrentFollowsThrottle"), true).toBool();
+        const double gs = std::isfinite(in.groundSpeedMs) ? in.groundSpeedMs : 0.0;
+        const bool hover = PowerTypeModel::isHover(gs);
+        const QVariant thr = v->throttlePct()->rawValue();
+        const double throttle = thr.isValid() ? thr.toDouble() / 100.0 : -1.0;
+        const double refThrottle = m_powerSummary.value(hover ? QStringLiteral("refThrottleHover")
+                                                              : QStringLiteral("refThrottleCruise"), -1.0).toDouble();
+        const double throttleRatio = PowerTypeModel::throttleRatio(throttle, refThrottle);
+        if (gcsCount) {
+            if (m_gcsCounting && m_gcsLastMs > 0) {
+                const double alt = m_telemetry->altitudeRelative();
+                const bool airborne = !hover || (std::isfinite(alt) && alt > PowerTypeModel::kAirborneAltM);
+                // On the ground armed the motors idle: count the hover current
+                // only once airborne, the way the recorder does.
+                if (airborne)
+                    m_gcsUsedAh += PowerTypeModel::chargeStepAh(in.model, hover,
+                                                                m_livePayloadAboard ? m_payloadWeightKg : 0.0,
+                                                                throttleRatio, (nowMs - m_gcsLastMs) / 1000.0);
+            }
+            m_gcsLastMs = nowMs;
+            in.factor = 1.0;
+            in.currentA = -1.0;
+            in.throttleRatio = throttleRatio;
+            // Before the first arm the pack is taken as full; a flight the
+            // GCS joined armed falls back to the FC's charge %.
+            in.fcMahUsed = (!armed && !m_gcsCountKnown && m_gcsUsedAh == 0.0) ? 0.0
+                         : m_gcsCountKnown ? m_gcsUsedAh * 1000.0 : -1.0;
+        } else {
+            in.factor = m_powerSummary.value(QStringLiteral("chargerFactor"), 1.0).toDouble();
+            in.fcMahUsed = fcMahUsed;
+            in.currentA = m_liveSmoothAmps > 0.0 ? m_liveSmoothAmps : -1.0;
+        }
+        out[QStringLiteral("chargeSource")] = !gcsCount ? QStringLiteral("fc")
+                                            : in.fcMahUsed >= 0.0 ? QStringLiteral("gcs") : QStringLiteral("fcPercent");
         in.altitudeM = m_telemetry->altitudeRelative();
         if (pos.isValid()) {
             in.lat = pos.latitude();
@@ -996,7 +1057,9 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
                 : m_powerSummary.value(QStringLiteral("source")).toString() == QLatin1String("none")
                       ? QStringLiteral("no learned model") : QStringLiteral("no pack capacity or charge reading");
         qInfo().noquote() << QStringLiteral("VehicleProfileManager: power-type estimate %1%2")
-                                 .arg(isActive ? QStringLiteral("on (%1)").arg(out.value(QStringLiteral("typeName")).toString())
+                                 .arg(isActive ? QStringLiteral("on (%1, charge used from %2)")
+                                                     .arg(out.value(QStringLiteral("typeName")).toString(),
+                                                          out.value(QStringLiteral("chargeSource")).toString())
                                                : QStringLiteral("off"),
                                       why.isEmpty() ? QString() : QStringLiteral(": ") + why);
     }
@@ -1388,6 +1451,9 @@ struct FittedType {
     bool fromCharger = false;
     double factor = 1.0;
     int pending = 0;
+    bool fcCurrentFollowsThrottle = true;   ///< false: the FC current is a constant (synthetic on a copter)
+    double refThrottleHover = -1.0;          ///< The used flights' average throttle per phase (0–1)
+    double refThrottleCruise = -1.0;
 };
 
 FittedType fitType(const QVariantList &rows)
@@ -1395,10 +1461,17 @@ FittedType fitType(const QVariantList &rows)
     FittedType t;
     double synthHover = 0.0, synthCruise = 0.0;
     int synthN = 0;
+    double thrHover = 0.0, thrCruise = 0.0;
+    int thrHoverN = 0, thrCruiseN = 0;
     for (const QVariant &v : rows) {
         const QVariantMap row = v.toMap();
-        if (isUsed(row))
+        if (isUsed(row)) {
             t.used << toModelFlight(row);
+            const double th = row.value(QStringLiteral("refThrottleHover")).toDouble();
+            const double tc = row.value(QStringLiteral("refThrottleCruise")).toDouble();
+            if (th > 0.0) { thrHover += th; ++thrHoverN; }
+            if (tc > 0.0) { thrCruise += tc; ++thrCruiseN; }
+        }
         const QString state = row.value(QStringLiteral("learningState")).toString();
         if (state == QLatin1String("pending"))
             ++t.pending;
@@ -1408,10 +1481,15 @@ FittedType fitType(const QVariantList &rows)
             synthHover += h; synthCruise += c; ++synthN;
         }
     }
+    if (thrHoverN > 0) t.refThrottleHover = thrHover / thrHoverN;
+    if (thrCruiseN > 0) t.refThrottleCruise = thrCruise / thrCruiseN;
+    if (synthN > 0)
+        t.fcCurrentFollowsThrottle = PowerTypeModel::currentFollowsThrottle(synthHover / synthN, synthCruise / synthN);
     t.factor = PowerTypeModel::chargerFactor(t.used);
     t.model = PowerTypeModel::fit(t.used);
     t.fromCharger = t.model.usable();
-    if (!t.fromCharger && synthN > 0) {
+    // A constant FC current says nothing about hover or cruise: no seed from it.
+    if (!t.fromCharger && synthN > 0 && t.fcCurrentFollowsThrottle) {
         const QString advice = t.model.advice;
         t.model = PowerTypeModel::seedFromSynthetic(synthHover / synthN, synthCruise / synthN, t.factor);
         t.model.advice = advice.isEmpty() ? t.model.advice : advice;
@@ -1484,6 +1562,9 @@ QVariantMap VehicleProfileManager::powerTypeSummary(int powerTypeId)
     out[QStringLiteral("chargerFactor")]  = t.factor;
     out[QStringLiteral("usedFlights")]    = t.used.size();
     out[QStringLiteral("pendingFlights")] = t.pending;
+    out[QStringLiteral("fcCurrentFollowsThrottle")] = t.fcCurrentFollowsThrottle;
+    out[QStringLiteral("refThrottleHover")]  = t.refThrottleHover;
+    out[QStringLiteral("refThrottleCruise")] = t.refThrottleCruise;
     return out;
 }
 
@@ -1742,8 +1823,18 @@ QVariantMap VehicleProfileManager::ampPerVoltSuggestion()
     out[QStringLiteral("available")] = false;
     if (!m_telemetry || m_currentDeviceUid.isEmpty() || m_powerTypeId <= 0)
         return out;
-    out[QStringLiteral("monitor")] = m_telemetry->hasParameter(QStringLiteral("BATT_MONITOR"))
+    const int monitor = m_telemetry->hasParameter(QStringLiteral("BATT_MONITOR"))
         ? qRound(m_telemetry->parameterValue(QStringLiteral("BATT_MONITOR"), -1.0f)) : -1;
+    out[QStringLiteral("monitor")] = monitor;
+    // On a copter ArduPilot's synthetic current does not use BATT_AMP_PERVLT
+    // in any way that follows throttle (it reads the k_throttle output, which
+    // a multicopter does not drive): changing it would change nothing.
+    if (m_kind == VehicleKind::Multirotor
+        && (monitor == 25
+            || !powerTypeSummary(m_powerTypeId).value(QStringLiteral("fcCurrentFollowsThrottle"), true).toBool())) {
+        out[QStringLiteral("reason")] = QStringLiteral("not used on a copter: the GCS counts the charge itself");
+        return out;
+    }
     if (!m_telemetry->hasParameter(QStringLiteral("BATT_AMP_PERVLT")))
         return out;
     const double current = m_telemetry->parameterValue(QStringLiteral("BATT_AMP_PERVLT"), 0.0f);

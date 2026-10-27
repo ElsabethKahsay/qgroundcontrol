@@ -552,6 +552,44 @@ private slots:
         QVERIFY(!liveEstimate(pre).valid);
     }
 
+    // Copters without a current that follows throttle: a constant FC current
+    // (ArduPilot's synthetic current on a multicopter, seen in SITL as 0.3 A
+    // in hover and cruise) is recognised, and the GCS counts the charge
+    // itself: model current × throttle correction (±30 %) × time.
+    void testPowerTypeGcsChargeCount()
+    {
+        using namespace PowerTypeModel;
+        QVERIFY(!currentFollowsThrottle(0.3, 0.3));
+        QVERIFY(!currentFollowsThrottle(0.3, 0.3001));
+        QVERIFY(currentFollowsThrottle(26.7, 17.5));
+        QVERIFY(!currentFollowsThrottle(0.0, 17.5));
+
+        const Model m = fit(sky03Flights());
+        QVERIFY(near(chargeStepAh(m, true, 0.8, 1.0, 60.0), m.hoverA(0.8) / 60.0, 1e-12));   // 1 min hover, 0.8 kg (≈ 36.8 A)
+        QVERIFY(near(chargeStepAh(m, false, 0.0, 1.0, 120.0), m.cruiseA(0.0) * 2.0 / 60.0, 1e-12));
+        QVERIFY(near(chargeStepAh(m, false, 0.0, 2.0, 60.0), m.cruiseA(0.0) * 1.3 / 60.0, 1e-12)); // limited to +30 %
+        QVERIFY(near(chargeStepAh(m, false, 0.0, -1.0, 60.0), m.cruiseA(0.0) / 60.0, 1e-12));    // no throttle: model only
+        QCOMPARE(chargeStepAh(m, true, 0.0, 1.0, 0.0), 0.0);
+        QCOMPARE(chargeStepAh(Model(), true, 0.0, 1.0, 60.0), 0.0);
+
+        // The throttle correction in place of the FC current, while flying.
+        LiveInput in;
+        in.model = m;
+        in.capacityAh = 16.0;
+        in.fcMahUsed = 5200.0;
+        in.factor = 1.0;
+        in.currentA = 0.3;                                  // the constant synthetic current: ignored
+        in.throttleRatio = throttleRatio(0.297, 0.27);      // 10 % over the cruise reference
+        in.groundSpeedMs = 13.0;
+        in.altitudeM = 30.0;
+        in.armed = true;
+        LiveResult r = liveEstimate(in);
+        QVERIFY2(near(r.ratio, std::pow(1.1, 1.5), 1e-6) && near(r.currentA, m.cruiseA(0.0) * std::pow(1.1, 1.5), 1e-6),
+                 qPrintable(QStringLiteral("%1 %2").arg(r.ratio).arg(r.currentA)));
+        in.armed = false;
+        QCOMPARE(liveEstimate(in).ratio, 1.0);
+    }
+
     // Validated = the last three flights each predicted within 10 %; a flight
     // more than 20 % off is flagged.
     void testPowerTypeValidationAndOutliers()
@@ -645,6 +683,31 @@ private slots:
         QCOMPARE(rows.size(), 4);
         QVERIFY(near(rows[0].toMap().value(QStringLiteral("predictedMah")).toDouble(), 5100.0, 1.0));
         QVERIFY(!rows[0].toMap().value(QStringLiteral("outlier")).toBool());
+        QVERIFY(sum.value(QStringLiteral("fcCurrentFollowsThrottle")).toBool());   // 26.7 A hover vs 17.5 A cruise
+
+        // A copter on ArduPilot's synthetic current: the same 0.3 A in hover
+        // and cruise. It seeds no model, is flagged, and the used flights'
+        // throttle per phase is kept as the reference for the GCS's count.
+        const int synthType = mgr()->savePowerType(0, QStringLiteral("Quad X"), 13.0, 4.5, 3, {});
+        QVERIFY(synthType > 0);
+        for (double thr : {0.34, 0.38}) {
+            const int id = db.startFlightSession(uid, QString(), 0.0);
+            FlightPowerRecord r;
+            r.powerTypeId = synthType;
+            r.hoverMinEmpty = 2.0; r.cruiseMinEmpty = 2.0;
+            r.synthHoverA = 0.3; r.synthCruiseA = 0.3; r.fcMah = 13.0;
+            r.refThrottleHover = thr; r.refThrottleCruise = thr + 0.04;
+            r.startedFull = true; r.telemetryCoverage = 1.0;
+            QVERIFY(db.saveFlightPowerRecord(id, r));
+            QVERIFY(db.setFlightChargerMah(id, 900.0));
+            QVERIFY(db.setFlightLearningState(id, QStringLiteral("used")));
+        }
+        sum = mgr()->powerTypeSummary(synthType);
+        QVERIFY(!sum.value(QStringLiteral("fcCurrentFollowsThrottle"), true).toBool());
+        QVERIFY2(sum.value(QStringLiteral("source")).toString() != QLatin1String("synthetic"),
+                 qPrintable(sum.value(QStringLiteral("source")).toString()));
+        QVERIFY(near(sum.value(QStringLiteral("refThrottleHover")).toDouble(), 0.36, 1e-9));
+        QVERIFY(near(sum.value(QStringLiteral("refThrottleCruise")).toDouble(), 0.40, 1e-9));
 
         db.reset();
     }
