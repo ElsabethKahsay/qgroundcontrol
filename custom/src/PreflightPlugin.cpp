@@ -393,10 +393,13 @@ void PreflightPlugin::init()
         static bool shown = false;
         const QVariantMap live = _vehicleProfileManager->powerLive();
         const bool returnNow = live.value(QStringLiteral("returnNow")).toBool();
-        if (returnNow && !shown)
-            qgcApp()->showAppMessage(tr("RETURN NOW: the rest of the trip needs %1 Ah, %2 Ah are left above the reserve.")
-                                         .arg(live.value(QStringLiteral("tripNeedAh")).toDouble(), 0, 'f', 1)
-                                         .arg(live.value(QStringLiteral("usableAh")).toDouble(), 0, 'f', 1));
+        if (returnNow && !shown) {
+            const QString text = tr("RETURN NOW: the rest of the trip needs %1 Ah, %2 Ah are left above the reserve.")
+                                     .arg(live.value(QStringLiteral("tripNeedAh")).toDouble(), 0, 'f', 1)
+                                     .arg(live.value(QStringLiteral("usableAh")).toDouble(), 0, 'f', 1);
+            qCWarning(preflightPluginLog).noquote() << text;   // in the log too, for after-flight review
+            qgcApp()->showAppMessage(text);
+        }
         shown = returnNow;
     });
 

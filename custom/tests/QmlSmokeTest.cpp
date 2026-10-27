@@ -1284,6 +1284,7 @@ private slots:
     void testPowerDialogsDriveTheItems();
     void testPowerTypesPageDrivesStorage();
     void testPowerLiveInFlyView();
+    void testEstimatorPanelKeepsTheStoredPack();
 
 private:
     bool _connectPlane();
@@ -2036,6 +2037,53 @@ void LivePluginBenchTest::testPowerLiveInFlyView()
     chip->setParentItem(nullptr);
     vpm->clearPayloadEntry();
     QVERIFY(vpm->linkCurrentVehiclePowerType(0));
+}
+
+// The Fly view's battery estimator panel fills its fields from the stored
+// pack one at a time; each field change used to write all four fields back,
+// so the cell size still showing its default (5000 mAh) overwrote the stored
+// pack whenever a vehicle connected. Loading the panel, and a later config
+// change, must leave the stored pack as it is.
+void LivePluginBenchTest::testEstimatorPanelKeepsTheStoredPack()
+{
+    QVERIFY2(_connectPlane(), "mock copter did not connect / resolve its UID");
+    VehicleProfileManager *vpm = VehicleProfileManager::instance();
+    vpm->setBatterySeriesCells(3);
+    vpm->setBatteryParallelCells(2);
+    vpm->setBatteryCellMah(2200);
+
+    QSharedPointer<QQmlApplicationEngine> engine(QGCCorePlugin::instance()->createQmlApplicationEngine(nullptr));
+    QVERIFY(engine);
+    QGCPalette palette;
+    engine->rootContext()->setContextProperty(QStringLiteral("qgcPal"), &palette);
+    QSharedPointer<QQuickWindow> window(createWindow(engine, 1100, 700));
+    QDir src(QCoreApplication::applicationDirPath());
+    for (int i = 0; i < 4 && !QFileInfo::exists(src.filePath(QStringLiteral("custom/qml/cpts/BatteryTimeEstimatorPanel.qml"))); ++i)
+        src.cdUp();
+    QString err;
+    QScopedPointer<QQuickItem> panel(createComponent(engine, window.data(),
+        src.filePath(QStringLiteral("custom/qml/cpts/BatteryTimeEstimatorPanel.qml")).toUtf8().constData(), &err));
+    QVERIFY2(panel, qPrintable(err));
+    pumpQml(300);
+    auto pack = [vpm]() {
+        return QStringLiteral("%1S %2P %3 mAh").arg(vpm->batterySeriesCells()).arg(vpm->batteryParallelCells())
+                                              .arg(vpm->batteryCellMah());
+    };
+    QCOMPARE(pack(), QStringLiteral("3S 2P 2200 mAh"));
+
+    // A config change from elsewhere (e.g. a pack chosen): the panel reloads.
+    vpm->setBatterySeriesCells(4);
+    pumpQml(200);
+    QCOMPARE(pack(), QStringLiteral("4S 2P 2200 mAh"));
+
+    // The vehicle goes away: the profile changes every field in one update
+    // (back to 6S 1P 5000 mAh). Loading them must not write the fields not
+    // yet loaded (2P, 2200 mAh) back over the new values.
+    _disconnectMockLink();
+    pumpQml(300);
+    QCOMPARE(pack(), QStringLiteral("6S 1P 5000 mAh"));
+
+    panel->setParentItem(nullptr);
 }
 
 UT_REGISTER_TEST(LivePluginBenchTest)

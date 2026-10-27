@@ -113,7 +113,8 @@ Rectangle {
             Text { text: qsTr("S \u00D7"); font.pixelSize: Config.fontSizeSmall; color: Colors.textSecondary }
             SpinBox { id: parallelBox; from:1; to:10; value:1; onValueChanged: estimator.calculate() }
             Text { text: qsTr("P \u00D7"); font.pixelSize: Config.fontSizeSmall; color: Colors.textSecondary }
-            SpinBox { id: cellMahBox;  from:500; to:30000; value:5000; stepSize:500; editable:true; onValueChanged: estimator.calculate() }
+            // 250 mAh: the smallest cell VehicleProfileManager accepts.
+            SpinBox { id: cellMahBox;  from:250; to:30000; value:5000; stepSize:500; editable:true; onValueChanged: estimator.calculate() }
             Text { text: qsTr("mAh"); font.pixelSize: Config.fontSizeSmall; color: Colors.textSecondary }
         }
 
@@ -204,8 +205,18 @@ Rectangle {
     QtObject {
         id: estimator
 
+        // True while loadFromProfile() fills the controls one by one: each
+        // control's change handler calls calculate(), which would otherwise
+        // write the controls not yet loaded (their defaults, e.g. 5000 mAh)
+        // back over the stored pack.
+        property bool loading: false
+        // False until the first load at Component.onCompleted: while the panel
+        // is being created its controls settle (the type box's index changes)
+        // and would write their defaults (6S) over the stored pack.
+        property bool ready: false
+
         function calculate() {
-            if (typeof VehicleProfileManager === "undefined" || !VehicleProfileManager) return
+            if (!ready || loading || typeof VehicleProfileManager === "undefined" || !VehicleProfileManager) return
             VehicleProfileManager.batteryType = battTypeBox.currentText
             VehicleProfileManager.batterySeriesCells = seriesBox.value
             VehicleProfileManager.batteryParallelCells = parallelBox.value
@@ -215,11 +226,13 @@ Rectangle {
         // Sync the controls from the persisted profile (idempotent: setters early-out).
         function loadFromProfile() {
             if (typeof VehicleProfileManager === "undefined" || !VehicleProfileManager) return
+            loading = true
             var tIdx = proxy.indexOfType(VehicleProfileManager.batteryType)
             if (battTypeBox.currentIndex !== tIdx) battTypeBox.currentIndex = tIdx
             if (seriesBox.value !== VehicleProfileManager.batterySeriesCells) seriesBox.value   = VehicleProfileManager.batterySeriesCells
             if (parallelBox.value !== VehicleProfileManager.batteryParallelCells) parallelBox.value = VehicleProfileManager.batteryParallelCells
             if (cellMahBox.value !== VehicleProfileManager.batteryCellMah) cellMahBox.value  = VehicleProfileManager.batteryCellMah
+            loading = false
         }
     }
 
@@ -233,6 +246,7 @@ Rectangle {
 
     Component.onCompleted: {
         estimator.loadFromProfile()
+        estimator.ready = true
         estimator.calculate()
     }
 }

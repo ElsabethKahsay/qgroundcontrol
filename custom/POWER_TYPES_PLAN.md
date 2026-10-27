@@ -1,8 +1,8 @@
 # Power Types and Mission Check
 
-Skywin GCS · copter only · designed 26 Oct 2026 with the operator · **steps 1–5 of 6 built**
+Skywin GCS · copter only · designed 26 Oct 2026 with the operator · **all 6 steps built; one open decision (synthetic current on copters, section 9)**
 
-Status: step 1 (the maths) and step 2 (storage) built and tested 26 Oct, step 3 (flight recorder) and step 4 (checklist items and arming) 27 Oct; step 5 (the Power types page and the Fly view) 27 Oct; step 6 (SITL check) not started. Each step starts on the operator's go (see "Implementation plan"). Planes keep the existing rough flight-time estimate.
+Status: step 1 (the maths) and step 2 (storage) built and tested 26 Oct, step 3 (flight recorder) and step 4 (checklist items and arming) 27 Oct; step 5 (the Power types page and the Fly view) 27 Oct; step 6 (SITL check) 27 Oct. Open: the synthetic current does not work on copters (section 9). Each step starts on the operator's go (see "Implementation plan"). Planes keep the existing rough flight-time estimate.
 
 Method (decided 26 Oct): **combined**. The flight controller estimates current from throttle (`BATT_MONITOR = 25`, synthetic current), the charger provides the real total after each flight, and the GCS learns a hover/cruise/payload model from both.
 
@@ -212,7 +212,7 @@ The operator approves each step before the next one starts.
 | 3. Flight recorder **(done 27 Oct)** | Per-second hover/cruise and payload-aboard accounting; FC mAh and synthetic current per phase; telemetry coverage; full-pack test at arming; `BATT_MONITOR` / `BATT_AMP_PERVLT` read on connect | ½ day |
 | 4. Checklist and arming **(done 27 Oct)** | `PowerTypeCheck.h` and `MissionCheck.h` (header-only, no Q_OBJECT; the mission check blocks when validated, amber otherwise); `BATT_MONITOR` warning; time-at-target field in the payload dialog; one arming-gate rule + waiver. Unit tests + LivePluginBenchTest | 1 day |
 | 5. Screens **(done 27 Oct)** | Vehicle Management: power types, link, the type's flights (charger status, Use/Dismiss, "fly next" advice, Validated badge), built as inline QML in the existing page. Post-flight page: charger mAh entry, FC vs charger comparison and suggested `BATT_AMP_PERVLT`. Fly view: battery chip, info box, RETURN NOW | 1 day |
-| 6. Final check | SITL flight with `BATT_MONITOR = 25` (this proves the logic only, since SITL's current is simulated); full test suite; report | ½–1 day |
+| 6. Final check **(done 27 Oct)** | SITL flight with `BATT_MONITOR = 25` (this proves the logic only, since SITL's current is simulated); full test suite; report | ½–1 day |
 
 **Total: about 4½–5 days.**
 
@@ -445,6 +445,51 @@ The operator approves each step before the next one starts.
   - the info box showing a spare when short;
   - the chip saying RETURN NOW whenever the trip is short.
 - **Full suite (steps 5a + 5b):** 34 classes, 452 passed, 0 failed, 7 skipped (the known ones).
+
+**Step 6 result (27 Oct): SITL check**
+- **Scenario:** `tools/sitl/sc_power_type.py`, run log in `tools/sitl/runs/2026-10-27-power-type-arducopter.md`.
+- **Setup:**
+  - ArduCopter SITL (ArduPilot 4.6.0-beta1-6903, instance 5) with `BATT_MONITOR = 25`.
+  - The GCS uses a throw-away data folder; the operator's SITL and database are not touched.
+  - The GCS database was seeded the way the Power types page leaves it: a validated "Quad X · 13×4.5 · 3S" type linked to the copter, a target 300 m north, and a 250 mAh pack so the way home cannot fit.
+- **The flight:** take off to 20 m, hover 30 s, fly to the target, hover 20 s, fly back, land.
+- **Result: PASS.** Recorded on the flight:
+  - hover and cruise split at the drop: loaded 0.63 + 0.48 min before the target, empty 0.75 + 0.62 min after;
+  - cruise speed 20 m/s; FC mAh 13; throttle 0.36 hover / 0.39 cruise;
+  - the pack full at arm (4.2 V per cell); coverage 100 %; waiting for the charger number.
+- **RETURN NOW:** on 25 s after take-off ("trip needs 0.37 Ah, 0.20 Ah left"), with the app message; off after the landing. No QML errors from the power-type screens.
+- **The GCS now logs** when the power-type estimate comes on or goes off (and why), and when RETURN NOW changes, for after-flight review.
+- **Found and fixed: a pack-config bug.** The Fly view's battery estimator panel (`BatteryTimeEstimatorPanel.qml`, always loaded) filled its fields from the stored pack one at a time. Each field's change wrote all four fields back, including the ones not yet loaded, and it also wrote its defaults while being created. So whenever a vehicle connected, the stored pack (cells, mAh) was overwritten with 6S or 5000 mAh. It now writes nothing until it has loaded, and nothing while loading. Its minimum cell size is 250 mAh, as elsewhere.
+  - Test: `LivePluginBenchTest::testEstimatorPanelKeepsTheStoredPack` (a stored 3S·2P·2200 mAh survives the panel opening and a later config change).
+  - Mutants: writing while loading, and writing while being created, both caught.
+- **Full suite after step 6:** 34 classes, 453 passed, 0 failed, 7 skipped (the known ones).
+- **Finding: the synthetic current does not work on copters** (section 9).
+
+## 9. Open decision: the synthetic current on copters
+
+The SITL flight read **0.30 A in hover and in cruise**, exactly `BATT_AMP_OFFSET`. ArduPilot computes it as:
+
+```
+current = (V / BATT_MAX_VOLT) × throttle² × 0.0001 × BATT_AMP_PERVLT + BATT_AMP_OFFSET
+```
+
+(`libraries/AP_BattMonitor/AP_BattMonitor_Synthetic_Current.cpp`). `throttle` comes from the `k_throttle` servo output, which a multicopter does not use: its motors are `k_motor1…N`. On ArduCopter that term is always 0, so `BATT_MONITOR = 25` reports a constant idle current. ArduPilot's documentation says only "inaccurate" for multicopters; in practice it does not follow throttle at all.
+
+What still works without it:
+- Learning hover and cruise current from the charger numbers (the core of the method).
+- The mission check before take-off.
+- The recorder's hover/cruise/payload split.
+- The throttle per phase.
+
+What it breaks:
+- "Charge used" in flight. FC mAh × charger factor becomes elapsed time × the average current of past flights: no response to hover versus cruise, wind or payload.
+- The live correction of the model current. It is limited to ±30 %, but it is meaningless.
+- The `BATT_AMP_PERVLT` suggestion, which changes nothing on a copter.
+
+Options (the operator decides):
+1. **The GCS's own charge count** (the plan's "no current sensor" path). The GCS integrates model current × (throttle ÷ the phase's reference throttle)^1.5 every second, and ignores the FC current on a copter with `BATT_MONITOR = 25`. About half a day.
+2. **Current sensors** (`BATT_MONITOR = 4`, a power module) on the copters. Real current; everything built works as designed. Hardware cost and setup.
+3. **Both:** option 1 now, sensors later.
 
 Build rules (as for all Skywin work):
 - No CMake re-run and no `custom.qrc` change; incremental builds only.
