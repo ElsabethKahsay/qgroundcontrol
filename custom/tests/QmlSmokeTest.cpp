@@ -998,13 +998,12 @@ void FlyQuickActionsSmokeTest::testTelemetryStripTargetIsLive()
         problems << QStringLiteral("%1 of %2 Tgt rows are not conditional on a saved target").arg(rows - optional).arg(rows);
     // Removed as redundant with the toolbar and the battery chip (operator,
     // 27 Oct): the bearing row and the battery-percent row.
-    for (const char *gone : { "\"Brg\"", "\"Bat\"", "\"Sats\"" }) {
+    for (const char *gone : { "\"Brg\"", "\"Bat\"", "\"Sats\"", "\"Plan\"", "\"Trip\"" }) {
         if (strip.contains(QStringLiteral("label: ") + QLatin1String(gone)))
             problems << QStringLiteral("row %1 is back").arg(QLatin1String(gone));
     }
-    // The power-type rows: time/distance left and the rest of the trip.
-    for (const auto &[label, value] : { std::pair<QString, QString>{QStringLiteral("Left"), QStringLiteral("_leftValue")},
-                                        std::pair<QString, QString>{QStringLiteral("Trip"), QStringLiteral("_tripValue")} }) {
+    // The power-type row: time and distance left.
+    for (const auto &[label, value] : { std::pair<QString, QString>{QStringLiteral("Left"), QStringLiteral("_leftValue")} }) {
         const QRegularExpression row(QStringLiteral("label:\\s*\"%1\",\\s*value:\\s*([^,\\s]+)").arg(label));
         int n = 0;
         for (auto it = row.globalMatch(strip); it.hasNext(); ++n) {
@@ -1484,7 +1483,8 @@ void LivePluginBenchTest::testFlyViewTargetDistanceFromVehicle()
     QCOMPARE(value, QString::number(qRound(dist)));
 
     // The rows shown: Tgt (a target is saved), not the ones removed as
-    // redundant (GPS, Sats, Hdg, Brg in NAVIGATION; Bat in SYSTEM).
+    // redundant or empty (GPS, Sats, Hdg, Brg, Plan, Trip in NAVIGATION;
+    // Bat and Trip in SYSTEM).
     auto labels = [&](const char *column) {
         QStringList out;
         QObject *col = strip->findChild<QObject *>(QLatin1String(column));
@@ -1497,9 +1497,11 @@ void LivePluginBenchTest::testFlyViewTargetDistanceFromVehicle()
     const QStringList sys = labels("systemColumn");
     QVERIFY2(nav.contains(QStringLiteral("Tgt")) || sys.contains(QStringLiteral("Tgt")),
              qPrintable(nav.join(QLatin1Char(',')) + QStringLiteral(" | ") + sys.join(QLatin1Char(','))));
-    for (const QString &gone : { QStringLiteral("GPS"), QStringLiteral("Sats"), QStringLiteral("Hdg"), QStringLiteral("Brg") })
+    for (const QString &gone : { QStringLiteral("GPS"), QStringLiteral("Sats"), QStringLiteral("Hdg"), QStringLiteral("Brg"),
+                                 QStringLiteral("Plan"), QStringLiteral("Trip") })
         QVERIFY2(!nav.contains(gone), qPrintable(QStringLiteral("NAVIGATION still has %1").arg(gone)));
-    QVERIFY2(!sys.contains(QStringLiteral("Bat")) && !sys.contains(QStringLiteral("Brg")), qPrintable(sys.join(QLatin1Char(','))));
+    QVERIFY2(!sys.contains(QStringLiteral("Bat")) && !sys.contains(QStringLiteral("Brg")) && !sys.contains(QStringLiteral("Trip")),
+             qPrintable(sys.join(QLatin1Char(','))));
 
     strip->setParentItem(nullptr);
 }
@@ -1980,8 +1982,8 @@ void LivePluginBenchTest::testPowerTypesPageDrivesStorage()
 // The power-type live estimate on the mock copter, through the real Fly-view
 // info box and battery chip loaded from the source tree: active once the
 // copter is linked to a validated type; before the arm the cruise endurance;
-// a target 60 km away shows the trip short (amber) but not RETURN NOW, on
-// the ground and armed alike, since the copter is not airborne.
+// a target 60 km away makes the trip short, but the chip does not say RETURN
+// NOW, on the ground and armed alike, since the copter is not airborne.
 void LivePluginBenchTest::testPowerLiveInFlyView()
 {
     QVERIFY2(_connectPlane(), "mock copter did not connect / resolve its UID");
@@ -2028,8 +2030,6 @@ void LivePluginBenchTest::testPowerLiveInFlyView()
 
     const QString left = strip->property("_leftValue").toString();
     QVERIFY2(left.contains(QStringLiteral("min")) && left.contains(QStringLiteral("km")), qPrintable(left));
-    const QString trip = strip->property("_tripValue").toString();
-    QVERIFY2(trip.startsWith(QStringLiteral("short ")), qPrintable(trip));
     QVERIFY(!chip->property("_returnNow").toBool());
     QVERIFY(chip->property("_plActive").toBool());
 
@@ -2041,7 +2041,9 @@ void LivePluginBenchTest::testPowerLiveInFlyView()
         QTest::qWait(50);
     QVERIFY(live().value(QStringLiteral("armed")).toBool());
     QVERIFY(!live().value(QStringLiteral("returnNow")).toBool());
-    QVERIFY(strip->property("_tripValue").toString() != QStringLiteral("RETURN NOW"));
+    pumpQml(100);
+    QVERIFY(!chip->property("_returnNow").toBool());
+    QVERIFY(chip->property("_label").toString() != QStringLiteral("RETURN NOW"));
     _vehicle->setArmed(false, false);
     QVERIFY(_waitArmed(false));
 
