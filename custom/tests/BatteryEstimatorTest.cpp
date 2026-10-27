@@ -472,6 +472,86 @@ private slots:
         QVERIFY(near(remainingTripAh(m, back), 21.0 * 3.333 / 60.0 + 32.0 / 60.0, 0.003));
     }
 
+    // The Fly view's live estimate: charge left above the reserve from the
+    // FC's mAh × the charger factor, the expected current for the phase
+    // (model × live ratio), time/distance left, and RETURN NOW only while
+    // airborne when the rest of the trip no longer fits.
+    void testPowerTypeLiveEstimate()
+    {
+        using namespace PowerTypeModel;
+        const double north = 1.0 / 111194.93;            // degrees per metre
+        LiveInput in;
+        in.model = fit(sky03Flights());
+        in.factor = 1.2;
+        in.capacityAh = 16.0;
+        in.reserve = 0.20;
+        in.fcMahUsed = 4333.0;
+        in.currentA = 23.3;
+        in.groundSpeedMs = 13.0;
+        in.altitudeM = 30.0;
+        in.homeLat = -35.0; in.homeLon = 149.0;
+        in.lat = -35.0 + 2500.0 * north; in.lon = 149.0;            // half way out
+        in.targetLat = -35.0 + 5000.0 * north; in.targetLon = 149.0;
+        in.payloadAboard = true; in.payloadKg = 0.8; in.minAtTarget = 2.0;
+        in.cruiseSpeedMs = 15.0;
+        in.armed = true;
+
+        LiveResult r = liveEstimate(in);
+        const QString got = QStringLiteral("usable %1 A %2 ratio %3 left %4 min %5 km need %6 short %7")
+                                .arg(r.usableAh).arg(r.currentA).arg(r.ratio).arg(r.timeLeftMin)
+                                .arg(r.distLeftKm).arg(r.tripNeedAh).arg(r.tripShortAh);
+        QVERIFY(r.valid && r.airborne && !r.hover);
+        QVERIFY2(near(r.usableAh, 7.600, 0.002), qPrintable(got));
+        QVERIFY2(near(r.ratio, 1.1554, 0.0005) && near(r.currentA, 27.96, 0.01), qPrintable(got));
+        QVERIFY2(near(r.timeLeftMin, 16.31, 0.01) && near(r.distLeftKm, 12.72, 0.01), qPrintable(got));
+        // The rest of the trip: 2.5 km out loaded, 2 min there, 5 km home empty, land.
+        QVERIFY2(near(r.tripNeedAh, 4.8248 * 1.1554, 0.005), qPrintable(got));
+        QCOMPARE(r.tripShortAh, 0.0);
+        QVERIFY(!r.returnNow);
+
+        // A target 20 km out: no longer fits, RETURN NOW.
+        in.targetLat = -35.0 + 20000.0 * north;
+        r = liveEstimate(in);
+        QVERIFY2(near(r.tripNeedAh, 17.380 * 1.1554, 0.01) && near(r.tripShortAh, 12.48, 0.01), qPrintable(QString::number(r.tripShortAh)));
+        QVERIFY(r.returnNow);
+
+        // On the ground the same shortfall is not RETURN NOW (and no live ratio).
+        LiveInput ground = in;
+        ground.altitudeM = 0.0;
+        ground.groundSpeedMs = 0.0;
+        r = liveEstimate(ground);
+        QVERIFY(!r.airborne && r.tripShortAh > 0.0 && !r.returnNow);
+        QCOMPARE(r.ratio, 1.0);
+
+        // After the drop the way home is costed empty, from here.
+        in.payloadAboard = false;
+        r = liveEstimate(in);
+        QCOMPARE(r.ratio, kLiveRatioMax);                                   // 27.96 A vs 21 A: limited
+        QVERIFY2(near(r.tripNeedAh, (21.0 * (2500.0 / 15.0 / 60.0) / 60.0 + 32.0 / 60.0) * 1.3, 0.005),
+                 qPrintable(QString::number(r.tripNeedAh)));
+
+        // Before the arm, full pack: endurance with the payload entered.
+        LiveInput pre;
+        pre.model = in.model;
+        pre.capacityAh = 16.0;
+        pre.fcMahUsed = 0.0;
+        pre.payloadAboard = true; pre.payloadKg = 0.8;
+        pre.cruiseSpeedMs = 15.0;
+        r = liveEstimate(pre);
+        QVERIFY2(near(r.hoverMin, 12.8 / 36.8 * 60.0, 0.01) && near(r.cruiseMin, 12.8 / 24.2 * 60.0, 0.01)
+                     && near(r.cruiseKm, 12.8 / 24.2 * 60.0 * 60.0 * 15.0 / 1000.0, 0.01),
+                 qPrintable(QStringLiteral("%1 %2 %3").arg(r.hoverMin).arg(r.cruiseMin).arg(r.cruiseKm)));
+        QVERIFY(!r.tripKnown);                                              // no position, no home
+
+        // No mAh counter: the FC's % instead.
+        pre.fcMahUsed = -1.0;
+        pre.socPct = 50.0;
+        QVERIFY(near(liveEstimate(pre).usableAh, 4.8, 1e-9));
+        // No model, or no pack: nothing.
+        pre.model = Model();
+        QVERIFY(!liveEstimate(pre).valid);
+    }
+
     // Validated = the last three flights each predicted within 10 %; a flight
     // more than 20 % off is flagged.
     void testPowerTypeValidationAndOutliers()

@@ -477,4 +477,112 @@ private:
     double m_totalSec = 0.0, m_seenSec = 0.0;
 };
 
+// ── Live estimate (Fly view) ─────────────────────────────────────────────
+
+/// What the Fly view knows every update.
+struct LiveInput {
+    Model  model;
+    double factor        = 1.0;     ///< Charger factor (charger mAh ÷ FC mAh)
+    double capacityAh    = 0.0;     ///< The selected pack
+    double reserve       = 0.20;    ///< Share of the pack never planned
+    double fcMahUsed     = -1.0;    ///< FC counter (synthetic or measured); < 0 = none
+    double socPct        = -1.0;    ///< Fallback when there is no mAh counter
+    double currentA      = -1.0;    ///< FC current, smoothed; < 0 = none
+    double groundSpeedMs = std::nan("");
+    double altitudeM     = std::nan("");
+    double lat = std::nan(""), lon = std::nan("");
+    double homeLat = std::nan(""), homeLon = std::nan("");
+    double targetLat = std::nan(""), targetLon = std::nan("");
+    bool   payloadAboard = false;   ///< Until the copter first reached the target
+    double payloadKg     = 0.0;
+    double minAtTarget   = 0.0;
+    double cruiseSpeedMs = 10.0;    ///< The type's learned cruise speed
+    double landMin       = 1.0;
+    bool   armed         = false;
+};
+
+struct LiveResult {
+    bool   valid       = false;     ///< A model, a pack and a charge reading
+    bool   airborne    = false;
+    bool   hover       = true;
+    double usableAh    = -1.0;      ///< Charge left above the reserve
+    double currentA    = -1.0;      ///< Expected current now (model × live ratio)
+    double ratio       = 1.0;
+    double timeLeftMin = -1.0;      ///< At the expected current, down to the reserve
+    double distLeftKm  = -1.0;      ///< Time left at the ground speed (cruise speed when hovering)
+    double hoverMin    = -1.0;      ///< Endurance hovering / cruising with the payload aboard
+    double cruiseMin   = -1.0;
+    double cruiseKm    = -1.0;
+    bool   tripKnown   = false;     ///< Position and home known
+    double tripNeedAh  = -1.0;      ///< The rest of the trip: to the target, time there, home, land
+    double tripShortAh = 0.0;
+    bool   returnNow   = false;     ///< Airborne and the rest of the trip no longer fits
+};
+
+/// Charge left above the reserve (the FC's mAh used × the charger factor, or
+/// its %), the expected current for the phase the copter is in (the model,
+/// corrected by the live FC current within ±30 % while flying), time and
+/// distance left, and whether the rest of the trip still fits: with the
+/// payload aboard, the way to the target, the time there and the way home
+/// empty; after the drop (or with no target), the way home. RETURN NOW only
+/// while airborne.
+inline LiveResult liveEstimate(const LiveInput &in)
+{
+    LiveResult r;
+    if (!in.model.usable() || in.capacityAh <= 0.0)
+        return r;
+    double usedAh = -1.0;
+    if (in.fcMahUsed >= 0.0)
+        usedAh = in.fcMahUsed / 1000.0 * in.factor;
+    else if (in.socPct >= 0.0)
+        usedAh = in.capacityAh * (1.0 - in.socPct / 100.0);
+    if (usedAh < 0.0)
+        return r;
+    r.valid = true;
+    r.usableAh = std::max(0.0, in.capacityAh - usedAh - in.reserve * in.capacityAh);
+
+    const double gs = std::isfinite(in.groundSpeedMs) ? in.groundSpeedMs : 0.0;
+    r.hover = isHover(gs);
+    r.airborne = (std::isfinite(in.altitudeM) && in.altitudeM > kAirborneAltM) || !r.hover;
+    const double kg = in.payloadAboard ? in.payloadKg : 0.0;
+    const double modelA = r.hover ? in.model.hoverA(kg) : in.model.cruiseA(kg);
+    r.ratio = (in.armed && r.airborne) ? liveRatio(in.currentA, in.factor, modelA) : 1.0;
+    r.currentA = modelA * r.ratio;
+    if (r.currentA > 0.0) {
+        r.timeLeftMin = r.usableAh / r.currentA * 60.0;
+        const double speed = r.hover ? in.cruiseSpeedMs : gs;
+        r.distLeftKm = r.timeLeftMin * 60.0 * speed / 1000.0;
+    }
+    if (in.model.hoverA(kg) > 0.0)
+        r.hoverMin = r.usableAh / in.model.hoverA(kg) * 60.0;
+    if (in.model.cruiseA(kg) > 0.0) {
+        r.cruiseMin = r.usableAh / in.model.cruiseA(kg) * 60.0;
+        r.cruiseKm = r.cruiseMin * 60.0 * in.cruiseSpeedMs / 1000.0;
+    }
+
+    const bool posValid = std::isfinite(in.lat) && std::isfinite(in.lon);
+    const bool homeValid = std::isfinite(in.homeLat) && std::isfinite(in.homeLon);
+    if (!posValid || !homeValid)
+        return r;
+    RemainingTrip t;
+    t.payloadKg = in.payloadKg;
+    t.outSpeedMs = in.cruiseSpeedMs;
+    t.backSpeedMs = in.cruiseSpeedMs;
+    t.landMin = in.landMin;
+    t.ratio = r.ratio;
+    if (in.payloadAboard && std::isfinite(in.targetLat) && std::isfinite(in.targetLon)) {
+        t.payloadAboard = true;
+        t.kmToTarget = distanceM(in.lat, in.lon, in.targetLat, in.targetLon) / 1000.0;
+        t.minAtTargetLeft = in.minAtTarget;
+        t.kmHome = distanceM(in.targetLat, in.targetLon, in.homeLat, in.homeLon) / 1000.0;
+    } else {
+        t.kmHome = distanceM(in.lat, in.lon, in.homeLat, in.homeLon) / 1000.0;
+    }
+    r.tripKnown = true;
+    r.tripNeedAh = remainingTripAh(in.model, t);
+    r.tripShortAh = returnShortAh(r.usableAh, r.tripNeedAh);
+    r.returnNow = in.armed && r.airborne && r.tripShortAh > 0.0;
+    return r;
+}
+
 } // namespace PowerTypeModel

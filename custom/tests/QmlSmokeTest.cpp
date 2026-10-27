@@ -20,6 +20,7 @@
  */
 
 #include <QTest>
+#include <functional>
 #include <QSignalSpy>
 #include <QDateTime>
 #include <QCoreApplication>
@@ -998,6 +999,19 @@ void FlyQuickActionsSmokeTest::testTelemetryStripTargetIsLive()
             problems << QStringLiteral("Brg row bound to %1 / %2").arg(bm.captured(1), bm.captured(2));
     }
     QVERIFY2(brgRows >= 2, "expected a Brg row in both the 3- and 2-column layouts");
+    // The power-type rows: time/distance left and the rest of the trip.
+    for (const auto &[label, value] : { std::pair<QString, QString>{QStringLiteral("Left"), QStringLiteral("_leftValue")},
+                                        std::pair<QString, QString>{QStringLiteral("Trip"), QStringLiteral("_tripValue")} }) {
+        const QRegularExpression row(QStringLiteral("label:\\s*\"%1\",\\s*value:\\s*([^,\\s]+)").arg(label));
+        int n = 0;
+        for (auto it = row.globalMatch(strip); it.hasNext(); ++n) {
+            const QString bound = it.next().captured(1);
+            if (bound != value)
+                problems << QStringLiteral("%1 row bound to %2").arg(label, bound);
+        }
+        if (n < 2)
+            problems << QStringLiteral("expected a %1 row in both layouts, found %2").arg(label).arg(n);
+    }
     QVERIFY2(problems.isEmpty(), qPrintable(problems.join(QStringLiteral("; "))));
 
     QVERIFY2(gpsGroup.contains(QStringLiteral("Fact *lat ")) && !gpsGroup.contains(QStringLiteral("Fact *latitude")),
@@ -1268,10 +1282,15 @@ private slots:
     void testPowerTypeFlightRecordedLive();
     void testPowerTypeAndMissionItemsLive();
     void testPowerDialogsDriveTheItems();
+    void testPowerTypesPageDrivesStorage();
+    void testPowerLiveInFlyView();
 
 private:
     bool _connectPlane();
     bool _waitArmed(bool armed, int ms = 10000);
+    /// The "Quad X · 15×5.5 · 6S" type with the worked example's four flights
+    /// recorded on the connected copter and used, so it is validated.
+    int _validatedPowerType();
     template <typename T> static T *_pluginChild()
     {
         const auto all = PreflightPlugin::instance()->findChildren<T *>();
@@ -1288,6 +1307,37 @@ bool LivePluginBenchTest::_connectPlane()
     for (int i = 0; i < 100 && VehicleProfileManager::instance()->currentDeviceUid().isEmpty(); ++i)
         QTest::qWait(50);
     return !VehicleProfileManager::instance()->currentDeviceUid().isEmpty();
+}
+
+int LivePluginBenchTest::_validatedPowerType()
+{
+    VehicleProfileManager *vpm = VehicleProfileManager::instance();
+    DatabaseManager &db = DatabaseManager::instance();
+    const QString uid = vpm->currentDeviceUid();
+    int type = -1;
+    for (const QVariant &t : vpm->listPowerTypes())
+        if (t.toMap().value(QStringLiteral("name")).toString() == QStringLiteral("Quad X · 15×5.5 · 6S"))
+            type = t.toMap().value(QStringLiteral("id")).toInt();
+    if (type <= 0)
+        type = vpm->savePowerType(0, QStringLiteral("Quad X"), 15.0, 5.5, 6, {});
+    if (type <= 0 || uid.isEmpty())
+        return -1;
+    // Hover 32 + 6 A/kg, cruise 21 + 4 A/kg at 15 m/s.
+    struct F { double hover, cruise, kg, mah; };
+    for (const F &f : { F{3, 10, 0.0, 5100.0}, F{8, 4, 0.0, 5666.7}, F{3, 10, 1.5, 6550.0}, F{8, 4, 1.5, 7266.7} }) {
+        const int id = db.startFlightSession(uid, QString(), f.kg);
+        FlightPowerRecord r;
+        r.powerTypeId = type;
+        (f.kg > 0 ? r.hoverMinLoaded : r.hoverMinEmpty) = f.hover;
+        (f.kg > 0 ? r.cruiseMinLoaded : r.cruiseMinEmpty) = f.cruise;
+        r.cruiseSpeedMs = 15.0;
+        r.startedFull = true;
+        r.telemetryCoverage = 1.0;
+        if (!db.saveFlightPowerRecord(id, r) || !db.setFlightChargerMah(id, f.mah)
+            || !db.setFlightLearningState(id, QStringLiteral("used")))
+            return -1;
+    }
+    return vpm->powerTypeSummary(type).value(QStringLiteral("validated")).toBool() ? type : -1;
 }
 
 bool LivePluginBenchTest::_waitArmed(bool armed, int ms)
@@ -1641,32 +1691,9 @@ void LivePluginBenchTest::testPowerTypeAndMissionItemsLive()
     QVERIFY(gate->currentRequest(0).failingMandatoryIds.contains(QStringLiteral("power.power_type")));
     QCOMPARE(tripItem->status(), CheckStatus::Skipped);
 
-    // A type validated by the worked example's four flights (hover 32 + 6 A/kg,
-    // cruise 21 + 4 A/kg), recorded on this copter.
-    DatabaseManager &db = DatabaseManager::instance();
-    const QString uid = vpm->currentDeviceUid();
-    int type = -1;
-    for (const QVariant &t : vpm->listPowerTypes())
-        if (t.toMap().value(QStringLiteral("name")).toString() == QStringLiteral("Quad X · 15×5.5 · 6S"))
-            type = t.toMap().value(QStringLiteral("id")).toInt();
-    if (type <= 0)
-        type = vpm->savePowerType(0, QStringLiteral("Quad X"), 15.0, 5.5, 6, {});
+    // A type validated by the worked example's four flights.
+    const int type = _validatedPowerType();
     QVERIFY(type > 0);
-    struct F { double hover, cruise, kg, mah; };
-    for (const F &f : { F{3, 10, 0.0, 5100.0}, F{8, 4, 0.0, 5666.7}, F{3, 10, 1.5, 6550.0}, F{8, 4, 1.5, 7266.7} }) {
-        const int id = db.startFlightSession(uid, QString(), f.kg);
-        FlightPowerRecord r;
-        r.powerTypeId = type;
-        (f.kg > 0 ? r.hoverMinLoaded : r.hoverMinEmpty) = f.hover;
-        (f.kg > 0 ? r.cruiseMinLoaded : r.cruiseMinEmpty) = f.cruise;
-        r.cruiseSpeedMs = 15.0;
-        r.startedFull = true;
-        r.telemetryCoverage = 1.0;
-        QVERIFY(db.saveFlightPowerRecord(id, r));
-        QVERIFY(db.setFlightChargerMah(id, f.mah));
-        QVERIFY(db.setFlightLearningState(id, QStringLiteral("used")));
-    }
-    QVERIFY(vpm->powerTypeSummary(type).value(QStringLiteral("validated")).toBool());
 
     QVERIFY(vpm->linkCurrentVehiclePowerType(type));
     QCOMPARE(typeItem->status(), CheckStatus::Pending);
@@ -1816,6 +1843,197 @@ void LivePluginBenchTest::testPowerDialogsDriveTheItems()
     QMetaObject::invokeMethod(mc, "close");
 
     vpm->clearPowerTypeFlightState();
+    vpm->clearPayloadEntry();
+    QVERIFY(vpm->linkCurrentVehiclePowerType(0));
+}
+
+// Analyze → Vehicles → "Power types" (the real page from the resources),
+// driven like an operator: create a type, link the connected copter, enter
+// a recorded flight's charger number and use it, set the fleet's take-off
+// and landing minutes. Each step is checked in the database.
+void LivePluginBenchTest::testPowerTypesPageDrivesStorage()
+{
+    QVERIFY2(_connectPlane(), "mock copter did not connect / resolve its UID");
+    VehicleProfileManager *vpm = VehicleProfileManager::instance();
+    DatabaseManager &db = DatabaseManager::instance();
+    const double takeoffBefore = vpm->takeoffMin(), landBefore = vpm->landMin();
+
+    QSharedPointer<QQmlApplicationEngine> engine(QGCCorePlugin::instance()->createQmlApplicationEngine(nullptr));
+    QVERIFY(engine);
+    QGCPalette palette;
+    engine->rootContext()->setContextProperty(QStringLiteral("qgcPal"), &palette);
+    QSharedPointer<QQuickWindow> window(createWindow(engine, 1400, 900));
+    QString err;
+    QScopedPointer<QQuickItem> page(createComponent(engine, window.data(), "qrc:/qml/analyze/VehiclesPage.qml", &err));
+    QVERIFY2(page, qPrintable(err));
+    page->setSize(QSizeF(1400, 900));
+    pumpQml(300);
+
+    // Repeater rows are only in the visual item tree, not the QObject tree:
+    // search both.
+    std::function<QObject *(QQuickItem *, const QString &)> findItem =
+        [&findItem](QQuickItem *item, const QString &name) -> QObject * {
+        if (QObject *o = item->findChild<QObject *>(name))
+            return o;
+        for (QQuickItem *child : item->childItems()) {
+            if (child->objectName() == name)
+                return child;
+            if (QObject *o = findItem(child, name))
+                return o;
+        }
+        return nullptr;
+    };
+    auto find = [&](const QString &name) { return findItem(page.data(), name); };
+    auto click = [&](const QString &name) {
+        QObject *b = find(name);
+        if (!b || !b->property("enabled").toBool())
+            return false;
+        QMetaObject::invokeMethod(b, "clicked");
+        pumpQml(100);
+        return true;
+    };
+    QObject *tabs = find(QStringLiteral("vehiclesTabs"));
+    QVERIFY2(tabs, "tab bar not found");
+    tabs->setProperty("currentIndex", 1);
+    pumpQml(200);
+
+    // A new type, unique per run (the test database persists).
+    const QString frame = QStringLiteral("Page Quad %1").arg(QDateTime::currentMSecsSinceEpoch());
+    QVERIFY(click(QStringLiteral("ptNewButton")));
+    find(QStringLiteral("ptFrameField"))->setProperty("text", frame);
+    find(QStringLiteral("ptDiameterField"))->setProperty("text", QStringLiteral("15"));
+    find(QStringLiteral("ptPitchField"))->setProperty("text", QStringLiteral("5.5"));
+    find(QStringLiteral("ptCellsField"))->setProperty("text", QStringLiteral("6"));
+    QVERIFY(click(QStringLiteral("ptSaveButton")));
+    int type = -1;
+    for (const QVariant &t : vpm->listPowerTypes())
+        if (t.toMap().value(QStringLiteral("frame")).toString() == frame)
+            type = t.toMap().value(QStringLiteral("id")).toInt();
+    QVERIFY2(type > 0, "Save on the page created no power type");
+    QCOMPARE(db.powerType(type).value(QStringLiteral("name")).toString(), frame + QStringLiteral(" · 15×5.5 · 6S"));
+
+    QVERIFY2(click(QStringLiteral("ptLinkButton")), "Link button missing or disabled");
+    QCOMPARE(vpm->currentPowerTypeId(), type);
+
+    // A recorded flight of this type appears with a charger field and Use.
+    const int sid = db.startFlightSession(vpm->currentDeviceUid(), QString(), 0.0);
+    FlightPowerRecord r;
+    r.powerTypeId = type;
+    r.hoverMinEmpty = 3.0;
+    r.cruiseMinEmpty = 10.0;
+    r.fcMah = 4250.0;
+    r.startedFull = true;
+    r.telemetryCoverage = 1.0;
+    QVERIFY(db.saveFlightPowerRecord(sid, r));
+    // Values that differ from whatever an earlier run left stored (the
+    // settings file persists), so an unsaved field cannot pass by luck.
+    const double takeoffNew = takeoffBefore <= 9.0 ? takeoffBefore + 0.5 : 1.0;
+    const double landNew = landBefore <= 8.0 ? landBefore + 1.5 : 1.0;
+    find(QStringLiteral("takeoffField"))->setProperty("text", QString::number(takeoffNew));
+    find(QStringLiteral("landField"))->setProperty("text", QString::number(landNew));
+    QVERIFY(click(QStringLiteral("fleetSaveButton")));       // also reloads the flights
+    QCOMPARE(vpm->takeoffMin(), takeoffNew);
+    QCOMPARE(vpm->landMin(), landNew);
+
+    const QString charger = QStringLiteral("chargerField_%1").arg(sid);
+    QVERIFY2(find(charger), "the recorded flight has no charger field");
+    QVERIFY2(!find(QStringLiteral("useButton_%1").arg(sid))->property("enabled").toBool(),
+             "Use is enabled before a charger number");
+    find(charger)->setProperty("text", QStringLiteral("5100"));
+    QVERIFY(click(QStringLiteral("chargerSave_%1").arg(sid)));
+    QVERIFY2(click(QStringLiteral("useButton_%1").arg(sid)), "Use stayed disabled after the charger number");
+    QVariantMap row;
+    for (const QVariant &v : db.powerTypeFlights(type))
+        if (v.toMap().value(QStringLiteral("sessionId")).toInt() == sid)
+            row = v.toMap();
+    QCOMPARE(row.value(QStringLiteral("chargerMah")).toDouble(), 5100.0);
+    QCOMPARE(row.value(QStringLiteral("learningState")).toString(), QStringLiteral("used"));
+
+    // The suggestion needs the copter's BATT_AMP_PERVLT; when the mock reports
+    // it, the page shows the corrected value.
+    const QVariantMap amp = vpm->ampPerVoltSuggestion();
+    if (amp.value(QStringLiteral("available")).toBool()) {
+        QObject *text = find(QStringLiteral("ampPerVoltText"));
+        QVERIFY(text && text->property("visible").toBool());
+        QVERIFY(text->property("text").toString().contains(QStringLiteral("suggested")));
+        QVERIFY(qAbs(amp.value(QStringLiteral("ratio")).toDouble() - 1.2) < 1e-6);
+    }
+
+    QVERIFY(vpm->setTakeoffMin(takeoffBefore));
+    QVERIFY(vpm->setLandMin(landBefore));
+    QVERIFY(vpm->linkCurrentVehiclePowerType(0));
+}
+
+// The power-type live estimate on the mock copter, through the real Fly-view
+// info box and battery chip loaded from the source tree: active once the
+// copter is linked to a validated type; before the arm the cruise endurance;
+// a target 60 km away shows the trip short (amber) but not RETURN NOW, on
+// the ground and armed alike, since the copter is not airborne.
+void LivePluginBenchTest::testPowerLiveInFlyView()
+{
+    QVERIFY2(_connectPlane(), "mock copter did not connect / resolve its UID");
+    VehicleProfileManager *vpm = VehicleProfileManager::instance();
+    for (int i = 0; i < 100 && vpm->kind() != VehicleKind::Multirotor; ++i)
+        QTest::qWait(50);
+    const int type = _validatedPowerType();
+    QVERIFY2(type > 0, "could not set up a validated power type");
+    QVERIFY(vpm->linkCurrentVehiclePowerType(type));
+    QVERIFY(vpm->enterPayloadWeightKg(0.8));
+    QVERIFY(vpm->enterTimeAtTargetMin(2.0));
+    for (int i = 0; i < 200 && !_vehicle->coordinate().isValid(); ++i)
+        QTest::qWait(50);
+    const QGeoCoordinate here = _vehicle->coordinate();
+    QVERIFY(FlightSession::instance()->saveTargetLocation(here.latitude() + 60.0 / 111.195, here.longitude(),
+                                                          QStringLiteral("typed")));
+    auto live = [vpm]() { return vpm->powerLive(); };
+    for (int i = 0; i < 120 && !(live().value(QStringLiteral("active")).toBool()
+                                 && live().value(QStringLiteral("tripKnown")).toBool()); ++i)
+        QTest::qWait(50);
+    QVERIFY2(live().value(QStringLiteral("active")).toBool(), "the power-type estimate did not come on");
+    QVERIFY(live().value(QStringLiteral("cruiseMin")).toDouble() > 0.0);
+    QVERIFY2(live().value(QStringLiteral("tripKnown")).toBool(), "no home or position on the mock copter");
+    QVERIFY(live().value(QStringLiteral("tripShortAh")).toDouble() > 0.0);
+    QVERIFY(!live().value(QStringLiteral("returnNow")).toBool());
+
+    QSharedPointer<QQmlApplicationEngine> engine(QGCCorePlugin::instance()->createQmlApplicationEngine(nullptr));
+    QVERIFY(engine);
+    QGCPalette palette;
+    engine->rootContext()->setContextProperty(QStringLiteral("qgcPal"), &palette);
+    QSharedPointer<QQuickWindow> window(createWindow(engine, 1100, 700));
+    QDir src(QCoreApplication::applicationDirPath());
+    for (int i = 0; i < 4 && !QFileInfo::exists(src.filePath(QStringLiteral("custom/qml/cpts/FlyViewTelemetryStrip.qml"))); ++i)
+        src.cdUp();
+    QString err;
+    QScopedPointer<QQuickItem> strip(createComponent(engine, window.data(),
+        src.filePath(QStringLiteral("custom/qml/cpts/FlyViewTelemetryStrip.qml")).toUtf8().constData(), &err));
+    QVERIFY2(strip, qPrintable(err));
+    strip->setProperty("activeVehicle", QVariant::fromValue(static_cast<QObject *>(_vehicle)));
+    QScopedPointer<QQuickItem> chip(createComponent(engine, window.data(),
+        src.filePath(QStringLiteral("custom/qml/cpts/BatteryStatusChip.qml")).toUtf8().constData(), &err));
+    QVERIFY2(chip, qPrintable(err));
+    pumpQml(300);
+
+    const QString left = strip->property("_leftValue").toString();
+    QVERIFY2(left.contains(QStringLiteral("min")) && left.contains(QStringLiteral("km")), qPrintable(left));
+    const QString trip = strip->property("_tripValue").toString();
+    QVERIFY2(trip.startsWith(QStringLiteral("short ")), qPrintable(trip));
+    QVERIFY(!chip->property("_returnNow").toBool());
+    QVERIFY(chip->property("_plActive").toBool());
+
+    // Armed from the RC, still on the ground: not airborne, so no RETURN NOW.
+    FlightSession::instance()->setMode(QStringLiteral("FLIGHT"));
+    _vehicle->setArmed(true, false);
+    QVERIFY(_waitArmed(true));
+    for (int i = 0; i < 80 && !live().value(QStringLiteral("armed")).toBool(); ++i)
+        QTest::qWait(50);
+    QVERIFY(live().value(QStringLiteral("armed")).toBool());
+    QVERIFY(!live().value(QStringLiteral("returnNow")).toBool());
+    QVERIFY(strip->property("_tripValue").toString() != QStringLiteral("RETURN NOW"));
+    _vehicle->setArmed(false, false);
+    QVERIFY(_waitArmed(false));
+
+    strip->setParentItem(nullptr);
+    chip->setParentItem(nullptr);
     vpm->clearPayloadEntry();
     QVERIFY(vpm->linkCurrentVehiclePowerType(0));
 }

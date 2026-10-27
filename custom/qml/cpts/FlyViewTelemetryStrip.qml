@@ -111,6 +111,28 @@ Item {
     readonly property string _tgtBrgValue: _tgtBrg < 0 ? "--" : Math.round(_tgtBrg) % 360 + "°"
     readonly property string _tgtCompass:  _tgtBrg < 0 ? "" : _compassPoint(_tgtBrg)
 
+    // Power-type estimate (VehicleProfileManager.powerLive; copters linked to
+    // a type with a learned model). "Left": time and distance left (before the
+    // arm: cruise endurance with the payload entered). "Trip": the charge the
+    // rest of the trip (target, time there, home, land) needs against what is
+    // left above the reserve, or RETURN NOW once it no longer fits in flight.
+    readonly property var    _pl: typeof VehicleProfileManager !== "undefined" && VehicleProfileManager
+                                  ? VehicleProfileManager.powerLive : ({})
+    readonly property bool   _plActive: !!_pl && _pl.active === true
+    readonly property double _plMin: !_plActive ? -1 : (_pl.armed ? _pl.timeLeftMin : _pl.cruiseMin)
+    readonly property double _plKm:  !_plActive ? -1 : (_pl.armed ? _pl.distLeftKm : _pl.cruiseKm)
+    readonly property string _leftValue: _plMin < 0 ? "--"
+                                         : Math.round(_plMin) + " min · " + (_plKm >= 0 ? _plKm.toFixed(1) + " km" : "--")
+    readonly property bool   _returnNow: _plActive && _pl.returnNow === true
+    readonly property bool   _tripShort: _plActive && _pl.tripKnown === true && _pl.tripShortAh > 0
+    readonly property string _tripValue: !_plActive || !_pl.tripKnown ? "--"
+                                         : _returnNow ? "RETURN NOW"
+                                         : _tripShort ? "short " + Number(_pl.tripShortAh).toFixed(1)
+                                         : "+" + (_pl.usableAh - _pl.tripNeedAh).toFixed(1)
+    readonly property string _tripUnit:  !_plActive || !_pl.tripKnown || _returnNow ? "" : "Ah"
+    readonly property color  _tripColor: _returnNow ? Colors.error : _tripShort ? Colors.warning
+                                         : (_plActive && _pl.tripKnown ? Colors.pass : Colors.textSecondary)
+
     // The saved target is read from the database for the vehicle that is
     // connected, so reload it when the vehicle (or the open flight) changes.
     Component.onCompleted: FlightSession.reloadTargetLocation()
@@ -331,7 +353,10 @@ Item {
                     { label: "Tgt",  value: _tgtValue, unit: _tgtUnit,
                       vcolor: _tgtDist >= 0 ? Colors.accentCyan : Colors.textSecondary },
                     { label: "Brg",  value: _tgtBrgValue, unit: _tgtCompass,
-                      vcolor: _tgtDist >= 0 ? Colors.accentCyan : Colors.textSecondary }
+                      vcolor: _tgtDist >= 0 ? Colors.accentCyan : Colors.textSecondary },
+                    { label: "Left", value: _leftValue, unit: "",
+                      vcolor: _plActive ? Colors.textPrimary : Colors.textSecondary },
+                    { label: "Trip", value: _tripValue, unit: _tripUnit, vcolor: _tripColor }
                 ]
             }
 
@@ -382,7 +407,12 @@ Item {
                       vcolor: _tgtDist >= 0 ? Colors.accentCyan : Colors.textSecondary },
                     { label: "Brg",
                       value: _tgtBrgValue, unit: _tgtCompass,
-                      vcolor: _tgtDist >= 0 ? Colors.accentCyan : Colors.textSecondary }
+                      vcolor: _tgtDist >= 0 ? Colors.accentCyan : Colors.textSecondary },
+                    { label: "Left",
+                      value: _leftValue, unit: "",
+                      vcolor: _plActive ? Colors.textPrimary : Colors.textSecondary },
+                    { label: "Trip",
+                      value: _tripValue, unit: _tripUnit, vcolor: _tripColor }
                 ]
             }
 

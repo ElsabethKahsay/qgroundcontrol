@@ -1,8 +1,8 @@
 # Power Types and Mission Check
 
-Skywin GCS · copter only · designed 26 Oct 2026 with the operator · **steps 1–4 of 6 built**
+Skywin GCS · copter only · designed 26 Oct 2026 with the operator · **steps 1–5 of 6 built**
 
-Status: step 1 (the maths) and step 2 (storage) built and tested 26 Oct, step 3 (flight recorder) and step 4 (checklist items and arming) 27 Oct; steps 5–6 not started. Each step starts on the operator's go (see "Implementation plan"). Planes keep the existing rough flight-time estimate.
+Status: step 1 (the maths) and step 2 (storage) built and tested 26 Oct, step 3 (flight recorder) and step 4 (checklist items and arming) 27 Oct; step 5 (the Power types page and the Fly view) 27 Oct; step 6 (SITL check) not started. Each step starts on the operator's go (see "Implementation plan"). Planes keep the existing rough flight-time estimate.
 
 Method (decided 26 Oct): **combined**. The flight controller estimates current from throttle (`BATT_MONITOR = 25`, synthetic current), the charger provides the real total after each flight, and the GCS learns a hover/cruise/payload model from both.
 
@@ -211,7 +211,7 @@ The operator approves each step before the next one starts.
 | 2. Storage **(done 26 Oct)** | Next database version step: tables `power_types` and `vehicle_power_type`. New flight_sessions columns: power type, hover/cruise minutes with/without payload, cruise speed, FC synthetic mAh, synthetic current per phase, reference throttles, cell volts at arming, telemetry coverage, time at target, charger mAh, learning state. Q_INVOKABLEs on VehicleProfileManager (count the recompiles first; ask if 300 or more) | ½ day |
 | 3. Flight recorder **(done 27 Oct)** | Per-second hover/cruise and payload-aboard accounting; FC mAh and synthetic current per phase; telemetry coverage; full-pack test at arming; `BATT_MONITOR` / `BATT_AMP_PERVLT` read on connect | ½ day |
 | 4. Checklist and arming **(done 27 Oct)** | `PowerTypeCheck.h` and `MissionCheck.h` (header-only, no Q_OBJECT; the mission check blocks when validated, amber otherwise); `BATT_MONITOR` warning; time-at-target field in the payload dialog; one arming-gate rule + waiver. Unit tests + LivePluginBenchTest | 1 day |
-| 5. Screens | Vehicle Management: power types, link, the type's flights (charger status, Use/Dismiss, "fly next" advice, Validated badge), built as inline QML in the existing page. Post-flight page: charger mAh entry, FC vs charger comparison and suggested `BATT_AMP_PERVLT`. Fly view: battery chip, info box, RETURN NOW | 1 day |
+| 5. Screens **(done 27 Oct)** | Vehicle Management: power types, link, the type's flights (charger status, Use/Dismiss, "fly next" advice, Validated badge), built as inline QML in the existing page. Post-flight page: charger mAh entry, FC vs charger comparison and suggested `BATT_AMP_PERVLT`. Fly view: battery chip, info box, RETURN NOW | 1 day |
 | 6. Final check | SITL flight with `BATT_MONITOR = 25` (this proves the logic only, since SITL's current is simulated); full test suite; report | ½–1 day |
 
 **Total: about 4½–5 days.**
@@ -355,6 +355,96 @@ The operator approves each step before the next one starts.
   - the payload dialog dropping the time;
   - the button confirming nothing.
 - **Not pinned by a test:** the frame, cell-count and `BATT_MONITOR` warnings. They are built in the plugin's provider from live parameters the mock does not let the test choose. Usable in the app only once step 5 adds the screen to create power types; until then the Power type item can only be waived.
+
+**Step 5a result (27 Oct): the Power types page**
+- **Where:** Analyze → Vehicles, as a second tab, "Power types". `VehicleManagement.qml` is never opened in the app (its only entry is `Config.navigatePush`, which goes nowhere), so the page is the one the app shows. It is a tab in the existing file, with no new QML file and so no qrc or CMake change.
+- **Left pane:**
+  - the types, with linked aircraft and flight counts, and New;
+  - the connected copter's type;
+  - the fleet's take-off and landing minutes for the mission check (0–10, default 1, stored in settings).
+- **Right pane:**
+  - **Editor:** frame (a new type is prefilled from the copter's FRAME_CLASS/FRAME_TYPE), prop diameter and pitch, cells, motor note; Save, Link connected copter, and Delete (only while unused).
+  - **What the type has learned:** the status, hover and cruise currents with the per-kg extras, Validated, the starting model from the synthetic current, used and waiting counts, the charger ÷ FC factor, and the "fly next" advice.
+  - **The `BATT_AMP_PERVLT` suggestion** for the connected copter, from its latest flight with both numbers. The pilot sets it; the GCS never writes it.
+  - **The type's flights, newest first.** Each has its numbers, a charger mAh field with Save, Use (only once a charger number is saved), Dismiss, the model's prediction and an outlier warning. Excluded flights say why.
+- **Charger entry is on this page, not the post-flight page,** which is still hidden (audit item 16).
+- **`VehicleProfileManager` additions:** `takeoffMin` / `landMin` with their setters (`missionCheck()` now uses them), and `ampPerVoltSuggestion()`.
+- **Found and fixed by the test:**
+  - The fleet Save reloaded the page after saving take-off, which refilled the landing field with the old value before it was read. Both fields are now read first.
+  - The page title read an undefined name for a moment after selecting a type, which gave a QML warning.
+- **Test:** `LivePluginBenchTest::testPowerTypesPageDrivesStorage` loads the real page from the resources on the mock copter and drives it, checking each step in the database:
+  - New → fill → Save creates the type;
+  - Link links the copter;
+  - a recorded flight shows a charger field;
+  - Use is disabled until a charger number is saved, then sets "used";
+  - the fleet minutes are saved.
+  LivePluginBenchTest 11/11; QmlShadowTest 7/7 (no colour literals).
+- **Mutants: 5 of 5 caught:**
+  - Save reading the landing field after the reload;
+  - Use enabled before a charger number;
+  - charger Save storing nothing;
+  - Link linking nothing;
+  - the minutes not stored.
+  Two of them first slipped through because the settings file kept values from an earlier aborted run. The test now picks values that differ from whatever is stored.
+- **Not pinned by a test:** the `BATT_AMP_PERVLT` line is only checked when the mock copter reports that parameter.
+
+**Step 5b result (27 Oct): the Fly view**
+- **`PowerTypeModel::liveEstimate()`** (pure). Its inputs:
+  - the type's model and charger factor;
+  - the pack and reserve, and the FC's mAh used (its % as fallback);
+  - the smoothed FC current;
+  - ground speed, altitude and position;
+  - home and the target;
+  - whether the payload is still aboard, and the time at the target;
+  - the type's cruise speed and the landing minutes.
+
+  It returns:
+  - the charge left above the reserve;
+  - the expected current for the phase the copter is in (the model × the live ratio, within ±30 %, only while flying);
+  - time and distance left;
+  - hover/cruise endurance and cruise range for before the arm;
+  - the charge the rest of the trip needs. With the payload aboard that is the way to the target, the time there, the way home empty, and landing; after the drop or with no target, it is the way home.
+  - **RETURN NOW**, which is only set while airborne.
+- **`VehicleProfileManager.powerLive`** (map, refreshed with the existing 2 s live estimate):
+  - Active for a copter linked to a type with a usable model, with neither the type nor the pack waived.
+  - The model is re-fitted only when the type's flights change.
+  - The payload counts as aboard from the arm until the copter first comes within 20 m of the saved target.
+  - Cleared on disconnect.
+- **Battery chip:**
+  - before the arm, the cruise endurance with the payload entered;
+  - in flight, the time left;
+  - "RETURN NOW" in red;
+  - the detail popover adds Power type, Left (min / km) and Rest of the trip.
+- **Info box:** a "Left" row (min · km) and a "Trip" row, in both layouts. The Trip row shows:
+  - "+x Ah" spare, in green;
+  - "short x Ah" in amber, on the ground;
+  - "RETURN NOW" in red, airborne.
+- **App message:** once when RETURN NOW comes on; again only after it has cleared.
+- **Tests:**
+  - `BatteryEstimatorTest::testPowerTypeLiveEstimate`, the worked example in flight. 16 Ah, 20 % reserve, FC 4,333 mAh × 1.20 gives 7.6 Ah left. 23.3 A × 1.2 against a modelled 24.2 A is a ratio of 1.155, so 16.3 min and 12.7 km at 13 m/s. Half way to a 5 km target the trip fits; to a 20 km target it is short by 12.5 Ah, so RETURN NOW. Also covered:
+    - on the ground: no RETURN NOW and no live ratio;
+    - after the drop: home costed empty, the ratio limited to 1.3;
+    - before the arm: the endurance;
+    - % fallback; no model.
+  - `LivePluginBenchTest::testPowerLiveInFlyView`, on the mock copter with the real info box and chip loaded from the source tree:
+    - the estimate comes on;
+    - a 60 km target shows "short", not RETURN NOW, on the ground and armed alike.
+  - The Left and Trip rows are added to the info-box source scan.
+  - `_validatedPowerType()` is now a shared helper for the live tests.
+  - BatteryEstimatorTest 23/23, LivePluginBenchTest 12/12, FlyQuickActionsSmokeTest 11/11, QmlShadowTest 7/7.
+- **Not pinned by a test:**
+  - the drop at the target and RETURN NOW in the app (the mock copter cannot fly; the pure test covers both);
+  - the app message;
+  - the estimate switching off when the pack or the type is waived.
+
+  Step 6's SITL flight covers the in-flight parts.
+- **Mutants: 5 of 5 caught:**
+  - RETURN NOW on the ground too;
+  - the dropped payload still counted in the current;
+  - the charger factor ignored in the charge used;
+  - the info box showing a spare when short;
+  - the chip saying RETURN NOW whenever the trip is short.
+- **Full suite (steps 5a + 5b):** 34 classes, 452 passed, 0 failed, 7 skipped (the known ones).
 
 Build rules (as for all Skywin work):
 - No CMake re-run and no `custom.qrc` change; incremental builds only.

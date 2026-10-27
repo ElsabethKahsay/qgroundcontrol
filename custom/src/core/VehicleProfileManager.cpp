@@ -71,6 +71,9 @@ VehicleProfileManager::VehicleProfileManager(QObject *parent)
     m_liveTimer.setInterval(2000);
     m_liveTimer.setTimerType(Qt::CoarseTimer);
     connect(&m_liveTimer, &QTimer::timeout, this, &VehicleProfileManager::_updateLiveEstimate);
+    // A changed type, link, charger number or used/dismissed flight changes
+    // the model the live estimate uses: re-fit it on the next update.
+    connect(this, &VehicleProfileManager::powerTypeChanged, this, [this]() { m_powerModelDirty = true; });
 }
 
 VehicleProfileManager::~VehicleProfileManager()
@@ -255,12 +258,16 @@ void VehicleProfileManager::onConnectionChanged()
 {
     if (!m_telemetry || !m_telemetry->isConnected()) {
         m_liveTimer.stop();
-        if (m_liveSOC != -1 || m_liveTimeMins != -1.0) {
+        if (m_liveSOC != -1 || m_liveTimeMins != -1.0 || !m_powerLive.isEmpty()) {
             m_liveSOC = -1;
             m_liveTimeMins = -1.0;
             m_liveSmoothAmps = 0.0;
+            m_powerLive.clear();
             emit liveDataChanged();
         }
+        m_liveWasArmed = false;
+        m_livePayloadAboard = false;
+        m_powerModelDirty = true;
         // The arming-gate flow owns flight sessions end-to-end (opens on gate
         // up, closes on disarm / check failure) and owns the per-flight
         // counters; the session id is reset here for the next connect.
@@ -873,6 +880,110 @@ void VehicleProfileManager::_updateLiveEstimate()
     if (soc != m_liveSOC || !qFuzzyCompare(timeMin + 1, m_liveTimeMins + 1)) {
         m_liveSOC = soc;
         m_liveTimeMins = timeMin;
+        emit liveDataChanged();
+    }
+    _updatePowerLive(mahUsed, m_telemetry->batterySocPct());
+}
+
+// The power-type estimate for the Fly view (PowerTypeModel::liveEstimate):
+// the linked type's model (re-fitted when its flights change), the selected
+// pack, the FC's mAh used × the charger factor, the smoothed FC current, the
+// copter's position, home, and the target saved on the gimbal page. The
+// payload counts as aboard from the arm until the copter first comes within
+// 20 m of the target.
+void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
+{
+    QVariantMap out;
+    const bool armed = m_telemetry && m_telemetry->armed();
+    Vehicle *v = m_telemetry ? m_telemetry->vehicle() : nullptr;
+    const bool applicable = v && m_kind == VehicleKind::Multirotor && m_powerTypeId > 0
+                            && m_powerTypeWaivedBy.isEmpty() && !batteryPackWaived();
+
+    if (applicable && m_powerModelDirty) {
+        m_powerSummary = powerTypeSummary(m_powerTypeId);
+        double speedSum = 0.0;
+        int speedN = 0;
+        for (const QVariant &row : DatabaseManager::instance().powerTypeFlights(m_powerTypeId)) {
+            const QVariantMap f = row.toMap();
+            const double spd = f.value(QStringLiteral("cruiseSpeedMs")).toDouble();
+            if (f.value(QStringLiteral("learningState")).toString() == QLatin1String("used") && spd > 0.0) {
+                speedSum += spd;
+                ++speedN;
+            }
+        }
+        m_powerCruiseSpeedMs = speedN > 0 ? speedSum / speedN : 10.0;
+        m_powerModelDirty = false;
+    }
+
+    const QVariantMap target = applicable ? DatabaseManager::instance().vehicleTarget(m_currentDeviceUid) : QVariantMap();
+    const QGeoCoordinate pos = v ? v->coordinate() : QGeoCoordinate();
+    if (armed && !m_liveWasArmed)
+        m_livePayloadAboard = m_payloadEntered && m_payloadWeightKg > 0.0;
+    m_liveWasArmed = armed;
+    if (m_livePayloadAboard && !target.isEmpty() && pos.isValid()
+        && PowerTypeModel::distanceM(pos.latitude(), pos.longitude(), target.value(QStringLiteral("lat")).toDouble(),
+                                     target.value(QStringLiteral("lon")).toDouble()) <= PowerTypeModel::kDropRadiusM)
+        m_livePayloadAboard = false;
+
+    if (applicable && m_powerSummary.value(QStringLiteral("source")).toString() != QLatin1String("none")) {
+        PowerTypeModel::LiveInput in;
+        in.model.hover0 = m_powerSummary.value(QStringLiteral("hover0")).toDouble();
+        in.model.hoverK = m_powerSummary.value(QStringLiteral("hoverK")).toDouble();
+        in.model.cruise0 = m_powerSummary.value(QStringLiteral("cruise0")).toDouble();
+        in.model.cruiseK = m_powerSummary.value(QStringLiteral("cruiseK")).toDouble();
+        in.model.status = PowerTypeModel::FitStatus::PayloadNotModelled;   // usable; the numbers above are the model
+        in.factor = m_powerSummary.value(QStringLiteral("chargerFactor"), 1.0).toDouble();
+        in.capacityAh = capacityAh();
+        in.reserve = m_batteryReserve;
+        in.fcMahUsed = fcMahUsed;
+        in.socPct = socPct;
+        in.currentA = m_liveSmoothAmps > 0.0 ? m_liveSmoothAmps : -1.0;
+        in.groundSpeedMs = m_telemetry->groundSpeed();
+        in.altitudeM = m_telemetry->altitudeRelative();
+        if (pos.isValid()) {
+            in.lat = pos.latitude();
+            in.lon = pos.longitude();
+        }
+        const QGeoCoordinate home = v->homePosition();
+        if (home.isValid()) {
+            in.homeLat = home.latitude();
+            in.homeLon = home.longitude();
+        }
+        if (!target.isEmpty()) {
+            in.targetLat = target.value(QStringLiteral("lat")).toDouble();
+            in.targetLon = target.value(QStringLiteral("lon")).toDouble();
+        }
+        // Before the arm the payload entered is what will be aboard.
+        in.payloadAboard = armed ? m_livePayloadAboard : (m_payloadEntered && m_payloadWeightKg > 0.0);
+        in.payloadKg = m_payloadWeightKg;
+        in.minAtTarget = m_timeAtTargetMin >= 0.0 ? m_timeAtTargetMin : 0.0;
+        in.cruiseSpeedMs = m_powerCruiseSpeedMs;
+        in.landMin = landMin();
+        in.armed = armed;
+        const PowerTypeModel::LiveResult r = PowerTypeModel::liveEstimate(in);
+        out[QStringLiteral("active")] = r.valid;
+        out[QStringLiteral("armed")] = armed;
+        out[QStringLiteral("airborne")] = r.airborne;
+        out[QStringLiteral("hover")] = r.hover;
+        out[QStringLiteral("usableAh")] = r.usableAh;
+        out[QStringLiteral("currentA")] = r.currentA;
+        out[QStringLiteral("timeLeftMin")] = r.timeLeftMin;
+        out[QStringLiteral("distLeftKm")] = r.distLeftKm;
+        out[QStringLiteral("hoverMin")] = r.hoverMin;
+        out[QStringLiteral("cruiseMin")] = r.cruiseMin;
+        out[QStringLiteral("cruiseKm")] = r.cruiseKm;
+        out[QStringLiteral("tripKnown")] = r.tripKnown;
+        out[QStringLiteral("tripNeedAh")] = r.tripNeedAh;
+        out[QStringLiteral("tripShortAh")] = r.tripShortAh;
+        out[QStringLiteral("returnNow")] = r.returnNow;
+        out[QStringLiteral("payloadAboard")] = in.payloadAboard;
+        out[QStringLiteral("source")] = m_powerSummary.value(QStringLiteral("source"));
+        out[QStringLiteral("typeName")] = m_powerSummary.value(QStringLiteral("name"));
+    } else {
+        out[QStringLiteral("active")] = false;
+    }
+    if (out != m_powerLive) {
+        m_powerLive = out;
         emit liveDataChanged();
     }
 }
@@ -1522,15 +1633,13 @@ QVariantMap VehicleProfileManager::missionCheck()
     out[QStringLiteral("cruiseSpeedMs")] = cruise;
     out[QStringLiteral("speedAssumed")] = speedN == 0;
 
-    QSettings settings;
-    settings.beginGroup(QStringLiteral("PowerTypes"));
     PowerTypeModel::Mission x;
     x.payloadKg = m_payloadEntered ? m_payloadWeightKg : 0.0;
     x.minAtTarget = m_timeAtTargetMin >= 0.0 ? m_timeAtTargetMin : 0.0;
     x.outSpeedMs = cruise;
     x.backSpeedMs = cruise;
-    x.takeoffMin = settings.value(QStringLiteral("takeoffMin"), 1.0).toDouble();
-    x.landMin = settings.value(QStringLiteral("landMin"), 1.0).toDouble();
+    x.takeoffMin = takeoffMin();
+    x.landMin = landMin();
     const int soc = m_telemetry ? m_telemetry->batteryPercent() : -1;
     x.usableAh = usableAhAboveReserveFor(soc >= 0 && soc <= 100 ? soc : 100);
     out[QStringLiteral("payloadEntered")] = m_payloadEntered;
@@ -1563,5 +1672,76 @@ QVariantMap VehicleProfileManager::missionCheck()
     out[QStringLiteral("spareAh")] = r.spareAh;
     out[QStringLiteral("maxTargetKm")] = r.maxTargetKm;
     out[QStringLiteral("fits")] = r.fits;
+    return out;
+}
+
+// ── Fleet settings and the BATT_AMP_PERVLT suggestion ────────────────────
+
+namespace {
+double settingMinutes(const char *key)
+{
+    QSettings settings;
+    return std::clamp(settings.value(QStringLiteral("PowerTypes/%1").arg(QLatin1String(key)), 1.0).toDouble(),
+                      0.0, 10.0);
+}
+bool storeMinutes(const char *key, double minutes)
+{
+    if (!std::isfinite(minutes) || minutes < 0.0 || minutes > 10.0)
+        return false;
+    QSettings settings;
+    settings.setValue(QStringLiteral("PowerTypes/%1").arg(QLatin1String(key)), minutes);
+    return true;
+}
+} // namespace
+
+double VehicleProfileManager::takeoffMin() const { return settingMinutes("takeoffMin"); }
+double VehicleProfileManager::landMin() const { return settingMinutes("landMin"); }
+
+bool VehicleProfileManager::setTakeoffMin(double minutes)
+{
+    if (!storeMinutes("takeoffMin", minutes))
+        return false;
+    emit powerTypeChanged();
+    return true;
+}
+
+bool VehicleProfileManager::setLandMin(double minutes)
+{
+    if (!storeMinutes("landMin", minutes))
+        return false;
+    emit powerTypeChanged();
+    return true;
+}
+
+QVariantMap VehicleProfileManager::ampPerVoltSuggestion()
+{
+    QVariantMap out;
+    out[QStringLiteral("available")] = false;
+    if (!m_telemetry || m_currentDeviceUid.isEmpty() || m_powerTypeId <= 0)
+        return out;
+    out[QStringLiteral("monitor")] = m_telemetry->hasParameter(QStringLiteral("BATT_MONITOR"))
+        ? qRound(m_telemetry->parameterValue(QStringLiteral("BATT_MONITOR"), -1.0f)) : -1;
+    if (!m_telemetry->hasParameter(QStringLiteral("BATT_AMP_PERVLT")))
+        return out;
+    const double current = m_telemetry->parameterValue(QStringLiteral("BATT_AMP_PERVLT"), 0.0f);
+    out[QStringLiteral("ampPerVolt")] = current;
+
+    // This copter's latest flight with both numbers (flights come oldest first).
+    const QVariantList rows = DatabaseManager::instance().powerTypeFlights(m_powerTypeId);
+    for (int i = rows.size() - 1; i >= 0; --i) {
+        const QVariantMap f = rows[i].toMap();
+        const double charger = f.value(QStringLiteral("chargerMah")).toDouble();
+        const double fc = f.value(QStringLiteral("fcMah")).toDouble();
+        if (f.value(QStringLiteral("deviceUid")).toString() != m_currentDeviceUid || charger <= 0.0 || fc <= 0.0)
+            continue;
+        out[QStringLiteral("available")] = current > 0.0;
+        out[QStringLiteral("suggested")] = PowerTypeModel::suggestedAmpPerVolt(current, charger, fc);
+        out[QStringLiteral("ratio")] = charger / fc;
+        out[QStringLiteral("sessionId")] = f.value(QStringLiteral("sessionId"));
+        out[QStringLiteral("startedAt")] = f.value(QStringLiteral("startedAt"));
+        out[QStringLiteral("chargerMah")] = charger;
+        out[QStringLiteral("fcMah")] = fc;
+        break;
+    }
     return out;
 }

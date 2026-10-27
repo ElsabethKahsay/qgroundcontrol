@@ -65,6 +65,10 @@ class VehicleProfileManager : public QObject {
     Q_PROPERTY(QString missionCheckWaivedBy READ missionCheckWaivedBy NOTIFY powerTypeChanged)
     /// Minutes the copter stays at the target this flight; -1 = not entered.
     Q_PROPERTY(double timeAtTargetMin READ timeAtTargetMin NOTIFY payloadWeightChanged)
+    /// Take-off and landing minutes the mission check costs as hover
+    /// (fleet settings, default 1 min each, 0–10).
+    Q_PROPERTY(double takeoffMin READ takeoffMin NOTIFY powerTypeChanged)
+    Q_PROPERTY(double landMin READ landMin NOTIFY powerTypeChanged)
 
     /// Empty-airframe weight in kg (persisted per vehicle, used by the
     /// payload/battery flight-time estimate).
@@ -95,6 +99,13 @@ class VehicleProfileManager : public QObject {
     /// (armed && I_smooth >= 3 A) is not met or data is missing.
     Q_PROPERTY(int liveSOC READ liveSOC NOTIFY liveDataChanged)
     Q_PROPERTY(double liveTimeMins READ liveTimeMins NOTIFY liveDataChanged)
+    /// The power-type estimate (copters linked to a type with a usable
+    /// model; PowerTypeModel::liveEstimate), refreshed with the live
+    /// estimate: time and distance left, and whether the rest of the trip
+    /// (to the target with the payload, the time there, home empty, land)
+    /// still fits above the reserve. Values are -1 when unknown.
+    Q_PROPERTY(bool powerLiveActive READ powerLiveActive NOTIFY liveDataChanged)
+    Q_PROPERTY(QVariantMap powerLive READ powerLive NOTIFY liveDataChanged)
 
 public:
     static VehicleProfileManager *instance();
@@ -196,6 +207,11 @@ public:
     /// Live estimate delivery (see Q_PROPERTY docs above).
     int liveSOC() const { return m_liveSOC; }
     double liveTimeMins() const { return m_liveTimeMins; }
+    bool powerLiveActive() const { return m_powerLive.value(QStringLiteral("active")).toBool(); }
+    /// {active, armed, airborne, hover, usableAh, currentA, timeLeftMin,
+    /// distLeftKm, hoverMin, cruiseMin, cruiseKm, tripKnown, tripNeedAh,
+    /// tripShortAh, returnNow, payloadAboard, source, typeName}.
+    QVariantMap powerLive() const { return m_powerLive; }
 
     /// Persist the current pack config for the connected vehicle (no-op when
     /// no vehicle is connected).
@@ -318,6 +334,17 @@ public:
     /// totalAh, totalMin, spareAh, maxTargetKm, fits, waivedBy}.
     Q_INVOKABLE QVariantMap missionCheck();
 
+    double takeoffMin() const;
+    double landMin() const;
+    Q_INVOKABLE bool setTakeoffMin(double minutes);
+    Q_INVOKABLE bool setLandMin(double minutes);
+    /// BATT_AMP_PERVLT recalibration for the connected copter (synthetic
+    /// current, BATT_MONITOR = 25), ArduPilot's formula: new = current ×
+    /// charger mAh ÷ FC mAh, from this copter's latest flight that has both
+    /// numbers. {available, monitor, ampPerVolt, suggested, ratio,
+    /// sessionId, startedAt, chargerMah, fcMah}. The GCS never writes it.
+    Q_INVOKABLE QVariantMap ampPerVoltSuggestion();
+
 signals:
     void currentVehicleChanged();
     void uavWeightChanged();
@@ -338,6 +365,7 @@ private slots:
     void _onArmedChanged(bool armed);
     void resolveVehicleTypeAndMotorCount();
     void _updateLiveEstimate();
+    void _updatePowerLive(double fcMahUsed, int socPct);
 
 private:
     static VehicleProfileManager *s_instance;
@@ -380,6 +408,12 @@ private:
     int m_liveSOC = -1;                 ///< battery_remaining (0-100, -1=unknown).
     double m_liveTimeMins = -1.0;       ///< -1 when the current gate is not met.
     double m_liveSmoothAmps = 0.0;      ///< EMA current (α=0.095 @ 0.5 Hz ≈ 10 s).
+    QVariantMap m_powerLive;            ///< Last power-type live estimate.
+    bool m_powerModelDirty = true;      ///< Re-fit the type's model before the next update.
+    QVariantMap m_powerSummary;         ///< Cached powerTypeSummary() of the linked type.
+    double m_powerCruiseSpeedMs = 10.0; ///< Its used flights' average cruise speed.
+    bool m_liveWasArmed = false;
+    bool m_livePayloadAboard = false;   ///< This flight's payload, until the target is reached.
     QTimer m_liveTimer;                 ///< Drives the 2 s live-estimate refresh.
     QString m_locationName;
     double m_planLat = 0.0;

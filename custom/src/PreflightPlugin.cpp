@@ -386,6 +386,20 @@ void PreflightPlugin::init()
     connect(powerTimer, &QTimer::timeout, this, reevaluatePower);
     powerTimer->start();
 
+    // RETURN NOW (the power-type live estimate: the rest of the trip no longer
+    // fits above the reserve) is announced once when it comes on; it is
+    // announced again only after it has cleared.
+    connect(_vehicleProfileManager, &VehicleProfileManager::liveDataChanged, this, [this]() {
+        static bool shown = false;
+        const QVariantMap live = _vehicleProfileManager->powerLive();
+        const bool returnNow = live.value(QStringLiteral("returnNow")).toBool();
+        if (returnNow && !shown)
+            qgcApp()->showAppMessage(tr("RETURN NOW: the rest of the trip needs %1 Ah, %2 Ah are left above the reserve.")
+                                         .arg(live.value(QStringLiteral("tripNeedAh")).toDouble(), 0, 'f', 1)
+                                         .arg(live.value(QStringLiteral("usableAh")).toDouble(), 0, 'f', 1));
+        shown = returnNow;
+    });
+
     // --- Vehicle registry signals ---
     // knownVehicleConnected: a previously-seen vehicle reconnected; load its saved config.
     auto *registry = VehicleRegistry::instance();

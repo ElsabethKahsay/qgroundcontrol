@@ -43,6 +43,13 @@ Rectangle {
         return -1
     }
     readonly property double _timeMin:  _profile ? _profile.liveTimeMins : -1
+    // Power-type estimate (copter linked to a type with a learned model):
+    // replaces the generic estimate. Before the arm it shows the cruise
+    // endurance with the payload; in flight the time left; "RETURN NOW" when
+    // the rest of the trip (target, time there, home, land) no longer fits.
+    readonly property var  _pl: _profile ? _profile.powerLive : ({})
+    readonly property bool _plActive: !!_pl && _pl.active === true && !_packWaived
+    readonly property bool _returnNow: _plActive && _pl.returnNow === true
     readonly property bool  _armed:     _tel ? _tel.armed : false
     readonly property double _iSmooth:  _tel ? _tel.batteryCurrentSmoothAmps : 0
     readonly property double _voltage:  _tel ? _tel.batteryVoltage : 0
@@ -141,6 +148,9 @@ Rectangle {
         if (!_fresh)                return "STALE"   // stale / no BATTERY_STATUS
         if (_soc < 0)               return "? · —"   // FC not configured
         if (_packWaived)            return _soc + "% · no est."
+        if (_returnNow)             return "RETURN NOW"
+        if (_plActive && !_armed && _pl.cruiseMin >= 0)  return _soc + "% · ~" + Math.round(_pl.cruiseMin) + " min"
+        if (_plActive && _armed && _pl.timeLeftMin >= 0) return _soc + "% · ~" + Math.round(_pl.timeLeftMin) + " min"
         if (_preEstShown)           return _soc + "% · est ~" + Math.round(_preEst.flightTimeMin) + " min"
         if (!_gateOk || _timeMin < 0) return _soc + "% · —"
         if (_timeMin <= 0)          return _soc + "% · RESERVE \u2014 LAND"
@@ -153,6 +163,13 @@ Rectangle {
         if (!_fresh)                return "No battery telemetry (stale)"
         if (_soc < 0)               return "Battery SOC not reported by flight controller"
         if (_packWaived)            return "Battery pack waived by " + _profile.batteryPackWaivedBy + " \u2014 no flight-time estimate for this flight"
+        if (_returnNow)             return "The rest of the trip needs " + Number(_pl.tripNeedAh).toFixed(1) + " Ah, "
+                                           + Number(_pl.usableAh).toFixed(1) + " Ah left above the reserve: return now"
+        if (_plActive && !_armed)   return _pl.typeName + ": cruise ~" + Math.round(_pl.cruiseMin) + " min / "
+                                           + Number(_pl.cruiseKm).toFixed(1) + " km, hover ~" + Math.round(_pl.hoverMin)
+                                           + " min with the payload entered"
+        if (_plActive)              return _pl.typeName + ": ~" + Math.round(_pl.timeLeftMin) + " min / "
+                                           + Number(_pl.distLeftKm).toFixed(1) + " km left at the current draw \u2014 tap for detail"
         if (_preEstShown)           return "Pre-flight estimate for the selected pack (" + _preEst.sourceLabel + ") \u2014 the live estimate starts once armed"
         if (!_gateOk)               return "Arm and draw ≥ " + kMinGateA.toFixed(1) + " A to estimate flight time"
         if (!_canComputeTime)       return "Configure battery pack (N_S · N_P · mAh) to estimate flight time"
@@ -163,7 +180,7 @@ Rectangle {
     readonly property color _textColor: {
         if (_connected && !_fresh) return Colors.statusStale
         if (!_socKnown) return Colors.textDisabled
-        if (_atReserve) return Colors.error
+        if (_atReserve || _returnNow) return Colors.error
         if (_soc > 30)  return Colors.success
         if (_soc >= 15) return Colors.warning
         return Colors.error
@@ -358,6 +375,22 @@ Rectangle {
                                ? "~" + Math.round(root._preEst.flightTimeMin) + " min / " + root._preEst.rangeKm.toFixed(1) + " km"
                                : "—"
                         valueColor: root._preEstShown && root._preEst.isCalibrated ? Colors.success : Colors.textSecondary }
+            DetailRow { label: qsTr("Power type");
+                        visible: root._plActive
+                        value: root._plActive ? root._pl.typeName + (root._pl.source === "synthetic" ? " (not yet learned)" : "") : ""
+                        valueColor: Colors.textPrimary }
+            DetailRow { label: qsTr("Left");
+                        visible: root._plActive
+                        value: root._plActive && root._pl.timeLeftMin >= 0
+                               ? "~" + Math.round(root._pl.timeLeftMin) + " min / " + Number(root._pl.distLeftKm).toFixed(1) + " km"
+                               : "—"
+                        valueColor: Colors.textPrimary }
+            DetailRow { label: qsTr("Rest of the trip");
+                        visible: root._plActive
+                        value: !root._plActive || !root._pl.tripKnown ? "—"
+                               : root._returnNow ? "short by " + Number(root._pl.tripShortAh).toFixed(1) + " Ah"
+                               : Number(root._pl.tripNeedAh).toFixed(1) + " of " + Number(root._pl.usableAh).toFixed(1) + " Ah"
+                        valueColor: root._returnNow ? Colors.error : Colors.success }
             DetailRow { label: qsTr("Based on");
                         visible: root._preEstShown
                         value: root._preEstShown
