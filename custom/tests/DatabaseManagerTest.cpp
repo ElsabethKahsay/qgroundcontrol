@@ -80,6 +80,7 @@ private slots:
     void testPowerTypeUpgradeFromV24();
     void testComplianceLogKeptWithoutVehicleDetails();
     void testRecorderPowerTypeFlight();
+    void testRecorderHistoryEvents();
 };
 
 void DatabaseManagerTest::testInitialize()
@@ -1871,6 +1872,35 @@ void DatabaseManagerTest::testRecorderPowerTypeFlight()
     const QVariantMap j = row(QStringLiteral("SELECT started_full, learning_state FROM flight_sessions WHERE id = %1").arg(joinedId));
     QCOMPARE(j.value(QStringLiteral("started_full")).toInt(), 0);
     QCOMPARE(j.value(QStringLiteral("learning_state")).toString(), QStringLiteral("excluded"));
+}
+
+// Every recorded flight's Flight History row gets its arm (with who armed)
+// and its disarm (with why the flight ended) as events, for the page's
+// "Events" tab.
+void DatabaseManagerTest::testRecorderHistoryEvents()
+{
+    RecorderFixture f;
+    QVERIFY(f.init());
+    DatabaseManager &db = DatabaseManager::instance();
+    SessionRecorder rec(db);
+    f.wire(rec);
+    rec.connectionOpened(QStringLiteral("UID-R"), QStringLiteral("Flight"), QString(), QString());
+
+    f.sample = SessionRecorder::Sample{16.4, 0.0, 99, -1, -1};
+    rec.armed(start(QStringLiteral("external")));
+    const int historyId = rec.historyFlightId();
+    QVERIFY(historyId > 0);
+    QCOMPARE(db.recordingHistoryFlightId(), historyId);
+    f.clock.advance(60000);
+    rec.disarmed();
+    QCOMPARE(db.recordingHistoryFlightId(), -1);
+
+    QStringList events;
+    for (const QVariantMap &e : db.getTelemetryEventsForFlight(historyId))
+        events << e.value(QStringLiteral("event_type")).toString() + QLatin1Char(':')
+                      + e.value(QStringLiteral("triggered_by")).toString();
+    QVERIFY2(events.contains(QStringLiteral("ARM:external")) && events.contains(QStringLiteral("DISARM:disarmed")),
+             qPrintable(events.join(QStringLiteral(", "))));
 }
 
 UT_REGISTER_TEST(DatabaseManagerTest)

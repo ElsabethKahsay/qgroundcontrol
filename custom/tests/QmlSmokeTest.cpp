@@ -1296,6 +1296,7 @@ private slots:
     void testPowerTypesPageDrivesStorage();
     void testPowerLiveInFlyView();
     void testEstimatorPanelKeepsTheStoredPack();
+    void testFlightHistoryDetailsRecorded();
 
 private:
     bool _connectPlane();
@@ -2125,6 +2126,49 @@ void LivePluginBenchTest::testEstimatorPanelKeepsTheStoredPack()
     QCOMPARE(pack(), QStringLiteral("6S 1P 5000 mAh"));
 
     panel->setParentItem(nullptr);
+}
+
+// Flight History's detail tabs for a flight armed from the RC on the mock
+// copter (the real plugin): "Preflight" holds the checklist as it stood at
+// take-off, "Events" holds the arm, a mode change during the flight and the
+// disarm. They were empty because both were filed under FlightSession's own
+// flight id, which only the retired flight form set.
+void LivePluginBenchTest::testFlightHistoryDetailsRecorded()
+{
+    QVERIFY2(_connectPlane(), "mock copter did not connect / resolve its UID");
+    auto *mgr = _pluginChild<PreflightManager>();
+    QVERIFY(mgr);
+    DatabaseManager &db = DatabaseManager::instance();
+    FlightSession::instance()->setMode(QStringLiteral("FLIGHT"));
+
+    _vehicle->setArmed(true, false);
+    QVERIFY(_waitArmed(true));
+    int historyId = -1;
+    for (int i = 0; i < 100 && historyId <= 0; ++i) {
+        QTest::qWait(50);
+        historyId = db.recordingHistoryFlightId();
+    }
+    QVERIFY2(historyId > 0, "no Flight History row for the flight");
+    const QString before = _vehicle->flightMode();
+    const QString other = before == QStringLiteral("Loiter") ? QStringLiteral("Stabilize") : QStringLiteral("Loiter");
+    _vehicle->setFlightMode(other);
+    for (int i = 0; i < 100 && _vehicle->flightMode() != other; ++i)
+        QTest::qWait(50);
+    QTest::qWait(300);
+    _vehicle->setArmed(false, false);
+    QVERIFY(_waitArmed(false));
+    QTest::qWait(300);
+
+    const QList<QVariantMap> checks = db.getCheckResultsForFlight(historyId, false);
+    QVERIFY2(checks.size() >= mgr->checks().size() - 1,
+             qPrintable(QStringLiteral("%1 check results for %2 checks").arg(checks.size()).arg(mgr->checks().size())));
+    QStringList events;
+    for (const QVariantMap &e : db.getTelemetryEventsForFlight(historyId))
+        events << e.value(QStringLiteral("event_type")).toString();
+    QVERIFY2(events.contains(QStringLiteral("ARM")) && events.contains(QStringLiteral("DISARM")),
+             qPrintable(events.join(QStringLiteral(", "))));
+    QVERIFY2(_vehicle->flightMode() != other || events.contains(QStringLiteral("MODE_CHANGE")),
+             qPrintable(QStringLiteral("mode %1 -> %2, events %3").arg(before, other, events.join(QStringLiteral(", ")))));
 }
 
 UT_REGISTER_TEST(LivePluginBenchTest)

@@ -215,6 +215,9 @@ public:
                                                  QStringLiteral("arm source: %1%2").arg(start.armSource,
                                                      start.bench ? QStringLiteral(", bench") : QString()),
                                                  start.weatherSummary);
+            // Flight History's events: the arm, and who armed.
+            if (m_historyId > 0)
+                logHistoryEvent(QStringLiteral("ARM"), start.armSource, s);
         }
         updateContext();
     }
@@ -375,6 +378,7 @@ private:
         if (m_historyId > 0) {
             if (!atLinkLoss)
                 noteAltitude(s.altitudeM);
+            logHistoryEvent(QStringLiteral("DISARM"), reason, s);
             m_db.setFlightDisarmedAt(m_historyId, QDateTime::currentDateTimeUtc());
             m_db.closeFlight(m_historyId, qRound(end.durationSec),
                              std::isfinite(m_maxAltitude) ? m_maxAltitude : 0.0,
@@ -393,6 +397,16 @@ private:
     }
 
     void updateContext() { m_db.setRecordingContext(m_connId, m_flightId, m_deviceUid, m_historyId); }
+
+    /// One event on the flight's Flight History row, with the vehicle's
+    /// state at that moment.
+    void logHistoryEvent(const QString &event, const QString &detail, const Sample &s)
+    {
+        m_db.insertTelemetryEvent(m_historyId, event, detail,
+                                  std::isfinite(s.voltage) ? s.voltage : 0.0,
+                                  std::isfinite(s.altitudeM) ? s.altitudeM : 0.0,
+                                  qMax(0, s.gpsSats), s.flightMode);
+    }
 
     /// Bench arms (motor/servo tests, Testing mode) teach the model nothing.
     bool powerTracking() const { return m_start.powerTypeId > 0 && !m_start.bench; }

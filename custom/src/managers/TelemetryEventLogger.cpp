@@ -63,6 +63,7 @@ void TelemetryEventLogger::setDependencies(TelemetryBridge *bridge, ArmingGate *
     if (m_bridge) {
         connect(m_bridge, &TelemetryBridge::flightModeChanged, this, [this]() {
             m_modeChanges++;
+            _writeEvent(QStringLiteral("MODE_CHANGE"), m_bridge->flightMode());
         });
 
         connect(m_bridge, &TelemetryBridge::rtlTriggered,
@@ -128,8 +129,13 @@ void TelemetryEventLogger::onRtlTriggered(double altitudeM, double groundSpeedMs
 
 void TelemetryEventLogger::_writeEvent(const QString &eventType, const QString &triggeredBy)
 {
+    // The flight's Flight History row: FlightSession's own (the old form
+    // flow) or, as for every flight now, the one SessionRecorder opened at
+    // the arm. With neither (on the ground), nothing is written.
     FlightSession *fs = FlightSession::instance();
-    if (!fs || fs->currentFlightId() <= 0)
+    const int flightId = (fs && fs->currentFlightId() > 0) ? fs->currentFlightId()
+                                                         : DatabaseManager::instance().recordingHistoryFlightId();
+    if (flightId <= 0)
         return;
 
     double batteryV = m_bridge ? m_bridge->batteryVoltage() : 0.0;
@@ -138,6 +144,6 @@ void TelemetryEventLogger::_writeEvent(const QString &eventType, const QString &
     QString flightMode = m_bridge ? m_bridge->flightMode() : QString();
 
     DatabaseManager::instance().insertTelemetryEvent(
-        fs->currentFlightId(), eventType, triggeredBy,
+        flightId, eventType, triggeredBy,
         batteryV, altitudeM, gpsSats, flightMode);
 }

@@ -862,6 +862,35 @@ static bool s_joiningArmedFlight = false;
 // arm, motor test). Read on disarm: a bench arm does not use up a pack waiver.
 static bool s_benchArm = false;
 
+// Names stored with each check result (Flight History shows them as text).
+static QString checkStatusName(CheckStatus status)
+{
+    switch (status) {
+    case CheckStatus::Passed:  return QStringLiteral("Passed");
+    case CheckStatus::Failed:  return QStringLiteral("Failed");
+    case CheckStatus::Warning: return QStringLiteral("Warning");
+    case CheckStatus::Error:   return QStringLiteral("Error");
+    case CheckStatus::Skipped: return QStringLiteral("Skipped");
+    case CheckStatus::Stale:   return QStringLiteral("Stale");
+    default:                   return QStringLiteral("Pending");
+    }
+}
+
+static QString checkCategoryName(CheckCategory category)
+{
+    switch (category) {
+    case CheckCategory::Propulsion:    return QStringLiteral("Propulsion");
+    case CheckCategory::Power:         return QStringLiteral("Power");
+    case CheckCategory::Navigation:    return QStringLiteral("Navigation");
+    case CheckCategory::Communication: return QStringLiteral("Communication");
+    case CheckCategory::Airframe:      return QStringLiteral("Airframe");
+    case CheckCategory::Safety:        return QStringLiteral("Safety");
+    case CheckCategory::Environment:   return QStringLiteral("Environment");
+    case CheckCategory::ArmingGate:    return QStringLiteral("Arming gate");
+    }
+    return QStringLiteral("Other");
+}
+
 // Opens the connection session once the vehicle's UID (the vehicles-row key)
 // is known. A different UID closes the previous connection first.
 //
@@ -956,6 +985,16 @@ void PreflightPlugin::_onGateOpened()
             db.saveTargetLocation(_sessionRecorder->historyFlightId(), target.value(QStringLiteral("lat")).toDouble(),
                                   target.value(QStringLiteral("lon")).toDouble(),
                                   target.value(QStringLiteral("source")).toString());
+        // The checklist as it stood at take-off, for the flight's Flight
+        // History "Preflight" tab (and its pass/fail counts).
+        if (_sessionRecorder->historyFlightId() > 0 && _preflightManager) {
+            for (AbstractCheck *check : _preflightManager->checks()) {
+                if (check)
+                    db.insertFlightCheckResult(_sessionRecorder->historyFlightId(), check->id(),
+                                               checkCategoryName(check->category()), /*isPostFlight*/ false,
+                                               checkStatusName(check->status()), check->message(), -1);
+            }
+        }
     }
 }
 

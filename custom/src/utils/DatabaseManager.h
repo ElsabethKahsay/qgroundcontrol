@@ -542,6 +542,9 @@ public:
     /// Where recordCheckResult() files results (set by SessionRecorder).
     void setRecordingContext(int connectionSessionId, int flightId, const QString &deviceUid,
                              int historyFlightId = -1);
+    /// The Flight History row (flights.id) of the flight the recorder has
+    /// open, or -1: where flight events and the take-off checklist go.
+    int recordingHistoryFlightId() const { return m_ctxHistoryId; }
     /// How many times the GCS lost the connected vehicle since the app started,
     /// or -1 when no vehicle is connected. See the .cpp for what counts.
     int linkDropsSinceStart() const;
