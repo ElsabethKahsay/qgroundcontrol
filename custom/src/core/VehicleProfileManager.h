@@ -63,6 +63,9 @@ class VehicleProfileManager : public QObject {
     Q_PROPERTY(bool powerTypePropsConfirmed READ powerTypePropsConfirmed NOTIFY powerTypeChanged)
     Q_PROPERTY(QString powerTypeWaivedBy READ powerTypeWaivedBy NOTIFY powerTypeChanged)
     Q_PROPERTY(QString missionCheckWaivedBy READ missionCheckWaivedBy NOTIFY powerTypeChanged)
+    /// The pilot chose to fly a pack that is not full (its charge is then
+    /// estimated from the resting voltage). Per flight, like the waivers above.
+    Q_PROPERTY(QString partialPackWaivedBy READ partialPackWaivedBy NOTIFY powerTypeChanged)
     /// Minutes the copter stays at the target this flight; -1 = not entered.
     Q_PROPERTY(double timeAtTargetMin READ timeAtTargetMin NOTIFY payloadWeightChanged)
     /// Take-off and landing minutes the mission check costs as hover
@@ -310,6 +313,12 @@ public:
     bool powerTypePropsConfirmed() const { return m_propsConfirmed; }
     QString powerTypeWaivedBy() const { return m_powerTypeWaivedBy; }
     QString missionCheckWaivedBy() const { return m_missionWaivedBy; }
+    QString partialPackWaivedBy() const { return m_partialPackWaivedBy; }
+    /// Fly a pack that is not full; needs the pilot's name; logged.
+    Q_INVOKABLE bool waivePartialPack(const QString &pilot);
+    /// The selected pack's charge (%) from its resting voltage: 100 when full
+    /// (or the voltage is not known), else PowerTypeModel::restingSocPct.
+    double packRestingSocPct(double packVolts) const;
     double timeAtTargetMin() const { return m_timeAtTargetMin; }
     /// 0–600 min; false (nothing changes) outside that.
     Q_INVOKABLE bool enterTimeAtTargetMin(double minutes);
@@ -393,6 +402,9 @@ private:
     bool m_propsConfirmed = false;
     QString m_powerTypeWaivedBy;
     QString m_missionWaivedBy;
+    QString m_partialPackWaivedBy;
+    double m_armStartSocPct = 100.0;    ///< Pack charge (%) just before this flight's arm.
+    double m_fcMahAtArm = -1.0;         ///< The FC's mAh counter at this flight's arm (it counts from power-up).
     double m_timeAtTargetMin = -1.0;
     bool recordWaiver(const QString &event, const QString &pilot, const QString &reason, const QString &checkId);
     double m_payloadWeightKg = 0.0;

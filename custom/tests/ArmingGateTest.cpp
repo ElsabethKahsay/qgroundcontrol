@@ -544,9 +544,34 @@ void ArmingGateTest::testMissionCheckBlocksOnlyWhenValidated()
     r[QStringLiteral("positionKnown")] = false;
     QCOMPARE(status(), CheckStatus::Pending);
 
+    // A pack that is not full (charge from its resting voltage): a
+    // validated type holds the arm until a full pack or a waiver; after the
+    // waiver the trip is checked as usual; before validation it is amber.
+    r = base;
+    r[QStringLiteral("packFull")] = false;
+    r[QStringLiteral("packCellV")] = 3.95;
+    r[QStringLiteral("packSocPct")] = 70.0;
+    QCOMPARE(status(), CheckStatus::Pending);
+    QVERIFY2(item->message().contains(QStringLiteral("Pack not full")) && item->message().contains(QStringLiteral("70 %")),
+             qPrintable(item->message()));
+    QVERIFY(g.failing(id));
+    r[QStringLiteral("partialPackWaivedBy")] = QStringLiteral("Pack Pilot");
+    QCOMPARE(status(), CheckStatus::Passed);
+    QVERIFY2(item->message().contains(QStringLiteral("waived by Pack Pilot")), qPrintable(item->message()));
+    r[QStringLiteral("fits")] = false;
+    r[QStringLiteral("spareAh")] = -1.0;
+    QCOMPARE(status(), CheckStatus::Failed);                       // the waiver is for the pack, not the trip
+    r.remove(QStringLiteral("partialPackWaivedBy"));
+    r[QStringLiteral("validated")] = false;
+    r[QStringLiteral("fits")] = true;
+    QCOMPARE(status(), CheckStatus::Warning);
+    QVERIFY(!g.failing(id));
+
     r = base;
     r[QStringLiteral("hasTarget")] = false;
     QCOMPARE(status(), CheckStatus::Passed);
+    r[QStringLiteral("packFull")] = false;
+    QCOMPARE(status(), CheckStatus::Warning);                      // no target: never blocks, amber when not full
     QVERIFY2(item->message().contains(QStringLiteral("No target")) && item->message().contains(QStringLiteral("12.5 km")),
              qPrintable(item->message()));
 }
@@ -569,6 +594,9 @@ void ArmingGateTest::testPowerTypeWaiversAndTimeAtTarget()
     QVERIFY(!vpm.waiveMissionCheck(QString()));
     QVERIFY(vpm.waiveMissionCheck(QStringLiteral("Trip Pilot")));
     QCOMPARE(vpm.missionCheckWaivedBy(), QStringLiteral("Trip Pilot"));
+    QVERIFY(!vpm.waivePartialPack(QStringLiteral(" ")));
+    QVERIFY(vpm.waivePartialPack(QStringLiteral("Pack Pilot")));
+    QCOMPARE(vpm.partialPackWaivedBy(), QStringLiteral("Pack Pilot"));
 
     QStringList events;
     for (const QString &id : db.listComplianceLogs(QStringLiteral("unknown"), 100000)) {
@@ -578,7 +606,8 @@ void ArmingGateTest::testPowerTypeWaiversAndTimeAtTarget()
         events << e.value(QStringLiteral("event")).toString() + QLatin1Char(':') + e.value(QStringLiteral("pilot")).toString();
     }
     QVERIFY2(events.contains(QStringLiteral("power_type_waived:Type Pilot"))
-                 && events.contains(QStringLiteral("mission_check_waived:Trip Pilot")),
+                 && events.contains(QStringLiteral("mission_check_waived:Trip Pilot"))
+                 && events.contains(QStringLiteral("partial_pack_waived:Pack Pilot")),
              qPrintable(events.join(QStringLiteral(", "))));
 
     QCOMPARE(vpm.timeAtTargetMin(), -1.0);
@@ -590,8 +619,21 @@ void ArmingGateTest::testPowerTypeWaiversAndTimeAtTarget()
     vpm.clearPowerTypeFlightState();
     QVERIFY(vpm.powerTypeWaivedBy().isEmpty());
     QVERIFY(vpm.missionCheckWaivedBy().isEmpty());
+    QVERIFY(vpm.partialPackWaivedBy().isEmpty());
     vpm.clearPayloadEntry();
     QCOMPARE(vpm.timeAtTargetMin(), -1.0);
+
+    // The pack's charge from its resting voltage, by its cell count and
+    // chemistry: 6S at 23.7 V is 3.95 V per cell, about 70 % on the LiPo
+    // curve; a full pack (or no reading) counts as 100 %.
+    vpm.setBatterySeriesCells(6);
+    QCOMPARE(vpm.packRestingSocPct(23.7), 70.0);
+    QCOMPARE(vpm.packRestingSocPct(25.2), 100.0);
+    QCOMPARE(vpm.packRestingSocPct(24.9), 100.0);       // 4.15 V per cell: full
+    QCOMPARE(vpm.packRestingSocPct(0.0), 100.0);        // no reading
+    vpm.setBatteryType(QStringLiteral("LiHV"));
+    QCOMPARE(vpm.packRestingSocPct(24.9), 77.5);        // 4.15 V on LiHV is 4.00 V on the LiPo curve
+    vpm.setBatteryType(QStringLiteral("LiPo"));
 
     QCOMPARE(VehicleProfileManager::frameName(1, 1), QStringLiteral("Quad X"));
     QCOMPARE(VehicleProfileManager::frameName(2, 0), QStringLiteral("Hexa Plus"));

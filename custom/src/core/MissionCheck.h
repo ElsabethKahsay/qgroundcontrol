@@ -74,9 +74,21 @@ public:
         const QString note = flag("speedAssumed") ? QStringLiteral(" (cruise speed assumed %1 m/s)")
                                                         .arg(num("cruiseSpeedMs"), 0, 'f', 0)
                                                   : QString();
+        // A pack that is not full: its charge is estimated from the resting
+        // voltage (rough). A validated type holds the arm until a full pack is
+        // fitted or the pilot waives it; before validation it is a note.
+        const bool packFull = r.value(QStringLiteral("packFull"), true).toBool();
+        const QString partialBy = r.value(QStringLiteral("partialPackWaivedBy")).toString();
+        const QString packNote = packFull ? QString()
+            : QStringLiteral(" (pack not full: %1 V per cell, about %2 % from its voltage%3)")
+                  .arg(num("packCellV"), 0, 'f', 2).arg(qRound(num("packSocPct")))
+                  .arg(partialBy.isEmpty() ? QString() : QStringLiteral(", waived by ") + partialBy);
+        // Unwaived and not full: amber, whatever the trip says.
+        const CheckStatus okStatus = (packFull || !partialBy.isEmpty()) ? CheckStatus::Passed : CheckStatus::Warning;
+
         if (!flag("hasTarget")) {
-            set(CheckStatus::Passed, QStringLiteral("No target — max out-and-back %1 km with %2 kg%3")
-                                         .arg(num("maxTargetKm"), 0, 'f', 1).arg(kg, 0, 'f', 1).arg(note));
+            set(okStatus, QStringLiteral("No target — max out-and-back %1 km with %2 kg%3%4")
+                              .arg(num("maxTargetKm"), 0, 'f', 1).arg(kg, 0, 'f', 1).arg(note, packNote));
             return;
         }
         // A validated type can block, so it must not be dodged by leaving the
@@ -92,12 +104,19 @@ public:
             return;
         }
 
+        if (!packFull && partialBy.isEmpty() && validated) {
+            set(CheckStatus::Pending, QStringLiteral("Pack not full (%1 V per cell, about %2 %): fit a full pack, or waive")
+                                          .arg(num("packCellV"), 0, 'f', 2).arg(qRound(num("packSocPct"))));
+            return;
+        }
+
         const QString trip = QStringLiteral("Tgt %1 km · %2 kg dropped · %3 min at target")
                                  .arg(num("targetKm"), 0, 'f', 1).arg(kg, 0, 'f', 1)
                                  .arg(num("minAtTarget"), 0, 'f', 0);
-        const QString assumed = flag("timeAtTargetEntered") ? QString() : QStringLiteral(" (0 min at target assumed)");
+        const QString assumed = (flag("timeAtTargetEntered") ? QString() : QStringLiteral(" (0 min at target assumed)"))
+                                + packNote;
         if (flag("fits")) {
-            set(CheckStatus::Passed, QStringLiteral("%1 → OK, %2 Ah spare (max %3 km)%4%5")
+            set(okStatus, QStringLiteral("%1 → OK, %2 Ah spare (max %3 km)%4%5")
                                          .arg(trip).arg(num("spareAh"), 0, 'f', 1)
                                          .arg(num("maxTargetKm"), 0, 'f', 1).arg(assumed, note));
             return;

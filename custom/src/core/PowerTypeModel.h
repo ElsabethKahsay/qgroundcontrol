@@ -49,9 +49,13 @@ constexpr double kMinTelemetryCoverage = 0.90;
 /// A flight that misses the model by more than this is flagged.
 constexpr double kOutlierFraction = 0.20;
 /// A type is validated when each of its last kValidationFlights flights is
-/// predicted within this fraction.
+/// predicted within this fraction by a model learned without that flight,
+/// and it has at least kMinValidationFlights accepted flights (the 3 a first
+/// model needs, plus 2: a model always matches the flights it was learned
+/// from, so those prove nothing).
 constexpr double kValidationFraction = 0.10;
 constexpr int    kValidationFlights = 3;
+constexpr int    kMinValidationFlights = 5;
 /// The in-flight correction of the model current is limited to ±30 %.
 constexpr double kLiveRatioMin = 0.70;
 constexpr double kLiveRatioMax = 1.30;
@@ -193,15 +197,23 @@ inline bool isOutlier(const Model &m, const Flight &f)
     return std::abs(m.predictAh(f) - f.chargerAh) / f.chargerAh > kOutlierFraction;
 }
 
-/// At least kValidationFlights accepted flights, and the last ones (the end
-/// of @p flights) are each predicted within kValidationFraction.
-inline bool isValidated(const Model &m, const QVector<Flight> &flights)
+/// At least kMinValidationFlights accepted flights, and each of the last
+/// kValidationFlights (the end of @p flights) predicted within
+/// kValidationFraction by a model fitted on all the others (leave one out).
+/// Checking a flight against a model that was learned from it would always
+/// pass: with the minimum flights the fit goes through every one exactly.
+inline bool isValidated(const QVector<Flight> &flights)
 {
-    if (!m.usable() || flights.size() < kValidationFlights)
+    if (flights.size() < kMinValidationFlights)
         return false;
     for (int i = flights.size() - kValidationFlights; i < flights.size(); ++i) {
         const Flight &f = flights[i];
-        if (f.chargerAh <= 0.0 || std::abs(m.predictAh(f) - f.chargerAh) / f.chargerAh > kValidationFraction)
+        if (f.chargerAh <= 0.0)
+            return false;
+        QVector<Flight> others = flights;
+        others.removeAt(i);
+        const Model m = fit(others);
+        if (!m.usable() || std::abs(m.predictAh(f) - f.chargerAh) / f.chargerAh > kValidationFraction)
             return false;
     }
     return true;
@@ -370,6 +382,47 @@ inline bool fullAtArm(double restingVolts, int cells)
     return cells > 0 && restingVolts / cells >= kFullCellV - 1e-9;
 }
 
+/// Resting cell voltage at or above which a pack counts as full: 4.15 V,
+/// 4.30 V for high-voltage LiPo ("LiHV").
+inline double fullCellVolts(const QString &chemistry)
+{
+    return chemistry.compare(QLatin1String("LiHV"), Qt::CaseInsensitive) == 0 ? 4.30 : kFullCellV;
+}
+
+/// Charge left (%) from the resting cell voltage (no load), on a typical
+/// discharge curve: LiPo; LiHV is LiPo 0.15 V higher; Li-ion ("LiIon")
+/// has its own flatter curve. Rough (about ±15 %): for a pack that was not
+/// full at arming, in place of assuming it full. -1 when the voltage is not
+/// a cell voltage.
+inline double restingSocPct(double cellVolts, const QString &chemistry)
+{
+    struct Point { double v, pct; };
+    static const Point lipo[] = {
+        {3.27, 0}, {3.61, 5}, {3.69, 10}, {3.71, 15}, {3.73, 20}, {3.75, 25}, {3.77, 30}, {3.79, 35},
+        {3.80, 40}, {3.82, 45}, {3.84, 50}, {3.85, 55}, {3.87, 60}, {3.91, 65}, {3.95, 70}, {3.98, 75},
+        {4.02, 80}, {4.08, 85}, {4.11, 90}, {4.15, 95}, {4.20, 100} };
+    static const Point liion[] = {
+        {3.00, 0}, {3.30, 10}, {3.40, 20}, {3.50, 30}, {3.60, 40}, {3.70, 50}, {3.80, 60}, {3.90, 70},
+        {4.00, 80}, {4.10, 90}, {4.20, 100} };
+    if (!std::isfinite(cellVolts) || cellVolts < 2.5 || cellVolts > 4.5)
+        return -1.0;
+    const bool isLiIon = chemistry.compare(QLatin1String("LiIon"), Qt::CaseInsensitive) == 0;
+    const double v = chemistry.compare(QLatin1String("LiHV"), Qt::CaseInsensitive) == 0 ? cellVolts - 0.15 : cellVolts;
+    const Point *curve = isLiIon ? liion : lipo;
+    const int n = isLiIon ? int(sizeof(liion) / sizeof(Point)) : int(sizeof(lipo) / sizeof(Point));
+    if (v <= curve[0].v)
+        return 0.0;
+    if (v >= curve[n - 1].v)
+        return 100.0;
+    for (int i = 1; i < n; ++i) {
+        if (v <= curve[i].v) {
+            const double t = (v - curve[i - 1].v) / (curve[i].v - curve[i - 1].v);
+            return curve[i - 1].pct + t * (curve[i].pct - curve[i - 1].pct);
+        }
+    }
+    return 100.0;
+}
+
 /// A recorded flight may join the learning: it started on a full pack, has a
 /// charger number and enough telemetry.
 inline bool usableForLearning(const Flight &f, bool startedFull, double telemetryCoverage)
@@ -499,6 +552,9 @@ struct LiveInput {
     double cruiseSpeedMs = 10.0;    ///< The type's learned cruise speed
     double landMin       = 1.0;
     bool   armed         = false;
+    /// Charge the pack had when the count started (%): 100 for a full pack,
+    /// else estimated from its resting voltage (restingSocPct).
+    double startSocPct   = 100.0;
     /// Correction from the throttle instead of the FC current (when the FC
     /// reports no current that follows throttle); < 0 = not used.
     double throttleRatio = -1.0;
@@ -542,7 +598,12 @@ inline LiveResult liveEstimate(const LiveInput &in)
     if (usedAh < 0.0)
         return r;
     r.valid = true;
-    r.usableAh = std::max(0.0, in.capacityAh - usedAh - in.reserve * in.capacityAh);
+    // A counter (FC mAh or the GCS's own count) starts at the arm: what it
+    // counts comes off the charge the pack had then. The FC's % already is
+    // the charge left.
+    const double startAh = in.fcMahUsed >= 0.0 ? in.capacityAh * std::clamp(in.startSocPct, 0.0, 100.0) / 100.0
+                                               : in.capacityAh;
+    r.usableAh = std::max(0.0, startAh - usedAh - in.reserve * in.capacityAh);
 
     const double gs = std::isfinite(in.groundSpeedMs) ? in.groundSpeedMs : 0.0;
     r.hover = isHover(gs);

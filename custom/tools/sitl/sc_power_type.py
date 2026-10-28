@@ -5,8 +5,8 @@ the fleet is set up. Before the flight the GCS's throw-away database is
 seeded the way an operator would have left it after the Power types page:
 
 * a power type "Quad X · 13×4.5 · 3S" (SITL's pack is 3S at 12.6 V, so it
-  is full at arming), linked to this copter and validated by the worked
-  example's four used flights (hover 32 + 6 A/kg, cruise 21 + 4 A/kg);
+  is full at arming), linked to this copter and validated by six used
+  flights (the worked example's four and two more) (hover 32 + 6 A/kg, cruise 21 + 4 A/kg);
 * a target about 300 m north of home, as saved on the gimbal page;
 * a 250 mAh pack (the smallest the GCS accepts), so that once airborne the
   way home (at least the landing) can never fit above the reserve and the
@@ -89,7 +89,9 @@ def seed(r, uid, home):
         type_id = cur.lastrowid
         con.execute("INSERT INTO vehicle_power_type (device_uid, power_type_id, linked_at) VALUES (?, ?, ?)",
                     (uid, type_id, now))
-        for hover, cruise, kg, mah in ((3, 10, 0.0, 5100.0), (8, 4, 0.0, 5666.7), (3, 10, 1.5, 6550.0), (8, 4, 1.5, 7266.7)):
+        # Six learning flights: a type needs at least 5 to be validated.
+        for hover, cruise, kg, mah in ((3, 10, 0.0, 5100.0), (8, 4, 0.0, 5666.7), (3, 10, 1.5, 6550.0), (8, 4, 1.5, 7266.7),
+                                       (5, 6, 0.0, 4766.7), (5, 6, 1.5, 6116.7)):
             loaded = kg > 0
             con.execute("INSERT INTO flight_sessions (device_uid, started_at, payload_weight_kg, power_type_id, "
                         "hover_min_empty, hover_min_loaded, cruise_min_empty, cruise_min_loaded, cruise_speed_ms, "

@@ -1300,8 +1300,9 @@ private slots:
 private:
     bool _connectPlane();
     bool _waitArmed(bool armed, int ms = 10000);
-    /// The "Quad X · 15×5.5 · 6S" type with the worked example's four flights
-    /// recorded on the connected copter and used, so it is validated.
+    /// The "Quad X · 15×5.5 · 6S" type with six learning flights (the worked
+    /// example's four and two more) recorded on the connected copter and
+    /// used, so it is validated.
     int _validatedPowerType();
     template <typename T> static T *_pluginChild()
     {
@@ -1336,7 +1337,9 @@ int LivePluginBenchTest::_validatedPowerType()
         return -1;
     // Hover 32 + 6 A/kg, cruise 21 + 4 A/kg at 15 m/s.
     struct F { double hover, cruise, kg, mah; };
-    for (const F &f : { F{3, 10, 0.0, 5100.0}, F{8, 4, 0.0, 5666.7}, F{3, 10, 1.5, 6550.0}, F{8, 4, 1.5, 7266.7} }) {
+    // Six flights: a type needs at least 5, checked leave-one-out.
+    for (const F &f : { F{3, 10, 0.0, 5100.0}, F{8, 4, 0.0, 5666.7}, F{3, 10, 1.5, 6550.0}, F{8, 4, 1.5, 7266.7},
+                        F{5, 6, 0.0, 4766.7}, F{5, 6, 1.5, 6116.7} }) {
         const int id = db.startFlightSession(uid, QString(), f.kg);
         FlightPowerRecord r;
         r.powerTypeId = type;

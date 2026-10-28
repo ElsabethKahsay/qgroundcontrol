@@ -929,7 +929,12 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
     if (!armed)
         m_liveSeenDisarmed = true;
+    // On the ground (disarmed, motors off) the voltage is the resting one:
+    // the charge it gives is where the next flight's count starts.
+    if (!armed && m_telemetry)
+        m_armStartSocPct = packRestingSocPct(m_telemetry->batteryVoltage());
     if (armed && !m_liveWasArmed) {
+        m_fcMahAtArm = fcMahUsed;
         m_livePayloadAboard = m_payloadEntered && m_payloadWeightKg > 0.0;
         m_gcsUsedAh = 0.0;
         m_gcsCounting = true;
@@ -954,6 +959,7 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         in.capacityAh = capacityAh();
         in.reserve = m_batteryReserve;
         in.socPct = socPct;
+        in.startSocPct = m_armStartSocPct;
         in.groundSpeedMs = m_telemetry->groundSpeed();
 
         // Where the charge used comes from. An FC current that follows
@@ -989,13 +995,18 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
             in.factor = 1.0;
             in.currentA = -1.0;
             in.throttleRatio = throttleRatio;
-            // Before the first arm the pack is taken as full; a flight the
-            // GCS joined armed falls back to the FC's charge %.
-            in.fcMahUsed = (!armed && !m_gcsCountKnown && m_gcsUsedAh == 0.0) ? 0.0
-                         : m_gcsCountKnown ? m_gcsUsedAh * 1000.0 : -1.0;
+            // On the ground the resting voltage already gives the charge (the
+            // count of a finished flight is in it); in flight the count since
+            // the arm comes off the charge measured just before it. A flight
+            // the GCS joined armed falls back to the FC's charge %.
+            in.fcMahUsed = !armed ? 0.0 : m_gcsCountKnown ? m_gcsUsedAh * 1000.0 : -1.0;
         } else {
             in.factor = m_powerSummary.value(QStringLiteral("chargerFactor"), 1.0).toDouble();
-            in.fcMahUsed = fcMahUsed;
+            // The FC counts from power-up: in flight, what it counted since
+            // the arm; on the ground, nothing (the voltage gives the charge).
+            in.fcMahUsed = !armed ? 0.0
+                         : (m_gcsCountKnown && fcMahUsed >= 0.0 && m_fcMahAtArm >= 0.0)
+                               ? std::max(0.0, fcMahUsed - m_fcMahAtArm) : -1.0;
             in.currentA = m_liveSmoothAmps > 0.0 ? m_liveSmoothAmps : -1.0;
         }
         out[QStringLiteral("chargeSource")] = !gcsCount ? QStringLiteral("fc")
@@ -1038,6 +1049,7 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         out[QStringLiteral("tripShortAh")] = r.tripShortAh;
         out[QStringLiteral("returnNow")] = r.returnNow;
         out[QStringLiteral("payloadAboard")] = in.payloadAboard;
+        out[QStringLiteral("startSocPct")] = in.startSocPct;
         out[QStringLiteral("source")] = m_powerSummary.value(QStringLiteral("source"));
         out[QStringLiteral("typeName")] = m_powerSummary.value(QStringLiteral("name"));
     } else {
@@ -1558,7 +1570,7 @@ QVariantMap VehicleProfileManager::powerTypeSummary(int powerTypeId)
     out[QStringLiteral("cruise0")]        = t.model.cruise0;
     out[QStringLiteral("cruiseK")]        = t.model.cruiseK;
     out[QStringLiteral("advice")]         = t.model.advice;
-    out[QStringLiteral("validated")]      = t.fromCharger && PowerTypeModel::isValidated(t.model, t.used);
+    out[QStringLiteral("validated")]      = t.fromCharger && PowerTypeModel::isValidated(t.used);
     out[QStringLiteral("chargerFactor")]  = t.factor;
     out[QStringLiteral("usedFlights")]    = t.used.size();
     out[QStringLiteral("pendingFlights")] = t.pending;
@@ -1661,12 +1673,38 @@ bool VehicleProfileManager::waiveMissionCheck(const QString &pilot)
 
 void VehicleProfileManager::clearPowerTypeFlightState()
 {
-    if (!m_propsConfirmed && m_powerTypeWaivedBy.isEmpty() && m_missionWaivedBy.isEmpty())
+    if (!m_propsConfirmed && m_powerTypeWaivedBy.isEmpty() && m_missionWaivedBy.isEmpty()
+        && m_partialPackWaivedBy.isEmpty())
         return;
     m_propsConfirmed = false;
     m_powerTypeWaivedBy.clear();
     m_missionWaivedBy.clear();
+    m_partialPackWaivedBy.clear();
     emit powerTypeChanged();
+}
+
+double VehicleProfileManager::packRestingSocPct(double packVolts) const
+{
+    if (!(packVolts > 1.0) || m_batterySeriesCells <= 0)
+        return 100.0;   // no reading: nothing to go on, as before
+    const double cellV = packVolts / m_batterySeriesCells;
+    if (cellV >= PowerTypeModel::fullCellVolts(m_batteryType) - 1e-9)
+        return 100.0;
+    const double soc = PowerTypeModel::restingSocPct(cellV, m_batteryType);
+    return soc >= 0.0 ? std::min(soc, 99.0) : 100.0;
+}
+
+bool VehicleProfileManager::waivePartialPack(const QString &pilot)
+{
+    const double volts = m_telemetry ? m_telemetry->batteryVoltage() : 0.0;
+    const QString reason = QStringLiteral("Pack not full: %1 V per cell, about %2 %")
+                               .arg(m_batterySeriesCells > 0 ? volts / m_batterySeriesCells : 0.0, 0, 'f', 2)
+                               .arg(qRound(packRestingSocPct(volts)));
+    if (!recordWaiver(QStringLiteral("partial_pack_waived"), pilot, reason, QStringLiteral("power.mission")))
+        return false;
+    m_partialPackWaivedBy = pilot.trimmed();
+    emit powerTypeChanged();
+    return true;
 }
 
 QString VehicleProfileManager::frameName(int frameClass, int frameType)
@@ -1744,8 +1782,17 @@ QVariantMap VehicleProfileManager::missionCheck()
     x.backSpeedMs = cruise;
     x.takeoffMin = takeoffMin();
     x.landMin = landMin();
-    const int soc = m_telemetry ? m_telemetry->batteryPercent() : -1;
-    x.usableAh = usableAhAboveReserveFor(soc >= 0 && soc <= 100 ? soc : 100);
+    // The pack's charge from its resting voltage (on the ground the motors
+    // are off): 100 % when full, else the discharge-curve estimate. The FC's
+    // own % is not used: with no current sensor it does not know the charge.
+    const double packVolts = m_telemetry ? m_telemetry->batteryVoltage() : 0.0;
+    const double cellV = (packVolts > 1.0 && m_batterySeriesCells > 0) ? packVolts / m_batterySeriesCells : -1.0;
+    const double soc = packRestingSocPct(packVolts);
+    x.usableAh = usableAhAboveReserveFor(qRound(soc));
+    out[QStringLiteral("packCellV")] = cellV;
+    out[QStringLiteral("packFull")] = soc >= 100.0;
+    out[QStringLiteral("packSocPct")] = soc;
+    out[QStringLiteral("partialPackWaivedBy")] = m_partialPackWaivedBy;
     out[QStringLiteral("payloadEntered")] = m_payloadEntered;
     out[QStringLiteral("payloadKg")] = x.payloadKg;
     out[QStringLiteral("timeAtTargetEntered")] = m_timeAtTargetMin >= 0.0;

@@ -590,23 +590,55 @@ private slots:
         QCOMPARE(liveEstimate(in).ratio, 1.0);
     }
 
-    // Validated = the last three flights each predicted within 10 %; a flight
-    // more than 20 % off is flagged.
+    // Validated = at least 5 flights, and each of the last three predicted
+    // within 10 % by a model learned WITHOUT it (leave one out): a model
+    // learned from a flight always matches it, so that proves nothing. A
+    // flight more than 20 % off is flagged.
     void testPowerTypeValidationAndOutliers()
     {
         using namespace PowerTypeModel;
         QVector<Flight> flights = sky03Flights();
         const Model m = fit(flights);
-        QVERIFY(isValidated(m, flights));
-        QVERIFY(!isValidated(m, flights.mid(0, 2)));
+        // Four flights: the fit goes through every one exactly, yet that is no
+        // evidence; not validated.
+        QVERIFY(near(m.predictAh(flights.last()), flights.last().chargerAh, 1e-3));
+        QVERIFY(!isValidated(flights));
 
-        QVector<Flight> drift = flights;
+        // Two more flights that agree with the others (hover 32 + 6 A/kg,
+        // cruise 21 + 4 A/kg): validated.
+        QVector<Flight> six = flights;
+        Flight f5; f5.hoverMinEmpty = 5; f5.cruiseMinEmpty = 6; f5.chargerAh = (32.0 * 5 + 21.0 * 6) / 60.0;
+        Flight f6; f6.hoverMinLoaded = 5; f6.cruiseMinLoaded = 6; f6.payloadKg = 1.5;
+        f6.chargerAh = (41.0 * 5 + 27.0 * 6) / 60.0;
+        six << f5 << f6;
+        QVERIFY(isValidated(six));
+
+        // Four consistent flights without payload pass the left-out check
+        // (any three still give the model), but four are fewer than five.
+        auto empty = [](double hover, double cruise) {
+            Flight f; f.hoverMinEmpty = hover; f.cruiseMinEmpty = cruise;
+            f.chargerAh = (32.0 * hover + 21.0 * cruise) / 60.0;
+            return f;
+        };
+        QVector<Flight> fourEmpty{ empty(3, 10), empty(8, 4), empty(5, 6), empty(10, 2) };
+        QVERIFY(!isValidated(fourEmpty));
+        fourEmpty << empty(6, 8);
+        QVERIFY(isValidated(fourEmpty));                          // the fifth makes it
+
+        // Five flights that are not consistent: each still fits a model
+        // learned from all of them, but the left-out check catches it.
+        QVector<Flight> bad = six.mid(0, 5);
+        bad[4].chargerAh *= 1.4;                                  // flight 5 used 40 % more
+        QVERIFY(!isValidated(bad));
+
+        QVector<Flight> drift = six;
         drift.last().chargerAh *= 1.15;   // last flight 15 % over the model
-        QVERIFY(!isValidated(m, drift));
+        QVERIFY(!isValidated(drift));
         QVERIFY(!isOutlier(m, drift.last()));
 
-        drift.last().chargerAh = flights.last().chargerAh * 1.30;   // 23 % off the charger number
-        QVERIFY(isOutlier(m, drift.last()));
+        Flight off = flights.last();
+        off.chargerAh *= 1.30;                                    // 23 % off the charger number
+        QVERIFY(isOutlier(m, off));
         QVERIFY(!isOutlier(m, flights.first()));
     }
 
@@ -669,7 +701,7 @@ private slots:
                      && near(sum.value(QStringLiteral("cruise0")).toDouble(), 21.0, 0.01)
                      && near(sum.value(QStringLiteral("cruiseK")).toDouble(), 4.0, 0.01), qPrintable(got));
         QVERIFY2(near(sum.value(QStringLiteral("chargerFactor")).toDouble(), 1.2, 0.001), qPrintable(got));
-        QVERIFY(sum.value(QStringLiteral("validated")).toBool());
+        QVERIFY(!sum.value(QStringLiteral("validated")).toBool());   // 4 flights: not enough to validate
         QCOMPARE(sum.value(QStringLiteral("usedFlights")).toInt(), 4);
         QCOMPARE(sum.value(QStringLiteral("pendingFlights")).toInt(), 0);
 
@@ -741,6 +773,36 @@ private slots:
         t.tick(60.0, s);
         QCOMPARE(t.cruiseMinLoaded(), 2.0);
         QVERIFY(std::abs(distanceM(-35.0, 149.0, -35.0 + 500.0 / 111195.0, 149.0) - 500.0) < 1.0);
+    }
+
+    // A pack that is not full: its charge from the resting cell voltage on a
+    // typical discharge curve, and the live estimate starting from it.
+    void testPowerTypePartialPack()
+    {
+        using namespace PowerTypeModel;
+        QCOMPARE(restingSocPct(4.20, QStringLiteral("LiPo")), 100.0);
+        QCOMPARE(restingSocPct(3.84, QStringLiteral("LiPo")), 50.0);
+        QCOMPARE(restingSocPct(3.95, QStringLiteral("LiPo")), 70.0);
+        QVERIFY(near(restingSocPct(3.70, QStringLiteral("LiPo")), 12.5, 1e-9));   // between 3.69 (10) and 3.71 (15)
+        QCOMPARE(restingSocPct(3.0, QStringLiteral("LiPo")), 0.0);
+        QCOMPARE(restingSocPct(4.10, QStringLiteral("LiHV")), 70.0);              // LiHV: 0.15 V higher
+        QCOMPARE(restingSocPct(3.70, QStringLiteral("LiIon")), 50.0);
+        QCOMPARE(restingSocPct(1.2, QStringLiteral("LiPo")), -1.0);                // not a cell voltage
+        QCOMPARE(fullCellVolts(QStringLiteral("LiHV")), 4.30);
+        QCOMPARE(fullCellVolts(QStringLiteral("LiPo")), kFullCellV);
+
+        // A 16 Ah pack at 70 %: 11.2 Ah, less the 3.2 Ah reserve = 8.0 Ah, then
+        // less what was counted since the arm.
+        LiveInput in;
+        in.model = fit(sky03Flights());
+        in.capacityAh = 16.0;
+        in.fcMahUsed = 0.0;
+        in.startSocPct = 70.0;
+        QVERIFY(near(liveEstimate(in).usableAh, 8.0, 1e-9));
+        in.fcMahUsed = 2000.0;
+        QVERIFY(near(liveEstimate(in).usableAh, 6.0, 1e-9));
+        in.startSocPct = 100.0;
+        QVERIFY(near(liveEstimate(in).usableAh, 10.8, 1e-9));
     }
 
     // What the recorder decides each second and at arming.

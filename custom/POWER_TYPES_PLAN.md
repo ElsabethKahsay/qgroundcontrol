@@ -2,7 +2,7 @@
 
 Skywin GCS · copters only · designed with the operator 26 Oct 2026 · built and tested 26–28 Oct 2026
 
-**Status:** built and tested on the bench, in a simulator and on QGC's mock copter. **Not yet flown on a real copter.** Four known issues are listed in section 9; fix the first two before letting the mission check block arming in the field.
+**Status:** built and tested on the bench, in a simulator and on QGC's mock copter. **Not yet flown on a real copter.** Issues 1 and 2 of the 28 Oct review are fixed; two smaller ones remain (section 9).
 
 ---
 
@@ -39,7 +39,7 @@ Before a delivery flight the pilot needs to know: *"Can this copter carry this p
 | **Hover / cruise** | Below 3 m/s counts as hover (take-off, landing, waiting at the target); faster counts as cruise. |
 | **Payload** | What the copter carries this flight (not its own weight). It is **dropped at the target**, so the way back is costed empty. |
 | **Reserve** | The share of the battery that is never planned to be used. Default 20 %. |
-| **Validated** | The type has enough learning flights, and its predictions match reality within 10 %. Only then can the mission check **block** arming. |
+| **Validated** | The type has **at least 5 learning flights**, and each of the last 3 is predicted within 10 % by a model learned **without that flight**. Only then can the mission check **block** arming. |
 | **Waiver** | The pilot flies anyway, giving their name; the GCS logs it. |
 
 ## 4. How it works, step by step
@@ -51,9 +51,9 @@ Before a delivery flight the pilot needs to know: *"Can this copter carry this p
 | With the copter connected: **Link connected copter**. | Remembers which type this copter is (by its hardware ID). |
 | Optional: set the **take-off and landing minutes** on the same page (default 1 min each). | Uses them in every trip calculation. |
 
-### 4.2 Learning flights (2–4 per type)
+### 4.2 Learning flights (at least 5 per type)
 1. Fly with a **full pack**. The GCS checks the voltage at arming.
-2. Fly **one flight that is mostly cruising** and **one that is mostly hovering**, both **without payload**. Then fly **one or two with a known payload**, kept aboard.
+2. Fly **one flight that is mostly cruising** and **one that is mostly hovering**, both **without payload**. Then fly **one or two with a known payload**, kept aboard. After 3 such flights the GCS has a first model; it needs **5 or more** before it trusts it enough to block arming (validated).
 3. After landing, **charge that pack straight away** and read the mAh on the charger.
 4. **Power types tab → the flight → type the charger mAh → Save → Use.**
 
@@ -66,7 +66,7 @@ Before a delivery flight the pilot needs to know: *"Can this copter carry this p
 |---|---|---|
 | **Payload** | Enter the payload weight (kg) and the **time at the target** (min). | Never. |
 | **Power type** | Confirm **"Props fitted match"** (the GCS can't see the props), or waive. | Until confirmed or waived. |
-| **Mission check** | Nothing: the GCS costs the trip to your saved target. Tap **Details** to see each leg. | Only when the trip **doesn't fit** *and* the type is **validated**. A waiver releases it. |
+| **Mission check** | Nothing: the GCS costs the trip to your saved target. Tap **Details** to see each leg. | When the type is **validated** and a target is saved: the trip **doesn't fit**, or the **pack isn't full**. Each has its own waiver. |
 
 The props confirmation, the waivers and the mission waiver last **one flight**.
 
@@ -85,7 +85,7 @@ Charge the pack and type the charger mAh for that flight (Power types tab). Acce
 
 **The build:** Quad X, 15×5.5 props, 6S, 16 Ah pack. The copter weighs 9 kg empty.
 
-**Four learning flights** (minutes recorded by the GCS; charger mAh typed by the pilot):
+**The first four learning flights** (minutes recorded by the GCS; charger mAh typed by the pilot). Two more that agree with them, e.g. 5 min hover + 6 min cruise with and without the payload, make the type **validated**.
 
 | Flight | Payload | Hover | Cruise | Charger |
 |---|---|---|---|---|
@@ -125,6 +125,8 @@ The mission check says: **"OK, 6.2 Ah spare. Furthest target with this payload: 
 | No power type confirmed (copter) | The GCS won't arm until confirmed or waived. **RC arming is never blocked.** |
 | Trip doesn't fit, type **validated** | The GCS won't arm until the pilot waives it (name logged). |
 | Trip doesn't fit, type **not yet validated** | Amber warning only; arming allowed. |
+| Pack not full at arming (resting voltage below 4.15 V per cell; 4.30 V for LiHV), type **validated**, target saved | The GCS won't arm until a full pack is fitted or the pilot waives it ("Fly with this pack", logged). The trip is then costed from the charge **estimated from the voltage**. |
+| Pack not full, type not yet validated, or no target | Amber note; the estimate starts from the voltage-based charge. |
 | No target saved | No block; shows the furthest out-and-back distance. |
 | In flight, the way home no longer fits | **RETURN NOW** on the chip (red) and as a message. The GCS never takes control; the flight controller's own battery failsafe is untouched. |
 | Planes | Not affected; they keep the old rough estimate. |
@@ -137,20 +139,20 @@ The mission check says: **"OK, 6.2 Ah spare. Furthest target with this payload: 
 
 ## 8. What the operator still needs to do
 1. Create the power types and link each copter (section 4.1).
-2. Fly 2–4 learning flights per type and enter the charger numbers (section 4.2).
+2. Fly at least 5 learning flights per type and enter the charger numbers (section 4.2). The first 3 give a model; from 5 on it can be validated.
 3. Make sure the charger shows "mAh charged", and charge each pack right after its flight.
 4. Fly with real copters and compare the estimate with what the charger says. Nothing has been measured on real aircraft yet.
 
 ## 9. Known issues and limits (review of 28 Oct)
 
-**To fix before relying on the arming block:**
+**Fixed 28 Oct:**
 
-| # | Issue | Why it matters | Planned fix |
-|---|---|---|---|
-| 1 | "Validated" can come too early. The model is checked against the same flights it was learned from, so 3–4 flights always "match". | The mission check could block arming on an untested model. | Check each flight against a model learned *without* it, and require extra flights. About ¼ day. |
-| 2 | The pack is assumed full before take-off. | On a half-used pack the trip check is too optimistic and RETURN NOW comes late. | Use the resting cell voltage at arming. Either estimate the charge from it, or refuse the trip check until the pack is full or waived (operator to choose). About ¼ day. |
+| # | Issue | Fix |
+|---|---|---|
+| 1 | "Validated" came too early: the model was checked against the same flights it was learned from, so 3–4 flights always "matched". | Each of the last 3 flights is now checked against a model learned **without** it (leave-one-out), and a type needs **at least 5** learning flights. |
+| 2 | The pack was assumed full before take-off. On a half-used pack the trip check was too optimistic and RETURN NOW came late. | The GCS reads the resting cell voltage. A full pack (≥ 4.15 V/cell, 4.30 V LiHV) counts as 100 %; otherwise the charge is **estimated from the voltage** on a typical LiPo / LiHV / Li-ion discharge curve (rough, about ±15 %). A validated type with a target **holds arming** until a full pack or a logged waiver. The in-flight count starts from the charge measured just before the arm. |
 
-**Also to fix:**
+**Still to fix:**
 
 | # | Issue | Effect |
 |---|---|---|
@@ -186,6 +188,7 @@ The mission check says: **"OK, 6.2 Ah spare. Furthest target with this payload: 
 | 26 Oct | Power type = frame + props + cells; the charger is the measuring instrument; learning is suggest-only (Use/Dismiss) |
 | 26 Oct | Payload is dropped at the target; time at target is entered per flight; take-off/landing 1 min each (adjustable); reserve 20 % (adjustable) |
 | 26 Oct | A short trip blocks arming (with waiver) only once the type is validated; no target → no block |
+| 28 Oct | Validation is leave-one-out with at least 5 flights; a pack that is not full holds a validated type's mission check until a full pack or a waiver, and its charge is then estimated from the resting voltage |
 | 27 Oct | `BATT_MONITOR = 25` doesn't follow throttle on copters → the GCS counts the charge itself |
 | 27 Oct | Info box trimmed (section 7.3); Skywin logo slightly bigger |
 

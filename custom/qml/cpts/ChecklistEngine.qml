@@ -517,8 +517,10 @@ QtObject {
 
         onAboutToShow: {
             mcWaiveBox.checked = false
+            ppWaiveBox.checked = false
             mcPilotField.text = (typeof OperatorManager !== "undefined" && OperatorManager)
                     ? OperatorManager.currentOperatorName : ""
+            ppPilotField.text = mcPilotField.text
             _r = _vpm ? _vpm.missionCheck() : ({})
         }
 
@@ -584,6 +586,41 @@ QtObject {
                 color: mcDialog._r.fits ? Colors.statusPass : (mcDialog._r.validated ? Colors.statusFail : Colors.statusWarn)
             }
 
+            // A pack that is not full: its charge comes from its resting
+            // voltage. A validated type holds the arm until a full pack is
+            // fitted or the pilot flies this one (logged).
+            Text {
+                visible: mcDialog._r.packFull === false
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: qsTr("Pack not full: %1 V per cell, about %2 % from its voltage. The trip is costed from that estimate.%3")
+                          .arg(Number(mcDialog._r.packCellV).toFixed(2)).arg(Math.round(mcDialog._r.packSocPct))
+                          .arg(mcDialog._r.partialPackWaivedBy ? qsTr(" Flown on purpose: %1.").arg(mcDialog._r.partialPackWaivedBy) : "")
+                font.pixelSize: Config.fontSizeDialog
+                color: Colors.statusWarn
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                visible: mcDialog._r.packFull === false && !mcDialog._r.partialPackWaivedBy
+                CheckBox { id: ppWaiveBox; objectName: "ppWaiveBox" }
+                Text {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: qsTr("Fly with this pack. I accept its charge is only estimated from its voltage.")
+                    font.pixelSize: Config.fontSizeDialog
+                    color: Colors.textPrimary
+                    MouseArea { anchors.fill: parent; onClicked: ppWaiveBox.toggle() }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                visible: ppWaiveBox.checked
+                Text { font.pixelSize: Config.fontSizeDialog; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Pilot:") }
+                TextField { id: ppPilotField; objectName: "ppPilotField"; Layout.fillWidth: true; placeholderText: qsTr("pilot name") }
+            }
+
             RowLayout {
                 Layout.fillWidth: true
                 visible: mcDialog._costed && !mcDialog._r.fits
@@ -609,6 +646,17 @@ QtObject {
                 Layout.fillWidth: true
                 spacing: Config.spacingSmall
                 Button { text: qsTr("Close"); Layout.fillWidth: true; onClicked: mcDialog.close() }
+                Button {
+                    objectName: "ppWaiveButton"
+                    visible: ppWaiveBox.checked
+                    text: qsTr("Fly with this pack")
+                    enabled: ppPilotField.text.trim().length > 0
+                    Layout.fillWidth: true
+                    onClicked: if (mcDialog._vpm && mcDialog._vpm.waivePartialPack(ppPilotField.text.trim())) {
+                                   ppWaiveBox.checked = false
+                                   mcDialog._r = mcDialog._vpm.missionCheck()
+                               }
+                }
                 Button {
                     visible: mcWaiveBox.checked
                     text: qsTr("Fly anyway")
