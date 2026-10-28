@@ -13,6 +13,7 @@ QtObject {
     readonly property int fontSizeH3: 18
     readonly property int fontSizeBody: 16
     readonly property int fontSizeSmall: 13
+    readonly property int fontSizeDialog: Math.round(fontSizeSmall * 1.1)   // preflight dialogs, 10 % larger
     readonly property int spacingSmall: 6
     readonly property int spacingMedium: 10
     readonly property int spacingLarge: 14

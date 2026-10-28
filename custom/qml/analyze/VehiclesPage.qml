@@ -12,8 +12,8 @@ AnalyzePage {
     property int _selectedIndex: -1
     property string _statusText: ""
 
-    // 20% larger text across the whole page
-    property real fontScale: 1.2
+    // Text across the whole page: 20 % larger, then 10 % more (27 Oct).
+    property real fontScale: 1.32
 
     function fs(base) { return Math.round(base * fontScale) }
 
@@ -37,10 +37,35 @@ AnalyzePage {
     }
 
     pageComponent: Component {
-        ColumnLayout {
+        // A Control around the page so its buttons, fields, tabs and combo
+        // boxes take this palette and a 10 % larger font: Qt's stock palette
+        // drew dark text (and black buttons) on the dark page.
+        Control {
             width:  root.availableWidth
             height: root.availableHeight
-            spacing: 8
+            padding: 0
+            font.pointSize: Qt.application.font.pointSize * 1.1
+            // Its own dark background, so the light text reads whatever the
+            // Analyze view's theme is.
+            background: Rectangle { color: Colors.background }
+            palette.window:          Colors.surface          // panel: light text on it
+            palette.windowText:      Colors.textPrimary      // labels, flat buttons, the selected tab
+            palette.base:            Colors.bgPrimary        // input fields
+            palette.alternateBase:   Colors.surfaceLight
+            palette.text:            Colors.textPrimary
+            palette.placeholderText: Colors.textSecondary
+            palette.button:          Colors.textPrimary      // light buttons with dark text
+            palette.buttonText:      Colors.background
+            palette.dark:            Colors.teal             // highlighted buttons, unselected tabs
+            palette.brightText:      Colors.textInverse      // text on teal
+            palette.mid:             Colors.textSecondary
+            palette.midlight:        Colors.divider
+            palette.light:           Colors.divider
+            palette.shadow:          Colors.background
+            palette.highlight:       Colors.teal
+            palette.highlightedText: Colors.textInverse
+            palette.toolTipBase:     Colors.bgPrimary
+            palette.toolTipText:     Colors.textPrimary
 
             // VehicleListModel is the DB-backed single source; reload applies the date filter.
             // Reloads the C++ list model; empty date strings mean "no bound" in the SQL filter
@@ -49,6 +74,9 @@ AnalyzePage {
             }
 
             Component.onCompleted: refresh()
+
+            contentItem: ColumnLayout {
+            spacing: 8
 
             // "Vehicles": the registry below. "Power types": copter power
             // systems (frame + props + cells) and what they learn from each
@@ -723,6 +751,7 @@ AnalyzePage {
                     }
                 }
             }
+        }
         }
     }
 

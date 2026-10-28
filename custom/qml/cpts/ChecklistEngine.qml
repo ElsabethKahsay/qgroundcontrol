@@ -235,7 +235,32 @@ QtObject {
     // checklist pages). Weight only, in kg; the aircraft's own weight is set in
     // Vehicle Management. 0 = no payload. The weight goes on the flight record
     // at arm. An inline component, so no new qrc entry.
-    component PayloadDialog: Dialog {
+    // The look of the preflight dialogs below: light text on the dark panel,
+    // dark text on the light buttons (Qt's stock palette drew dark text on
+    // the dark panel), and a 10 % larger font. Controls inside take both.
+    component SkyDialog: Dialog {
+        font.pointSize: Qt.application.font.pointSize * 1.1
+        palette.window:          Colors.surface          // panel: light text on it
+        palette.windowText:      Colors.textPrimary      // labels, flat buttons, the selected tab
+        palette.base:            Colors.bgPrimary        // input fields
+        palette.alternateBase:   Colors.surfaceLight
+        palette.text:            Colors.textPrimary
+        palette.placeholderText: Colors.textSecondary
+        palette.button:          Colors.textPrimary      // light buttons with dark text
+        palette.buttonText:      Colors.background
+        palette.dark:            Colors.teal             // highlighted buttons, unselected tabs
+        palette.brightText:      Colors.textInverse      // text on teal
+        palette.mid:             Colors.textSecondary
+        palette.midlight:        Colors.divider
+        palette.light:           Colors.divider
+        palette.shadow:          Colors.background
+        palette.highlight:       Colors.teal
+        palette.highlightedText: Colors.textInverse
+        palette.toolTipBase:     Colors.bgPrimary
+        palette.toolTipText:     Colors.textPrimary
+    }
+
+    component PayloadDialog: SkyDialog {
         id: payloadDialog
         title:            qsTr("Payload")
         modal:            true
@@ -274,13 +299,13 @@ QtObject {
                 wrapMode: Text.WordWrap
                 text: qsTr("Weight of what the aircraft carries on this flight (camera, gimbal, cargo), "
                            + "not the aircraft itself. It is saved on the flight record.")
-                font.pixelSize: Config.fontSizeSmall
+                font.pixelSize: Config.fontSizeDialog
                 color: Colors.textPrimary
             }
 
             RowLayout {
                 Layout.fillWidth: true
-                Text { font.pixelSize: Config.fontSizeSmall; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Payload (kg):") }
+                Text { font.pixelSize: Config.fontSizeDialog; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Payload (kg):") }
                 TextField {
                     id: kgField
                     objectName: "payloadKgField"
@@ -293,7 +318,7 @@ QtObject {
 
             RowLayout {
                 Layout.fillWidth: true
-                Text { font.pixelSize: Config.fontSizeSmall; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Time at target (min):") }
+                Text { font.pixelSize: Config.fontSizeDialog; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Time at target (min):") }
                 TextField {
                     id: minField
                     objectName: "payloadMinField"
@@ -307,7 +332,7 @@ QtObject {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 text: qsTr("The payload is dropped at the target; the mission check costs the way back without it.")
-                font.pixelSize: Config.fontSizeSmall
+                font.pixelSize: Config.fontSizeDialog
                 color: Colors.textSecondary
             }
 
@@ -315,7 +340,7 @@ QtObject {
                 visible: !payloadDialog._minValid
                 Layout.fillWidth: true
                 text: qsTr("Enter a time at target between 0 and 600 minutes (or leave it empty).")
-                font.pixelSize: Config.fontSizeSmall
+                font.pixelSize: Config.fontSizeDialog
                 color: Colors.error
                 wrapMode: Text.WordWrap
             }
@@ -324,7 +349,7 @@ QtObject {
                 visible: kgField.text.trim().length > 0 && !payloadDialog._valid && payloadDialog._minValid
                 Layout.fillWidth: true
                 text: qsTr("Enter a weight between 0 and 100 kg.")
-                font.pixelSize: Config.fontSizeSmall
+                font.pixelSize: Config.fontSizeDialog
                 color: Colors.error
                 wrapMode: Text.WordWrap
             }
@@ -356,7 +381,7 @@ QtObject {
     // The "Power type" item (copters): link the copter to its power type,
     // confirm the props fitted are the type's (every flight), or waive it for
     // the flight (logged). New types are created in Vehicle Management.
-    component PowerTypeDialog: Dialog {
+    component PowerTypeDialog: SkyDialog {
         id: ptDialog
         title:            qsTr("Power Type")
         modal:            true
@@ -392,13 +417,13 @@ QtObject {
                 text: qsTr("The power type (frame + props + cells) is what the flight-time estimate and the "
                            + "mission check learn from. Confirm on every flight that the props fitted are the "
                            + "type's: the flight controller cannot see them.")
-                font.pixelSize: Config.fontSizeSmall
+                font.pixelSize: Config.fontSizeDialog
                 color: Colors.textPrimary
             }
 
             RowLayout {
                 Layout.fillWidth: true
-                Text { font.pixelSize: Config.fontSizeSmall; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Power type:") }
+                Text { font.pixelSize: Config.fontSizeDialog; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Power type:") }
                 ComboBox {
                     id: typeCombo
                     Layout.fillWidth: true
@@ -417,7 +442,7 @@ QtObject {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 text: qsTr("No power types yet: create one in Vehicle Management.")
-                font.pixelSize: Config.fontSizeSmall
+                font.pixelSize: Config.fontSizeDialog
                 color: Colors.textSecondary
             }
 
@@ -425,7 +450,7 @@ QtObject {
                 visible: ptDialog._vpm && ptDialog._vpm.powerTypePropsConfirmed
                 Layout.fillWidth: true
                 text: qsTr("Props confirmed for this flight.")
-                font.pixelSize: Config.fontSizeSmall
+                font.pixelSize: Config.fontSizeDialog
                 color: Colors.statusPass
             }
 
@@ -436,7 +461,7 @@ QtObject {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                     text: qsTr("Fly without a power type. I accept a rough flight-time estimate and no mission check.")
-                    font.pixelSize: Config.fontSizeSmall
+                    font.pixelSize: Config.fontSizeDialog
                     color: Colors.textPrimary
                     MouseArea { anchors.fill: parent; onClicked: ptWaiveBox.toggle() }
                 }
@@ -445,7 +470,7 @@ QtObject {
             RowLayout {
                 Layout.fillWidth: true
                 visible: ptWaiveBox.checked
-                Text { font.pixelSize: Config.fontSizeSmall; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Pilot:") }
+                Text { font.pixelSize: Config.fontSizeDialog; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Pilot:") }
                 TextField { id: ptPilotField; Layout.fillWidth: true; placeholderText: qsTr("pilot name") }
             }
 
@@ -476,7 +501,7 @@ QtObject {
     // The "Mission check" item (copters): the trip to the saved target, leg
     // by leg, as VehicleProfileManager.missionCheck() costs it. When it comes
     // out short the pilot can waive it for the flight (logged).
-    component MissionCheckDialog: Dialog {
+    component MissionCheckDialog: SkyDialog {
         id: mcDialog
         title:            qsTr("Mission Check")
         modal:            true
@@ -514,7 +539,7 @@ QtObject {
                           .arg(mcDialog._r.typeName).arg(Number(mcDialog._r.targetKm).toFixed(2))
                           .arg(Number(mcDialog._r.payloadKg).toFixed(1)).arg(Number(mcDialog._r.minAtTarget).toFixed(0))
                           .arg(Number(mcDialog._r.cruiseSpeedMs).toFixed(0)).arg(mcDialog._r.speedAssumed ? qsTr(" (assumed)") : "")
-                font.pixelSize: Config.fontSizeSmall
+                font.pixelSize: Config.fontSizeDialog
                 color: Colors.textPrimary
             }
 
@@ -525,7 +550,7 @@ QtObject {
                 visible: mcDialog._costed
                 Layout.fillWidth: true
                 textFormat: Text.RichText
-                font.pixelSize: Config.fontSizeSmall
+                font.pixelSize: Config.fontSizeDialog
                 color: Colors.textSecondary
                 text: {
                     var r = mcDialog._r
@@ -554,7 +579,7 @@ QtObject {
                                        : qsTr("Short by %1 Ah. Furthest target with this payload: %2 km.%3")
                                              .arg((-Number(mcDialog._r.spareAh)).toFixed(1)).arg(Number(mcDialog._r.maxTargetKm).toFixed(1))
                                              .arg(mcDialog._r.validated ? "" : qsTr(" (estimate not yet validated: a warning only)"))
-                font.pixelSize: Config.fontSizeSmall
+                font.pixelSize: Config.fontSizeDialog
                 font.weight: Font.DemiBold
                 color: mcDialog._r.fits ? Colors.statusPass : (mcDialog._r.validated ? Colors.statusFail : Colors.statusWarn)
             }
@@ -567,7 +592,7 @@ QtObject {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                     text: qsTr("Fly this trip anyway. I accept the estimate says the battery is short.")
-                    font.pixelSize: Config.fontSizeSmall
+                    font.pixelSize: Config.fontSizeDialog
                     color: Colors.textPrimary
                     MouseArea { anchors.fill: parent; onClicked: mcWaiveBox.toggle() }
                 }
@@ -576,7 +601,7 @@ QtObject {
             RowLayout {
                 Layout.fillWidth: true
                 visible: mcWaiveBox.checked
-                Text { font.pixelSize: Config.fontSizeSmall; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Pilot:") }
+                Text { font.pixelSize: Config.fontSizeDialog; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Pilot:") }
                 TextField { id: mcPilotField; Layout.fillWidth: true; placeholderText: qsTr("pilot name") }
             }
 
@@ -600,7 +625,7 @@ QtObject {
     // pages/PreFlightChecklist). Choosing a pack stores its rated config,
     // makes it the current pack for the flight log and cycle count, and feeds
     // the flight-time estimate. An inline component, so no new qrc entry.
-    component BatteryPackDialog: Dialog {
+    component BatteryPackDialog: SkyDialog {
         id: packDialog
         title:            qsTr("Battery Pack")
         modal:            true
@@ -662,13 +687,13 @@ QtObject {
                 wrapMode: Text.WordWrap
                 text: qsTr("Choose the pack fitted for this flight. A flight that uses at least 20% of the "
                            + "pack's rated capacity counts as one cycle.")
-                font.pixelSize: Config.fontSizeSmall
+                font.pixelSize: Config.fontSizeDialog
                 color: Colors.textPrimary
             }
 
             RowLayout {
                 Layout.fillWidth: true
-                Text { font.pixelSize: Config.fontSizeSmall; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Pack:") }
+                Text { font.pixelSize: Config.fontSizeDialog; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Pack:") }
                 ComboBox {
                     id: packCombo
                     Layout.fillWidth: true
@@ -681,7 +706,7 @@ QtObject {
 
             RowLayout {
                 Layout.fillWidth: true
-                Text { font.pixelSize: Config.fontSizeSmall; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Pack ID / serial:") }
+                Text { font.pixelSize: Config.fontSizeDialog; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Pack ID / serial:") }
                 TextField {
                     id: serialField
                     Layout.fillWidth: true
@@ -694,38 +719,38 @@ QtObject {
                 visible: packDialog.serialTaken
                 Layout.fillWidth: true
                 text: qsTr("A pack with this ID is already registered — pick it from the list.")
-                font.pixelSize: Config.fontSizeSmall
+                font.pixelSize: Config.fontSizeDialog
                 color: Colors.error
                 wrapMode: Text.WordWrap
             }
 
             RowLayout {
                 Layout.fillWidth: true
-                Text { font.pixelSize: Config.fontSizeSmall; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Name (optional):") }
+                Text { font.pixelSize: Config.fontSizeDialog; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Name (optional):") }
                 TextField { id: labelField; Layout.fillWidth: true }
             }
 
             RowLayout {
                 Layout.fillWidth: true
-                Text { font.pixelSize: Config.fontSizeSmall; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Type:") }
+                Text { font.pixelSize: Config.fontSizeDialog; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Type:") }
                 ComboBox { id: typeCombo; Layout.fillWidth: true; model: ["LiPo", "LiHV", "LiIon", "LiFe"] }
             }
 
             RowLayout {
                 Layout.fillWidth: true
-                Text { font.pixelSize: Config.fontSizeSmall; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Series (S):") }
+                Text { font.pixelSize: Config.fontSizeDialog; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Series (S):") }
                 SpinBox { id: seriesSpin; Layout.fillWidth: true; from: 1; to: 24; editable: true; value: 6 }
             }
 
             RowLayout {
                 Layout.fillWidth: true
-                Text { font.pixelSize: Config.fontSizeSmall; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Parallel (P):") }
+                Text { font.pixelSize: Config.fontSizeDialog; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Parallel (P):") }
                 SpinBox { id: parallelSpin; Layout.fillWidth: true; from: 1; to: 16; editable: true; value: 1 }
             }
 
             RowLayout {
                 Layout.fillWidth: true
-                Text { font.pixelSize: Config.fontSizeSmall; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Cell capacity (mAh):") }
+                Text { font.pixelSize: Config.fontSizeDialog; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Cell capacity (mAh):") }
                 SpinBox {
                     id: capacitySpin
                     Layout.fillWidth: true
@@ -736,7 +761,7 @@ QtObject {
             Text {
                 Layout.fillWidth: true
                 text: qsTr("Rated pack capacity: %1 mAh").arg(capacitySpin.value * parallelSpin.value)
-                font.pixelSize: Config.fontSizeSmall
+                font.pixelSize: Config.fontSizeDialog
                 color: Colors.textSecondary
             }
 
@@ -752,7 +777,7 @@ QtObject {
                     wrapMode: Text.WordWrap
                     text: qsTr("Fly without a registered pack. I accept that there is no battery "
                                + "flight-time estimate and no cycle is counted.")
-                    font.pixelSize: Config.fontSizeSmall
+                    font.pixelSize: Config.fontSizeDialog
                     color: Colors.textPrimary
                     MouseArea { anchors.fill: parent; onClicked: waiveBox.toggle() }
                 }
@@ -761,7 +786,7 @@ QtObject {
             RowLayout {
                 Layout.fillWidth: true
                 visible: waiveBox.checked
-                Text { font.pixelSize: Config.fontSizeSmall; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Pilot:") }
+                Text { font.pixelSize: Config.fontSizeDialog; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Pilot:") }
                 TextField {
                     id: waivePilotField
                     Layout.fillWidth: true

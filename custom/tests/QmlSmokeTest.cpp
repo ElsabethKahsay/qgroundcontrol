@@ -166,6 +166,15 @@ static QQuickItem *createComponent(const QSharedPointer<QQmlApplicationEngine> &
     return item;
 }
 
+// Set SKYWIN_SCREEN_GRAB=<folder> to save pictures of the screens the live
+// tests drive (Power types page, preflight dialogs), to check them by eye.
+static void grabScreen(QQuickWindow *window, const QString &name)
+{
+    const QString dir = qEnvironmentVariable("SKYWIN_SCREEN_GRAB");
+    if (!dir.isEmpty() && window)
+        window->grabWindow().save(QDir(dir).filePath(name + QStringLiteral(".png")));
+}
+
 // ---------------------------------------------------------------------------
 // Forced-failed mandatory check used to drive the live gate into a blocked
 // state deterministically (mirrors TestFlowCheck in ArmingFlowIntegrationTest).
@@ -1798,7 +1807,9 @@ void LivePluginBenchTest::testPowerDialogsDriveTheItems()
         "    property alias payload: payload\n"
         "    property alias powerType: powerType\n"
         "    property alias mission: mission\n"
+        "    property alias pack: pack\n"
         "    CE.ChecklistEngine.PayloadDialog { id: payload }\n"
+        "    CE.ChecklistEngine.BatteryPackDialog { id: pack }\n"
         "    CE.ChecklistEngine.PowerTypeDialog { id: powerType }\n"
         "    CE.ChecklistEngine.MissionCheckDialog { id: mission }\n"
         "}\n"), QUrl(QStringLiteral("qrc:/qml/cpts/PowerDialogsTest.qml")));
@@ -1819,6 +1830,7 @@ void LivePluginBenchTest::testPowerDialogsDriveTheItems()
     QVERIFY(payload);
     QMetaObject::invokeMethod(payload, "open");
     pumpQml(200);
+    grabScreen(window.data(), QStringLiteral("dialog-payload"));
     QObject *kg = contentChild(payload, QStringLiteral("payloadKgField"));
     QObject *min = contentChild(payload, QStringLiteral("payloadMinField"));
     QVERIFY2(kg && min, "payload fields not found");
@@ -1837,6 +1849,7 @@ void LivePluginBenchTest::testPowerDialogsDriveTheItems()
     QVERIFY(pt);
     QMetaObject::invokeMethod(pt, "open");
     pumpQml(200);
+    grabScreen(window.data(), QStringLiteral("dialog-power-type"));
     QObject *confirm = contentChild(pt, QStringLiteral("ptConfirmButton"));
     QVERIFY2(confirm, "Props fitted match button not found");
     QVERIFY(confirm->property("enabled").toBool());
@@ -1850,12 +1863,21 @@ void LivePluginBenchTest::testPowerDialogsDriveTheItems()
     QVERIFY(mc);
     QMetaObject::invokeMethod(mc, "open");
     pumpQml(200);
+    grabScreen(window.data(), QStringLiteral("dialog-mission-check"));
     const QVariantMap shown = mc->property("_r").toMap();
     QVERIFY(shown.value(QStringLiteral("applicable")).toBool());
     QVERIFY(shown.value(QStringLiteral("linked")).toBool());
     QCOMPARE(shown.value(QStringLiteral("payloadKg")).toDouble(), 0.8);
     QCOMPARE(shown.value(QStringLiteral("minAtTarget")).toDouble(), 2.0);
     QMetaObject::invokeMethod(mc, "close");
+
+    // The battery pack dialog (same look; only pictured here).
+    QObject *pack = dialog("pack");
+    QVERIFY(pack);
+    QMetaObject::invokeMethod(pack, "open");
+    pumpQml(200);
+    grabScreen(window.data(), QStringLiteral("dialog-battery-pack"));
+    QMetaObject::invokeMethod(pack, "close");
 
     vpm->clearPowerTypeFlightState();
     vpm->clearPayloadEntry();
@@ -1909,6 +1931,7 @@ void LivePluginBenchTest::testPowerTypesPageDrivesStorage()
     };
     QObject *tabs = find(QStringLiteral("vehiclesTabs"));
     QVERIFY2(tabs, "tab bar not found");
+    grabScreen(window.data(), QStringLiteral("page-vehicles"));
     tabs->setProperty("currentIndex", 1);
     pumpQml(200);
 
@@ -1927,6 +1950,7 @@ void LivePluginBenchTest::testPowerTypesPageDrivesStorage()
     QVERIFY2(type > 0, "Save on the page created no power type");
     QCOMPARE(db.powerType(type).value(QStringLiteral("name")).toString(), frame + QStringLiteral(" · 15×5.5 · 6S"));
 
+    grabScreen(window.data(), QStringLiteral("page-power-types"));
     QVERIFY2(click(QStringLiteral("ptLinkButton")), "Link button missing or disabled");
     QCOMPARE(vpm->currentPowerTypeId(), type);
 
