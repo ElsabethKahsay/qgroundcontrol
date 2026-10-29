@@ -2020,7 +2020,23 @@ void LivePluginBenchTest::testPowerLiveInFlyView()
         QTest::qWait(50);
     const int type = _validatedPowerType();
     QVERIFY2(type > 0, "could not set up a validated power type");
+    auto live = [vpm]() { return vpm->powerLive(); };
+    auto offReason = [vpm]() { return vpm->powerLive().value(QStringLiteral("offReason")).toString(); };
+
+    // While the estimate is off, the log says why, again each time the
+    // reason changes: unlinked, then linked but waived, then on.
+    QVERIFY(vpm->linkCurrentVehiclePowerType(0));
+    for (int i = 0; i < 100 && offReason() != QStringLiteral("no power type linked"); ++i)
+        QTest::qWait(50);
+    QCOMPARE(offReason(), QStringLiteral("no power type linked"));
+    QVERIFY(vpm->waivePowerType(QStringLiteral("Test Pilot")));
+    QTest::ignoreMessage(QtInfoMsg, "VehicleProfileManager: power-type estimate off: power type waived");
     QVERIFY(vpm->linkCurrentVehiclePowerType(type));
+    for (int i = 0; i < 100 && offReason() != QStringLiteral("power type waived"); ++i)
+        QTest::qWait(50);
+    QCOMPARE(offReason(), QStringLiteral("power type waived"));
+    vpm->clearPowerTypeFlightState();
+
     QVERIFY(vpm->enterPayloadWeightKg(0.8));
     QVERIFY(vpm->enterTimeAtTargetMin(2.0));
     for (int i = 0; i < 200 && !_vehicle->coordinate().isValid(); ++i)
@@ -2028,7 +2044,6 @@ void LivePluginBenchTest::testPowerLiveInFlyView()
     const QGeoCoordinate here = _vehicle->coordinate();
     QVERIFY(FlightSession::instance()->saveTargetLocation(here.latitude() + 60.0 / 111.195, here.longitude(),
                                                           QStringLiteral("typed")));
-    auto live = [vpm]() { return vpm->powerLive(); };
     for (int i = 0; i < 120 && !(live().value(QStringLiteral("active")).toBool()
                                  && live().value(QStringLiteral("tripKnown")).toBool()); ++i)
         QTest::qWait(50);

@@ -173,7 +173,7 @@ QtObject {
 
     readonly property bool allChecklistItemsChecked:
         typeof ChecklistEngine !== "undefined" && ChecklistEngine !== null
-            ? ChecklistEngine.allMandatoryPassed
+            ? ChecklistEngine.allMandatoryPassed === true
             : false
 
     // ── Payload & Final Checks ───────────────────────────────────────
@@ -186,7 +186,7 @@ QtObject {
 
     readonly property bool hardwareTestPassed:
         typeof HardwareTestController !== "undefined" && HardwareTestController !== null
-            ? HardwareTestController.allPassed
+            ? HardwareTestController.allPassed === true
             : true
 
     readonly property bool mavlinkConnected:

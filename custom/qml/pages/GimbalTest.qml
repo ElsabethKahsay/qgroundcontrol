@@ -334,7 +334,7 @@ Page {
                                 text: qsTr("Coordinates:")
                                 font.pixelSize: Config.fontSizeBody
                                 color: Colors.textSecondary
-                                anchors.verticalCenter: parent.verticalCenter
+                                Layout.alignment: Qt.AlignVCenter
                             }
                             TextField {
                                 id: targetLat

@@ -1055,25 +1055,29 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
     } else {
         out[QStringLiteral("active")] = false;
     }
-    // In the log for after-flight review: when the estimate comes on or goes
-    // off (and why it is off), and when RETURN NOW changes.
-    const bool wasActive = m_powerLive.value(QStringLiteral("active")).toBool();
+    // In the log for after-flight review: when the estimate comes on, and
+    // each time the reason it is off changes (the reason is also kept in the
+    // map, so the next update can tell whether it changed).
     const bool isActive = out.value(QStringLiteral("active")).toBool();
-    if (wasActive != isActive || m_powerLive.isEmpty()) {
-        QString why;
-        if (!isActive)
-            why = !v ? QStringLiteral("no vehicle") : m_kind != VehicleKind::Multirotor ? QStringLiteral("not a copter")
-                : m_powerTypeId <= 0 ? QStringLiteral("no power type linked")
-                : !m_powerTypeWaivedBy.isEmpty() ? QStringLiteral("power type waived")
-                : batteryPackWaived() ? QStringLiteral("pack waived")
-                : m_powerSummary.value(QStringLiteral("source")).toString() == QLatin1String("none")
-                      ? QStringLiteral("no learned model") : QStringLiteral("no pack capacity or charge reading");
-        qInfo().noquote() << QStringLiteral("VehicleProfileManager: power-type estimate %1%2")
+    if (!isActive)
+        out[QStringLiteral("offReason")] =
+            !v ? QStringLiteral("no vehicle")
+            : m_kind == VehicleKind::Unknown ? QStringLiteral("vehicle type not known yet")
+            : m_kind != VehicleKind::Multirotor ? QStringLiteral("not a copter")
+            : m_powerTypeId <= 0 ? QStringLiteral("no power type linked")
+            : !m_powerTypeWaivedBy.isEmpty() ? QStringLiteral("power type waived")
+            : batteryPackWaived() ? QStringLiteral("pack waived")
+            : m_powerSummary.value(QStringLiteral("source")).toString() == QLatin1String("none")
+                  ? QStringLiteral("no learned model") : QStringLiteral("no pack capacity or charge reading");
+    const bool wasActive = m_powerLive.value(QStringLiteral("active")).toBool();
+    const QString why = out.value(QStringLiteral("offReason")).toString();
+    if (wasActive != isActive || m_powerLive.isEmpty()
+        || (!isActive && why != m_powerLive.value(QStringLiteral("offReason")).toString())) {
+        qInfo().noquote() << QStringLiteral("VehicleProfileManager: power-type estimate %1")
                                  .arg(isActive ? QStringLiteral("on (%1, charge used from %2)")
                                                      .arg(out.value(QStringLiteral("typeName")).toString(),
                                                           out.value(QStringLiteral("chargeSource")).toString())
-                                               : QStringLiteral("off"),
-                                      why.isEmpty() ? QString() : QStringLiteral(": ") + why);
+                                               : QStringLiteral("off: ") + why);
     }
     if (m_powerLive.value(QStringLiteral("returnNow")).toBool() != out.value(QStringLiteral("returnNow")).toBool())
         qInfo().noquote() << QStringLiteral("VehicleProfileManager: RETURN NOW %1 (trip needs %2 Ah, %3 Ah left)")
