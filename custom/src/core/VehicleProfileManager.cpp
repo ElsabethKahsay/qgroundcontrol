@@ -29,6 +29,8 @@
 #include "DatabaseManager.h"
 #include "PowerModel.h"
 #include "PowerTypeModel.h"
+#include "MotorTable.h"
+#include "controllers/HardwareTestController.h"
 #include "TelemetryBridge.h"
 #include "MultiVehicleManager.h"
 #include "MAVLink/QGCMAVLink.h"
@@ -896,6 +898,45 @@ void VehicleProfileManager::_updateLiveEstimate()
 // copter's position, home, and the target saved on the gimbal page. The
 // payload counts as aboard from the arm until the copter first comes within
 // 20 m of the target.
+QVariantMap VehicleProfileManager::motorThrottleStatus() const
+{
+    QVariantMap out;
+    if (!m_telemetry || !m_telemetry->vehicle())
+        return out;
+    auto param = [this](const QString &name, double fallback) {
+        return m_telemetry->hasParameter(name) ? static_cast<double>(m_telemetry->parameterValue(name)) : fallback;
+    };
+    // Which outputs drive motors (SERVOn_FUNCTION 33–40), and how many motors
+    // the frame has (FRAME_CLASS).
+    QVector<int> functions;
+    for (int n = 1; n <= 16; ++n)
+        functions.append(qRound(param(QStringLiteral("SERVO%1_FUNCTION").arg(n), 0.0)));
+    const QVector<int> channels = MotorTable::motorChannels(functions);
+    const int frameClass = qRound(param(QStringLiteral("FRAME_CLASS"), -1.0));
+    const int expected = frameClass > 0 ? std::max(0, HardwareTestController::motorCountFromFrameClass(frameClass)) : 0;
+    const MotorTable::EscRange range = MotorTable::escRange(param(QStringLiteral("MOT_PWM_MIN"), 0.0),
+                                                            param(QStringLiteral("MOT_PWM_MAX"), 0.0));
+    QVector<int> outputs;
+    for (const QVariant &o : m_telemetry->motorOutputs())
+        outputs.append(o.toInt());
+    const QVector<double> throttles = MotorTable::motorThrottles(outputs, channels, expected, range);
+    const qint64 age = m_telemetry->streamAgeMs(TelemetryStream::ServoOutputRaw);
+
+    QVariantList thr, ch;
+    for (double t : throttles)
+        thr.append(t);
+    for (int c : channels)
+        ch.append(c);
+    out[QStringLiteral("throttles")] = thr;
+    out[QStringLiteral("channels")] = ch;
+    out[QStringLiteral("pwmMin")] = range.min;
+    out[QStringLiteral("pwmMax")] = range.max;
+    out[QStringLiteral("motorsExpected")] = expected;
+    out[QStringLiteral("ageMs")] = age;
+    out[QStringLiteral("fresh")] = !throttles.isEmpty() && age >= 0 && age <= MotorTable::kMotorOutputStaleMs;
+    return out;
+}
+
 void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
 {
     QVariantMap out;

@@ -8,6 +8,7 @@
 /// combined with the communication drop rate.
 
 #include "TelemetryBridge.h"
+#include "core/MotorTable.h"
 
 #include <QDateTime>
 #include <QDebug>
@@ -415,6 +416,14 @@ void TelemetryBridge::_connectVehicleSignals() {
     // Subscribe to raw MAVLink messages for servo outputs, ESC telemetry, GPS2, etc.
     connect(_vehicle, &Vehicle::mavlinkMessageReceived, this, &TelemetryBridge::_handleMavlinkMessage);
 
+    // The motor-table flight-time estimate reads each motor's output signal:
+    // ask a copter for them at a steady rate. A message-rate request changes no
+    // parameter and is gone after a reboot.
+    if (_vehicle->multiRotor())
+        _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_SET_MESSAGE_INTERVAL, false,
+                                 static_cast<float>(MAVLINK_MSG_ID_SERVO_OUTPUT_RAW), MotorTable::kMotorOutputIntervalUs,
+                                 0, 0, 0, 0, 0);
+
     // Gimbal command acks for the gimbal page.
     connect(_vehicle, &Vehicle::mavCommandResult, this,
             [this](int, int, int command, int ackResult, int) {
@@ -719,6 +728,10 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message) {
     case MAVLINK_MSG_ID_RC_CHANNELS:         stampStream(TelemetryStream::RcChannels); break;
     case MAVLINK_MSG_ID_EKF_STATUS_REPORT:   stampStream(TelemetryStream::EkfStatus); break;
     case MAVLINK_MSG_ID_GLOBAL_POSITION_INT: stampStream(TelemetryStream::GlobalPosition); break;
+    case MAVLINK_MSG_ID_SERVO_OUTPUT_RAW:
+        if (mavlink_msg_servo_output_raw_get_port(&message) == 0)
+            stampStream(TelemetryStream::ServoOutputRaw);
+        break;
     default: break;
     }
     switch (message.msgid) {

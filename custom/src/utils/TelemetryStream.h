@@ -14,6 +14,7 @@ enum class TelemetryStream : int {
     RcChannels,         ///< RC_CHANNELS
     EkfStatus,          ///< EKF_STATUS_REPORT
     GlobalPosition,     ///< GLOBAL_POSITION_INT
+    ServoOutputRaw,     ///< SERVO_OUTPUT_RAW (each output's signal; the motor-table estimate)
     Count
 };
 
@@ -28,6 +29,7 @@ inline const char *telemetryStreamName(TelemetryStream s)
     case TelemetryStream::RcChannels:     return "RC_CHANNELS";
     case TelemetryStream::EkfStatus:      return "EKF_STATUS_REPORT";
     case TelemetryStream::GlobalPosition: return "GLOBAL_POSITION_INT";
+    case TelemetryStream::ServoOutputRaw: return "SERVO_OUTPUT_RAW";
     case TelemetryStream::Count:          break;
     }
     return "?";

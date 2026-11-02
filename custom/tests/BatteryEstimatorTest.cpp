@@ -15,6 +15,9 @@
 #include "DatabaseManager.h"
 #include "PowerModel.h"
 #include "PowerTypeModel.h"
+#include "MotorTable.h"
+#include <QCoreApplication>
+#include <QFileInfo>
 
 /**
  * Battery time estimator math: thrust→current interpolation, the known
@@ -825,6 +828,209 @@ private slots:
         QVERIFY(!usableForLearning(f, true, 0.89));
         f.chargerAh = -1.0;
         QVERIFY(!usableForLearning(f, true, 0.95));
+    }
+
+    // ── Motor table (MotorTable.h) ───────────────────────────────────────
+
+    // The rows compiled into the app are the ones in the table's CSV, and the
+    // CSV is the maker's 23 V table moved to 30.7 V: throttle × 23 ÷ 30.7,
+    // the same thrust, power and speed.
+    void testMotorTableMatchesItsCsv()
+    {
+        QDir src(QCoreApplication::applicationDirPath());
+        const QString rel = QStringLiteral("custom/tools/motor_tables/");
+        for (int i = 0; i < 5 && !QFileInfo::exists(src.filePath(rel)); ++i)
+            src.cdUp();
+        auto readCsv = [&](const QString &name) {
+            QVector<QStringList> rows;
+            QFile f(src.filePath(rel + name));
+            if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+                return rows;
+            bool header = true;
+            while (!f.atEnd()) {
+                const QString line = QString::fromUtf8(f.readLine()).trimmed();
+                if (line.isEmpty() || line.startsWith(QLatin1Char('#')))
+                    continue;
+                if (header) { header = false; continue; }
+                rows.append(line.split(QLatin1Char(',')));
+            }
+            return rows;
+        };
+        const QVector<QStringList> derived = readCsv(QStringLiteral("M6215_HighProt_320KV_MSC22x7.8_8S_30.7V_derived.csv"));
+        const QVector<QStringList> measured = readCsv(QStringLiteral("M6215_HighProt_320KV_MSC22x7.8_23V.csv"));
+        const MotorTable::Table &t = MotorTable::m6215_320kv_22x78_8s();
+        QCOMPARE(derived.size(), t.rows.size());
+        QCOMPARE(measured.size(), t.rows.size());
+        for (int i = 0; i < t.rows.size(); ++i) {
+            const MotorTable::Row &r = t.rows.at(i);
+            QCOMPARE(derived.at(i).at(0).toDouble(), r.throttlePct);
+            QCOMPARE(derived.at(i).at(1).toDouble(), r.thrustG);
+            QCOMPARE(derived.at(i).at(3).toDouble(), r.powerInW);
+            QCOMPARE(derived.at(i).at(4).toDouble(), r.rpm);
+            QVERIFY(qAbs(derived.at(i).at(2).toDouble() - r.powerInW / t.volts) < 0.051);
+            QVERIFY(qAbs(measured.at(i).at(0).toDouble() * 23.0 / t.volts - r.throttlePct) < 0.051);
+            QCOMPARE(measured.at(i).at(3).toDouble(), r.powerInW);
+            QCOMPARE(measured.at(i).at(1).toDouble(), r.thrustG);
+        }
+        QCOMPARE(MotorTable::byId(t.id), &t);
+        QVERIFY(!MotorTable::byId(QStringLiteral("nope")));
+    }
+
+    // The 12 kg quad from MOTOR_TABLE_PLAN.md: 3000 g per motor needs 37.1 %
+    // throttle, 357 W, 11.6 A per motor at 30.7 V, 47.6 A for the battery; a
+    // drained 28 V pack holds the same hover at a higher throttle and draws
+    // the same power, so more amps.
+    void testMotorTableWorkedExample()
+    {
+        using namespace MotorTable;
+        const Table &t = m6215_320kv_22x78_8s();
+        auto near = [](double a, double b, double tol) { return qAbs(a - b) <= tol; };
+
+        QVERIFY(near(powerAt(t, 0.450).watts, 562.6, 1e-9));       // a row exactly
+        QVERIFY(near(powerAt(t, 0.461).watts, (562.6 + 630.1) / 2, 1e-6));   // half way between rows
+
+        const double hover = throttleForThrust(t, 3000.0);
+        QVERIFY2(near(hover, 0.37086, 1e-4), qPrintable(QString::number(hover, 'f', 5)));
+        const MotorCurrent one = motorCurrent(t, hover, 30.7);
+        QVERIFY2(near(one.amps, 11.636, 0.005), qPrintable(QString::number(one.amps)));
+        QVERIFY(!one.beyond);
+        const BatteryCurrent all4 = batteryCurrent(t, {hover, hover, hover, hover}, 30.7);
+        QVERIFY2(near(all4.amps, 47.54, 0.02), qPrintable(QString::number(all4.amps)));
+        QCOMPARE(all4.motorsBeyond, 0);
+
+        // 28 V: the same motor voltage needs throttle × 30.7 ÷ 28; the same
+        // power over 28 V.
+        const double hover28 = hover * 30.7 / 28.0;
+        QVERIFY(near(motorCurrent(t, hover28, 28.0).amps, one.amps * 30.7 / 28.0, 1e-6));
+        // An unknown pack voltage reads the table at its own voltage.
+        QVERIFY(near(motorCurrent(t, hover, -1.0).amps, one.amps, 1e-9));
+        QVERIFY(near(motorCurrent(t, hover, qQNaN()).amps, one.amps, 1e-9));
+
+        // Uneven motors (wind) draw more than the same average throttle.
+        const BatteryCurrent windy = batteryCurrent(t, {hover + 0.05, hover + 0.05, hover - 0.05, hover - 0.05}, 30.7);
+        QVERIFY(windy.amps > all4.amps);
+
+        // Usable 16 Ah of the 20 Ah pack at 47.5 A: about 20 minutes of hover.
+        QVERIFY(near(16.0 / all4.amps * 60.0, 20.2, 0.1));
+    }
+
+    void testMotorTableOutsideItsRows()
+    {
+        using namespace MotorTable;
+        const Table &t = m6215_320kv_22x78_8s();
+        auto near = [](double a, double b, double tol) { return qAbs(a - b) <= tol; };
+
+        // Below the first row: the first two rows' curve, down to 0 at 0 %.
+        QCOMPARE(powerAt(t, 0.0).watts, 0.0);
+        QCOMPARE(powerAt(t, -0.1).watts, 0.0);
+        const double k = std::log(146.9 / 127.5) / std::log(26.2 / 24.7);
+        QVERIFY(near(powerAt(t, 0.10).watts, 127.5 * std::pow(10.0 / 24.7, k), 1e-9));
+        QVERIFY(powerAt(t, 0.10).watts < powerAt(t, 0.20).watts);
+        QVERIFY(!powerAt(t, 0.10).beyond);
+
+        // Above the last row: throttle³ from it, and marked.
+        const PowerAt hi = powerAt(t, 0.80);
+        QVERIFY(hi.beyond);
+        QVERIFY(near(hi.watts, 1705.3 * std::pow(80.0 / 74.9, 3.0), 1e-9));
+        QVERIFY(!powerAt(t, 0.749).beyond);
+        const BatteryCurrent b = batteryCurrent(t, {0.80, 0.80, 0.40, 0.40}, 30.7);
+        QCOMPARE(b.motorsBeyond, 2);
+
+        // Thrust outside the table has no throttle.
+        QCOMPARE(throttleForThrust(t, 1000.0), -1.0);
+        QCOMPARE(throttleForThrust(t, 9000.0), -1.0);
+        QVERIFY(near(throttleForThrust(t, 1392.0), 0.247, 1e-9));
+    }
+
+    void testMotorTableInputs()
+    {
+        using namespace MotorTable;
+        auto near = [](double a, double b, double tol) { return qAbs(a - b) <= tol; };
+
+        QVERIFY(near(pwmToThrottle(1371, 1000, 2000), 0.371, 1e-9));
+        QVERIFY(near(pwmToThrottle(1500, 1100, 1900), 0.5, 1e-9));
+        QCOMPARE(pwmToThrottle(900, 1000, 2000), 0.0);
+        QCOMPARE(pwmToThrottle(2100, 1000, 2000), 1.0);
+        QCOMPARE(pwmToThrottle(1500, 0, 2000), -1.0);      // MOT_PWM_MIN 0: unknown range
+        QCOMPARE(pwmToThrottle(1500, 2000, 1000), -1.0);
+
+        // Motors 1–4 on SERVO1–4, in any order; motor order, not channel order.
+        QCOMPARE(motorChannels({33, 34, 35, 36}), QVector<int>({1, 2, 3, 4}));
+        QCOMPARE(motorChannels({0, 35, 33, 0, 36, 34}), QVector<int>({3, 6, 2, 5}));
+        QCOMPARE(motorChannels({33, 34, 0, 36}), QVector<int>({1, 2, 4}));   // motor 3 has no output
+        QVERIFY(motorChannels({0, 0, 19, 70}).isEmpty());
+
+        QCOMPARE(cellsFromVoltMax(33.6), 8);
+        QCOMPARE(cellsFromVoltMax(25.2), 6);
+        QCOMPARE(cellsFromVoltMax(0.0), 0);
+
+        // ArduPilot's hover output for this drone: MOT_THST_HOVER 0.1297,
+        // default spin and expo, 8S voltage compensation, 30.7 V resting:
+        // curve 0.2525 ÷ (30.7 ÷ 33.6) = 0.2763 → 0.15 + 0.8 × 0.2763 = 0.371.
+        HoverParams p;
+        p.thstHover = 0.1297;
+        p.battVoltMax = 33.6;
+        p.battVoltMin = 26.4;
+        QVERIFY2(near(hoverMotorThrottle(p, 30.7), 0.371, 0.001), qPrintable(QString::number(hoverMotorThrottle(p, 30.7))));
+        // A lower pack voltage raises the output (until MOT_BAT_VOLT_MIN).
+        QVERIFY(hoverMotorThrottle(p, 28.0) > hoverMotorThrottle(p, 30.7));
+        QCOMPARE(hoverMotorThrottle(p, 20.0), hoverMotorThrottle(p, 26.4));
+        QCOMPARE(hoverMotorThrottle(p, 40.0), hoverMotorThrottle(p, 33.6));
+        // No voltage compensation (MOT_BAT_VOLT_MAX 0): the curve alone.
+        HoverParams flat = p;
+        flat.battVoltMax = 0.0;
+        QVERIFY(near(hoverMotorThrottle(flat, 30.7), 0.15 + 0.8 * 0.2525, 0.001));
+        // Linear thrust curve (expo 0).
+        HoverParams lin = flat;
+        lin.expo = 0.0;
+        QVERIFY(near(hoverMotorThrottle(lin, 30.7), 0.15 + 0.8 * 0.1297, 1e-9));
+        // MOT_BAT_VOLT_MIN below 0.6 × max is raised to it, as ArduPilot does.
+        HoverParams lowMin = p;
+        lowMin.battVoltMin = 10.0;
+        QCOMPARE(hoverMotorThrottle(lowMin, 15.0), hoverMotorThrottle(lowMin, 0.6 * 33.6));
+        HoverParams unknown;
+        QCOMPARE(hoverMotorThrottle(unknown, 30.7), -1.0);
+    }
+
+    // Each motor's throttle from the 16 output signals: the ESC range ArduPilot
+    // uses, outputs per SERVOn_FUNCTION (or outputs 1–N when not known), and
+    // nothing when a motor's output is missing.
+    void testMotorTableMotorThrottles()
+    {
+        using namespace MotorTable;
+        auto near = [](double a, double b) { return qAbs(a - b) <= 1e-9; };
+
+        QCOMPARE(escRange(1100, 1900).min, 1100.0);
+        QCOMPARE(escRange(1100, 1900).max, 1900.0);
+        QCOMPARE(escRange(0, 0).min, 1000.0);          // not set: ArduPilot's 1000–2000
+        QCOMPARE(escRange(0, 0).max, 2000.0);
+        QCOMPARE(escRange(1500, 1400).min, 1000.0);    // unusable: the defaults
+        QCOMPARE(escRange(0.5, 2000).min, 1000.0);
+
+        QVector<int> out(16, 0);
+        out[0] = 1371; out[1] = 1371; out[2] = 1500; out[3] = 1000;
+        const QVector<double> t = motorThrottles(out, {1, 2, 3, 4}, 4, escRange(0, 0));
+        QCOMPARE(t.size(), 4);
+        QVERIFY(near(t[0], 0.371) && near(t[1], 0.371) && near(t[2], 0.5) && near(t[3], 0.0));
+
+        // Motor order follows the channel list, not the output order.
+        QVector<int> mixed(16, 0);
+        mixed[2] = 1200; mixed[5] = 1600; mixed[1] = 1300; mixed[4] = 1400;
+        const QVector<double> m = motorThrottles(mixed, motorChannels({0, 35, 33, 0, 36, 34}), 4, escRange(0, 0));
+        QCOMPARE(m.size(), 4);
+        QVERIFY(near(m[0], 0.2) && near(m[1], 0.6) && near(m[2], 0.3) && near(m[3], 0.4));
+
+        // Output functions unknown: motors on outputs 1–4.
+        QCOMPARE(motorThrottles(out, {}, 4, escRange(0, 0)).size(), 4);
+        // A motor's output not sent (0), or fewer motor outputs than the frame has.
+        QVector<int> gap = out;
+        gap[2] = 0;
+        QVERIFY(motorThrottles(gap, {1, 2, 3, 4}, 4, escRange(0, 0)).isEmpty());
+        QVERIFY(motorThrottles(out, {1, 2, 4}, 4, escRange(0, 0)).isEmpty());
+        QVERIFY(motorThrottles(out, {}, 0, escRange(0, 0)).isEmpty());
+        QVERIFY(motorThrottles({}, {1, 2, 3, 4}, 4, escRange(0, 0)).isEmpty());
+        // The ESC range scales the signal.
+        QVERIFY(near(motorThrottles(out, {3}, 1, escRange(1100, 1900)).at(0), 0.5));
     }
 };
 

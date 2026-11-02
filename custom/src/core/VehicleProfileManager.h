@@ -215,6 +215,11 @@ public:
     /// distLeftKm, hoverMin, cruiseMin, cruiseKm, tripKnown, tripNeedAh,
     /// tripShortAh, returnNow, payloadAboard, source, typeName}.
     QVariantMap powerLive() const { return m_powerLive; }
+    /// Each motor's throttle from its output signal, for the motor-table
+    /// estimate: {throttles (0–1, motor order), channels, pwmMin, pwmMax,
+    /// motorsExpected, ageMs, fresh}. fresh is false when the outputs are older
+    /// than MotorTable::kMotorOutputStaleMs or a motor's output is not known.
+    Q_INVOKABLE QVariantMap motorThrottleStatus() const;
 
     /// Persist the current pack config for the connected vehicle (no-op when
     /// no vehicle is connected).

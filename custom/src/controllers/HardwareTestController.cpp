@@ -6,6 +6,7 @@
  */
 
 #include "HardwareTestController.h"
+#include "core/MotorTable.h"
 
 #include <algorithm>
 #include <cmath>
@@ -1128,7 +1129,8 @@ void HardwareTestController::_evaluateTestResult()
     emit activeMotorChanged();
 }
 
-/// Enables or disables streaming of SERVO_OUTPUT_RAW (msg ID #36) at 10 Hz.
+/// Streams SERVO_OUTPUT_RAW (msg ID #36) at 10 Hz during a test; afterwards a
+/// copter goes back to the 2 Hz the motor-table estimate uses, others stop it.
 /// This message contains the actual PWM values the flight controller is outputting,
 /// which we use as feedback to verify motor/servo commands.
 void HardwareTestController::_setServoStreaming(bool enable)
@@ -1139,7 +1141,9 @@ void HardwareTestController::_setServoStreaming(bool enable)
         MAV_CMD_SET_MESSAGE_INTERVAL,
         false,
         static_cast<float>(MAVLINK_MSG_ID_SERVO_OUTPUT_RAW),
-        enable ? 100000.0f : -1.0f,
+        // Off goes back to the copter's steady rate for the motor-table
+        // estimate (TelemetryBridge asks for it on connect), not to no stream.
+        enable ? 100000.0f : (_vehicle->multiRotor() ? MotorTable::kMotorOutputIntervalUs : -1.0f),
         0, 0, 0, 0, 0
     );
 }

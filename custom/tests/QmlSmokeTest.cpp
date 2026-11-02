@@ -56,6 +56,8 @@
 #include "FlightSession.h"
 #include "TelemetryBridge.h"
 #include "VehicleProfileManager.h"
+#include "MotorTable.h"
+#include "ParameterWatchlist.h"
 #include "Comms/MockLink/MockLink.h"
 
 #include <QGeoCoordinate>
@@ -1297,6 +1299,7 @@ private slots:
     void testPowerLiveInFlyView();
     void testEstimatorPanelKeepsTheStoredPack();
     void testFlightHistoryDetailsRecorded();
+    void testMotorOutputsReadForTheEstimate();
 
 private:
     bool _connectPlane();
@@ -2184,6 +2187,61 @@ void LivePluginBenchTest::testFlightHistoryDetailsRecorded()
              qPrintable(events.join(QStringLiteral(", "))));
     QVERIFY2(_vehicle->flightMode() != other || events.contains(QStringLiteral("MODE_CHANGE")),
              qPrintable(QStringLiteral("mode %1 -> %2, events %3").arg(before, other, events.join(QStringLiteral(", ")))));
+}
+
+// The motor-table estimate's inputs on the mock copter (the real plugin): the
+// motor parameters are watched, and each motor's output signal
+// (SERVO_OUTPUT_RAW) becomes its throttle on the ESC range, in motor order;
+// the outputs count as fresh only while they keep arriving.
+void LivePluginBenchTest::testMotorOutputsReadForTheEstimate()
+{
+    QVERIFY2(_connectPlane(), "mock copter did not connect / resolve its UID");
+    for (const char *name : {"MOT_PWM_MIN", "MOT_PWM_MAX", "MOT_THST_HOVER", "MOT_SPIN_MIN", "MOT_SPIN_MAX",
+                             "MOT_THST_EXPO", "MOT_HOVER_LEARN", "MOT_BAT_VOLT_MAX", "SERVO1_FUNCTION", "SERVO16_FUNCTION"})
+        QVERIFY2(ParameterWatchlist::names().contains(QString::fromLatin1(name)), name);
+    VehicleProfileManager *vpm = VehicleProfileManager::instance();
+    auto *bridge = _pluginChild<TelemetryBridge>();
+    QVERIFY(bridge);
+    for (int i = 0; i < 100 && !bridge->parametersReady(); ++i)
+        QTest::qWait(50);
+
+    QVariantMap st = vpm->motorThrottleStatus();
+    QVariantList channels = st.value(QStringLiteral("channels")).toList();
+    if (channels.isEmpty())
+        for (int c = 1; c <= st.value(QStringLiteral("motorsExpected")).toInt(); ++c)
+            channels.append(c);
+    QVERIFY2(!channels.isEmpty(), "no motor outputs known on the mock copter");
+    const double pwmMin = st.value(QStringLiteral("pwmMin")).toDouble();
+    const double pwmMax = st.value(QStringLiteral("pwmMax")).toDouble();
+    QVERIFY(pwmMax > pwmMin);
+
+    // Motor k gets min + (0.30 + 0.05·k) of the range.
+    uint16_t pwm[16] = {};
+    for (int k = 0; k < channels.size(); ++k)
+        pwm[channels.at(k).toInt() - 1] = static_cast<uint16_t>(qRound(pwmMin + (0.30 + 0.05 * k) * (pwmMax - pwmMin)));
+    auto send = [&]() {
+        mavlink_message_t msg;
+        mavlink_msg_servo_output_raw_pack_chan(static_cast<uint8_t>(_vehicle->id()), static_cast<uint8_t>(_vehicle->defaultComponentId()),
+                                               0, &msg, 0, 0, pwm[0], pwm[1], pwm[2], pwm[3], pwm[4], pwm[5], pwm[6], pwm[7],
+                                               pwm[8], pwm[9], pwm[10], pwm[11], pwm[12], pwm[13], pwm[14], pwm[15]);
+        emit _vehicle->mavlinkMessageReceived(msg);
+    };
+    send();
+    QTest::qWait(50);
+    st = vpm->motorThrottleStatus();
+    const QVariantList thr = st.value(QStringLiteral("throttles")).toList();
+    QCOMPARE(thr.size(), channels.size());
+    for (int k = 0; k < thr.size(); ++k)
+        QVERIFY2(qAbs(thr.at(k).toDouble() - (0.30 + 0.05 * k)) < 1.0 / (pwmMax - pwmMin) + 1e-9,
+                 qPrintable(QStringLiteral("motor %1: %2").arg(k + 1).arg(thr.at(k).toDouble())));
+    QVERIFY(st.value(QStringLiteral("fresh")).toBool());
+
+    // No outputs for longer than the stale limit: not fresh.
+    QTest::qWait(static_cast<int>(MotorTable::kMotorOutputStaleMs) + 300);
+    QVERIFY(!vpm->motorThrottleStatus().value(QStringLiteral("fresh")).toBool());
+    send();
+    QTest::qWait(50);
+    QVERIFY(vpm->motorThrottleStatus().value(QStringLiteral("fresh")).toBool());
 }
 
 UT_REGISTER_TEST(LivePluginBenchTest)

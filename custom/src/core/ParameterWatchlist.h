@@ -110,6 +110,36 @@ inline const QVector<ParameterDef> &all()
         {"SYS_HITL",        "ARM", "Hardware-in-the-loop mode",       0.0f,   1.0f,    0.0f},
         {"FRAME_CLASS",     "ARM", "Frame class (quad=1, hex=2, ...)",0.0f,   10.0f,   0.0f},
         {"FRAME_TYPE",      "ARM", "Frame type (plus=1, x=2, ...)",   0.0f,   10.0f,   1.0f},
+
+        // ── Motors (the motor-table flight-time estimate) ──
+        // ESC range that turns each motor output into throttle, the settings
+        // that turn the learned hover throttle into motor output, and which
+        // output drives which motor.
+        {"MOT_PWM_MIN",     "MOT", "Motor PWM output minimum (0 = 1000)", 0.0f, 2200.0f, 1000.0f},
+        {"MOT_PWM_MAX",     "MOT", "Motor PWM output maximum (0 = 2000)", 0.0f, 2200.0f, 2000.0f},
+        {"MOT_SPIN_MIN",    "MOT", "Motor output at minimum thrust",   0.0f,   1.0f,    0.15f},
+        {"MOT_SPIN_MAX",    "MOT", "Motor output at maximum thrust",   0.0f,   1.0f,    0.95f},
+        {"MOT_THST_EXPO",   "MOT", "Thrust curve expo",               -1.0f,   1.0f,    0.65f},
+        {"MOT_THST_HOVER",  "MOT", "Learned hover throttle",           0.0f,   1.0f,    0.35f},
+        {"MOT_HOVER_LEARN", "MOT", "Hover throttle learning (2 = learn and save)", 0.0f, 2.0f, 2.0f},
+        {"MOT_BAT_VOLT_MAX","MOT", "Battery voltage compensation maximum (V)", 0.0f, 100.0f, 0.0f},
+        {"MOT_BAT_VOLT_MIN","MOT", "Battery voltage compensation minimum (V)", 0.0f, 100.0f, 0.0f},
+        {"SERVO1_FUNCTION",  "MOT", "Output 1 function (33-40 = motor 1-8)", 0.0f, 200.0f, 0.0f},
+        {"SERVO2_FUNCTION",  "MOT", "Output 2 function (33-40 = motor 1-8)", 0.0f, 200.0f, 0.0f},
+        {"SERVO3_FUNCTION",  "MOT", "Output 3 function (33-40 = motor 1-8)", 0.0f, 200.0f, 0.0f},
+        {"SERVO4_FUNCTION",  "MOT", "Output 4 function (33-40 = motor 1-8)", 0.0f, 200.0f, 0.0f},
+        {"SERVO5_FUNCTION",  "MOT", "Output 5 function (33-40 = motor 1-8)", 0.0f, 200.0f, 0.0f},
+        {"SERVO6_FUNCTION",  "MOT", "Output 6 function (33-40 = motor 1-8)", 0.0f, 200.0f, 0.0f},
+        {"SERVO7_FUNCTION",  "MOT", "Output 7 function (33-40 = motor 1-8)", 0.0f, 200.0f, 0.0f},
+        {"SERVO8_FUNCTION",  "MOT", "Output 8 function (33-40 = motor 1-8)", 0.0f, 200.0f, 0.0f},
+        {"SERVO9_FUNCTION",  "MOT", "Output 9 function (33-40 = motor 1-8)", 0.0f, 200.0f, 0.0f},
+        {"SERVO10_FUNCTION", "MOT", "Output 10 function (33-40 = motor 1-8)", 0.0f, 200.0f, 0.0f},
+        {"SERVO11_FUNCTION", "MOT", "Output 11 function (33-40 = motor 1-8)", 0.0f, 200.0f, 0.0f},
+        {"SERVO12_FUNCTION", "MOT", "Output 12 function (33-40 = motor 1-8)", 0.0f, 200.0f, 0.0f},
+        {"SERVO13_FUNCTION", "MOT", "Output 13 function (33-40 = motor 1-8)", 0.0f, 200.0f, 0.0f},
+        {"SERVO14_FUNCTION", "MOT", "Output 14 function (33-40 = motor 1-8)", 0.0f, 200.0f, 0.0f},
+        {"SERVO15_FUNCTION", "MOT", "Output 15 function (33-40 = motor 1-8)", 0.0f, 200.0f, 0.0f},
+        {"SERVO16_FUNCTION", "MOT", "Output 16 function (33-40 = motor 1-8)", 0.0f, 200.0f, 0.0f},
     };
     return params;
 }
