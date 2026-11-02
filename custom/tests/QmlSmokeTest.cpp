@@ -57,6 +57,11 @@
 #include "TelemetryBridge.h"
 #include "VehicleProfileManager.h"
 #include "MotorTable.h"
+#include "FactSystem/ParameterManager.h"
+#include "FactSystem/Fact.h"
+#include "Vehicle/FactGroups/VehicleBatteryFactGroup.h"
+#include "QmlObjectListModel.h"
+#include <QElapsedTimer>
 #include "ParameterWatchlist.h"
 #include "Comms/MockLink/MockLink.h"
 
@@ -1300,6 +1305,7 @@ private slots:
     void testEstimatorPanelKeepsTheStoredPack();
     void testFlightHistoryDetailsRecorded();
     void testMotorOutputsReadForTheEstimate();
+    void testMotorTableLiveEstimate();
 
 private:
     bool _connectPlane();
@@ -2242,6 +2248,139 @@ void LivePluginBenchTest::testMotorOutputsReadForTheEstimate()
     send();
     QTest::qWait(50);
     QVERIFY(vpm->motorThrottleStatus().value(QStringLiteral("fresh")).toBool());
+}
+
+// The live estimate of a copter linked to the motor table, on the mock
+// copter (the real plugin). With no current sensor (BATT_MONITOR 3, set on
+// the mock only) the GCS counts the charge itself: battery current = each
+// motor's table current at its output's throttle, at the pack voltage, plus
+// 1 A; the count grows with it while armed, and time left is the usable
+// charge over that current. When the outputs stop, the overall throttle is
+// used instead. With a current sensor (BATT_MONITOR 4) the FC's count wins.
+void LivePluginBenchTest::testMotorTableLiveEstimate()
+{
+    QVERIFY2(_connectPlane(), "mock copter did not connect / resolve its UID");
+    VehicleProfileManager *vpm = VehicleProfileManager::instance();
+    auto *bridge = _pluginChild<TelemetryBridge>();
+    QVERIFY(bridge);
+    for (int i = 0; i < 100 && (!bridge->parametersReady() || vpm->kind() != VehicleKind::Multirotor); ++i)
+        QTest::qWait(50);
+    const MotorTable::Table &table = MotorTable::m6215_320kv_22x78_8s();
+    QVERIFY(!vpm->linkCurrentVehicleMotorTable(QStringLiteral("no-such-table")));
+    QVERIFY(vpm->linkCurrentVehicleMotorTable(table.id));
+    QCOMPARE(vpm->motorTableId(), table.id);
+    QVERIFY(vpm->linkCurrentVehiclePowerType(0));
+    const int seriesBefore = vpm->batterySeriesCells(), parallelBefore = vpm->batteryParallelCells(),
+              mahBefore = vpm->batteryCellMah();
+    vpm->setBatterySeriesCells(8);
+    vpm->setBatteryParallelCells(1);
+    vpm->setBatteryCellMah(20000);
+
+    Fact *monitor = _vehicle->parameterManager()->getParameter(_vehicle->defaultComponentId(), QStringLiteral("BATT_MONITOR"));
+    QVERIFY(monitor);
+    const QVariant monitorBefore = monitor->rawValue();
+    monitor->setRawValue(3);
+    for (int i = 0; i < 100 && qRound(bridge->parameterValue(QStringLiteral("BATT_MONITOR"), -1.0f)) != 3; ++i)
+        QTest::qWait(50);
+    QCOMPARE(qRound(bridge->parameterValue(QStringLiteral("BATT_MONITOR"), -1.0f)), 3);
+
+    QVariantList channels = vpm->motorThrottleStatus().value(QStringLiteral("channels")).toList();
+    QVERIFY(!channels.isEmpty());
+    const double pwmMin = vpm->motorThrottleStatus().value(QStringLiteral("pwmMin")).toDouble();
+    const double pwmMax = vpm->motorThrottleStatus().value(QStringLiteral("pwmMax")).toDouble();
+    uint16_t pwm[16] = {};
+    for (const QVariant &c : channels)
+        pwm[c.toInt() - 1] = static_cast<uint16_t>(qRound(pwmMin + 0.371 * (pwmMax - pwmMin)));
+    // The mock numbers its batteries from 1; ArduPilot's first battery is 0,
+    // the pack the GCS reads. Send battery 0 the way ArduPilot does: 4 cells
+    // at 4.2 V, 16.8 V, far from the table's 30.7 V, so the pack-voltage
+    // correction shows.
+    auto sendPack = [&]() {
+        uint16_t cells[10];
+        std::fill(std::begin(cells), std::end(cells), UINT16_MAX);
+        cells[0] = cells[1] = cells[2] = cells[3] = 4200;
+        uint16_t ext[4] = {0, 0, 0, 0};
+        mavlink_message_t msg;
+        mavlink_msg_battery_status_pack_chan(static_cast<uint8_t>(_vehicle->id()), static_cast<uint8_t>(_vehicle->defaultComponentId()),
+                                             0, &msg, 0, MAV_BATTERY_FUNCTION_ALL, MAV_BATTERY_TYPE_LIPO, INT16_MAX, cells,
+                                             -1, -1, -1, -1, 0, MAV_BATTERY_CHARGE_STATE_OK, ext, 0, 0);
+        _mockLink->respondWithMavlinkMessage(msg);
+    };
+    sendPack();
+    for (int i = 0; i < 100 && !(bridge->batteryVoltage() > 0.0); ++i) {
+        QTest::qWait(50);
+        if (i % 10 == 9)
+            sendPack();
+    }
+    QTimer feed;
+    connect(&feed, &QTimer::timeout, this, [&]() {
+        sendPack();
+        mavlink_message_t msg;
+        mavlink_msg_servo_output_raw_pack_chan(static_cast<uint8_t>(_vehicle->id()), static_cast<uint8_t>(_vehicle->defaultComponentId()),
+                                               0, &msg, 0, 0, pwm[0], pwm[1], pwm[2], pwm[3], pwm[4], pwm[5], pwm[6], pwm[7],
+                                               pwm[8], pwm[9], pwm[10], pwm[11], pwm[12], pwm[13], pwm[14], pwm[15]);
+        emit _vehicle->mavlinkMessageReceived(msg);
+    });
+    feed.start(500);
+
+    // Before the arm: linked, but no current yet.
+    auto live = [vpm]() { return vpm->powerLive(); };
+    QTest::qWait(2500);
+    QVERIFY(!live().value(QStringLiteral("active")).toBool());
+    QVERIFY2(live().value(QStringLiteral("offReason")).toString().startsWith(QStringLiteral("motor table")),
+             qPrintable(live().value(QStringLiteral("offReason")).toString()));
+
+    FlightSession::instance()->setMode(QStringLiteral("FLIGHT"));
+    _vehicle->setArmed(true, false);
+    QVERIFY(_waitArmed(true));
+    for (int i = 0; i < 120 && !live().value(QStringLiteral("active")).toBool(); ++i)
+        QTest::qWait(50);
+    QVERIFY2(live().value(QStringLiteral("active")).toBool(), qPrintable(live().value(QStringLiteral("offReason")).toString()));
+    QCOMPARE(live().value(QStringLiteral("source")).toString(), QStringLiteral("motor table"));
+    QCOMPARE(live().value(QStringLiteral("tableId")).toString(), table.id);
+    QCOMPARE(live().value(QStringLiteral("chargeSource")).toString(), QStringLiteral("gcs"));
+    QCOMPARE(live().value(QStringLiteral("throttleSource")).toString(), QStringLiteral("motor outputs"));
+
+    const double packV = bridge->batteryVoltage();
+    QVERIFY2(packV > 0.0 && qAbs(packV - table.volts) > 5.0, qPrintable(QString::number(packV)));
+    const double thr = (qRound(pwmMin + 0.371 * (pwmMax - pwmMin)) - pwmMin) / (pwmMax - pwmMin);
+    const double expectA = channels.size() * MotorTable::motorCurrent(table, thr, packV).amps + MotorTable::kElectronicsA;
+    const double nowA = live().value(QStringLiteral("tableCurrentA")).toDouble();
+    QVERIFY2(qAbs(nowA - expectA) < 0.01 * expectA, qPrintable(QStringLiteral("%1 A, expected %2 A at %3 V").arg(nowA).arg(expectA).arg(packV)));
+
+    // The count grows by about current × time.
+    const double usable1 = live().value(QStringLiteral("usableAh")).toDouble();
+    QElapsedTimer clock;
+    clock.start();
+    QTest::qWait(6000);
+    const double usable2 = live().value(QStringLiteral("usableAh")).toDouble();
+    const double expectUsedAh = expectA * clock.elapsed() / 1000.0 / 3600.0;
+    QVERIFY2(usable1 - usable2 > 0.5 * expectUsedAh && usable1 - usable2 < 1.5 * expectUsedAh,
+             qPrintable(QStringLiteral("used %1 Ah in %2 s, expected about %3 Ah").arg(usable1 - usable2).arg(clock.elapsed() / 1000.0).arg(expectUsedAh)));
+    const double currentA = live().value(QStringLiteral("currentA")).toDouble();
+    QVERIFY(currentA > 0.0);
+    QVERIFY(qAbs(live().value(QStringLiteral("timeLeftMin")).toDouble() - usable2 / currentA * 60.0) < 0.5);
+
+    // Outputs stop: not "motor outputs" any more.
+    feed.stop();
+    QTest::qWait(static_cast<int>(MotorTable::kMotorOutputStaleMs) + 2500);
+    QVERIFY(live().value(QStringLiteral("throttleSource")).toString() != QStringLiteral("motor outputs"));
+
+    // A current sensor: the FC's count.
+    monitor->setRawValue(4);
+    for (int i = 0; i < 100 && qRound(bridge->parameterValue(QStringLiteral("BATT_MONITOR"), -1.0f)) != 4; ++i)
+        QTest::qWait(50);
+    QTest::qWait(2500);
+    QCOMPARE(live().value(QStringLiteral("chargeSource")).toString(), QStringLiteral("fc"));
+
+    _vehicle->setArmed(false, false);
+    QVERIFY(_waitArmed(false));
+    monitor->setRawValue(monitorBefore);
+    QVERIFY(vpm->linkCurrentVehicleMotorTable(QString()));
+    QVERIFY(vpm->motorTableId().isEmpty());
+    vpm->setBatterySeriesCells(seriesBefore);
+    vpm->setBatteryParallelCells(parallelBefore);
+    vpm->setBatteryCellMah(mahBefore);
 }
 
 UT_REGISTER_TEST(LivePluginBenchTest)

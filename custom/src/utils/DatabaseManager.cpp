@@ -340,7 +340,7 @@ bool DatabaseManager::initialize(const QString &dbPath)
 //       power-type model learns from (hover/cruise minutes with and without
 //       payload, FC mAh and current, throttle, cell volts at arm, telemetry
 //       coverage, time at target, the charger number and its learning state)
-static const int kLatestSchemaVersion = 25;
+static const int kLatestSchemaVersion = 26;
 
 bool DatabaseManager::createTables()
 {
@@ -1800,6 +1800,14 @@ bool DatabaseManager::migrateSchema()
             q.exec("CREATE INDEX IF NOT EXISTS idx_flight_sessions_power_type ON flight_sessions(power_type_id)");
             break;
         }
+        case 26:
+            // v26: which motor table a copter uses for its flight-time
+            // estimate (MotorTable.h id; MOTOR_TABLE_PLAN.md).
+            q.exec("CREATE TABLE IF NOT EXISTS vehicle_motor_table ("
+                   "device_uid TEXT PRIMARY KEY,"
+                   "table_id TEXT NOT NULL,"
+                   "linked_at TEXT NOT NULL)");
+            break;
         default:
             qWarning() << "DatabaseManager: unknown migration version" << v;
             m_db.rollback();
@@ -5321,6 +5329,35 @@ int DatabaseManager::vehiclePowerTypeId(const QString &deviceUid)
     q.addBindValue(deviceUid.trimmed());
     if (!execOrWarn(q, "vehiclePowerTypeId") || !q.next()) return -1;
     return q.value(0).toInt();
+}
+
+bool DatabaseManager::linkVehicleMotorTable(const QString &deviceUid, const QString &tableId)
+{
+    assertMainThread();
+    if (!m_initialized || deviceUid.trimmed().isEmpty()) return false;
+    QSqlQuery q(m_db);
+    if (tableId.trimmed().isEmpty()) {
+        q.prepare("DELETE FROM vehicle_motor_table WHERE device_uid = ?");
+        q.addBindValue(deviceUid.trimmed());
+        return execOrWarn(q, "linkVehicleMotorTable unlink");
+    }
+    q.prepare("INSERT INTO vehicle_motor_table (device_uid, table_id, linked_at) VALUES (?, ?, ?) "
+              "ON CONFLICT(device_uid) DO UPDATE SET table_id = excluded.table_id, linked_at = excluded.linked_at");
+    q.addBindValue(deviceUid.trimmed());
+    q.addBindValue(tableId.trimmed());
+    q.addBindValue(QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+    return execOrWarn(q, "linkVehicleMotorTable");
+}
+
+QString DatabaseManager::vehicleMotorTableId(const QString &deviceUid)
+{
+    assertMainThread();
+    if (!m_initialized || deviceUid.trimmed().isEmpty()) return QString();
+    QSqlQuery q(m_db);
+    q.prepare("SELECT table_id FROM vehicle_motor_table WHERE device_uid = ?");
+    q.addBindValue(deviceUid.trimmed());
+    if (!execOrWarn(q, "vehicleMotorTableId") || !q.next()) return QString();
+    return q.value(0).toString();
 }
 
 bool DatabaseManager::saveFlightPowerRecord(int sessionId, const FlightPowerRecord &r)

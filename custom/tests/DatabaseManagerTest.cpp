@@ -81,6 +81,7 @@ private slots:
     void testComplianceLogKeptWithoutVehicleDetails();
     void testRecorderPowerTypeFlight();
     void testRecorderHistoryEvents();
+    void testVehicleMotorTableLink();
 };
 
 void DatabaseManagerTest::testInitialize()
@@ -1723,14 +1724,14 @@ void DatabaseManagerTest::testPowerTypeFlightRecords()
 }
 
 // A database written before version 25 gains the power-type tables and the
-// flight columns when it is opened.
+// flight columns when it is opened, and then the motor-table link (v26).
 void DatabaseManagerTest::testPowerTypeUpgradeFromV24()
 {
     DatabaseManager &db = DatabaseManager::instance();
     QTemporaryDir dir;
     const QString path = dir.filePath(QStringLiteral("v24.db"));
     QVERIFY(db.initialize(path));
-    QCOMPARE(db.storedSchemaVersion(), 25);
+    QCOMPARE(db.storedSchemaVersion(), db.schemaVersion());
     db.reset();
 
     // Roll the file back to its v24 shape.
@@ -1739,19 +1740,21 @@ void DatabaseManagerTest::testPowerTypeUpgradeFromV24()
         raw.setDatabaseName(path);
         QVERIFY(raw.open());
         QSqlQuery q(raw);
+        QVERIFY(q.exec(QStringLiteral("DROP TABLE vehicle_motor_table")));
         QVERIFY(q.exec(QStringLiteral("DROP TABLE vehicle_power_type")));
         QVERIFY(q.exec(QStringLiteral("DROP TABLE power_types")));
         QVERIFY(q.exec(QStringLiteral("DROP INDEX idx_flight_sessions_power_type")));
         for (const char *col : { "power_type_id", "hover_min_empty", "charger_mah", "learning_state" })
             QVERIFY2(q.exec(QStringLiteral("ALTER TABLE flight_sessions DROP COLUMN %1").arg(QLatin1String(col))),
                      qPrintable(q.lastError().text()));
-        QVERIFY(q.exec(QStringLiteral("DELETE FROM schema_version WHERE version = 25")));
+        QVERIFY(q.exec(QStringLiteral("DELETE FROM schema_version WHERE version >= 25")));
         raw.close();
     }
     QSqlDatabase::removeDatabase(QStringLiteral("v24rollback"));
 
     QVERIFY(db.initialize(path));
-    QCOMPARE(db.storedSchemaVersion(), 25);
+    QCOMPARE(db.storedSchemaVersion(), db.schemaVersion());
+    QVERIFY(db.linkVehicleMotorTable(QStringLiteral("UID-V24"), QStringLiteral("m6215-320kv-msc22x7.8-8s")));
     QVERIFY(db.savePowerType(0, QStringLiteral("Quad X"), 15.0, 5.5, 6, {}) > 0);
     QSqlQuery cols(QSqlDatabase::database());
     QVERIFY(cols.exec(QStringLiteral("PRAGMA table_info(flight_sessions)")));
@@ -1901,6 +1904,29 @@ void DatabaseManagerTest::testRecorderHistoryEvents()
                       + e.value(QStringLiteral("triggered_by")).toString();
     QVERIFY2(events.contains(QStringLiteral("ARM:external")) && events.contains(QStringLiteral("DISARM:disarmed")),
              qPrintable(events.join(QStringLiteral(", "))));
+}
+
+// Which motor table a copter's estimate uses is stored per aircraft (v26):
+// linked, replaced, unlinked, and kept apart for each aircraft.
+void DatabaseManagerTest::testVehicleMotorTableLink()
+{
+    QTemporaryDir dir;
+    DatabaseManager &db = DatabaseManager::instance();
+    QVERIFY(db.initialize(dir.filePath(QStringLiteral("mt.db"))));
+    QCOMPARE(db.schemaVersion(), 26);
+    QCOMPARE(db.storedSchemaVersion(), 26);
+    const QString a = QStringLiteral("UID-MT-A"), b = QStringLiteral("UID-MT-B");
+    db.linkVehicleMotorTable(a, QString());
+    db.linkVehicleMotorTable(b, QString());
+    QVERIFY(db.vehicleMotorTableId(a).isEmpty());
+    QVERIFY(db.linkVehicleMotorTable(a, QStringLiteral("m6215-320kv-msc22x7.8-8s")));
+    QCOMPARE(db.vehicleMotorTableId(a), QStringLiteral("m6215-320kv-msc22x7.8-8s"));
+    QVERIFY(db.vehicleMotorTableId(b).isEmpty());
+    QVERIFY(db.linkVehicleMotorTable(a, QStringLiteral("other")));
+    QCOMPARE(db.vehicleMotorTableId(a), QStringLiteral("other"));
+    QVERIFY(db.linkVehicleMotorTable(a, QString()));
+    QVERIFY(db.vehicleMotorTableId(a).isEmpty());
+    QVERIFY(!db.linkVehicleMotorTable(QString(), QStringLiteral("other")));
 }
 
 UT_REGISTER_TEST(DatabaseManagerTest)

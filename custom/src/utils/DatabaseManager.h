@@ -309,6 +309,10 @@ public:
     Q_INVOKABLE bool linkVehiclePowerType(const QString &deviceUid, int powerTypeId);
     /// The aircraft's type id, or -1 when it is not linked.
     Q_INVOKABLE int vehiclePowerTypeId(const QString &deviceUid);
+    /// Links an aircraft to a motor table (MotorTable.h id); an empty id unlinks it.
+    Q_INVOKABLE bool linkVehicleMotorTable(const QString &deviceUid, const QString &tableId);
+    /// The aircraft's motor table id, or empty when it is not linked.
+    Q_INVOKABLE QString vehicleMotorTableId(const QString &deviceUid);
     /// Writes the recorder's numbers onto a flight. A flight that did not start
     /// on a full pack or lacks telemetry is marked "excluded" from learning;
     /// otherwise it waits as "pending" until the pilot picks Use or Dismiss

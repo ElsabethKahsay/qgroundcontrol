@@ -56,6 +56,8 @@ class VehicleProfileManager : public QObject {
     /// it is not linked or no aircraft is connected.
     Q_PROPERTY(int currentPowerTypeId READ currentPowerTypeId NOTIFY powerTypeChanged)
     Q_PROPERTY(QString currentPowerTypeName READ currentPowerTypeName NOTIFY powerTypeChanged)
+    /// Motor table the connected copter's estimate uses (MotorTable.h id); empty = none.
+    Q_PROPERTY(QString motorTableId READ motorTableId NOTIFY powerTypeChanged)
     /// Per flight: the pilot confirmed the props fitted match the power type,
     /// or waived the type, or waived a mission check that came out short.
     /// Cleared by the disarm that ends a flight (bench arms keep them) and by
@@ -302,6 +304,13 @@ public:
     Q_INVOKABLE bool deletePowerType(int id);
     /// Links the connected aircraft to a type (≤ 0 unlinks). False with no aircraft.
     Q_INVOKABLE bool linkCurrentVehiclePowerType(int powerTypeId);
+    // ── Motor table (MotorTable.h): the estimate from each motor's throttle ──
+    QString motorTableId() const { return m_motorTableId; }
+    /// Links the connected copter to a motor table (empty unlinks). False with
+    /// no aircraft or an unknown table.
+    Q_INVOKABLE bool linkCurrentVehicleMotorTable(const QString &tableId);
+    /// The tables the GCS knows: [{id, name, volts, motors, cells}].
+    Q_INVOKABLE QVariantList motorTables() const;
     /// The type's learned model: {status, source, hover0, hoverK, cruise0,
     /// cruiseK, advice, validated, chargerFactor, usedFlights, pendingFlights}.
     /// status: "none", "tooAlike", "payloadNotModelled", "payloadProportional",
@@ -404,6 +413,8 @@ private:
     QString m_packWaivedBy;             ///< Pilot who waived the pack; empty when not waived.
     int m_flightSessionId = -1;
     int m_powerTypeId = -1;             ///< Connected aircraft's power type; -1 = none.
+    QString m_motorTableId;             ///< Connected copter's motor table; empty = none.
+    double m_tableSmoothA = 0.0;        ///< Motor-table battery current, smoothed like m_liveSmoothAmps.
     bool m_propsConfirmed = false;
     QString m_powerTypeWaivedBy;
     QString m_missionWaivedBy;
