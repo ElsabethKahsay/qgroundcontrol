@@ -1308,6 +1308,7 @@ private slots:
     void testMotorTableLiveEstimate();
     void testMotorTableBeforeTakeoff();
     void testMotorTableCountsEveryReading();
+    void testMotorTableInTheApp();
 
 private:
     bool _connectPlane();
@@ -2760,6 +2761,112 @@ void LivePluginBenchTest::testMotorTableCountsEveryReading()
     QVERIFY(_waitArmed(false));
     restoreMockParams(paramsBefore);
     QVERIFY(vpm->linkCurrentVehicleMotorTable(QString()));
+    vpm->setBatterySeriesCells(seriesBefore);
+    vpm->setBatteryParallelCells(parallelBefore);
+    vpm->setBatteryCellMah(mahBefore);
+}
+
+// The motor table in the app, on the mock copter (the real plugin): linked
+// from the Vehicles page's "Motor table" choice, the preflight "Power type"
+// item passes without a power type, and the battery chip names the motor
+// table as the estimate's source; unlinked from the page, the item needs a
+// power type again.
+void LivePluginBenchTest::testMotorTableInTheApp()
+{
+    QVERIFY2(_connectPlane(), "mock copter did not connect / resolve its UID");
+    VehicleProfileManager *vpm = VehicleProfileManager::instance();
+    auto *mgr = _pluginChild<PreflightManager>();
+    auto *bridge = _pluginChild<TelemetryBridge>();
+    QVERIFY(mgr && bridge);
+    for (int i = 0; i < 100 && (!bridge->parametersReady() || vpm->kind() != VehicleKind::Multirotor); ++i)
+        QTest::qWait(50);
+    const MotorTable::Table &table = MotorTable::m6215_320kv_22x78_6s();
+    QVERIFY(vpm->linkCurrentVehiclePowerType(0));
+    QVERIFY(vpm->linkCurrentVehicleMotorTable(QString()));
+    const int seriesBefore = vpm->batterySeriesCells(), parallelBefore = vpm->batteryParallelCells(),
+              mahBefore = vpm->batteryCellMah();
+    vpm->setBatterySeriesCells(6);
+    vpm->setBatteryParallelCells(1);
+    vpm->setBatteryCellMah(20000);
+    const auto paramsBefore = setMockParams(_vehicle, bridge, {{QStringLiteral("SERVO5_FUNCTION"), 0.0},
+                                                               {QStringLiteral("SERVO6_FUNCTION"), 0.0}});
+
+    QSharedPointer<QQmlApplicationEngine> engine(QGCCorePlugin::instance()->createQmlApplicationEngine(nullptr));
+    QVERIFY(engine);
+    QGCPalette palette;
+    engine->rootContext()->setContextProperty(QStringLiteral("qgcPal"), &palette);
+    QSharedPointer<QQuickWindow> window(createWindow(engine, 1400, 900));
+    QString err;
+    QScopedPointer<QQuickItem> page(createComponent(engine, window.data(), "qrc:/qml/analyze/VehiclesPage.qml", &err));
+    QVERIFY2(page, qPrintable(err));
+    page->setSize(QSizeF(1400, 900));
+    pumpQml(300);
+    std::function<QObject *(QQuickItem *, const QString &)> findItem =
+        [&findItem](QQuickItem *item, const QString &name) -> QObject * {
+        if (QObject *o = item->findChild<QObject *>(name))
+            return o;
+        for (QQuickItem *child : item->childItems()) {
+            if (child->objectName() == name)
+                return child;
+            if (QObject *o = findItem(child, name))
+                return o;
+        }
+        return nullptr;
+    };
+    QObject *combo = findItem(page.data(), QStringLiteral("motorTableCombo"));
+    QObject *link = findItem(page.data(), QStringLiteral("motorTableLinkButton"));
+    QObject *status = findItem(page.data(), QStringLiteral("motorTableStatus"));
+    QVERIFY(combo && link && status);
+    QCOMPARE(combo->property("count").toInt(), 1 + int(MotorTable::all().size()));
+    QVERIFY(status->property("text").toString().startsWith(QStringLiteral("Not linked")));
+
+    // Link from the page.
+    combo->setProperty("currentIndex", 1);
+    QVERIFY(link->property("enabled").toBool());
+    QMetaObject::invokeMethod(link, "clicked");
+    pumpQml(200);
+    QCOMPARE(vpm->motorTableId(), table.id);
+    QCOMPARE(combo->property("currentIndex").toInt(), 1);
+    QVERIFY2(status->property("text").toString().contains(QStringLiteral("Hover")),
+             qPrintable(status->property("text").toString()));
+
+    // The checklist's Power type item passes on the motor table.
+    AbstractCheck *item = mgr->checkById(QStringLiteral("power.power_type"));
+    QVERIFY(item);
+    item->evaluate();
+    QCOMPARE(item->status(), CheckStatus::Passed);
+    QVERIFY2(item->message().contains(QStringLiteral("(motor table)")), qPrintable(item->message()));
+
+    // With a hover remembered, the ground estimate is on and the battery chip
+    // names the motor table.
+    QVERIFY(DatabaseManager::instance().saveVehicleMotorHover(vpm->currentDeviceUid(), 3000.0, 20));
+    for (int i = 0; i < 100 && !vpm->powerLive().value(QStringLiteral("active")).toBool(); ++i)
+        QTest::qWait(50);
+    QVERIFY2(vpm->powerLive().value(QStringLiteral("active")).toBool(),
+             qPrintable(vpm->powerLive().value(QStringLiteral("offReason")).toString()));
+    QDir src(QCoreApplication::applicationDirPath());
+    for (int i = 0; i < 4 && !QFileInfo::exists(src.filePath(QStringLiteral("custom/qml/cpts/BatteryStatusChip.qml"))); ++i)
+        src.cdUp();
+    QScopedPointer<QQuickItem> chip(createComponent(engine, window.data(),
+        src.filePath(QStringLiteral("custom/qml/cpts/BatteryStatusChip.qml")).toUtf8().constData(), &err));
+    QVERIFY2(chip, qPrintable(err));
+    pumpQml(300);
+    QObject *row = findItem(chip.data(), QStringLiteral("chipEstimateSource"));
+    QVERIFY(row);
+    QCOMPARE(row->property("label").toString(), QStringLiteral("Motor table"));
+    QVERIFY2(row->property("value").toString().startsWith(table.name), qPrintable(row->property("value").toString()));
+
+    // Unlink from the page: the item needs a power type again.
+    combo->setProperty("currentIndex", 0);
+    QMetaObject::invokeMethod(link, "clicked");
+    pumpQml(200);
+    QVERIFY(vpm->motorTableId().isEmpty());
+    item->evaluate();
+    QCOMPARE(item->status(), CheckStatus::Pending);
+
+    chip->setParentItem(nullptr);
+    page->setParentItem(nullptr);
+    restoreMockParams(paramsBefore);
     vpm->setBatterySeriesCells(seriesBefore);
     vpm->setBatteryParallelCells(parallelBefore);
     vpm->setBatteryCellMah(mahBefore);

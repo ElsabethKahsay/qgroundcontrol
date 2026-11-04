@@ -42,6 +42,7 @@ private slots:
     void testPayloadItemNeedsAnEnteredWeight();
     void testBatteryPackWarnsOnFcCapacityMismatch();
     void testPowerTypeItemNeedsConfirmedProps();
+    void testPowerTypeItemWithMotorTable();
     void testMissionCheckBlocksOnlyWhenValidated();
     void testMissionCheckOnMotorTable();
     void testPowerTypeWaiversAndTimeAtTarget();
@@ -693,6 +694,39 @@ void ArmingGateTest::testMissionCheckOnMotorTable()
     QCOMPARE(status(), CheckStatus::Warning);
     QVERIFY2(item->message().contains(QStringLiteral("not yet validated")), qPrintable(item->message()));
     QVERIFY(!g.failing(id));
+}
+
+// "Power type" for a copter linked to a motor table: no power type or props
+// confirmation is needed (the table is the maker's test of its motor and
+// prop), so it passes; when the table's setup checks turn the estimate off it
+// warns and says why; neither blocks.
+void ArmingGateTest::testPowerTypeItemWithMotorTable()
+{
+    QVariantMap st{{QStringLiteral("applicable"), true}, {QStringLiteral("typeId"), -1},
+                   {QStringLiteral("tableName"), QStringLiteral("M6215 HighProt 320KV · MSC 22×7.8 · 6S quad")}};
+    auto *item = new PowerTypeCheck([&st]() { return st; });
+    OneCheckGate g(item);
+    const QString id = QStringLiteral("power.power_type");
+
+    item->evaluate();
+    QCOMPARE(item->status(), CheckStatus::Passed);
+    QVERIFY2(item->message().contains(QStringLiteral("(motor table)")), qPrintable(item->message()));
+    QVERIFY(item->satisfied());
+    QVERIFY(!g.failing(id));
+
+    st[QStringLiteral("tableOffText")] = QStringLiteral("The motor table is for 6S; this pack is 8S");
+    item->evaluate();
+    QCOMPARE(item->status(), CheckStatus::Warning);
+    QVERIFY2(item->message().contains(QStringLiteral("this pack is 8S")) && item->message().contains(QStringLiteral("estimate off")),
+             qPrintable(item->message()));
+    QVERIFY(!g.failing(id));
+
+    // Unlinked again: back to needing a power type.
+    st.remove(QStringLiteral("tableName"));
+    st.remove(QStringLiteral("tableOffText"));
+    item->evaluate();
+    QCOMPARE(item->status(), CheckStatus::Pending);
+    QVERIFY(g.failing(id));
 }
 
 UT_REGISTER_TEST(ArmingGateTest)

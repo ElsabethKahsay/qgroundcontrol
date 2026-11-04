@@ -6,6 +6,11 @@
 // waive it for the flight (logged); the flight-time estimate is then the
 // rough one and the mission check is off.
 //
+// A copter linked to a motor table (MOTOR_TABLE_PLAN.md) needs no power type:
+// the table is the maker's test of its exact motor and prop, so it passes.
+// When the table's setup checks turn the estimate off (another frame or pack,
+// no pack size) it is a warning that says why.
+//
 // Mandatory, so Pending blocks arming. Warnings (frame or cell count not
 // matching the type, no current estimate on the flight controller) do not.
 //
@@ -22,7 +27,9 @@
 class PowerTypeCheck : public AbstractCheck {
 public:
     /// @p state returns {applicable (copter), typeId, typeName, propsConfirmed,
-    /// waivedBy, warnings (QStringList: frame/cells/BATT_MONITOR mismatches)}.
+    /// waivedBy, warnings (QStringList: frame/cells/BATT_MONITOR mismatches),
+    /// tableName (the motor table linked, if any), tableOffText (why its
+    /// estimate is off, if it is)}.
     using StateProvider = std::function<QVariantMap()>;
 
     explicit PowerTypeCheck(StateProvider state, QObject *parent = nullptr)
@@ -46,7 +53,8 @@ public:
         const QVariantMap s = m_state ? m_state() : QVariantMap();
         if (!s.value(QStringLiteral("applicable")).toBool())
             return true;
-        return !s.value(QStringLiteral("waivedBy")).toString().isEmpty()
+        return !s.value(QStringLiteral("tableName")).toString().isEmpty()
+            || !s.value(QStringLiteral("waivedBy")).toString().isEmpty()
             || (s.value(QStringLiteral("typeId")).toInt() > 0 && s.value(QStringLiteral("propsConfirmed")).toBool());
     }
 
@@ -56,6 +64,16 @@ public:
         if (!s.value(QStringLiteral("applicable")).toBool()) {
             setCurrentValue(QVariant());
             setStatus(CheckStatus::Skipped, QStringLiteral("Copters only"));
+            return;
+        }
+        const QString table = s.value(QStringLiteral("tableName")).toString();
+        if (!table.isEmpty()) {
+            setCurrentValue(table);
+            const QString off = s.value(QStringLiteral("tableOffText")).toString();
+            if (!off.isEmpty())
+                setStatus(CheckStatus::Warning, QStringLiteral("%1 (motor table) — %2: flight-time estimate off").arg(table, off));
+            else
+                setStatus(CheckStatus::Passed, QStringLiteral("%1 (motor table)").arg(table));
             return;
         }
         const QString waivedBy = s.value(QStringLiteral("waivedBy")).toString();

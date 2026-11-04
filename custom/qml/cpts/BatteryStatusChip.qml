@@ -377,9 +377,15 @@ Rectangle {
                                ? "~" + Math.round(root._preEst.flightTimeMin) + " min / " + root._preEst.rangeKm.toFixed(1) + " km"
                                : "—"
                         valueColor: root._preEstShown && root._preEst.isCalibrated ? Colors.success : Colors.textSecondary }
-            DetailRow { label: qsTr("Power type");
+            DetailRow { label: root._pl.source === "motor table" ? qsTr("Motor table") : qsTr("Power type");
+                        objectName: "chipEstimateSource"
                         visible: root._plActive
-                        value: root._plActive ? root._pl.typeName + (root._pl.source === "synthetic" ? " (not yet learned)" : "") : ""
+                        value: !root._plActive ? ""
+                               : root._pl.source === "motor table"
+                                 ? root._pl.typeName
+                                   + (root._pl.motorsBeyond > 0 ? qsTr(" (beyond table)") : "")
+                                   + (root._pl.throttleSource === "overall throttle" ? qsTr(" (from the overall throttle)") : "")
+                                 : root._pl.typeName + (root._pl.source === "synthetic" ? " (not yet learned)" : "")
                         valueColor: Colors.textPrimary }
             DetailRow { label: qsTr("Left");
                         visible: root._plActive

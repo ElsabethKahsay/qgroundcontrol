@@ -186,9 +186,11 @@ Until it is proven on this copter (see below) a trip that does not fit is an amb
 At 12 kg this drone hovers at 49.5 % throttle on a 23 V pack (51.3 % at the 22.2 V planning voltage), inside the 60 %
 limit. The limit is reached at about 15.6 kg.
 
-## What the pilot sees and does (step 5, not built yet)
+## What the pilot sees and does (step 5)
 
-- **Once per copter:** Analyze → Vehicles → "Motor table" → pick "M6215 HighProt 320KV · MSC 22×7.8 · 6S quad".
+- **Once per copter:** Analyze → Vehicles → Power types → "Motor table" → pick "M6215 HighProt 320KV · MSC 22×7.8 · 6S
+  quad" → Link. A line under it shows where the hover comes from (the last flight, or `MOT_THST_HOVER`), the copter's
+  weight and hover current, the air density, and any warning.
 - **Preflight:** the "Power type" item passes for a linked copter. The "Mission check" item shows the hover, the weight
   and whether the trip fits; it is an amber warning, not a block, until the table is proven.
 - **Fly view:** time and distance left as today, with "motor table" as the source, and "beyond table" or "overall
@@ -265,7 +267,7 @@ The table comes from a test stand, so it has to be checked on the aircraft:
 | 3 | In flight: a linked copter's charge count and time left from the table; current sensor wins; overall throttle when outputs stop | Done, commit 6f09aa887 |
 | 4 | Before take-off: the hover remembered from the last flight or from `MOT_THST_HOVER`; the trip check on the table; the setup checks | Done |
 | — | Switch to 6S: the maker's 23 V table as published replaces the 8S table; the 8S and 12S/160KV files removed | Done |
-| 5 | Linking on the Vehicles page; preflight item; Fly-view display | Next |
+| 5 | Linking on the Vehicles page; the Power type item passes on the table (amber when its estimate is off); the battery chip names the motor table | Done |
 | 6 | Recording per flight; charger fine-tuning; proving the table | To do |
 | 7 | SITL run, full test suite, docs | To do |
 

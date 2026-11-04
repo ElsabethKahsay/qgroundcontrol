@@ -54,6 +54,7 @@ int qInitResources_qmlcache_VehicleSetupModule();
 #include "core/BatteryPackCheck.h"
 #include "core/PayloadCheck.h"
 #include "core/PowerTypeCheck.h"
+#include "core/MotorTable.h"
 #include "core/MissionCheck.h"
 #include "core/PowerTypeModel.h"
 #include "core/SessionRecorder.h"
@@ -335,6 +336,18 @@ void PreflightPlugin::init()
         st[QStringLiteral("typeName")] = vpm->currentPowerTypeName();
         st[QStringLiteral("propsConfirmed")] = vpm->powerTypePropsConfirmed();
         st[QStringLiteral("waivedBy")] = vpm->powerTypeWaivedBy();
+        // A motor table instead of a power type: its name, and the first
+        // setup check that turns its estimate off.
+        if (const MotorTable::Table *table = MotorTable::byId(vpm->motorTableId())) {
+            st[QStringLiteral("tableName")] = table->name;
+            const QVariantMap setup = vpm->motorTableSetup();
+            for (const QVariant &i : setup.value(QStringLiteral("issues")).toList()) {
+                if (i.toMap().value(QStringLiteral("level")).toString() == QLatin1String("off")) {
+                    st[QStringLiteral("tableOffText")] = i.toMap().value(QStringLiteral("text"));
+                    break;
+                }
+            }
+        }
         // What the flight controller can tell: its frame, the pack's cell
         // count from its voltage, and whether it reports a current at all.
         QStringList warnings;

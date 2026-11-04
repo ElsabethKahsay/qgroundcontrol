@@ -345,6 +345,10 @@ AnalyzePage {
                 property var flights: []
                 property var ampSuggestion: ({})
                 property string message: ""
+                // The motor tables the GCS carries, and the connected copter's
+                // link to one (MOTOR_TABLE_PLAN.md).
+                property var motorTables: []
+                property var mtSetup: ({})
 
                 function reload() {
                     if (!_vpm) return
@@ -359,6 +363,30 @@ AnalyzePage {
                     ampSuggestion = (selId > 0 && selId === _vpm.currentPowerTypeId) ? _vpm.ampPerVoltSuggestion() : ({})
                     takeoffField.text = _vpm.takeoffMin
                     landField.text = _vpm.landMin
+                    motorTables = _vpm.motorTables()
+                    mtSetup = _vpm.motorTableId !== "" ? _vpm.motorTableSetup() : ({})
+                    var idx = 0
+                    for (var k = 0; k < motorTables.length; ++k)
+                        if (motorTables[k].id === _vpm.motorTableId) idx = k + 1
+                    mtCombo.currentIndex = idx
+                }
+                // What the linked motor table knows before take-off: where the
+                // hover comes from, the weight, the air, and its warnings.
+                function motorTableStatus() {
+                    if (!_vpm || _vpm.motorTableId === "") return qsTr("Not linked: the estimate uses a power type.")
+                    var t = mtSetup
+                    var parts = []
+                    if (t.hoverSource)
+                        parts.push(qsTr("Hover from the %1: %2 kg, %3 A").arg(t.hoverSource)
+                                   .arg(Number(t.weightKg).toFixed(1)).arg(Number(t.hoverA).toFixed(1)))
+                    else
+                        parts.push(qsTr("Hover not known yet: fly once (30 s of steady hover)"))
+                    if (t.densityRatio !== undefined)
+                        parts.push(qsTr("air density %1 (%2)").arg(Number(t.densityRatio).toFixed(3)).arg(t.densitySource))
+                    var issues = t.issues || []
+                    for (var i = 0; i < issues.length; ++i)
+                        parts.push((issues[i].level === "off" ? qsTr("Estimate off: ") : "") + issues[i].text)
+                    return parts.join(" · ")
                 }
                 function select(id) {
                     selId = id
@@ -439,6 +467,48 @@ AnalyzePage {
                             text: _ptPane._vpm && _ptPane._vpm.currentDeviceUid !== ""
                                   ? qsTr("Connected copter's type: %1").arg(_ptPane._vpm.currentPowerTypeName || qsTr("not linked"))
                                   : qsTr("No copter connected")
+                        }
+
+                        // A copter of a drone type whose maker's motor table
+                        // the GCS carries: link it once, and the estimate
+                        // comes from the table instead of a power type.
+                        Text {
+                            Layout.fillWidth: true
+                            text: qsTr("Motor table")
+                            font.pixelSize: fs(13)
+                            font.bold: true
+                            color: Colors.textPrimary
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            ComboBox {
+                                id: mtCombo
+                                objectName: "motorTableCombo"
+                                Layout.fillWidth: true
+                                font.pixelSize: fs(12)
+                                model: [qsTr("None")].concat(_ptPane.motorTables.map(function(t) { return t.name }))
+                            }
+                            Button {
+                                objectName: "motorTableLinkButton"
+                                text: qsTr("Link")
+                                flat: true
+                                enabled: _ptPane._vpm && _ptPane._vpm.currentDeviceUid !== ""
+                                onClicked: {
+                                    var id = mtCombo.currentIndex > 0 ? _ptPane.motorTables[mtCombo.currentIndex - 1].id : ""
+                                    var ok = _ptPane._vpm.linkCurrentVehicleMotorTable(id)
+                                    _ptPane.message = !ok ? qsTr("Not linked: no copter connected.")
+                                                    : id !== "" ? qsTr("Linked to the motor table.")
+                                                                : qsTr("Motor table unlinked.")
+                                }
+                            }
+                        }
+                        Text {
+                            objectName: "motorTableStatus"
+                            Layout.fillWidth: true
+                            wrapMode: Text.Wrap
+                            font.pixelSize: fs(11)
+                            color: Colors.textSecondary
+                            text: _ptPane.motorTableStatus()
                         }
 
                         ListView {
