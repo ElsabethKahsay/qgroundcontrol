@@ -1914,7 +1914,7 @@ void DatabaseManagerTest::testVehicleMotorTableLink()
     QTemporaryDir dir;
     DatabaseManager &db = DatabaseManager::instance();
     QVERIFY(db.initialize(dir.filePath(QStringLiteral("mt.db"))));
-    QVERIFY(db.schemaVersion() >= 27);
+    QVERIFY(db.schemaVersion() >= 28);
     QCOMPARE(db.storedSchemaVersion(), db.schemaVersion());
     const QString a = QStringLiteral("UID-MT-A"), b = QStringLiteral("UID-MT-B");
     db.linkVehicleMotorTable(a, QString());
@@ -1945,6 +1945,41 @@ void DatabaseManagerTest::testVehicleMotorTableLink()
     QVERIFY(db.linkVehicleMotorTable(a, QStringLiteral("other")));
     QVERIFY(db.vehicleMotorHover(a).isEmpty());
     QVERIFY(db.linkVehicleMotorTable(a, QString()));
+
+    // Its flights for the charger comparison (v28): recorded, the charger
+    // number entered (a pending flight becomes used), dismissed; per aircraft
+    // and table, oldest first.
+    QVariantMap f{{QStringLiteral("deviceUid"), a}, {QStringLiteral("tableId"), QStringLiteral("m6215-320kv-msc22x7.8-6s")},
+                  {QStringLiteral("gcsAh"), 14.2}, {QStringLiteral("startedFull"), true}, {QStringLiteral("startSoc"), 100.0},
+                  {QStringLiteral("hoverW"), 1666.0}, {QStringLiteral("hoverS"), 300.0}, {QStringLiteral("avgVolts"), 22.6},
+                  {QStringLiteral("minVolts"), 18.9}, {QStringLiteral("beyondS"), 0.0}, {QStringLiteral("density"), 0.75}};
+    const int id1 = db.insertMotorTableFlight(f);
+    QVERIFY(id1 > 0);
+    f[QStringLiteral("gcsAh")] = 9.0;
+    f[QStringLiteral("startedFull")] = false;
+    const int id2 = db.insertMotorTableFlight(f);
+    f[QStringLiteral("tableId")] = QStringLiteral("other");
+    QVERIFY(db.insertMotorTableFlight(f) > 0);
+    QVariantList rows = db.motorTableFlights(a, QStringLiteral("m6215-320kv-msc22x7.8-6s"));
+    QCOMPARE(rows.size(), 2);
+    QCOMPARE(rows[0].toMap().value(QStringLiteral("id")).toInt(), id1);
+    QCOMPARE(rows[0].toMap().value(QStringLiteral("gcsAh")).toDouble(), 14.2);
+    QVERIFY(rows[0].toMap().value(QStringLiteral("startedFull")).toBool());
+    QVERIFY(!rows[1].toMap().value(QStringLiteral("startedFull")).toBool());
+    QCOMPARE(rows[0].toMap().value(QStringLiteral("state")).toString(), QStringLiteral("pending"));
+    QVERIFY(!rows[0].toMap().value(QStringLiteral("chargerMah")).isValid() || rows[0].toMap().value(QStringLiteral("chargerMah")).isNull());
+    QVERIFY(db.setMotorTableFlightCharger(id1, 14600.0));
+    QVERIFY(!db.setMotorTableFlightCharger(id1, 0.0));
+    QVERIFY(!db.setMotorTableFlightCharger(id1, 300000.0));
+    rows = db.motorTableFlights(a, QStringLiteral("m6215-320kv-msc22x7.8-6s"));
+    QCOMPARE(rows[0].toMap().value(QStringLiteral("chargerMah")).toDouble(), 14600.0);
+    QCOMPARE(rows[0].toMap().value(QStringLiteral("state")).toString(), QStringLiteral("used"));
+    QVERIFY(db.setMotorTableFlightState(id2, QStringLiteral("dismissed")));
+    QVERIFY(!db.setMotorTableFlightState(id2, QStringLiteral("nonsense")));
+    QVERIFY(db.setMotorTableFlightCharger(id2, 9500.0));     // a dismissed flight stays dismissed
+    QCOMPARE(db.motorTableFlights(a, QStringLiteral("m6215-320kv-msc22x7.8-6s"))[1].toMap().value(QStringLiteral("state")).toString(),
+             QStringLiteral("dismissed"));
+    QVERIFY(db.motorTableFlights(b, QStringLiteral("m6215-320kv-msc22x7.8-6s")).isEmpty());
 }
 
 UT_REGISTER_TEST(DatabaseManagerTest)

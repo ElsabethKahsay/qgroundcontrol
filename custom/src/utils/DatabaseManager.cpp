@@ -340,7 +340,7 @@ bool DatabaseManager::initialize(const QString &dbPath)
 //       power-type model learns from (hover/cruise minutes with and without
 //       payload, FC mAh and current, throttle, cell volts at arm, telemetry
 //       coverage, time at target, the charger number and its learning state)
-static const int kLatestSchemaVersion = 27;
+static const int kLatestSchemaVersion = 28;
 
 bool DatabaseManager::createTables()
 {
@@ -1824,6 +1824,33 @@ bool DatabaseManager::migrateSchema()
             }
             break;
         }
+        case 28:
+            // v28: each flight of a copter on a motor table, for the charger
+            // comparison that fine-tunes and proves the table
+            // (MOTOR_TABLE_PLAN.md step 6).
+            q.exec("CREATE TABLE IF NOT EXISTS motor_table_flights ("
+                   "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                   "device_uid TEXT NOT NULL,"
+                   "table_id TEXT NOT NULL,"
+                   "started_at TEXT NOT NULL,"
+                   "ended_at TEXT NOT NULL,"
+                   "gcs_ah REAL NOT NULL,"
+                   "started_full INTEGER NOT NULL DEFAULT 0,"
+                   "start_soc REAL,"
+                   "hover_w REAL,"
+                   "hover_s REAL,"
+                   "cruise_ratio REAL,"
+                   "cruise_s REAL,"
+                   "avg_volts REAL,"
+                   "min_volts REAL,"
+                   "beyond_s REAL,"
+                   "overall_throttle_s REAL,"
+                   "density REAL,"
+                   "pack_ohm REAL,"
+                   "charger_mah REAL,"
+                   "state TEXT NOT NULL DEFAULT 'pending')");
+            q.exec("CREATE INDEX IF NOT EXISTS idx_motor_table_flights_vehicle ON motor_table_flights(device_uid, table_id)");
+            break;
         default:
             qWarning() << "DatabaseManager: unknown migration version" << v;
             m_db.rollback();
@@ -5409,6 +5436,80 @@ QVariantMap DatabaseManager::vehicleMotorHover(const QString &deviceUid)
     out[QStringLiteral("samples")] = q.value(1).toInt();
     out[QStringLiteral("at")] = q.value(2).toString();
     return out;
+}
+
+int DatabaseManager::insertMotorTableFlight(const QVariantMap &f)
+{
+    assertMainThread();
+    if (!m_initialized || f.value(QStringLiteral("deviceUid")).toString().isEmpty()) return -1;
+    QSqlQuery q(m_db);
+    q.prepare("INSERT INTO motor_table_flights (device_uid, table_id, started_at, ended_at, gcs_ah, started_full, "
+              "start_soc, hover_w, hover_s, cruise_ratio, cruise_s, avg_volts, min_volts, beyond_s, overall_throttle_s, "
+              "density, pack_ohm, charger_mah) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    auto num = [&f](const char *k) {
+        const QVariant v = f.value(QLatin1String(k));
+        return v.isValid() && v.toDouble() >= 0.0 ? v : QVariant();
+    };
+    q.addBindValue(f.value(QStringLiteral("deviceUid")));
+    q.addBindValue(f.value(QStringLiteral("tableId")));
+    q.addBindValue(f.value(QStringLiteral("startedAt"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate)));
+    q.addBindValue(f.value(QStringLiteral("endedAt"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate)));
+    q.addBindValue(f.value(QStringLiteral("gcsAh")).toDouble());
+    q.addBindValue(f.value(QStringLiteral("startedFull")).toBool() ? 1 : 0);
+    for (const char *k : {"startSoc", "hoverW", "hoverS", "cruiseRatio", "cruiseS", "avgVolts", "minVolts",
+                          "beyondS", "overallThrottleS", "density", "packOhm", "chargerMah"})
+        q.addBindValue(num(k));
+    if (!execOrWarn(q, "insertMotorTableFlight")) return -1;
+    return q.lastInsertId().toInt();
+}
+
+QVariantList DatabaseManager::motorTableFlights(const QString &deviceUid, const QString &tableId)
+{
+    assertMainThread();
+    QVariantList out;
+    if (!m_initialized) return out;
+    QSqlQuery q(m_db);
+    q.prepare("SELECT id, started_at, ended_at, gcs_ah, started_full, start_soc, hover_w, hover_s, cruise_ratio, "
+              "cruise_s, avg_volts, min_volts, beyond_s, overall_throttle_s, density, pack_ohm, charger_mah, state "
+              "FROM motor_table_flights WHERE device_uid = ? AND table_id = ? ORDER BY id");
+    q.addBindValue(deviceUid);
+    q.addBindValue(tableId);
+    if (!execOrWarn(q, "motorTableFlights")) return out;
+    static const char *const kKeys[] = { "id", "startedAt", "endedAt", "gcsAh", "startedFull", "startSoc", "hoverW",
+                                         "hoverS", "cruiseRatio", "cruiseS", "avgVolts", "minVolts", "beyondS",
+                                         "overallThrottleS", "density", "packOhm", "chargerMah", "state" };
+    while (q.next()) {
+        QVariantMap m;
+        for (int i = 0; i < int(sizeof(kKeys) / sizeof(kKeys[0])); ++i)
+            m[QLatin1String(kKeys[i])] = q.value(i);
+        m[QStringLiteral("startedFull")] = q.value(4).toInt() != 0;
+        out.append(m);
+    }
+    return out;
+}
+
+bool DatabaseManager::setMotorTableFlightCharger(int flightId, double chargerMah)
+{
+    assertMainThread();
+    if (!m_initialized || flightId <= 0 || !(chargerMah > 0.0) || chargerMah > 200000.0) return false;
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE motor_table_flights SET charger_mah = ?, state = CASE WHEN state = 'dismissed' THEN state ELSE 'used' END WHERE id = ?");
+    q.addBindValue(chargerMah);
+    q.addBindValue(flightId);
+    return execOrWarn(q, "setMotorTableFlightCharger") && q.numRowsAffected() == 1;
+}
+
+bool DatabaseManager::setMotorTableFlightState(int flightId, const QString &state)
+{
+    assertMainThread();
+    if (!m_initialized || flightId <= 0
+        || (state != QLatin1String("pending") && state != QLatin1String("used") && state != QLatin1String("dismissed")))
+        return false;
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE motor_table_flights SET state = ? WHERE id = ?");
+    q.addBindValue(state);
+    q.addBindValue(flightId);
+    return execOrWarn(q, "setMotorTableFlightState") && q.numRowsAffected() == 1;
 }
 
 bool DatabaseManager::saveFlightPowerRecord(int sessionId, const FlightPowerRecord &r)

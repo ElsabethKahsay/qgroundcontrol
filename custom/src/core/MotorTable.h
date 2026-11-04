@@ -799,6 +799,81 @@ inline ThrustAt maxThrustAt(const Table &t, double packVolts, double sigma = kTa
     return out;
 }
 
+// ── Proving the table on the aircraft ───────────────────────────────────
+//
+// After a flight the pack is charged and the charger's mAh entered: what it
+// put back is the charge the flight used. Charger ÷ the GCS's count says how
+// far the table is from this aircraft (worn motors, the real prop, the ESC,
+// what the electronics really draw). Only a flight that started on a full
+// pack counts: otherwise the charger also puts back what was missing before.
+
+/// Fine-tuning uses the median of this many latest flights …
+constexpr int kCalibrationFlights = 5;
+/// … once there are at least this many …
+constexpr int kMinCalibrationFlights = 2;
+/// … limited to this range.
+constexpr double kMinCalibration = 0.80;
+constexpr double kMaxCalibration = 1.20;
+/// The table is proven when each of the last kProofFlights flights agrees with
+/// the charger within kProofTolerance, counted as the GCS would have shown it
+/// (fine-tuned by the flights before it only).
+constexpr int kProofFlights = 3;
+constexpr double kProofTolerance = 0.10;
+
+/// One recorded flight for the comparison.
+struct TableFlight {
+    double gcsAh = 0.0;      ///< the GCS's count from the table, not fine-tuned
+    double chargerAh = 0.0;  ///< what the charger put back; ≤ 0 = not entered
+    bool startedFull = false;
+    bool dismissed = false;
+    bool usable() const { return !dismissed && startedFull && chargerAh > 0.0 && gcsAh > 0.5; }
+    double ratio() const { return chargerAh / gcsAh; }
+};
+
+struct Calibration {
+    int usable = 0;           ///< flights that count
+    double factor = 1.0;      ///< multiplies the table's current and the count
+    bool proven = false;
+    QVector<double> ratios;   ///< charger ÷ count of the usable flights, oldest first
+    QVector<double> errors;   ///< for each usable flight: charger ÷ the count as shown then − 1
+};
+
+/// The fine-tuning factor from usable flights' ratios (oldest first): the
+/// median of the latest kCalibrationFlights, limited; 1 below
+/// kMinCalibrationFlights.
+inline double calibrationFactor(const QVector<double> &ratios)
+{
+    if (ratios.size() < kMinCalibrationFlights)
+        return 1.0;
+    QVector<double> last = ratios.mid(std::max(0, int(ratios.size()) - kCalibrationFlights));
+    std::sort(last.begin(), last.end());
+    const int n = last.size();
+    const double median = n % 2 ? last[n / 2] : (last[n / 2 - 1] + last[n / 2]) / 2.0;
+    return std::clamp(median, kMinCalibration, kMaxCalibration);
+}
+
+/// Fine-tuning and proof from the recorded flights (oldest first).
+inline Calibration calibrate(const QVector<TableFlight> &flights)
+{
+    Calibration c;
+    for (const TableFlight &f : flights) {
+        if (!f.usable())
+            continue;
+        // The count as shown on that flight: fine-tuned by the flights before.
+        const double before = calibrationFactor(c.ratios);
+        c.errors.append(f.chargerAh / (f.gcsAh * before) - 1.0);
+        c.ratios.append(f.ratio());
+    }
+    c.usable = c.ratios.size();
+    c.factor = calibrationFactor(c.ratios);
+    if (c.usable >= kProofFlights) {
+        c.proven = true;
+        for (int i = c.usable - kProofFlights; i < c.usable; ++i)
+            c.proven = c.proven && std::abs(c.errors[i]) <= kProofTolerance;
+    }
+    return c;
+}
+
 /// The flight controller's settings that turn its hover throttle into motor output.
 struct HoverParams {
     double thstHover = -1.0;  ///< MOT_THST_HOVER

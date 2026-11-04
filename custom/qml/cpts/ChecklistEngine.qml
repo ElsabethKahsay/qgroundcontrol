@@ -383,7 +383,7 @@ QtObject {
     // the flight (logged). New types are created in Vehicle Management.
     component PowerTypeDialog: SkyDialog {
         id: ptDialog
-        title:            qsTr("Power Type")
+        title:            qsTr("Motor Table")
         modal:            true
         closePolicy:      Popup.CloseOnEscape
         anchors.centerIn: Overlay.overlay
@@ -391,8 +391,19 @@ QtObject {
 
         readonly property var _vpm: (typeof VehicleProfileManager !== "undefined") ? VehicleProfileManager : null
         property var _types: []
+        property string _tableName: ""
+        // The copter's estimate comes from the maker's motor table it is
+        // linked to on Analyze → Vehicles → Motor table. A copter still linked
+        // to a stored power type (the user-defined types, now hidden) keeps
+        // the old flow: pick the type and confirm its props on each flight.
+        readonly property bool _onTable: _vpm !== null && _vpm.motorTableId !== ""
+        readonly property bool _onType: !_onTable && _vpm !== null && _vpm.currentPowerTypeId > 0
 
         function _reload() {
+            _tableName = ""
+            var tables = _vpm ? _vpm.motorTables() : []
+            for (var t = 0; t < tables.length; ++t)
+                if (tables[t].id === _vpm.motorTableId) _tableName = tables[t].name
             _types = _vpm ? _vpm.listPowerTypes() : []
             var idx = -1
             for (var i = 0; i < _types.length; ++i)
@@ -412,16 +423,24 @@ QtObject {
             spacing: Config.spacingMedium
 
             Text {
+                objectName: "ptDialogText"
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
-                text: qsTr("The power type (frame + props + cells) is what the flight-time estimate and the "
-                           + "mission check learn from. Confirm on every flight that the props fitted are the "
-                           + "type's: the flight controller cannot see them.")
+                text: ptDialog._onTable
+                      ? qsTr("This copter's flight-time estimate and mission check come from the maker's motor "
+                             + "table: %1. Change the link on Analyze → Vehicles → Motor table.").arg(ptDialog._tableName)
+                      : ptDialog._onType
+                        ? qsTr("The power type (frame + props + cells) is what the flight-time estimate and the "
+                               + "mission check learn from. Confirm on every flight that the props fitted are the "
+                               + "type's: the flight controller cannot see them.")
+                        : qsTr("Not linked: link this copter to its maker's motor table on Analyze → Vehicles → "
+                               + "Motor table, or fly without one below.")
                 font.pixelSize: Config.fontSizeDialog
                 color: Colors.textPrimary
             }
 
             RowLayout {
+                visible: ptDialog._onType
                 Layout.fillWidth: true
                 Text { font.pixelSize: Config.fontSizeDialog; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Power type:") }
                 ComboBox {
@@ -438,7 +457,7 @@ QtObject {
             }
 
             Text {
-                visible: ptDialog._types.length === 0
+                visible: ptDialog._onType && ptDialog._types.length === 0
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 text: qsTr("No power types yet: create one in Vehicle Management.")
@@ -447,7 +466,7 @@ QtObject {
             }
 
             Text {
-                visible: ptDialog._vpm && ptDialog._vpm.powerTypePropsConfirmed
+                visible: ptDialog._onType && ptDialog._vpm.powerTypePropsConfirmed
                 Layout.fillWidth: true
                 text: qsTr("Props confirmed for this flight.")
                 font.pixelSize: Config.fontSizeDialog
@@ -455,12 +474,13 @@ QtObject {
             }
 
             RowLayout {
+                visible: !ptDialog._onTable
                 Layout.fillWidth: true
-                CheckBox { id: ptWaiveBox }
+                CheckBox { id: ptWaiveBox; objectName: "ptWaiveBox" }
                 Text {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
-                    text: qsTr("Fly without a power type. I accept a rough flight-time estimate and no mission check.")
+                    text: qsTr("Fly without a motor table. I accept a rough flight-time estimate and no mission check.")
                     font.pixelSize: Config.fontSizeDialog
                     color: Colors.textPrimary
                     MouseArea { anchors.fill: parent; onClicked: ptWaiveBox.toggle() }
@@ -477,16 +497,16 @@ QtObject {
             RowLayout {
                 Layout.fillWidth: true
                 spacing: Config.spacingSmall
-                Button { text: qsTr("Cancel"); Layout.fillWidth: true; onClicked: ptDialog.close() }
+                Button { text: ptDialog._onType || ptWaiveBox.checked ? qsTr("Cancel") : qsTr("Close"); Layout.fillWidth: true; onClicked: ptDialog.close() }
                 Button {
                     visible: ptWaiveBox.checked
-                    text: qsTr("Fly without a type")
+                    text: qsTr("Fly without a table")
                     enabled: ptPilotField.text.trim().length > 0
                     Layout.fillWidth: true
                     onClicked: if (ptDialog._vpm && ptDialog._vpm.waivePowerType(ptPilotField.text.trim())) ptDialog.close()
                 }
                 Button {
-                    visible: !ptWaiveBox.checked
+                    visible: ptDialog._onType && !ptWaiveBox.checked
                     objectName: "ptConfirmButton"
                     text: qsTr("Props fitted match")
                     highlighted: true

@@ -272,10 +272,15 @@ void TelemetryBridge::_connectVehicleSignals() {
         if (changed) emit gpsPositionChanged();
     });
 
+    // The vehicle facts are read in their raw units (metres, m/s, degrees C,
+    // volts), which the estimates and checks expect. Their shown value
+    // (valueChanged) is in the units picked in the app's settings instead:
+    // feet and mph on a computer set to US units.
+
     // Altitude relative to home (from Vehicle Fact).
     Fact* altFact = _vehicle->altitudeRelative();
     if (altFact) {
-        connect(altFact, &Fact::valueChanged, this, [this](QVariant val) {
+        connect(altFact, &Fact::rawValueChanged, this, [this](QVariant val) {
             _altitudeRelative = val.toDouble();
             emit altitudeChanged();
         });
@@ -285,7 +290,7 @@ void TelemetryBridge::_connectVehicleSignals() {
     // Heading in degrees.
     Fact* headingFact = _vehicle->heading();
     if (headingFact) {
-        connect(headingFact, &Fact::valueChanged, this, [this](QVariant val) {
+        connect(headingFact, &Fact::rawValueChanged, this, [this](QVariant val) {
             _heading = val.toDouble();
             emit headingChanged();
         });
@@ -295,7 +300,7 @@ void TelemetryBridge::_connectVehicleSignals() {
     // Ground speed in m/s.
     Fact* gsFact = _vehicle->groundSpeed();
     if (gsFact) {
-        connect(gsFact, &Fact::valueChanged, this, [this](QVariant val) {
+        connect(gsFact, &Fact::rawValueChanged, this, [this](QVariant val) {
             _groundSpeed = val.toDouble();
             emit groundSpeedChanged();
         });
@@ -305,7 +310,7 @@ void TelemetryBridge::_connectVehicleSignals() {
     // Indicated airspeed in m/s.
     Fact* asFact = _vehicle->airSpeed();
     if (asFact) {
-        connect(asFact, &Fact::valueChanged, this, [this](QVariant val) {
+        connect(asFact, &Fact::rawValueChanged, this, [this](QVariant val) {
             _airspeed = val.toDouble();
             emit airspeedChanged();
         });
@@ -328,19 +333,19 @@ void TelemetryBridge::_connectVehicleSignals() {
     // Vibration FactGroup: connect each axis + clipping count.
     auto* vibGroup = static_cast<VehicleVibrationFactGroup*>(_vehicle->vibrationFactGroup());
     if (vibGroup) {
-        connect(vibGroup->xAxis(), &Fact::valueChanged, this, [this](QVariant val) {
+        connect(vibGroup->xAxis(), &Fact::rawValueChanged, this, [this](QVariant val) {
             _vibrationX = val.toDouble();
             emit vibrationChanged();
         });
-        connect(vibGroup->yAxis(), &Fact::valueChanged, this, [this](QVariant val) {
+        connect(vibGroup->yAxis(), &Fact::rawValueChanged, this, [this](QVariant val) {
             _vibrationY = val.toDouble();
             emit vibrationChanged();
         });
-        connect(vibGroup->zAxis(), &Fact::valueChanged, this, [this](QVariant val) {
+        connect(vibGroup->zAxis(), &Fact::rawValueChanged, this, [this](QVariant val) {
             _vibrationZ = val.toDouble();
             emit vibrationChanged();
         });
-        connect(vibGroup->clipCount1(), &Fact::valueChanged, this, [this](QVariant val) {
+        connect(vibGroup->clipCount1(), &Fact::rawValueChanged, this, [this](QVariant val) {
             _vibrationClipping = val.toUInt();
             emit vibrationChanged();
         });
@@ -349,19 +354,19 @@ void TelemetryBridge::_connectVehicleSignals() {
     // Estimator Status FactGroup: connect velocity, horizontal, vertical, and mag ratios.
     auto* estGroup = static_cast<VehicleEstimatorStatusFactGroup*>(_vehicle->estimatorStatusFactGroup());
     if (estGroup) {
-        connect(estGroup->velRatio(), &Fact::valueChanged, this, [this](QVariant val) {
+        connect(estGroup->velRatio(), &Fact::rawValueChanged, this, [this](QVariant val) {
             _estimatorVelRatio = val.toDouble();
             emit estimatorStatusChanged();
         });
-        connect(estGroup->horizPosRatio(), &Fact::valueChanged, this, [this](QVariant val) {
+        connect(estGroup->horizPosRatio(), &Fact::rawValueChanged, this, [this](QVariant val) {
             _estimatorPosHorizRatio = val.toDouble();
             emit estimatorStatusChanged();
         });
-        connect(estGroup->vertPosRatio(), &Fact::valueChanged, this, [this](QVariant val) {
+        connect(estGroup->vertPosRatio(), &Fact::rawValueChanged, this, [this](QVariant val) {
             _estimatorPosVertRatio = val.toDouble();
             emit estimatorStatusChanged();
         });
-        connect(estGroup->magRatio(), &Fact::valueChanged, this, [this](QVariant val) {
+        connect(estGroup->magRatio(), &Fact::rawValueChanged, this, [this](QVariant val) {
             _estimatorMagRatio = val.toDouble();
             emit estimatorStatusChanged();
         });
@@ -370,11 +375,11 @@ void TelemetryBridge::_connectVehicleSignals() {
     // Wind FactGroup: speed and direction.
     auto* windGroup = static_cast<VehicleWindFactGroup*>(_vehicle->windFactGroup());
     if (windGroup) {
-        connect(windGroup->speed(), &Fact::valueChanged, this, [this](QVariant val) {
+        connect(windGroup->speed(), &Fact::rawValueChanged, this, [this](QVariant val) {
             _windSpeed = val.toDouble();
             emit windChanged();
         });
-        connect(windGroup->direction(), &Fact::valueChanged, this, [this](QVariant val) {
+        connect(windGroup->direction(), &Fact::rawValueChanged, this, [this](QVariant val) {
             _windDirection = val.toDouble();
             emit windChanged();
         });
@@ -477,7 +482,7 @@ void TelemetryBridge::_connectBatteryFacts(QObject* batteryModel) {
 
         if (id == 0 || id == 1) {
             // Voltage: route to primary (id=0) or secondary (id=1) cache.
-            connect(batt->voltage(), &Fact::valueChanged, this, [this, id](QVariant val) {
+            connect(batt->voltage(), &Fact::rawValueChanged, this, [this, id](QVariant val) {
                 double v = val.toDouble();
                 if (id == 0 || id == 1) {
                     if (id == 0) {
@@ -494,7 +499,7 @@ void TelemetryBridge::_connectBatteryFacts(QObject* batteryModel) {
                 }
             });
             // Current draw (amps).
-            connect(batt->current(), &Fact::valueChanged, this, [this, id](QVariant val) {
+            connect(batt->current(), &Fact::rawValueChanged, this, [this, id](QVariant val) {
                 double c = val.toDouble();
                 if (id == 0) {
                     _batteryCurrent = c;
@@ -509,7 +514,7 @@ void TelemetryBridge::_connectBatteryFacts(QObject* batteryModel) {
             // Remaining percentage (0-100). The stock QGC fact maps "battery not
             // configured" (battery_remaining 255) inconsistently, so re-normalize
             // here to the same -1 = unknown convention used by _batterySocPct.
-            connect(batt->percentRemaining(), &Fact::valueChanged, this, [this, id](QVariant val) {
+            connect(batt->percentRemaining(), &Fact::rawValueChanged, this, [this, id](QVariant val) {
                 int pct = normalizeBatterySoc(val.toInt());
                 if (id == 0) {
                     _batteryPercent = pct;
@@ -520,14 +525,14 @@ void TelemetryBridge::_connectBatteryFacts(QObject* batteryModel) {
                 }
             });
             // Temperature (primary battery only).
-            connect(batt->temperature(), &Fact::valueChanged, this, [this, id](QVariant val) {
+            connect(batt->temperature(), &Fact::rawValueChanged, this, [this, id](QVariant val) {
                 if (id == 0) {
                     _batteryTemperature = val.toDouble();
                     emit batteryTemperatureChanged();
                 }
             });
             // Charge state (primary battery only).
-            connect(batt->chargeState(), &Fact::valueChanged, this, [this, id](QVariant val) {
+            connect(batt->chargeState(), &Fact::rawValueChanged, this, [this, id](QVariant val) {
                 if (id == 0) {
                     QString st = parseBatteryChargeState(static_cast<uint8_t>(val.toUInt()));
                     if (_batteryChargeState != st) {
@@ -537,7 +542,7 @@ void TelemetryBridge::_connectBatteryFacts(QObject* batteryModel) {
                 }
             });
             // Time remaining (primary battery only).
-            connect(batt->timeRemaining(), &Fact::valueChanged, this, [this, id](QVariant val) {
+            connect(batt->timeRemaining(), &Fact::rawValueChanged, this, [this, id](QVariant val) {
                 if (id == 0) {
                     double sec = val.toDouble();
                     if (qAbs(sec - _batteryTimeRemainingSeconds) > 1.0) {

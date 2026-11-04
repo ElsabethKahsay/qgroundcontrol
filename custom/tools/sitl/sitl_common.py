@@ -199,11 +199,14 @@ class LinkRelay:
 class Run:
     """One scenario: SITL + relay + GCS + a control connection to the vehicle."""
 
-    def __init__(self, scenario, vehicle="ArduPlane", instance=3, params=None):
+    def __init__(self, scenario, vehicle="ArduPlane", instance=3, params=None, sim_args=None):
         self.scenario = scenario
         self.vehicle = vehicle
         self.instance = instance
         self.params = params or {}
+        # Extra sim_vehicle.py arguments, e.g. a frame model ("-f", "x",
+        # "--model", "x:<json>") or a location ("-l", "lat,lon,alt,heading").
+        self.sim_args = list(sim_args or [])
         self.ports = ports(instance)
         self.work = tempfile.mkdtemp(prefix="skywin-sitl-%s-" % scenario)
         self.log_lines = []
@@ -239,6 +242,16 @@ class Run:
                 for k, v in self.params.items():
                     f.write("%s %s\n" % (k, v))
             cmd.append("--add-param-file=%s" % pfile)
+        # SITL opens a frame model only by a path relative to its own folder:
+        # copy an absolute "--model frame:/path/file.json" there and pass its name.
+        args = list(self.sim_args)
+        for i, arg in enumerate(args[:-1]):
+            if arg == "--model" and ":" in args[i + 1]:
+                frame, path = args[i + 1].split(":", 1)
+                if os.path.isabs(path):
+                    shutil.copy(path, sitl_dir)
+                    args[i + 1] = "%s:%s" % (frame, os.path.basename(path))
+        cmd += args
         self.note("SITL: %s" % " ".join(cmd[1:]))
         self.sitl = subprocess.Popen(cmd, cwd=sitl_dir, stdout=open(os.path.join(sitl_dir, "sim.log"), "w"),
                                      stderr=subprocess.STDOUT, start_new_session=True)

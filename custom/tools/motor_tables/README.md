@@ -230,7 +230,23 @@ because there is no throttle to read: the hover power for 12 kg rises by 24 % at
 
 Warnings make the Mission check amber; they do not block arming.
 
-### 10. Outside the table
+### 10. The charger comparison
+
+After a flight the pack is charged and the charger's mAh entered. What the charger put back is the charge the flight
+used, so for each flight that started on a full pack and counted at least 0.5 Ah:
+
+  ***r* = charger Ah ÷ the GCS's count**
+
+| What | Formula |
+|---|---|
+| Fine-tuning (from 2 flights) | factor = the median of the last 5 *r*, limited to 0.80–1.20; the table's current and the count × factor |
+| Proven | each of the last 3 flights: \|charger Ah ÷ (count × the factor from the flights before it) − 1\| ≤ 10 % |
+
+Example: three flights of 12, 14 and 16 Ah where the charger put back 12.6, 14.7 and 16.8 Ah: *r* = 1.05 each. The
+first two are shown at factor 1 (5 % off, inside 10 %); the third at the median of the first two, 1.05 (0 % off). The
+table is proven, and the factor is 1.05: a hover of 80.5 A is then counted as 84.5 A.
+
+### 11. Outside the table
 
 | Where | Formula | When |
 |---|---|---|
@@ -239,7 +255,9 @@ Warnings make the Mission check amber; they do not block arming.
 
 ## Worked example: hover at 12 kg
 
-A quad weighing 12 kg on a 6S pack of 20 Ah, with a 20 % reserve, so 16 Ah usable. These are the numbers the GCS's code
+An example: a quad weighing 12 kg (the makers' figure) on a 6S pack of 20 Ah, with a 20 % reserve, so 16 Ah usable.
+The 12 kg is not a setting anywhere in the GCS: in use, the weight is what the GCS measured from the copter's hover on
+its last flight (formula 7, "Where *T* comes from"). These are the numbers the GCS's code
 gives for this case (checked by running `MotorTable.h` on it; the tests check the same values).
 
 The pack is Li-ion, 4.3 → 2.9 V per cell, with the typical 25.2 mΩ until its own is measured. The steps below are worked

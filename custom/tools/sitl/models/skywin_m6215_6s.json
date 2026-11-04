@@ -1,0 +1,61 @@
+# The Skywin 6S quad for ArduPilot's SITL: M6215 HighProt 320KV motors, MSC 22x7.8
+# props, a 6S Li-ion pack. Used with "-f x --model x:<this file>".
+#
+# Figures from the makers and the maker's thrust test at 23 V
+# (custom/tools/motor_tables/M6215_HighProt_320KV_MSC22x7.8_23V.csv):
+#   12 kg take-off weight; 3000 g per motor to hover, which the test reaches at
+#   49.5 % throttle taking 357.2 W per motor: 4 x 357.2 W / 23 V + 1 A = 63.1 A.
+# Marked ASSUMED where no measurement exists yet (replace from a real flight log).
+{
+    # take-off weight, kg (the makers' figure)
+    "mass" : 12.0,
+
+    # motor-to-motor diagonal, m. ASSUMED: about 2.2 x the 22-inch prop
+    "diagonal_size" : 1.25,
+
+    # drag reference: steady speed at a fixed lean angle in still air.
+    # ASSUMED (no flight log yet): 20 m/s at 30 degrees
+    "refSpd" : 20.0,
+    "refAngle" : 30.0,
+
+    # hover reference from the maker's test, in sea-level air at 15 C (the
+    # test's conditions are assumed, to confirm with the makers)
+    "refVoltage" : 23.0,
+    "refCurrent" : 63.1,
+    "refAlt" : 0,
+    "refTempC" : 15,
+
+    # pack internal resistance, ohm. ASSUMED: 4.2 mOhm per series cell (the
+    # GCS's starting value until a flight measures it)
+    "refBatRes" : 0.0252,
+
+    # full pack: 6 x 4.3 V Li-ion, 20 Ah
+    "maxVoltage" : 25.8,
+    "battCapacityAh" : 20,
+
+    # thrust curve of the prop: fitted to the maker's test rows
+    # (thrust = (1 - e) x + e x^2 on the spin range, e = 0.27, within 7.5 %)
+    "propExpo" : 0.27,
+
+    # approximate maximum yaw rate, deg/s (SITL default)
+    "refRotRate" : 120,
+
+    # thrust share at hover: 3000 g of about 11 070 g at full throttle on a
+    # full 25.8 V pack (the test's 8801 g at 23 V, x (25.8 / 23)^2)
+    "hoverThrOut" : 0.27,
+
+    # ESC range and spin range (ArduPilot defaults; to confirm on the aircraft)
+    "pwmMin" : 1000,
+    "pwmMax" : 2000,
+    "spin_min" : 0.15,
+    "spin_max" : 0.95,
+
+    # total disc area of four 22-inch props, m^2
+    "disc_area" : 0.981,
+
+    # momentum drag relative to a ducted rotor of the same area (as the
+    # Callisto example)
+    "mdrag_coef" : 0.10,
+
+    "num_motors" : 4
+}

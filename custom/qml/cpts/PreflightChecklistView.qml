@@ -731,7 +731,7 @@ Rectangle {
                                                     readonly property bool isMissionCheck: checkId === "power.mission"
                                                     actionLabel: isPackCheck ? (status === 1 ? qsTr("Change battery pack") : qsTr("Select battery pack"))
                                                                  : isPayloadCheck ? (status === 1 ? qsTr("Change payload") : qsTr("Enter payload"))
-                                                                 : isPowerTypeCheck ? (status === 1 ? qsTr("Change power type") : qsTr("Confirm power type"))
+                                                                 : isPowerTypeCheck ? qsTr("Motor table")
                                                                  : isMissionCheck ? qsTr("Mission check details")
                                                                  : actionButtonText.length > 0 ? actionButtonText : "Run"
                                                     repeatable: isPackCheck || isPayloadCheck || isPowerTypeCheck || isMissionCheck

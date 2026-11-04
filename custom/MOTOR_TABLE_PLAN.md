@@ -24,7 +24,7 @@ already says how much current a motor draws at each throttle, so the GCS can cal
 | Motor | M6215 HighProt 320KV |
 | Prop | MSC 22×7.8 |
 | Battery | 6S **Li-ion**, 20 000 mAh, used from **4.3 V to 2.9 V per cell** (25.8 V to 17.4 V); C rating to come |
-| Take-off weight | about 12 kg |
+| Take-off weight | not entered: the GCS measures it from the copter's hover (about 12 kg according to the makers, used for the worked examples in this document) |
 | Where it flies | **2000–4000 m** above sea level (now at 2900 m; planned 3500–4000 m) |
 | Cruise speed | **70 km/h** (19.4 m/s) |
 | Current sensor | none assumed: no ESC telemetry, no current-measuring power module |
@@ -143,35 +143,31 @@ needed where the table cannot be read directly: thin air and the headroom check.
 
 ## Before take-off
 
-On the ground there is no live throttle, so the GCS remembers the hover as **thrust per motor**. Thrust does not depend
-on the pack voltage, and the table turns it into current at any voltage. In this order:
+**The copter's weight is never entered.** On the ground there is no throttle to read, so the GCS uses the hover it
+measured, as **thrust per motor** (the weight is that × 4). Thrust does not depend on the pack voltage, and the table
+turns it into current at any voltage and air density. In this order:
 
 1. **The last flight's steady hover** for this copter: at least 30 s airborne, below 3 m/s, climbing or sinking slower
-   than 0.5 m/s, no payload aboard, read from the motor outputs. Remembered at the disarm. Best: real motors, real weight.
+   than 0.5 m/s, no payload aboard, read from the motor outputs and corrected for the air density. Remembered at the
+   disarm. Best: the real copter as it flies.
 2. **`MOT_THST_HOVER`**, the hover throttle the flight controller learns in flight (when `MOT_HOVER_LEARN` is 1 or 2 and the
    value is not the default 0.35), turned into motor output with ArduPilot's own formula (`MOT_SPIN_MIN`, `MOT_SPIN_MAX`,
-   `MOT_THST_EXPO`, `MOT_BAT_VOLT_MAX`). For this drone at 12 kg it should be about 0.24.
+   `MOT_THST_EXPO`, `MOT_BAT_VOLT_MAX`). About 2.5 % low on current, which is why it comes second.
 3. **Neither:** the trip check says "Hover not known yet: fly once (30 s of steady hover), or let the copter learn
-   MOT_THST_HOVER" and does not block.
+   MOT_THST_HOVER" and does not block. The GCS does not guess a weight.
 
-The hover thrust also gives the copter's weight (thrust × 4), shown with the trip check. A payload entered at preflight
-adds payload ÷ 4 to the thrust per motor.
+A payload entered at preflight adds payload ÷ 4 to the thrust per motor, read from the table at that thrust.
 
-Before take-off the flight is planned at 3.7 V per cell (22.2 V), an average over the flight. At 12 kg that is
-4 × 357 ÷ 22.2 + 1 = **65.4 A**, so **about 14.7 minutes** of hover to the reserve.
+The hover is then costed through the rest of the pack (fix A1), at the site's air density (A2), fine-tuned by the
+charger comparison once there is one (step 6). Cruise at 70 km/h is costed as hover × the copter's measured cruise ratio
+(A6), or as hover until a flight has measured it.
 
-The trip check works as today: distance to the target and back, time at the target, take-off and landing minutes
-(default 1 each), and the reserve (default 20 %). Cruise is taken at the hover current, which errs on the safe side.
+The trip check works as before: distance to the target and back at 70 km/h, time at the target, take-off and landing
+minutes (default 1 each), and the reserve (default 20 %). Until the table is proven on this copter, a trip that does
+not fit is an amber warning, not a block.
 
-Trip examples at 12 kg, 10 m/s, 1 min take-off + 1 min landing, 3 min at the target, 16 Ah usable:
-
-| Target | Time | Charge needed | Verdict |
-|---|---|---|---|
-| 2 km | 6.7 + 2 + 3 = 11.7 min | 12.7 Ah | fits, 3.3 Ah spare |
-| 3 km | 10 + 2 + 3 = 15 min | 16.3 Ah | short by 0.3 Ah |
-| furthest | | 16 Ah | about 2.9 km out |
-
-Until it is proven on this copter (see below) a trip that does not fit is an amber warning, not a block.
+Example, for a 12 kg copter (the makers' figure) on the 20 Ah Li-ion pack: see "Accuracy work" above and the site table
+in the team report: 12.6 min of hover at 2000 m, 11.2 min at 4000 m.
 
 ## Checks the GCS adds
 
@@ -180,11 +176,9 @@ Until it is proven on this copter (see below) a trip that does not fit is an amb
 | Four motors | `FRAME_CLASS`, else the outputs set to motors | "The motor table is for 4 motors; this copter has N": estimate off |
 | 6 cells | `MOT_BAT_VOLT_MAX` ÷ 4.2, else the pack entered at preflight | "The motor table is for 6S; this pack is NS": estimate off |
 | Pack size known | the pack entered at preflight | "No pack size: enter the battery pack": estimate off |
-| Not overloaded | the hover above, as a throttle | Hover above 60 % throttle: "Heavy for its motors" (warning, item amber) |
+| Spare thrust | full-throttle thrust at the reserve voltage, in the site's air ÷ the measured hover thrust (with payload) | below 2.0: "Little spare thrust" (warning, item amber) |
+| Pack rating | 4C × the pack's Ah; the hover current on average and by the reserve | above it: "Hover draws … above the pack's rating" (warning) |
 | Motor outputs arriving | `SERVO_OUTPUT_RAW` | "Motor output signals not arriving: estimating from the overall throttle" (warning) |
-
-At 12 kg this drone hovers at 49.5 % throttle on a 23 V pack (51.3 % at the 22.2 V planning voltage), inside the 60 %
-limit. The limit is reached at about 15.6 kg.
 
 ## What the pilot sees and does (step 5)
 
@@ -198,17 +192,27 @@ limit. The limit is reached at about 15.6 kg.
 - **After the flight (optional):** enter the charger's mAh. It fine-tunes the count and counts towards proving the
   table.
 
-## Proving it on real flights (step 6, not built yet)
+## Proving it on real flights (step 6)
 
-The table comes from a test stand, so it has to be checked on the aircraft:
+The table comes from a test stand, so it is checked on the aircraft with the charger:
 
-- each flight records the GCS's count, the average hover current and hover throttle, the average pack voltage, the time
-  beyond the table, and whether motor outputs or the overall throttle were used;
-- the pilot enters the charger mAh after a flight;
-- once **3 flights** agree with the charger **within 10 %**, the trip check may hold arming (with a waiver), like the
-  old power types;
-- from then on the GCS multiplies its count by the median charger ÷ count ratio of the recent flights, limited to
-  0.80–1.20. This covers worn motors and differences from the test stand.
+- **Each flight that gets airborne is recorded** at the disarm (a bench arm never gets airborne, so it is not): the
+  GCS's charge count, whether the pack started full, the hover power and time, the cruise ratio and time, the average
+  and lowest pack voltage, the time beyond the table and on the overall throttle, the air density and the pack's
+  resistance.
+- **After landing, the pilot charges the pack and enters the charger's mAh** next to that flight (Analyze → Vehicles →
+  Power types, with no power type selected: the copter's motor-table flights). A flight can be dismissed (wrong pack
+  charged, an odd flight).
+- **Only full flights count:** started on a full pack (otherwise the charger also refills what was missing before
+  the flight), and at least 0.5 Ah counted (on a shorter hop the charger's resolution swamps the difference).
+- **Fine-tuning:** from 2 such flights, the table's current and the count are multiplied by the median of the last 5
+  charger ÷ count ratios, limited to 0.80–1.20.
+- **Proven:** each of the last 3 such flights agrees with the charger within 10 % of the count as the GCS would have
+  shown it then (fine-tuned by the flights before it only). From then on a trip that does not fit holds the arm in
+  the Mission check, with a waiver.
+
+The charger comparison calibrates the current. The pack's real capacity at 4C still needs a flight flown down close to
+the reserve, to see what is left.
 
 ## What the GCS never does
 
@@ -268,8 +272,52 @@ The table comes from a test stand, so it has to be checked on the aircraft:
 | 4 | Before take-off: the hover remembered from the last flight or from `MOT_THST_HOVER`; the trip check on the table; the setup checks | Done |
 | — | Switch to 6S: the maker's 23 V table as published replaces the 8S table; the 8S and 12S/160KV files removed | Done |
 | 5 | Linking on the Vehicles page; the Power type item passes on the table (amber when its estimate is off); the battery chip names the motor table | Done |
-| 6 | Recording per flight; charger fine-tuning; proving the table | To do |
-| 7 | SITL run, full test suite, docs | To do |
+| 6 | Recording each flight; the charger comparison; fine-tuning and proving the table; the flights list on the Vehicles page | Done |
+| 7 | SITL run, full test suite, docs | Done in the simulator (below); the real flights and charger numbers are still to come |
+
+**Step 7, the simulated flight** (custom/tools/sitl/sc_motor_table.py, run log
+custom/tools/sitl/runs/2026-11-04-motor-table-arducopter.md). ArduCopter SITL
+set up as the drone as far as it is known (models/skywin_m6215_6s.json: 12 kg
+quad X, 22-inch props, 6S Li-ion 20 Ah from 25.8 V, hover and thrust curve from
+the maker's test; the diagonal and drag are assumed until a real flight log
+exists), home at 2900 m, no current sensor on the pack the GCS reads. Flight:
+take-off to 20 m, 40 s hover, 600 m north and back at 70 km/h (19.5 m/s
+reached), land. All 19 checks passed: the estimate on from the motor table, the
+charge counted by the GCS from the motor signals the whole flight, the flight
+recorded with 42 s of hover and 50 s of cruise and waiting for its charger
+number, the hover remembered, no QML errors.
+
+What it measured, and why these are not accuracy results:
+
+| | GCS | Simulator | Why they differ |
+|---|---|---|---|
+| Weight | 13.0 kg | 12.0 kg | The simulator's thrust curve is a one-number fit to the maker's rows (within 7.5 %), not the rows themselves |
+| Charge used | 3.40 Ah | 2.38 Ah | The simulator's current is a fixed watts-per-newton from the sea-level hover; it does not rise in thin air. The table does (about +20 % at 2900 m) |
+| Cruise ÷ hover power | 2.10 | | The simulator's prop slows its thrust at speed more than real props; a real flight measures its own ratio |
+| Air density | 0.69 | | Pressure from the simulated barometer at 2900 m; temperature from the live weather at the simulated home's real place (Canberra, about 580 m, near 18 °C), so lower than the standard 0.75 |
+
+The simulated flight proves the GCS's side of the chain: it reads the motor
+signals and the pack, counts the charge, records the flight and remembers the
+hover. Only real flights with charger numbers can say how close the count is.
+
+Found by this run and fixed: the GCS read the vehicle's ground speed, height,
+airspeed, wind and battery temperature in the units shown on screen instead of
+metres and m/s. On a computer set to British or US units (this one), the app
+shows mph and feet by default, so 10 m/s read as 22 (mph) and passed for
+70 km/h cruise. All telemetry is now read in its own units
+(LivePluginBenchTest::testTelemetryReadInMetricUnits).
+
+**Screens after the decision that power types are not user-defined.** On
+Analyze → Vehicles the second tab is now **Motor table** (was Power types). It
+holds the connected copter's motor-table link and its status, the Mission
+check's take-off and landing minutes, and the copter's motor-table flights,
+where the charger mAh is entered. The user-defined power types (their list,
+New and editor) are hidden, not deleted: a copter already linked to a stored
+type keeps using it. The preflight checklist item is now **Motor table**: on a
+linked copter it passes with the table's name and its dialog says where to
+change the link; a copter with nothing linked is told to link it on the Motor
+table tab, or the pilot waives it. Only a copter still on a stored power type
+is asked to confirm its props.
 
 How each step is checked: tests reproduce the worked numbers above (for example 63.1 A and about 15 minutes at 12 kg);
 each rule is then broken on purpose to confirm a test fails; and the full test suite runs before each commit. Nothing

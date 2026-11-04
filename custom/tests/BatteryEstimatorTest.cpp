@@ -1245,6 +1245,46 @@ private slots:
         QVERIFY(isCruiseSample(10.0, 0.0, 10.0));
     }
 
+    // The charger comparison: charger ÷ count per flight that started full;
+    // fine-tuning = the median of the last 5, from 2 flights, limited to
+    // 0.80–1.20; proven when the last 3 each agree within 10 % with the count
+    // as the GCS would have shown it (fine-tuned by the flights before only).
+    void testMotorTableCalibration()
+    {
+        using namespace MotorTable;
+        auto fl = [](double gcs, double charger, bool full = true, bool dismissed = false) {
+            TableFlight f; f.gcsAh = gcs; f.chargerAh = charger; f.startedFull = full; f.dismissed = dismissed; return f;
+        };
+        auto near = [](double a, double b) { return qAbs(a - b) < 1e-9; };
+
+        Calibration c = calibrate({});
+        QCOMPARE(c.usable, 0); QCOMPARE(c.factor, 1.0); QVERIFY(!c.proven);
+        c = calibrate({fl(14.0, 14.7)});                      // one flight: no fine-tuning yet
+        QCOMPARE(c.usable, 1); QCOMPARE(c.factor, 1.0);
+        c = calibrate({fl(14.0, 14.7), fl(10.0, 10.5)});      // two at 1.05
+        QVERIFY(near(c.factor, 1.05)); QVERIFY(!c.proven);
+        c = calibrate({fl(14.0, 14.7), fl(10.0, 10.5), fl(12.0, 12.6)});
+        QVERIFY(near(c.factor, 1.05)); QVERIFY(c.proven);
+        QCOMPARE(c.errors.size(), 3);
+        QVERIFY(near(c.errors[2], 0.0));                       // the third was shown fine-tuned × 1.05
+
+        // Not counted: a pack not full at the arm, a dismissed flight, no
+        // charger number, a tiny count.
+        c = calibrate({fl(14.0, 14.7), fl(10.0, 10.5, false), fl(10.0, 99.0, true, true), fl(10.0, 0.0), fl(0.2, 0.3)});
+        QCOMPARE(c.usable, 1);
+
+        // A flight 15 % off among the last three: not proven.
+        c = calibrate({fl(14.0, 14.7), fl(10.0, 10.5), fl(12.0, 12.0 * 1.05 * 1.15)});
+        QVERIFY(!c.proven);
+        // The median of the last five, so one odd flight does not swing it.
+        // Last five: 1.03, 1.30, 1.025, 1.03, 1.02 → median 1.03.
+        c = calibrate({fl(10, 10.2), fl(10, 10.3), fl(10, 13.0), fl(10, 10.25), fl(10, 10.3), fl(10, 10.2)});
+        QVERIFY(near(c.factor, 1.03));
+        // Limited to 0.80–1.20.
+        QCOMPARE(calibrate({fl(10, 15.0), fl(10, 16.0)}).factor, 1.20);
+        QCOMPARE(calibrate({fl(10, 5.0), fl(10, 6.0)}).factor, 0.80);
+    }
+
     // The table is for a quad on 6S with a pack size: anything else turns the
     // estimate off; hover above 60 % throttle and missing motor outputs warn.
     void testMotorTableSetupIssues()

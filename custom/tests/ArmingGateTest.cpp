@@ -444,6 +444,10 @@ void ArmingGateTest::testPowerTypeItemNeedsConfirmedProps()
 
     item->evaluate();
     QCOMPARE(item->status(), CheckStatus::Pending);
+    // Shown as "Motor table": not linked points to where the link is made.
+    QCOMPARE(item->label(), QStringLiteral("Motor table"));
+    QVERIFY2(item->message().contains(QStringLiteral("motor table (Analyze → Vehicles → Motor table)")),
+             qPrintable(item->message()));
     QVERIFY(g.failing(id));
     item->confirm(QStringLiteral("Action completed"));          // a checklist button's generic confirm
     QCOMPARE(item->status(), CheckStatus::Pending);

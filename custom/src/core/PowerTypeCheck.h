@@ -34,7 +34,7 @@ public:
 
     explicit PowerTypeCheck(StateProvider state, QObject *parent = nullptr)
         : AbstractCheck(QStringLiteral("power.power_type"),
-                        QStringLiteral("Power type"),
+                        QStringLiteral("Motor table"),
                         CheckCategory::Power, CheckType::Action,
                         /*mandatory*/ true, /*canOverride*/ false, parent)
         , m_state(std::move(state))
@@ -80,7 +80,7 @@ public:
         if (!waivedBy.isEmpty()) {
             setCurrentValue(QVariant());
             setStatus(CheckStatus::Warning,
-                      QStringLiteral("No power type — waived by %1: rough flight-time estimate only, "
+                      QStringLiteral("No motor table — waived by %1: rough flight-time estimate only, "
                                      "no mission check").arg(waivedBy));
             return;
         }
@@ -88,7 +88,7 @@ public:
         if (s.value(QStringLiteral("typeId")).toInt() <= 0) {
             setCurrentValue(QVariant());
             setStatus(CheckStatus::Pending,
-                      QStringLiteral("Link this copter to its power type (frame + props + cells), or waive it"));
+                      QStringLiteral("Link this copter to its motor table (Analyze → Vehicles → Motor table), or waive it"));
             return;
         }
         setCurrentValue(name);
@@ -114,8 +114,8 @@ public:
 
     QString getRationale() const override
     {
-        return QStringLiteral("The flight-time estimate and the mission check use what this power type "
-                              "has learned. Other props draw a different current.");
+        return QStringLiteral("The flight-time estimate and the mission check come from the maker's motor "
+                              "table linked to this copter (its motors, props and cells).");
     }
 
 private:

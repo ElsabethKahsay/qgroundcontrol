@@ -237,6 +237,16 @@ public:
     /// else the standard atmosphere's temperature. Sea level when nothing is
     /// known.
     Q_INVOKABLE QVariantMap airDensity() const;
+    /// The connected copter's flights on its motor table, newest first, each
+    /// with {…as DatabaseManager::motorTableFlights, ratio (charger ÷ count),
+    /// usable}. Empty when it is not on a table.
+    Q_INVOKABLE QVariantList motorTableFlights() const;
+    /// Enters the charger's mAh after a motor-table flight (1–200000).
+    Q_INVOKABLE bool setMotorTableFlightCharger(int flightId, double chargerMah);
+    /// Leaves a motor-table flight out of the comparison (wrong pack charged…).
+    Q_INVOKABLE bool dismissMotorTableFlight(int flightId);
+    /// {usable, factor, proven, needed (flights still needed to prove)}.
+    Q_INVOKABLE QVariantMap motorTableCalibration() const;
 
     /// Persist the current pack config for the connected vehicle (no-op when
     /// no vehicle is connected).
@@ -448,6 +458,28 @@ private:
     /// (QSettings MotorTable/cruiseRatio/<uid>).
     double m_cruiseRatioSum = 0.0;
     int m_cruiseSamples = 0;
+    /// This flight's record for the charger comparison (motor_table_flights),
+    /// written at the disarm of a flight that got airborne.
+    struct TableFlightLog {
+        QString startedAt;
+        bool startedFull = false;
+        double startSoc = -1.0;
+        bool airborne = false;
+        double voltSum = 0.0;
+        int voltN = 0;
+        double minVolts = -1.0;
+        double hoverWSum = 0.0;
+        double hoverS = 0.0;
+        double cruiseS = 0.0;
+        double beyondS = 0.0;
+        double overallThrottleS = 0.0;
+        double densitySum = 0.0;
+        int densityN = 0;
+        qint64 lastMs = -1;
+    } m_tableLog;
+    bool m_armVoltsKnown = false;       ///< The resting voltage was read before the arm.
+    /// Fine-tuning and proof from the copter's recorded flights on its table.
+    MotorTable::Calibration motorTableCalibrationNow() const;
     double m_packOhmLive = -1.0;
     int m_packOhmSamples = 0;
     /// The pack the motor-table estimate works with: cells, chemistry, size,

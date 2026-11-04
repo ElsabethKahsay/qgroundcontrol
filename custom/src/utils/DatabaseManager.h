@@ -318,6 +318,18 @@ public:
     bool saveVehicleMotorHover(const QString &deviceUid, double thrustG, int samples);
     /// {thrustG, samples, at}, or empty when none is stored.
     QVariantMap vehicleMotorHover(const QString &deviceUid);
+    /// A flight of a copter on a motor table (keys as motorTableFlights()
+    /// returns them, without id and state). Returns its id, or -1.
+    int insertMotorTableFlight(const QVariantMap &flight);
+    /// The aircraft's flights on that table, oldest first: {id, startedAt,
+    /// endedAt, gcsAh, startedFull, startSoc, hoverW, hoverS, cruiseRatio,
+    /// cruiseS, avgVolts, minVolts, beyondS, overallThrottleS, density,
+    /// packOhm, chargerMah, state ("pending", "used", "dismissed")}.
+    QVariantList motorTableFlights(const QString &deviceUid, const QString &tableId);
+    /// The charger's mAh after the flight (1–200000); a pending flight becomes used.
+    bool setMotorTableFlightCharger(int flightId, double chargerMah);
+    /// "pending", "used" or "dismissed".
+    bool setMotorTableFlightState(int flightId, const QString &state);
     /// Writes the recorder's numbers onto a flight. A flight that did not start
     /// on a full pack or lacks telemetry is marked "excluded" from learning;
     /// otherwise it waits as "pending" until the pilot picks Use or Dismiss

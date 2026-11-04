@@ -47,6 +47,9 @@
 #include "utils/DatabaseManager.h"
 #include "MultiVehicleManager.h"
 #include "Vehicle/Vehicle.h"
+#include "Settings/SettingsManager.h"
+#include "Settings/UnitsSettings.h"
+#include <QtCore/QScopeGuard>
 #include "PreflightManager.h"
 #include "ArmingGate.h"
 #include "AbstractCheck.h"
@@ -1309,6 +1312,7 @@ private slots:
     void testMotorTableBeforeTakeoff();
     void testMotorTableCountsEveryReading();
     void testMotorTableInTheApp();
+    void testTelemetryReadInMetricUnits();
 
 private:
     bool _connectPlane();
@@ -1951,6 +1955,22 @@ void LivePluginBenchTest::testPowerTypesPageDrivesStorage()
     tabs->setProperty("currentIndex", 1);
     pumpQml(200);
 
+    // The second tab is the motor table: its link and the Mission check's
+    // minutes show; the user-defined power types (list, New, editor) are
+    // hidden. The rest of this test drives the hidden parts, which the
+    // stored types still use.
+    QObject *mtTab = find(QStringLiteral("motorTableTab"));
+    QVERIFY2(mtTab, "motor table tab not found");
+    QCOMPARE(mtTab->property("text").toString(), QStringLiteral("Motor table"));
+    for (const char *shown : {"motorTableCombo", "motorTableLinkButton", "motorTableStatus", "takeoffField", "fleetSaveButton"}) {
+        QObject *o = find(QLatin1String(shown));
+        QVERIFY2(o && o->property("visible").toBool(), shown);
+    }
+    for (const char *hidden : {"ptNewButton", "ptSaveButton", "ptFrameField"}) {
+        QObject *o = find(QLatin1String(hidden));
+        QVERIFY2(o && !o->property("visible").toBool(), hidden);
+    }
+
     // A new type, unique per run (the test database persists).
     const QString frame = QStringLiteral("Page Quad %1").arg(QDateTime::currentMSecsSinceEpoch());
     QVERIFY(click(QStringLiteral("ptNewButton")));
@@ -2452,6 +2472,10 @@ void LivePluginBenchTest::testMotorTableBeforeTakeoff()
     QVERIFY(vpm->linkCurrentVehicleMotorTable(QString()));   // a fresh link: no hover remembered
     QVERIFY(vpm->linkCurrentVehicleMotorTable(table.id));
     vpm->clearPayloadEntry();
+    // Earlier runs' flights on the table are left out of the comparison.
+    for (const QVariant &f : vpm->motorTableFlights())
+        vpm->dismissMotorTableFlight(f.toMap().value(QStringLiteral("id")).toInt());
+    QVERIFY(!vpm->motorTableCalibration().value(QStringLiteral("proven")).toBool());
     const int seriesBefore = vpm->batterySeriesCells(), parallelBefore = vpm->batteryParallelCells(),
               mahBefore = vpm->batteryCellMah();
     vpm->setBatterySeriesCells(6);
@@ -2651,6 +2675,51 @@ void LivePluginBenchTest::testMotorTableBeforeTakeoff()
              qPrintable(QStringLiteral("%1 vs %2").arg(setup.value(QStringLiteral("hoverThrustG")).toDouble()).arg(expectHover)));
     QVERIFY(qAbs(setup.value(QStringLiteral("weightKg")).toDouble() - 4 * expectHover / 1000.0) < 0.05);
 
+    // The flight is recorded for the charger comparison: airborne, counted
+    // from the arm on a full pack, with its hover time.
+    QVariantList flights = vpm->motorTableFlights();
+    QVERIFY(!flights.isEmpty());
+    const QVariantMap rec = flights.first().toMap();   // newest first
+    QCOMPARE(rec.value(QStringLiteral("state")).toString(), QStringLiteral("pending"));
+    QVERIFY(rec.value(QStringLiteral("startedFull")).toBool());
+    QVERIFY(rec.value(QStringLiteral("gcsAh")).toDouble() > 0.0);
+    QVERIFY2(rec.value(QStringLiteral("hoverS")).toDouble() >= 30.0, qPrintable(rec.value(QStringLiteral("hoverS")).toString()));
+    QVERIFY(qAbs(rec.value(QStringLiteral("density")).toDouble() - sigma) < 1e-6);
+    QVERIFY(qAbs(rec.value(QStringLiteral("avgVolts")).toDouble() - packV) < 0.05);
+
+    // This 32 s flight is too short for the charger comparison (under
+    // 0.5 Ah, the charger's resolution would swamp the difference): its
+    // charger number is kept but it does not count.
+    const double hoverUntuned = setup.value(QStringLiteral("hoverA")).toDouble();
+    const int recId = rec.value(QStringLiteral("id")).toInt();
+    const double recAh = rec.value(QStringLiteral("gcsAh")).toDouble();
+    QVERIFY(vpm->setMotorTableFlightCharger(recId, recAh * 1050.0));
+    QCOMPARE(vpm->motorTableFlights().first().toMap().value(QStringLiteral("usable")).toBool(), recAh > 0.5);
+    QCOMPARE(vpm->motorTableCalibration().value(QStringLiteral("usable")).toInt(), recAh > 0.5 ? 1 : 0);
+    QVERIFY(!vpm->motorTableCalibration().value(QStringLiteral("proven")).toBool());
+    // Three full flights where the charger put back 5 % more than the count:
+    // fine-tuned × 1.05, and proven (each within 10 % of the count as shown
+    // then), so the Mission check may now hold the arm.
+    QVector<int> added;
+    for (double ah : {12.0, 14.0, 16.0}) {
+        QVariantMap f{{QStringLiteral("deviceUid"), vpm->currentDeviceUid()}, {QStringLiteral("tableId"), table.id},
+                      {QStringLiteral("gcsAh"), ah}, {QStringLiteral("startedFull"), true}};
+        const int id = DatabaseManager::instance().insertMotorTableFlight(f);
+        QVERIFY(id > 0);
+        added.append(id);
+        QVERIFY(vpm->setMotorTableFlightCharger(id, ah * 1050.0));
+    }
+    const QVariantMap cal = vpm->motorTableCalibration();
+    QVERIFY(cal.value(QStringLiteral("proven")).toBool());
+    QVERIFY(qAbs(cal.value(QStringLiteral("factor")).toDouble() - 1.05) < 1e-6);
+    setup = vpm->motorTableSetup();
+    QVERIFY2(qAbs(setup.value(QStringLiteral("hoverA")).toDouble() - hoverUntuned * 1.05) < 0.01,
+             qPrintable(QStringLiteral("%1 vs %2 × 1.05").arg(setup.value(QStringLiteral("hoverA")).toDouble()).arg(hoverUntuned)));
+    QVERIFY(vpm->missionCheck().value(QStringLiteral("validated")).toBool());
+    for (const QVariant &f : vpm->motorTableFlights())
+        vpm->dismissMotorTableFlight(f.toMap().value(QStringLiteral("id")).toInt());
+    QVERIFY(!vpm->missionCheck().value(QStringLiteral("validated")).toBool());
+
     feed.stop();
     restoreMockParams(paramsBefore);
     QVERIFY(vpm->linkCurrentVehicleMotorTable(QString()));
@@ -2771,6 +2840,60 @@ void LivePluginBenchTest::testMotorTableCountsEveryReading()
 // item passes without a power type, and the battery chip names the motor
 // table as the estimate's source; unlinked from the page, the item needs a
 // power type again.
+// The app shows speed and height in the units picked in its settings (km/h and
+// feet here, mph and feet by default on a computer set to British or US
+// units); the estimates and checks read the vehicle in metres and m/s whatever
+// is shown.
+void LivePluginBenchTest::testTelemetryReadInMetricUnits()
+{
+    // The vehicle's facts take the shown units when the vehicle connects, so
+    // they are set before it does.
+    UnitsSettings *units = SettingsManager::instance()->unitsSettings();
+    const QVariant speedWas = units->speedUnits()->rawValue();
+    const QVariant horizWas = units->horizontalDistanceUnits()->rawValue();
+    const QVariant vertWas = units->verticalDistanceUnits()->rawValue();
+    const auto restore = qScopeGuard([&]() {
+        units->speedUnits()->setRawValue(speedWas);
+        units->horizontalDistanceUnits()->setRawValue(horizWas);
+        units->verticalDistanceUnits()->setRawValue(vertWas);
+    });
+    units->speedUnits()->setRawValue(UnitsSettings::SpeedUnitsKilometersPerHour);
+    units->horizontalDistanceUnits()->setRawValue(UnitsSettings::HorizontalDistanceUnitsFeet);
+    units->verticalDistanceUnits()->setRawValue(UnitsSettings::VerticalDistanceUnitsFeet);
+
+    QVERIFY2(_connectPlane(), "mock vehicle did not connect / resolve its UID");
+    auto *bridge = _pluginChild<TelemetryBridge>();
+    QVERIFY(bridge);
+
+    // 10 m/s ground speed, 12 m/s airspeed, 20 m above home.
+    auto send = [&]() {
+        mavlink_message_t msg;
+        const auto sys = static_cast<uint8_t>(_vehicle->id());
+        const auto comp = static_cast<uint8_t>(_vehicle->defaultComponentId());
+        mavlink_msg_vfr_hud_pack_chan(sys, comp, 0, &msg, 12.0f, 10.0f, 0, 40, 20.0f, 0.0f);
+        _mockLink->respondWithMavlinkMessage(msg);
+        mavlink_msg_global_position_int_pack_chan(sys, comp, 0, &msg, 0, -353632610, 1491652300,
+                                                  2920000, 20000, 1000, 0, 0, 0);
+        _mockLink->respondWithMavlinkMessage(msg);
+    };
+    for (int i = 0; i < 100 && !(qAbs(_vehicle->groundSpeed()->rawValue().toDouble() - 10.0) < 1e-3
+                                 && qAbs(_vehicle->altitudeRelative()->rawValue().toDouble() - 20.0) < 1e-3); ++i) {
+        send();
+        QTest::qWait(50);
+    }
+    send();
+    QTest::qWait(200);
+    // The units took: the shown values are 36 km/h and about 65.6 ft.
+    QVERIFY2(qAbs(_vehicle->groundSpeed()->cookedValue().toDouble() - 36.0) < 0.01,
+             qPrintable(_vehicle->groundSpeed()->cookedValue().toString()));
+    QVERIFY2(qAbs(_vehicle->altitudeRelative()->cookedValue().toDouble() - 65.62) < 0.01,
+             qPrintable(_vehicle->altitudeRelative()->cookedValue().toString()));
+    // What the GCS reads.
+    QVERIFY2(qAbs(bridge->groundSpeed() - 10.0) < 1e-3, qPrintable(QString::number(bridge->groundSpeed())));
+    QVERIFY2(qAbs(bridge->airspeed() - 12.0) < 1e-3, qPrintable(QString::number(bridge->airspeed())));
+    QVERIFY2(qAbs(bridge->altitudeRelative() - 20.0) < 1e-3, qPrintable(QString::number(bridge->altitudeRelative())));
+}
+
 void LivePluginBenchTest::testMotorTableInTheApp()
 {
     QVERIFY2(_connectPlane(), "mock copter did not connect / resolve its UID");
@@ -2830,12 +2953,76 @@ void LivePluginBenchTest::testMotorTableInTheApp()
     QVERIFY2(status->property("text").toString().contains(QStringLiteral("Hover")),
              qPrintable(status->property("text").toString()));
 
-    // The checklist's Power type item passes on the motor table.
+    // A recorded flight shows on the page; its charger number is entered and
+    // it is dismissed from there.
+    QVariantMap fl{{QStringLiteral("deviceUid"), vpm->currentDeviceUid()}, {QStringLiteral("tableId"), table.id},
+                   {QStringLiteral("gcsAh"), 14.0}, {QStringLiteral("startedFull"), true}, {QStringLiteral("hoverS"), 300.0}};
+    const int flightId = DatabaseManager::instance().insertMotorTableFlight(fl);
+    QVERIFY(flightId > 0);
+    QVERIFY(vpm->linkCurrentVehicleMotorTable(table.id));   // the page reloads on the link
+    pumpQml(300);
+    QObject *chargerField = findItem(page.data(), QStringLiteral("mtFlightCharger_%1").arg(flightId));
+    QObject *saveButton = findItem(page.data(), QStringLiteral("mtFlightSave_%1").arg(flightId));
+    QObject *dismissButton = findItem(page.data(), QStringLiteral("mtFlightDismiss_%1").arg(flightId));
+    QVERIFY(chargerField && saveButton && dismissButton);
+    chargerField->setProperty("text", QStringLiteral("14600"));
+    QMetaObject::invokeMethod(saveButton, "clicked");
+    pumpQml(300);
+    auto flightById = [&](int id) {
+        for (const QVariant &f : vpm->motorTableFlights())
+            if (f.toMap().value(QStringLiteral("id")).toInt() == id)
+                return f.toMap();
+        return QVariantMap();
+    };
+    QCOMPARE(flightById(flightId).value(QStringLiteral("chargerMah")).toDouble(), 14600.0);
+    QVERIFY(qAbs(flightById(flightId).value(QStringLiteral("ratio")).toDouble() - 14.6 / 14.0) < 1e-6);
+    dismissButton = findItem(page.data(), QStringLiteral("mtFlightDismiss_%1").arg(flightId));
+    QVERIFY(dismissButton);
+    QMetaObject::invokeMethod(dismissButton, "clicked");
+    pumpQml(300);
+    QCOMPARE(flightById(flightId).value(QStringLiteral("state")).toString(), QStringLiteral("dismissed"));
+
+    // The checklist's Motor table item passes on the motor table.
     AbstractCheck *item = mgr->checkById(QStringLiteral("power.power_type"));
     QVERIFY(item);
     item->evaluate();
     QCOMPARE(item->status(), CheckStatus::Passed);
     QVERIFY2(item->message().contains(QStringLiteral("(motor table)")), qPrintable(item->message()));
+
+    // Its dialog names the linked table and where to change the link; the
+    // power-type props confirm and the waiver are not offered.
+    {
+        QQmlComponent dc(engine.data());
+        dc.setData(QByteArrayLiteral("import QtQuick\n"
+                                     "import cpts 1.0 as CE\n"
+                                     "Item {\n"
+                                     "    width: 1000; height: 760\n"
+                                     "    property alias dlg: dlg\n"
+                                     "    CE.ChecklistEngine.PowerTypeDialog { id: dlg }\n"
+                                     "}\n"),
+                   QUrl(QStringLiteral("qrc:/qml/cpts/MotorTableDialogTest.qml")));
+        QVERIFY2(dc.status() == QQmlComponent::Ready, qPrintable(dc.errorString()));
+        QScopedPointer<QObject> holder(dc.create());
+        auto *holderItem = qobject_cast<QQuickItem *>(holder.data());
+        QVERIFY2(holderItem, qPrintable(dc.errorString()));
+        holderItem->setParentItem(window->contentItem());
+        QObject *dlg = holder->property("dlg").value<QObject *>();
+        QVERIFY(dlg);
+        QMetaObject::invokeMethod(dlg, "open");
+        pumpQml(200);
+        QCOMPARE(dlg->property("title").toString(), QStringLiteral("Motor Table"));
+        QObject *text = dlg->findChild<QObject *>(QStringLiteral("ptDialogText"));
+        QVERIFY(text);
+        const QString shown = text->property("text").toString();
+        QVERIFY2(shown.contains(QStringLiteral("M6215")) && shown.contains(QStringLiteral("Vehicles → Motor table")),
+                 qPrintable(shown));
+        for (const char *hidden : {"ptConfirmButton", "ptWaiveBox"}) {
+            QObject *o = dlg->findChild<QObject *>(QLatin1String(hidden));
+            QVERIFY2(o && !o->property("visible").toBool(), hidden);
+        }
+        QMetaObject::invokeMethod(dlg, "close");
+        pumpQml(100);
+    }
 
     // With a hover remembered, the ground estimate is on and the battery chip
     // names the motor table.
