@@ -386,41 +386,83 @@ inline bool fullAtArm(double restingVolts, int cells)
 /// 4.30 V for high-voltage LiPo ("LiHV").
 inline double fullCellVolts(const QString &chemistry)
 {
-    return chemistry.compare(QLatin1String("LiHV"), Qt::CaseInsensitive) == 0 ? 4.30 : kFullCellV;
+    if (chemistry.compare(QLatin1String("LiHV"), Qt::CaseInsensitive) == 0)
+        return 4.30;
+    // Li-ion here is charged to 4.3 V per cell; it rests a little below that.
+    if (chemistry.compare(QLatin1String("LiIon"), Qt::CaseInsensitive) == 0)
+        return 4.25;
+    return kFullCellV;
 }
 
-/// Charge left (%) from the resting cell voltage (no load), on a typical
-/// discharge curve: LiPo; LiHV is LiPo 0.15 V higher; Li-ion ("LiIon")
-/// has its own flatter curve. Rough (about ±15 %): for a pack that was not
-/// full at arming, in place of assuming it full. -1 when the voltage is not
-/// a cell voltage.
-inline double restingSocPct(double cellVolts, const QString &chemistry)
+namespace detail {
+struct CurvePoint { double v, pct; };
+/// Resting cell voltage against charge left, for each chemistry, on a typical
+/// discharge curve: LiPo; LiHV is LiPo 0.15 V higher; Li-ion ("LiIon") is used
+/// from 4.3 V (full) to 2.9 V (empty) per cell, with the usual Li-ion shape
+/// (steeper at both ends, flatter in the middle). A pack's own curve, from its
+/// cell maker or learned from flights, is better than these.
+inline const CurvePoint *curve(const QString &chemistry, int &n)
 {
-    struct Point { double v, pct; };
-    static const Point lipo[] = {
+    static const CurvePoint lipo[] = {
         {3.27, 0}, {3.61, 5}, {3.69, 10}, {3.71, 15}, {3.73, 20}, {3.75, 25}, {3.77, 30}, {3.79, 35},
         {3.80, 40}, {3.82, 45}, {3.84, 50}, {3.85, 55}, {3.87, 60}, {3.91, 65}, {3.95, 70}, {3.98, 75},
         {4.02, 80}, {4.08, 85}, {4.11, 90}, {4.15, 95}, {4.20, 100} };
-    static const Point liion[] = {
-        {3.00, 0}, {3.30, 10}, {3.40, 20}, {3.50, 30}, {3.60, 40}, {3.70, 50}, {3.80, 60}, {3.90, 70},
-        {4.00, 80}, {4.10, 90}, {4.20, 100} };
+    static const CurvePoint liion[] = {
+        {2.90, 0}, {3.20, 5}, {3.35, 10}, {3.48, 20}, {3.57, 30}, {3.65, 40}, {3.73, 50},
+        {3.81, 60}, {3.90, 70}, {4.00, 80}, {4.12, 90}, {4.30, 100} };
+    if (chemistry.compare(QLatin1String("LiIon"), Qt::CaseInsensitive) == 0) {
+        n = int(sizeof(liion) / sizeof(CurvePoint));
+        return liion;
+    }
+    n = int(sizeof(lipo) / sizeof(CurvePoint));
+    return lipo;
+}
+inline double hvShift(const QString &chemistry)
+{
+    return chemistry.compare(QLatin1String("LiHV"), Qt::CaseInsensitive) == 0 ? 0.15 : 0.0;
+}
+} // namespace detail
+
+/// Charge left (%) from the resting cell voltage (no load), on the
+/// chemistry's curve (detail::curve). Rough (about ±15 %): for a pack that was
+/// not full at arming, in place of assuming it full. -1 when the voltage is
+/// not a cell voltage.
+inline double restingSocPct(double cellVolts, const QString &chemistry)
+{
     if (!std::isfinite(cellVolts) || cellVolts < 2.5 || cellVolts > 4.5)
         return -1.0;
-    const bool isLiIon = chemistry.compare(QLatin1String("LiIon"), Qt::CaseInsensitive) == 0;
-    const double v = chemistry.compare(QLatin1String("LiHV"), Qt::CaseInsensitive) == 0 ? cellVolts - 0.15 : cellVolts;
-    const Point *curve = isLiIon ? liion : lipo;
-    const int n = isLiIon ? int(sizeof(liion) / sizeof(Point)) : int(sizeof(lipo) / sizeof(Point));
-    if (v <= curve[0].v)
+    int n = 0;
+    const detail::CurvePoint *c = detail::curve(chemistry, n);
+    const double v = cellVolts - detail::hvShift(chemistry);
+    if (v <= c[0].v)
         return 0.0;
-    if (v >= curve[n - 1].v)
+    if (v >= c[n - 1].v)
         return 100.0;
     for (int i = 1; i < n; ++i) {
-        if (v <= curve[i].v) {
-            const double t = (v - curve[i - 1].v) / (curve[i].v - curve[i - 1].v);
-            return curve[i - 1].pct + t * (curve[i].pct - curve[i - 1].pct);
+        if (v <= c[i].v) {
+            const double t = (v - c[i - 1].v) / (c[i].v - c[i - 1].v);
+            return c[i - 1].pct + t * (c[i].pct - c[i - 1].pct);
         }
     }
     return 100.0;
+}
+
+/// The other way round: the resting cell voltage at `socPct` charge left, on
+/// the same curve.
+inline double restingCellVolts(double socPct, const QString &chemistry)
+{
+    int n = 0;
+    const detail::CurvePoint *c = detail::curve(chemistry, n);
+    const double p = std::clamp(socPct, 0.0, 100.0);
+    double v = c[n - 1].v;
+    for (int i = 1; i < n; ++i) {
+        if (p <= c[i].pct) {
+            const double t = (p - c[i - 1].pct) / (c[i].pct - c[i - 1].pct);
+            v = c[i - 1].v + t * (c[i].v - c[i - 1].v);
+            break;
+        }
+    }
+    return v + detail::hvShift(chemistry);
 }
 
 /// A recorded flight may join the learning: it started on a full pack, has a

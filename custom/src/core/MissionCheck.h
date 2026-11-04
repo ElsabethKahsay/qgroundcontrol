@@ -1,8 +1,10 @@
 // The "Mission check" item in the preflight Power section (copters only): can
 // the copter carry the entered payload to the saved target, stay there the
 // entered time, drop the payload and come back above the landing reserve?
-// The legs are costed with the power type's learned model
-// (PowerTypeModel::checkMission, via VehicleProfileManager::missionCheck()).
+// The legs are costed with the power type's learned model, or for a copter on
+// a motor table with its remembered hover (PowerTypeModel::checkMission, via
+// VehicleProfileManager::missionCheck()). A motor table is not validated
+// until its flights agree with the charger, so it only warns.
 //
 // It blocks arming (Failed) only when the trip does not fit and the type is
 // validated (its last flights were predicted within 10 %); the pilot can
@@ -63,17 +65,28 @@ public:
             return;
         }
         if (!flag("modelUsable")) {
+            // A motor table says what it is missing; a power type, what to fly.
+            const QString notReady = r.value(QStringLiteral("notReadyText")).toString();
             const QString advice = r.value(QStringLiteral("advice")).toString();
-            set(CheckStatus::Warning, QStringLiteral("Not enough learned flights yet%1")
-                                          .arg(advice.isEmpty() ? QString() : QStringLiteral(" — ") + advice));
+            set(CheckStatus::Warning, !notReady.isEmpty() ? notReady
+                                      : QStringLiteral("Not enough learned flights yet%1")
+                                            .arg(advice.isEmpty() ? QString() : QStringLiteral(" — ") + advice));
             return;
         }
 
         const bool validated = flag("validated");
         const double kg = num("payloadKg");
-        const QString note = flag("speedAssumed") ? QStringLiteral(" (cruise speed assumed %1 m/s)")
-                                                        .arg(num("cruiseSpeedMs"), 0, 'f', 0)
-                                                  : QString();
+        // A motor table's warnings (heavy for its motors, no motor outputs)
+        // keep the item amber and are shown after the verdict.
+        const QString setupWarning = r.value(QStringLiteral("setupWarning")).toString();
+        // Said, but not amber: a motor table's cruise power before a flight
+        // has measured it.
+        const QString cruiseNote = r.value(QStringLiteral("cruiseNote")).toString();
+        const QString note = (flag("speedAssumed") ? QStringLiteral(" (cruise speed assumed %1 m/s)")
+                                                         .arg(num("cruiseSpeedMs"), 0, 'f', 0)
+                                                   : QString())
+                             + (cruiseNote.isEmpty() ? QString() : QStringLiteral(" (") + cruiseNote + QStringLiteral(")"))
+                             + (setupWarning.isEmpty() ? QString() : QStringLiteral(" — ") + setupWarning);
         // A pack that is not full: its charge is estimated from the resting
         // voltage (rough). A validated type holds the arm until a full pack is
         // fitted or the pilot waives it; before validation it is a note.
@@ -84,7 +97,8 @@ public:
                   .arg(num("packCellV"), 0, 'f', 2).arg(qRound(num("packSocPct")))
                   .arg(partialBy.isEmpty() ? QString() : QStringLiteral(", waived by ") + partialBy);
         // Unwaived and not full: amber, whatever the trip says.
-        const CheckStatus okStatus = (packFull || !partialBy.isEmpty()) ? CheckStatus::Passed : CheckStatus::Warning;
+        const CheckStatus okStatus = ((packFull || !partialBy.isEmpty()) && setupWarning.isEmpty())
+                                         ? CheckStatus::Passed : CheckStatus::Warning;
 
         if (!flag("hasTarget")) {
             set(okStatus, QStringLiteral("No target — max out-and-back %1 km with %2 kg%3%4")

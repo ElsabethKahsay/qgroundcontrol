@@ -15,6 +15,8 @@
 #include <QElapsedTimer>
 #include <QPair>
 #include <QTimer>
+
+#include "MotorTable.h"
 #include <QVector>
 
 class TelemetryBridge;
@@ -222,6 +224,19 @@ public:
     /// motorsExpected, ageMs, fresh}. fresh is false when the outputs are older
     /// than MotorTable::kMotorOutputStaleMs or a motor's output is not known.
     Q_INVOKABLE QVariantMap motorThrottleStatus() const;
+    /// The motor table's view of the connected copter before take-off:
+    /// {linked, tableName, motors, cells, cellsSource, planVolts, hoverSource
+    /// ("last flight", "MOT_THST_HOVER" or empty), hoverThrustG (per motor),
+    /// weightKg, hoverA (at planVolts, without payload), hoverAPerKg,
+    /// hoverThrottle, issues [{level, text}], off (an issue stops the estimate)}.
+    Q_INVOKABLE QVariantMap motorTableSetup() const;
+    /// The air where the copter is, for the motor table: {ratio (density ÷
+    /// sea-level density), pressureHpa, tempC, humidityPct, source}. Pressure
+    /// from the flight controller's barometer, else the standard atmosphere at
+    /// the GPS altitude; temperature and humidity from the weather service,
+    /// else the standard atmosphere's temperature. Sea level when nothing is
+    /// known.
+    Q_INVOKABLE QVariantMap airDensity() const;
 
     /// Persist the current pack config for the connected vehicle (no-op when
     /// no vehicle is connected).
@@ -415,6 +430,33 @@ private:
     int m_powerTypeId = -1;             ///< Connected aircraft's power type; -1 = none.
     QString m_motorTableId;             ///< Connected copter's motor table; empty = none.
     double m_tableSmoothA = 0.0;        ///< Motor-table battery current, smoothed like m_liveSmoothAmps.
+    double m_tableSmoothW = 0.0;        ///< The motors' power from the table, smoothed the same way.
+    /// The motor-output readings since the last 2 s update: their motors'
+    /// power summed, how many, and when the last one came. The charge is
+    /// counted on each reading as it arrives.
+    double m_readingWattsSum = 0.0;
+    int m_readings = 0;
+    qint64 m_lastReadingMs = -1;
+    double m_lastSigma = 1.0;           ///< The air density the last update used.
+    /// Counts one motor-output reading (TelemetryBridge::motorOutputsReceived).
+    void _onMotorOutputs();
+    /// The pack's internal resistance (Ω): remembered from its last flight
+    /// (QSettings, per aircraft), and measured again in each flight.
+    double m_packOhm = -1.0;
+    /// This flight's steady-cruise readings: cruise power ÷ hover power for
+    /// the same copter and air, summed. Remembered per aircraft at the disarm
+    /// (QSettings MotorTable/cruiseRatio/<uid>).
+    double m_cruiseRatioSum = 0.0;
+    int m_cruiseSamples = 0;
+    double m_packOhmLive = -1.0;
+    int m_packOhmSamples = 0;
+    /// The pack the motor-table estimate works with: cells, chemistry, size,
+    /// and the resistance (remembered, else a typical value for its cells).
+    MotorTable::Pack motorTablePack(int cells) const;
+    /// This flight's steady hover without payload (thrust per motor, g), summed
+    /// per 2 s update; stored at the disarm for the next take-off.
+    double m_hoverThrustSum = 0.0;
+    int m_hoverSamples = 0;
     bool m_propsConfirmed = false;
     QString m_powerTypeWaivedBy;
     QString m_missionWaivedBy;

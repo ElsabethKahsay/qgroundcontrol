@@ -1754,7 +1754,7 @@ void DatabaseManagerTest::testPowerTypeUpgradeFromV24()
 
     QVERIFY(db.initialize(path));
     QCOMPARE(db.storedSchemaVersion(), db.schemaVersion());
-    QVERIFY(db.linkVehicleMotorTable(QStringLiteral("UID-V24"), QStringLiteral("m6215-320kv-msc22x7.8-8s")));
+    QVERIFY(db.linkVehicleMotorTable(QStringLiteral("UID-V24"), QStringLiteral("m6215-320kv-msc22x7.8-6s")));
     QVERIFY(db.savePowerType(0, QStringLiteral("Quad X"), 15.0, 5.5, 6, {}) > 0);
     QSqlQuery cols(QSqlDatabase::database());
     QVERIFY(cols.exec(QStringLiteral("PRAGMA table_info(flight_sessions)")));
@@ -1907,26 +1907,44 @@ void DatabaseManagerTest::testRecorderHistoryEvents()
 }
 
 // Which motor table a copter's estimate uses is stored per aircraft (v26):
-// linked, replaced, unlinked, and kept apart for each aircraft.
+// linked, replaced, unlinked, and kept apart for each aircraft; with it the
+// copter's last hover (v27).
 void DatabaseManagerTest::testVehicleMotorTableLink()
 {
     QTemporaryDir dir;
     DatabaseManager &db = DatabaseManager::instance();
     QVERIFY(db.initialize(dir.filePath(QStringLiteral("mt.db"))));
-    QCOMPARE(db.schemaVersion(), 26);
-    QCOMPARE(db.storedSchemaVersion(), 26);
+    QVERIFY(db.schemaVersion() >= 27);
+    QCOMPARE(db.storedSchemaVersion(), db.schemaVersion());
     const QString a = QStringLiteral("UID-MT-A"), b = QStringLiteral("UID-MT-B");
     db.linkVehicleMotorTable(a, QString());
     db.linkVehicleMotorTable(b, QString());
     QVERIFY(db.vehicleMotorTableId(a).isEmpty());
-    QVERIFY(db.linkVehicleMotorTable(a, QStringLiteral("m6215-320kv-msc22x7.8-8s")));
-    QCOMPARE(db.vehicleMotorTableId(a), QStringLiteral("m6215-320kv-msc22x7.8-8s"));
+    QVERIFY(db.linkVehicleMotorTable(a, QStringLiteral("m6215-320kv-msc22x7.8-6s")));
+    QCOMPARE(db.vehicleMotorTableId(a), QStringLiteral("m6215-320kv-msc22x7.8-6s"));
     QVERIFY(db.vehicleMotorTableId(b).isEmpty());
     QVERIFY(db.linkVehicleMotorTable(a, QStringLiteral("other")));
     QCOMPARE(db.vehicleMotorTableId(a), QStringLiteral("other"));
     QVERIFY(db.linkVehicleMotorTable(a, QString()));
     QVERIFY(db.vehicleMotorTableId(a).isEmpty());
     QVERIFY(!db.linkVehicleMotorTable(QString(), QStringLiteral("other")));
+
+    // The last hover (v27) is kept with the link: relinking the same table
+    // keeps it, another table forgets it, an unlinked aircraft stores none.
+    QVERIFY(!db.saveVehicleMotorHover(a, 3000.0, 20));
+    QVERIFY(db.vehicleMotorHover(a).isEmpty());
+    QVERIFY(db.linkVehicleMotorTable(a, QStringLiteral("m6215-320kv-msc22x7.8-6s")));
+    QVERIFY(db.vehicleMotorHover(a).isEmpty());
+    QVERIFY(db.saveVehicleMotorHover(a, 3000.0, 20));
+    QCOMPARE(db.vehicleMotorHover(a).value(QStringLiteral("thrustG")).toDouble(), 3000.0);
+    QCOMPARE(db.vehicleMotorHover(a).value(QStringLiteral("samples")).toInt(), 20);
+    QVERIFY(!db.saveVehicleMotorHover(a, 0.0, 20));
+    QVERIFY(db.linkVehicleMotorTable(a, QStringLiteral("m6215-320kv-msc22x7.8-6s")));
+    QCOMPARE(db.vehicleMotorHover(a).value(QStringLiteral("thrustG")).toDouble(), 3000.0);
+    QVERIFY(db.vehicleMotorHover(b).isEmpty());
+    QVERIFY(db.linkVehicleMotorTable(a, QStringLiteral("other")));
+    QVERIFY(db.vehicleMotorHover(a).isEmpty());
+    QVERIFY(db.linkVehicleMotorTable(a, QString()));
 }
 
 UT_REGISTER_TEST(DatabaseManagerTest)

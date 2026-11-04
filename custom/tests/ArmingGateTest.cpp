@@ -43,6 +43,7 @@ private slots:
     void testBatteryPackWarnsOnFcCapacityMismatch();
     void testPowerTypeItemNeedsConfirmedProps();
     void testMissionCheckBlocksOnlyWhenValidated();
+    void testMissionCheckOnMotorTable();
     void testPowerTypeWaiversAndTimeAtTarget();
 
 private:
@@ -638,6 +639,60 @@ void ArmingGateTest::testPowerTypeWaiversAndTimeAtTarget()
     QCOMPARE(VehicleProfileManager::frameName(1, 1), QStringLiteral("Quad X"));
     QCOMPARE(VehicleProfileManager::frameName(2, 0), QStringLiteral("Hexa Plus"));
     QCOMPARE(VehicleProfileManager::frameName(99, 1), QString());
+}
+
+// "Mission check" for a copter on a motor table: what is missing is said
+// plainly (no hover yet, a different frame), the table's warnings keep the item
+// amber, and a short trip warns but never blocks (the table is not validated
+// until its flights agree with the charger).
+void ArmingGateTest::testMissionCheckOnMotorTable()
+{
+    QVariantMap r;
+    auto *item = new MissionCheck([&r]() { return r; });
+    OneCheckGate g(item);
+    const QString id = QStringLiteral("power.mission");
+    auto status = [&]() { item->evaluate(); return item->status(); };
+
+    const QVariantMap linked{{QStringLiteral("applicable"), true}, {QStringLiteral("linked"), true},
+                             {QStringLiteral("source"), QStringLiteral("motor table")}, {QStringLiteral("validated"), false}};
+    r = linked;
+    r[QStringLiteral("modelUsable")] = false;
+    r[QStringLiteral("notReadyText")] = QStringLiteral("Hover not known yet: fly once");
+    QCOMPARE(status(), CheckStatus::Warning);
+    QCOMPARE(item->message(), QStringLiteral("Hover not known yet: fly once"));
+    QVERIFY(!g.failing(id));
+
+    r = linked;
+    r[QStringLiteral("modelUsable")] = true;
+    for (const char *k : {"hasTarget", "positionKnown", "payloadEntered", "timeAtTargetEntered", "fits"})
+        r[QLatin1String(k)] = true;
+    r[QStringLiteral("targetKm")] = 3.0;
+    r[QStringLiteral("usableAh")] = 16.0;
+    r[QStringLiteral("totalAh")] = 11.9;
+    r[QStringLiteral("spareAh")] = 4.1;
+    r[QStringLiteral("maxTargetKm")] = 4.5;
+    r[QStringLiteral("cruiseSpeedMs")] = 10.0;
+    r[QStringLiteral("speedAssumed")] = true;
+    QCOMPARE(status(), CheckStatus::Passed);
+    QVERIFY2(item->message().contains(QStringLiteral("OK, 4.1 Ah spare")), qPrintable(item->message()));
+    // Cruise not yet measured: said, still green.
+    r[QStringLiteral("cruiseNote")] = QStringLiteral("cruise power not measured yet: taken as hover");
+    QCOMPARE(status(), CheckStatus::Passed);
+    QVERIFY2(item->message().contains(QStringLiteral("cruise power not measured yet")), qPrintable(item->message()));
+    r.remove(QStringLiteral("cruiseNote"));
+
+    r[QStringLiteral("setupWarning")] = QStringLiteral("Little spare thrust: 1.95 × the weight at the reserve (want 2.0)");
+    QCOMPARE(status(), CheckStatus::Warning);
+    QVERIFY2(item->message().contains(QStringLiteral("Little spare thrust")), qPrintable(item->message()));
+    QVERIFY(!g.failing(id));
+    r.remove(QStringLiteral("setupWarning"));
+
+    r[QStringLiteral("fits")] = false;
+    r[QStringLiteral("spareAh")] = -2.0;
+    r[QStringLiteral("totalAh")] = 18.0;
+    QCOMPARE(status(), CheckStatus::Warning);
+    QVERIFY2(item->message().contains(QStringLiteral("not yet validated")), qPrintable(item->message()));
+    QVERIFY(!g.failing(id));
 }
 
 UT_REGISTER_TEST(ArmingGateTest)

@@ -952,6 +952,7 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message) {
                     _motorOutputs = outputs;
                     emit servoOutputsChanged();
                 }
+                emit motorOutputsReceived();
             }
             break;
         }

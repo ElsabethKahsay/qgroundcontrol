@@ -340,7 +340,7 @@ bool DatabaseManager::initialize(const QString &dbPath)
 //       power-type model learns from (hover/cruise minutes with and without
 //       payload, FC mAh and current, throttle, cell volts at arm, telemetry
 //       coverage, time at target, the charger number and its learning state)
-static const int kLatestSchemaVersion = 26;
+static const int kLatestSchemaVersion = 27;
 
 bool DatabaseManager::createTables()
 {
@@ -1808,6 +1808,22 @@ bool DatabaseManager::migrateSchema()
                    "table_id TEXT NOT NULL,"
                    "linked_at TEXT NOT NULL)");
             break;
+        case 27: {
+            // v27: the copter's last steady hover, as thrust per motor (g),
+            // for the motor-table estimate before take-off.
+            QSet<QString> have;
+            QSqlQuery pragma(m_db);
+            pragma.exec(QStringLiteral("PRAGMA table_info(vehicle_motor_table)"));
+            while (pragma.next())
+                have.insert(pragma.value(1).toString());
+            static const char *const kCols[] = { "hover_thrust_g REAL", "hover_samples INTEGER", "hover_at TEXT" };
+            for (const char *col : kCols) {
+                const QString def = QString::fromLatin1(col);
+                if (!have.contains(def.section(QLatin1Char(' '), 0, 0)))
+                    q.exec(QStringLiteral("ALTER TABLE vehicle_motor_table ADD COLUMN %1").arg(def));
+            }
+            break;
+        }
         default:
             qWarning() << "DatabaseManager: unknown migration version" << v;
             m_db.rollback();
@@ -5341,8 +5357,14 @@ bool DatabaseManager::linkVehicleMotorTable(const QString &deviceUid, const QStr
         q.addBindValue(deviceUid.trimmed());
         return execOrWarn(q, "linkVehicleMotorTable unlink");
     }
+    // A different table forgets the last hover: it was measured against the
+    // other table's motors.
     q.prepare("INSERT INTO vehicle_motor_table (device_uid, table_id, linked_at) VALUES (?, ?, ?) "
-              "ON CONFLICT(device_uid) DO UPDATE SET table_id = excluded.table_id, linked_at = excluded.linked_at");
+              "ON CONFLICT(device_uid) DO UPDATE SET "
+              "hover_thrust_g = CASE WHEN table_id = excluded.table_id THEN hover_thrust_g ELSE NULL END, "
+              "hover_samples = CASE WHEN table_id = excluded.table_id THEN hover_samples ELSE NULL END, "
+              "hover_at = CASE WHEN table_id = excluded.table_id THEN hover_at ELSE NULL END, "
+              "table_id = excluded.table_id, linked_at = excluded.linked_at");
     q.addBindValue(deviceUid.trimmed());
     q.addBindValue(tableId.trimmed());
     q.addBindValue(QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
@@ -5358,6 +5380,35 @@ QString DatabaseManager::vehicleMotorTableId(const QString &deviceUid)
     q.addBindValue(deviceUid.trimmed());
     if (!execOrWarn(q, "vehicleMotorTableId") || !q.next()) return QString();
     return q.value(0).toString();
+}
+
+bool DatabaseManager::saveVehicleMotorHover(const QString &deviceUid, double thrustG, int samples)
+{
+    assertMainThread();
+    if (!m_initialized || deviceUid.trimmed().isEmpty() || !(thrustG > 0.0)) return false;
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE vehicle_motor_table SET hover_thrust_g = ?, hover_samples = ?, hover_at = ? WHERE device_uid = ?");
+    q.addBindValue(thrustG);
+    q.addBindValue(samples);
+    q.addBindValue(QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+    q.addBindValue(deviceUid.trimmed());
+    return execOrWarn(q, "saveVehicleMotorHover") && q.numRowsAffected() == 1;
+}
+
+QVariantMap DatabaseManager::vehicleMotorHover(const QString &deviceUid)
+{
+    assertMainThread();
+    QVariantMap out;
+    if (!m_initialized || deviceUid.trimmed().isEmpty()) return out;
+    QSqlQuery q(m_db);
+    q.prepare("SELECT hover_thrust_g, hover_samples, hover_at FROM vehicle_motor_table "
+              "WHERE device_uid = ? AND hover_thrust_g IS NOT NULL");
+    q.addBindValue(deviceUid.trimmed());
+    if (!execOrWarn(q, "vehicleMotorHover") || !q.next()) return out;
+    out[QStringLiteral("thrustG")] = q.value(0).toDouble();
+    out[QStringLiteral("samples")] = q.value(1).toInt();
+    out[QStringLiteral("at")] = q.value(2).toString();
+    return out;
 }
 
 bool DatabaseManager::saveFlightPowerRecord(int sessionId, const FlightPowerRecord &r)

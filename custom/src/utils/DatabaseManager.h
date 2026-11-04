@@ -313,6 +313,11 @@ public:
     Q_INVOKABLE bool linkVehicleMotorTable(const QString &deviceUid, const QString &tableId);
     /// The aircraft's motor table id, or empty when it is not linked.
     Q_INVOKABLE QString vehicleMotorTableId(const QString &deviceUid);
+    /// Stores the copter's last steady hover (thrust per motor, g) on its motor
+    /// table link. False when it is not linked.
+    bool saveVehicleMotorHover(const QString &deviceUid, double thrustG, int samples);
+    /// {thrustG, samples, at}, or empty when none is stored.
+    QVariantMap vehicleMotorHover(const QString &deviceUid);
     /// Writes the recorder's numbers onto a flight. A flight that did not start
     /// on a full pack or lacks telemetry is marked "excluded" from learning;
     /// otherwise it waits as "pending" until the pilot picks Use or Dismiss

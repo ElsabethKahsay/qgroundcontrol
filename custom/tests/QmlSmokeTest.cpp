@@ -1306,6 +1306,8 @@ private slots:
     void testFlightHistoryDetailsRecorded();
     void testMotorOutputsReadForTheEstimate();
     void testMotorTableLiveEstimate();
+    void testMotorTableBeforeTakeoff();
+    void testMotorTableCountsEveryReading();
 
 private:
     bool _connectPlane();
@@ -2195,6 +2197,32 @@ void LivePluginBenchTest::testFlightHistoryDetailsRecorded()
              qPrintable(QStringLiteral("mode %1 -> %2, events %3").arg(before, other, events.join(QStringLiteral(", ")))));
 }
 
+// Sets parameters on the mock copter (never a real aircraft) and waits until
+// the plugin reads them back; returns the old values for restoreMockParams().
+static QVector<QPair<Fact *, QVariant>> setMockParams(Vehicle *v, TelemetryBridge *bridge,
+                                                      const QVector<QPair<QString, double>> &values)
+{
+    QVector<QPair<Fact *, QVariant>> old;
+    for (const auto &nv : values) {
+        Fact *f = v->parameterManager()->getParameter(v->defaultComponentId(), nv.first);
+        if (!f)
+            continue;
+        old.append({f, f->rawValue()});
+        f->setRawValue(nv.second);
+    }
+    for (const auto &nv : values)
+        for (int i = 0; i < 100 && qAbs(bridge->parameterValue(nv.first, -999.0f) - nv.second) > 1e-4; ++i)
+            QTest::qWait(50);
+    return old;
+}
+
+static void restoreMockParams(const QVector<QPair<Fact *, QVariant>> &old)
+{
+    for (const auto &fv : old)
+        fv.first->setRawValue(fv.second);
+    QTest::qWait(300);
+}
+
 // The motor-table estimate's inputs on the mock copter (the real plugin): the
 // motor parameters are watched, and each motor's output signal
 // (SERVO_OUTPUT_RAW) becomes its throttle on the ESC range, in motor order;
@@ -2265,14 +2293,14 @@ void LivePluginBenchTest::testMotorTableLiveEstimate()
     QVERIFY(bridge);
     for (int i = 0; i < 100 && (!bridge->parametersReady() || vpm->kind() != VehicleKind::Multirotor); ++i)
         QTest::qWait(50);
-    const MotorTable::Table &table = MotorTable::m6215_320kv_22x78_8s();
+    const MotorTable::Table &table = MotorTable::m6215_320kv_22x78_6s();
     QVERIFY(!vpm->linkCurrentVehicleMotorTable(QStringLiteral("no-such-table")));
     QVERIFY(vpm->linkCurrentVehicleMotorTable(table.id));
     QCOMPARE(vpm->motorTableId(), table.id);
     QVERIFY(vpm->linkCurrentVehiclePowerType(0));
     const int seriesBefore = vpm->batterySeriesCells(), parallelBefore = vpm->batteryParallelCells(),
               mahBefore = vpm->batteryCellMah();
-    vpm->setBatterySeriesCells(8);
+    vpm->setBatterySeriesCells(6);
     vpm->setBatteryParallelCells(1);
     vpm->setBatteryCellMah(20000);
 
@@ -2283,6 +2311,10 @@ void LivePluginBenchTest::testMotorTableLiveEstimate()
     for (int i = 0; i < 100 && qRound(bridge->parameterValue(QStringLiteral("BATT_MONITOR"), -1.0f)) != 3; ++i)
         QTest::qWait(50);
     QCOMPARE(qRound(bridge->parameterValue(QStringLiteral("BATT_MONITOR"), -1.0f)), 3);
+    // The mock loads ArduSub's parameters (6 motor outputs); the table is for
+    // a quad.
+    const auto quadBefore = setMockParams(_vehicle, bridge, {{QStringLiteral("SERVO5_FUNCTION"), 0.0},
+                                                             {QStringLiteral("SERVO6_FUNCTION"), 0.0}});
 
     QVariantList channels = vpm->motorThrottleStatus().value(QStringLiteral("channels")).toList();
     QVERIFY(!channels.isEmpty());
@@ -2292,18 +2324,23 @@ void LivePluginBenchTest::testMotorTableLiveEstimate()
     for (const QVariant &c : channels)
         pwm[c.toInt() - 1] = static_cast<uint16_t>(qRound(pwmMin + 0.371 * (pwmMax - pwmMin)));
     // The mock numbers its batteries from 1; ArduPilot's first battery is 0,
-    // the pack the GCS reads. Send battery 0 the way ArduPilot does: 4 cells
-    // at 4.2 V, 16.8 V, far from the table's 30.7 V, so the pack-voltage
-    // correction shows.
+    // the pack the GCS reads. Send battery 0 the way ArduPilot does: a full 6S
+    // pack, 6 cells at 4.2 V = 25.2 V, away from the table's 23 V, so the
+    // pack-voltage correction shows.
     auto sendPack = [&]() {
         uint16_t cells[10];
         std::fill(std::begin(cells), std::end(cells), UINT16_MAX);
-        cells[0] = cells[1] = cells[2] = cells[3] = 4200;
+        cells[0] = cells[1] = cells[2] = cells[3] = cells[4] = cells[5] = 4200;
         uint16_t ext[4] = {0, 0, 0, 0};
         mavlink_message_t msg;
         mavlink_msg_battery_status_pack_chan(static_cast<uint8_t>(_vehicle->id()), static_cast<uint8_t>(_vehicle->defaultComponentId()),
                                              0, &msg, 0, MAV_BATTERY_FUNCTION_ALL, MAV_BATTERY_TYPE_LIPO, INT16_MAX, cells,
                                              -1, -1, -1, -1, 0, MAV_BATTERY_CHARGE_STATE_OK, ext, 0, 0);
+        _mockLink->respondWithMavlinkMessage(msg);
+        // The barometer at 2900 m (710 hPa), as ArduPilot reports it: thin
+        // air, so the density correction shows.
+        mavlink_msg_scaled_pressure_pack_chan(static_cast<uint8_t>(_vehicle->id()), static_cast<uint8_t>(_vehicle->defaultComponentId()),
+                                              0, &msg, 0, 710.0f, 0.0f, 2500, 0);
         _mockLink->respondWithMavlinkMessage(msg);
     };
     sendPack();
@@ -2342,11 +2379,18 @@ void LivePluginBenchTest::testMotorTableLiveEstimate()
     QCOMPARE(live().value(QStringLiteral("throttleSource")).toString(), QStringLiteral("motor outputs"));
 
     const double packV = bridge->batteryVoltage();
-    QVERIFY2(packV > 0.0 && qAbs(packV - table.volts) > 5.0, qPrintable(QString::number(packV)));
+    QVERIFY2(packV > 0.0 && qAbs(packV - table.volts) > 1.5, qPrintable(QString::number(packV)));
     const double thr = (qRound(pwmMin + 0.371 * (pwmMax - pwmMin)) - pwmMin) / (pwmMax - pwmMin);
-    const double expectA = channels.size() * MotorTable::motorCurrent(table, thr, packV).amps + MotorTable::kElectronicsA;
+    const double sigma = vpm->airDensity().value(QStringLiteral("ratio")).toDouble();
+    QVERIFY2(sigma > 0.6 && sigma < 0.85, qPrintable(QString::number(sigma)));   // 710 hPa
+    QCOMPARE(live().value(QStringLiteral("densityRatio")).toDouble(), sigma);
+    const double expectA = channels.size() * MotorTable::motorCurrent(table, thr, packV, sigma).amps + MotorTable::kElectronicsA;
     const double nowA = live().value(QStringLiteral("tableCurrentA")).toDouble();
-    QVERIFY2(qAbs(nowA - expectA) < 0.01 * expectA, qPrintable(QStringLiteral("%1 A, expected %2 A at %3 V").arg(nowA).arg(expectA).arg(packV)));
+    // Exactly the table's current at the mock's pack voltage and air density
+    // (in flight the density correction is small, so only a tight check sees
+    // it).
+    QVERIFY2(qAbs(nowA - expectA) < 1e-4 * expectA,
+             qPrintable(QStringLiteral("%1 A, expected %2 A at %3 V, density %4").arg(nowA, 0, 'f', 5).arg(expectA, 0, 'f', 5).arg(packV).arg(sigma)));
 
     // The count grows by about current × time.
     const double usable1 = live().value(QStringLiteral("usableAh")).toDouble();
@@ -2359,6 +2403,11 @@ void LivePluginBenchTest::testMotorTableLiveEstimate()
              qPrintable(QStringLiteral("used %1 Ah in %2 s, expected about %3 Ah").arg(usable1 - usable2).arg(clock.elapsed() / 1000.0).arg(expectUsedAh)));
     const double currentA = live().value(QStringLiteral("currentA")).toDouble();
     QVERIFY(currentA > 0.0);
+    // Time left is costed through the rest of the pack: as the voltage falls
+    // the same power needs more current, so the current it uses is above the
+    // current now.
+    QVERIFY(live().value(QStringLiteral("motorPowerW")).toDouble() > 0.0);
+    QVERIFY2(currentA > nowA * 1.02, qPrintable(QStringLiteral("%1 A vs %2 A now").arg(currentA).arg(nowA)));
     QVERIFY(qAbs(live().value(QStringLiteral("timeLeftMin")).toDouble() - usable2 / currentA * 60.0) < 0.5);
 
     // Outputs stop: not "motor outputs" any more.
@@ -2376,8 +2425,341 @@ void LivePluginBenchTest::testMotorTableLiveEstimate()
     _vehicle->setArmed(false, false);
     QVERIFY(_waitArmed(false));
     monitor->setRawValue(monitorBefore);
+    restoreMockParams(quadBefore);
     QVERIFY(vpm->linkCurrentVehicleMotorTable(QString()));
     QVERIFY(vpm->motorTableId().isEmpty());
+    vpm->setBatterySeriesCells(seriesBefore);
+    vpm->setBatteryParallelCells(parallelBefore);
+    vpm->setBatteryCellMah(mahBefore);
+}
+
+// The motor-table estimate before take-off, on the mock copter (the real
+// plugin), made a quad on 6S (parameters set on the mock only): with no hover
+// known it says to fly once; with a learned MOT_THST_HOVER it plans with that;
+// after a flight with 30 s of steady hover it plans with that flight's hover
+// (thrust per motor read back from the motors' throttle at the pack voltage).
+void LivePluginBenchTest::testMotorTableBeforeTakeoff()
+{
+    QVERIFY2(_connectPlane(), "mock copter did not connect / resolve its UID");
+    VehicleProfileManager *vpm = VehicleProfileManager::instance();
+    auto *bridge = _pluginChild<TelemetryBridge>();
+    QVERIFY(bridge);
+    for (int i = 0; i < 100 && (!bridge->parametersReady() || vpm->kind() != VehicleKind::Multirotor); ++i)
+        QTest::qWait(50);
+    const MotorTable::Table &table = MotorTable::m6215_320kv_22x78_6s();
+    QVERIFY(vpm->linkCurrentVehiclePowerType(0));
+    QVERIFY(vpm->linkCurrentVehicleMotorTable(QString()));   // a fresh link: no hover remembered
+    QVERIFY(vpm->linkCurrentVehicleMotorTable(table.id));
+    vpm->clearPayloadEntry();
+    const int seriesBefore = vpm->batterySeriesCells(), parallelBefore = vpm->batteryParallelCells(),
+              mahBefore = vpm->batteryCellMah();
+    vpm->setBatterySeriesCells(6);
+    vpm->setBatteryParallelCells(1);
+    vpm->setBatteryCellMah(20000);
+    const auto paramsBefore = setMockParams(_vehicle, bridge, {{QStringLiteral("SERVO5_FUNCTION"), 0.0},
+                                                               {QStringLiteral("SERVO6_FUNCTION"), 0.0}});
+
+    // Battery 0, a full 6S pack at 25.2 V, and the motor outputs, as ArduPilot
+    // sends them.
+    uint16_t pwm[16] = {};
+    const QVariantMap st0 = vpm->motorThrottleStatus();
+    const double pwmMin = st0.value(QStringLiteral("pwmMin")).toDouble();
+    const double pwmMax = st0.value(QStringLiteral("pwmMax")).toDouble();
+    auto setThrottle = [&](double thr) {
+        for (const QVariant &c : vpm->motorThrottleStatus().value(QStringLiteral("channels")).toList())
+            pwm[c.toInt() - 1] = static_cast<uint16_t>(qRound(pwmMin + thr * (pwmMax - pwmMin)));
+    };
+    setThrottle(0.0);
+    QTimer feed;
+    connect(&feed, &QTimer::timeout, this, [&]() {
+        uint16_t cells[10];
+        std::fill(std::begin(cells), std::end(cells), UINT16_MAX);
+        cells[0] = cells[1] = cells[2] = cells[3] = cells[4] = cells[5] = 4200;
+        uint16_t ext[4] = {0, 0, 0, 0};
+        mavlink_message_t msg;
+        mavlink_msg_battery_status_pack_chan(static_cast<uint8_t>(_vehicle->id()), static_cast<uint8_t>(_vehicle->defaultComponentId()),
+                                             0, &msg, 0, MAV_BATTERY_FUNCTION_ALL, MAV_BATTERY_TYPE_LIPO, INT16_MAX, cells,
+                                             -1, -1, -1, -1, 0, MAV_BATTERY_CHARGE_STATE_OK, ext, 0, 0);
+        _mockLink->respondWithMavlinkMessage(msg);
+        // The barometer at 2900 m (710 hPa), as ArduPilot reports it: thin
+        // air, so the density correction shows.
+        mavlink_msg_scaled_pressure_pack_chan(static_cast<uint8_t>(_vehicle->id()), static_cast<uint8_t>(_vehicle->defaultComponentId()),
+                                              0, &msg, 0, 710.0f, 0.0f, 2500, 0);
+        _mockLink->respondWithMavlinkMessage(msg);
+        mavlink_msg_servo_output_raw_pack_chan(static_cast<uint8_t>(_vehicle->id()), static_cast<uint8_t>(_vehicle->defaultComponentId()),
+                                               0, &msg, 0, 0, pwm[0], pwm[1], pwm[2], pwm[3], pwm[4], pwm[5], pwm[6], pwm[7],
+                                               pwm[8], pwm[9], pwm[10], pwm[11], pwm[12], pwm[13], pwm[14], pwm[15]);
+        emit _vehicle->mavlinkMessageReceived(msg);
+    });
+    feed.start(500);
+    for (int i = 0; i < 100 && !(bridge->batteryVoltage() > 0.0); ++i)
+        QTest::qWait(50);
+    QTest::qWait(2500);
+
+    // No hover known (MOT_THST_HOVER at its default): fly once.
+    QVariantMap setup = vpm->motorTableSetup();
+    QVERIFY(setup.value(QStringLiteral("linked")).toBool());
+    QCOMPARE(setup.value(QStringLiteral("motors")).toInt(), 4);
+    QCOMPARE(setup.value(QStringLiteral("cells")).toInt(), 6);
+    QVERIFY2(!setup.value(QStringLiteral("off")).toBool(), qPrintable(QVariant(setup.value(QStringLiteral("issues"))).toString()));
+    QVERIFY(setup.value(QStringLiteral("hoverSource")).toString().isEmpty());
+    QVariantMap mc = vpm->missionCheck();
+    QVERIFY(mc.value(QStringLiteral("linked")).toBool());
+    QVERIFY(!mc.value(QStringLiteral("modelUsable")).toBool());
+    QVERIFY2(mc.value(QStringLiteral("notReadyText")).toString().startsWith(QStringLiteral("Hover not known yet")),
+             qPrintable(mc.value(QStringLiteral("notReadyText")).toString()));
+    QVERIFY(!vpm->powerLive().value(QStringLiteral("active")).toBool());
+
+    // An 8S pack entered: the table is for 6S, so the estimate is off.
+    vpm->setBatterySeriesCells(8);
+    QVERIFY(vpm->motorTableSetup().value(QStringLiteral("off")).toBool());
+    QVERIFY(vpm->missionCheck().value(QStringLiteral("notReadyText")).toString().contains(QStringLiteral("8S")));
+    vpm->setBatterySeriesCells(6);
+
+    // A learned MOT_THST_HOVER with 6S voltage compensation: the hover at the
+    // planning voltage (6 × 3.7 V) from ArduPilot's own formula.
+    const auto hoverBefore = setMockParams(_vehicle, bridge, {{QStringLiteral("MOT_THST_HOVER"), 0.2383},
+                                                              {QStringLiteral("MOT_BAT_VOLT_MAX"), 25.2},
+                                                              {QStringLiteral("MOT_BAT_VOLT_MIN"), 19.8}});
+    setup = vpm->motorTableSetup();
+    QCOMPARE(setup.value(QStringLiteral("hoverSource")).toString(), QStringLiteral("MOT_THST_HOVER"));
+    QCOMPARE(setup.value(QStringLiteral("cellsSource")).toString(), QStringLiteral("MOT_BAT_VOLT_MAX"));
+    MotorTable::HoverParams hp;
+    hp.thstHover = 0.2383;
+    hp.battVoltMax = 25.2;
+    hp.battVoltMin = 19.8;
+    // The pack's half-charge voltage on its curve (LiPo here: 3.84 V per cell),
+    // and the air where the mock is.
+    const double planV = 6 * PowerTypeModel::restingCellVolts(50.0, vpm->batteryType());
+    QCOMPARE(setup.value(QStringLiteral("planVolts")).toDouble(), planV);
+    const double sigma = vpm->airDensity().value(QStringLiteral("ratio")).toDouble();
+    QVERIFY2(sigma > 0.6 && sigma < 0.85, qPrintable(QString::number(sigma)));   // 710 hPa
+    QCOMPARE(vpm->airDensity().value(QStringLiteral("source")).toString().left(9), QStringLiteral("barometer"));
+    QCOMPARE(setup.value(QStringLiteral("densityRatio")).toDouble(), sigma);
+    const double act = MotorTable::hoverMotorThrottle(hp, planV);
+    const double expectThrust = MotorTable::thrustAt(table, act * planV / table.volts).grams
+                                * MotorTable::densityThrustRatio(table, act * planV, sigma);
+    QVERIFY(qAbs(setup.value(QStringLiteral("hoverThrustG")).toDouble() - expectThrust) < 1.0);
+    // The hover current through the rest of the pack: the motors' power for
+    // that thrust from the pack's charge now down to the reserve.
+    MotorTable::Pack pk;
+    pk.cells = 6;
+    pk.chemistry = vpm->batteryType();
+    pk.capacityAh = vpm->capacityAh();
+    pk.resistanceOhm = setup.value(QStringLiteral("packOhm")).toDouble();
+    QVERIFY(pk.resistanceOhm > 0.0);
+    const double socNow = vpm->packRestingSocPct(bridge->batteryVoltage());
+    auto hoverAt = [&](double thrustG) {
+        return MotorTable::averageCurrent(pk, 4 * MotorTable::powerForThrustAt(table, thrustG, sigma).watts, socNow,
+                                          vpm->batteryReserve() * 100.0);
+    };
+    QVERIFY2(qAbs(setup.value(QStringLiteral("hoverA")).toDouble() - hoverAt(expectThrust)) < 0.01,
+             qPrintable(QStringLiteral("%1 vs %2").arg(setup.value(QStringLiteral("hoverA")).toDouble()).arg(hoverAt(expectThrust))));
+    // More than the current at today's voltage: the pack's voltage falls
+    // through the flight.
+    QVERIFY(setup.value(QStringLiteral("hoverA")).toDouble()
+            > MotorTable::hoverCurrent(table, expectThrust, 4, bridge->batteryVoltage()));
+    // A payload adds its weight shared over the four motors: 1 kg is 250 g more
+    // thrust per motor.
+    QVERIFY(qAbs(setup.value(QStringLiteral("hoverAPerKg")).toDouble()
+                 - (hoverAt(expectThrust + 250.0) - hoverAt(expectThrust))) < 0.01);
+    QVERIFY(qAbs(setup.value(QStringLiteral("weightKg")).toDouble() - expectThrust * 4 / 1000.0) < 0.01);
+    // The pack's continuous rating: 4C × 20 Ah; the hover current by the
+    // reserve is at the pack's lowest voltage, so above the average.
+    QCOMPARE(setup.value(QStringLiteral("ratingA")).toDouble(), 80.0);
+    QVERIFY(setup.value(QStringLiteral("hoverPeakA")).toDouble() > setup.value(QStringLiteral("hoverA")).toDouble());
+    // Spare thrust at the reserve: full-throttle thrust at the reserve voltage,
+    // in this air, ÷ the hover thrust.
+    const double reserveV = setup.value(QStringLiteral("reserveVolts")).toDouble();
+    QVERIFY(reserveV > 0.0);
+    QVERIFY(qAbs(setup.value(QStringLiteral("thrustToWeight")).toDouble()
+                 - MotorTable::maxThrustAt(table, reserveV, sigma).grams / expectThrust) < 1e-6);
+    // An entered payload of 4 kg (1000 g more per motor): the hover with it
+    // aboard is read from the table at that thrust, so the two hovers the
+    // trip uses (with and without it) are both exact, where one slope worked
+    // out at 1 kg would be low.
+    QVERIFY(vpm->enterPayloadWeightKg(4.0));
+    setup = vpm->motorTableSetup();
+    const double base = setup.value(QStringLiteral("hoverA")).toDouble();
+    const double with4 = base + 4.0 * setup.value(QStringLiteral("hoverAPerKg")).toDouble();
+    QVERIFY2(qAbs(with4 - hoverAt(expectThrust + 1000.0)) < 0.01,
+             qPrintable(QStringLiteral("%1 A vs %2 A").arg(with4).arg(hoverAt(expectThrust + 1000.0))));
+    QVERIFY(qAbs(setup.value(QStringLiteral("hoverAWithPayload")).toDouble() - hoverAt(expectThrust + 1000.0)) < 0.001);
+    QVERIFY(with4 > base + 4.0 * (hoverAt(expectThrust + 250.0) - hoverAt(expectThrust)));
+    vpm->clearPayloadEntry();
+    setup = vpm->motorTableSetup();
+
+    // Cruise at 70 km/h: the hover until a flight has measured it (said in
+    // the Mission check), then the hover power × the measured ratio.
+    QCOMPARE(setup.value(QStringLiteral("cruiseSpeedMs")).toDouble(), MotorTable::kCruiseSpeedMs);
+    const QString uid = vpm->currentDeviceUid();
+    const QVariant cruiseBefore = QSettings().value(QStringLiteral("MotorTable/cruiseRatio/%1").arg(uid));
+    if (!setup.value(QStringLiteral("cruiseMeasured")).toBool()) {
+        QCOMPARE(setup.value(QStringLiteral("cruiseA")).toDouble(), setup.value(QStringLiteral("hoverA")).toDouble());
+        QVERIFY(vpm->missionCheck().value(QStringLiteral("cruiseNote")).toString().contains(QStringLiteral("not measured")));
+    }
+    QSettings().setValue(QStringLiteral("MotorTable/cruiseRatio/%1").arg(uid), 1.15);
+    setup = vpm->motorTableSetup();
+    QVERIFY(setup.value(QStringLiteral("cruiseMeasured")).toBool());
+    const double cruiseExpect = MotorTable::averageCurrent(
+        pk, 1.15 * 4 * MotorTable::powerForThrustAt(table, expectThrust, sigma).watts, socNow, vpm->batteryReserve() * 100.0);
+    QVERIFY2(qAbs(setup.value(QStringLiteral("cruiseA")).toDouble() - cruiseExpect) < 0.01,
+             qPrintable(QStringLiteral("%1 A vs %2 A").arg(setup.value(QStringLiteral("cruiseA")).toDouble()).arg(cruiseExpect)));
+    QVERIFY(setup.value(QStringLiteral("cruiseA")).toDouble() > setup.value(QStringLiteral("hoverA")).toDouble());
+    QVERIFY(vpm->missionCheck().value(QStringLiteral("cruiseNote")).toString().isEmpty());
+    QCOMPARE(vpm->missionCheck().value(QStringLiteral("cruiseSpeedMs")).toDouble(), MotorTable::kCruiseSpeedMs);
+    if (cruiseBefore.isValid())
+        QSettings().setValue(QStringLiteral("MotorTable/cruiseRatio/%1").arg(uid), cruiseBefore);
+    else
+        QSettings().remove(QStringLiteral("MotorTable/cruiseRatio/%1").arg(uid));
+    mc = vpm->missionCheck();
+    QVERIFY(mc.value(QStringLiteral("modelUsable")).toBool());
+    QVERIFY(!mc.value(QStringLiteral("validated")).toBool());
+    QCOMPARE(mc.value(QStringLiteral("source")).toString(), QStringLiteral("motor table"));
+    for (int i = 0; i < 60 && !vpm->powerLive().value(QStringLiteral("active")).toBool(); ++i)
+        QTest::qWait(50);
+    QVERIFY2(vpm->powerLive().value(QStringLiteral("active")).toBool(),
+             qPrintable(vpm->powerLive().value(QStringLiteral("offReason")).toString()));
+    const double usable = vpm->powerLive().value(QStringLiteral("usableAh")).toDouble();
+    QVERIFY(qAbs(vpm->powerLive().value(QStringLiteral("hoverMin")).toDouble()
+                 - usable / setup.value(QStringLiteral("hoverA")).toDouble() * 60.0) < 0.1);
+    restoreMockParams(hoverBefore);
+
+    // Fly: take off to 10 m, hover 32 s at the throttle that gives 2500 g per
+    // motor on the 25.2 V pack, disarm. That hover is remembered.
+    const double packV = bridge->batteryVoltage();
+    const double hoverThr = MotorTable::throttleForThrust(table, 2500.0) * table.volts / packV;
+    FlightSession::instance()->setMode(QStringLiteral("FLIGHT"));
+    _vehicle->setArmed(true, false);
+    QVERIFY(_waitArmed(true));
+    setThrottle(hoverThr);
+    QTest::qWait(600);
+    _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_NAV_TAKEOFF, false, 0, 0, 0, 0, 0, 0, 10.0f);
+    for (int i = 0; i < 100 && !(bridge->altitudeRelative() > 5.0); ++i)
+        QTest::qWait(50);
+    QVERIFY2(bridge->altitudeRelative() > 5.0, qPrintable(QString::number(bridge->altitudeRelative())));
+    QTest::qWait(2000 * (MotorTable::kMinHoverSamples + 1));
+    _vehicle->setArmed(false, false);
+    QVERIFY(_waitArmed(false));
+    QTest::qWait(2500);
+    setup = vpm->motorTableSetup();
+    QCOMPARE(setup.value(QStringLiteral("hoverSource")).toString(), QStringLiteral("last flight"));
+    const double expectHover = MotorTable::averageThrust(table, {hoverThr, hoverThr, hoverThr, hoverThr}, packV,
+                                                         vpm->airDensity().value(QStringLiteral("ratio")).toDouble());
+    QVERIFY2(qAbs(setup.value(QStringLiteral("hoverThrustG")).toDouble() - expectHover) < expectHover * 0.01,
+             qPrintable(QStringLiteral("%1 vs %2").arg(setup.value(QStringLiteral("hoverThrustG")).toDouble()).arg(expectHover)));
+    QVERIFY(qAbs(setup.value(QStringLiteral("weightKg")).toDouble() - 4 * expectHover / 1000.0) < 0.05);
+
+    feed.stop();
+    restoreMockParams(paramsBefore);
+    QVERIFY(vpm->linkCurrentVehicleMotorTable(QString()));
+    vpm->setBatterySeriesCells(seriesBefore);
+    vpm->setBatteryParallelCells(parallelBefore);
+    vpm->setBatteryCellMah(mahBefore);
+}
+
+// The charge is counted on every motor-output reading (5 a second), not once
+// per 2 s update: with the motors alternating between 40 % and 60 % on each
+// reading, the count follows the average of the two currents. Counting only
+// the latest reading at each update would land on one of them, since an
+// update sees an even number of readings.
+void LivePluginBenchTest::testMotorTableCountsEveryReading()
+{
+    QVERIFY2(_connectPlane(), "mock copter did not connect / resolve its UID");
+    VehicleProfileManager *vpm = VehicleProfileManager::instance();
+    auto *bridge = _pluginChild<TelemetryBridge>();
+    QVERIFY(bridge);
+    for (int i = 0; i < 100 && (!bridge->parametersReady() || vpm->kind() != VehicleKind::Multirotor); ++i)
+        QTest::qWait(50);
+    const MotorTable::Table &table = MotorTable::m6215_320kv_22x78_6s();
+    QVERIFY(vpm->linkCurrentVehiclePowerType(0));
+    QVERIFY(vpm->linkCurrentVehicleMotorTable(table.id));
+    vpm->clearPayloadEntry();
+    const int seriesBefore = vpm->batterySeriesCells(), parallelBefore = vpm->batteryParallelCells(),
+              mahBefore = vpm->batteryCellMah();
+    vpm->setBatterySeriesCells(6);
+    vpm->setBatteryParallelCells(1);
+    vpm->setBatteryCellMah(20000);
+    const auto paramsBefore = setMockParams(_vehicle, bridge, {{QStringLiteral("SERVO5_FUNCTION"), 0.0},
+                                                               {QStringLiteral("SERVO6_FUNCTION"), 0.0},
+                                                               {QStringLiteral("BATT_MONITOR"), 3.0}});
+    const QVariantMap st = vpm->motorThrottleStatus();
+    const QVariantList channels = st.value(QStringLiteral("channels")).toList();
+    QCOMPARE(channels.size(), 4);
+    const double pwmMin = st.value(QStringLiteral("pwmMin")).toDouble();
+    const double pwmMax = st.value(QStringLiteral("pwmMax")).toDouble();
+    const int pwmLow = qRound(pwmMin + 0.40 * (pwmMax - pwmMin));
+    const int pwmHigh = qRound(pwmMin + 0.60 * (pwmMax - pwmMin));
+    bool high = false;
+    QTimer feed;
+    connect(&feed, &QTimer::timeout, this, [&]() {
+        uint16_t cells[10];
+        std::fill(std::begin(cells), std::end(cells), UINT16_MAX);
+        cells[0] = cells[1] = cells[2] = cells[3] = cells[4] = cells[5] = 4200;
+        uint16_t ext[4] = {0, 0, 0, 0};
+        mavlink_message_t msg;
+        mavlink_msg_battery_status_pack_chan(static_cast<uint8_t>(_vehicle->id()), static_cast<uint8_t>(_vehicle->defaultComponentId()),
+                                             0, &msg, 0, MAV_BATTERY_FUNCTION_ALL, MAV_BATTERY_TYPE_LIPO, INT16_MAX, cells,
+                                             -1, -1, -1, -1, 0, MAV_BATTERY_CHARGE_STATE_OK, ext, 0, 0);
+        _mockLink->respondWithMavlinkMessage(msg);
+        mavlink_msg_scaled_pressure_pack_chan(static_cast<uint8_t>(_vehicle->id()), static_cast<uint8_t>(_vehicle->defaultComponentId()),
+                                              0, &msg, 0, 710.0f, 0.0f, 2500, 0);
+        _mockLink->respondWithMavlinkMessage(msg);
+        high = !high;
+        uint16_t pwm[16] = {};
+        for (const QVariant &c : channels)
+            pwm[c.toInt() - 1] = static_cast<uint16_t>(high ? pwmHigh : pwmLow);
+        mavlink_msg_servo_output_raw_pack_chan(static_cast<uint8_t>(_vehicle->id()), static_cast<uint8_t>(_vehicle->defaultComponentId()),
+                                               0, &msg, 0, 0, pwm[0], pwm[1], pwm[2], pwm[3], pwm[4], pwm[5], pwm[6], pwm[7],
+                                               pwm[8], pwm[9], pwm[10], pwm[11], pwm[12], pwm[13], pwm[14], pwm[15]);
+        emit _vehicle->mavlinkMessageReceived(msg);
+    });
+    feed.start(200);
+    for (int i = 0; i < 100 && !(bridge->batteryVoltage() > 0.0); ++i)
+        QTest::qWait(50);
+
+    FlightSession::instance()->setMode(QStringLiteral("FLIGHT"));
+    _vehicle->setArmed(true, false);
+    QVERIFY(_waitArmed(true));
+    auto usable = [vpm]() { return vpm->powerLive().value(QStringLiteral("usableAh")).toDouble(); };
+    // The usable charge changes at each 2 s update: time the count from one
+    // update to another, five updates later.
+    auto nextUpdate = [&](QElapsedTimer &clock) {
+        const double before = usable();
+        for (int i = 0; i < 200 && usable() == before; ++i)
+            QTest::qWait(10);
+        return clock.elapsed();
+    };
+    QElapsedTimer clock;
+    clock.start();
+    for (int i = 0; i < 100 && !vpm->powerLive().value(QStringLiteral("active")).toBool(); ++i)
+        QTest::qWait(50);
+    nextUpdate(clock);
+    const qint64 t0 = nextUpdate(clock);
+    const double u0 = usable();
+    qint64 t1 = t0;
+    for (int k = 0; k < 5; ++k)
+        t1 = nextUpdate(clock);
+    const double usedAh = u0 - usable();
+    const double hours = (t1 - t0) / 1000.0 / 3600.0;
+
+    const double packV = bridge->batteryVoltage();
+    const double sigma = vpm->airDensity().value(QStringLiteral("ratio")).toDouble();
+    auto amps = [&](int pwm) {
+        const double thr = (pwm - pwmMin) / (pwmMax - pwmMin);
+        return MotorTable::batteryCurrent(table, {thr, thr, thr, thr}, packV, sigma).amps;
+    };
+    const double mean = (amps(pwmLow) + amps(pwmHigh)) / 2.0;
+    const double counted = usedAh / hours;
+    QVERIFY2(qAbs(counted - mean) < 0.06 * mean,
+             qPrintable(QStringLiteral("counted %1 A over %2 s; average of the readings %3 A (low %4 A, high %5 A)")
+                            .arg(counted).arg((t1 - t0) / 1000.0).arg(mean).arg(amps(pwmLow)).arg(amps(pwmHigh))));
+
+    feed.stop();
+    _vehicle->setArmed(false, false);
+    QVERIFY(_waitArmed(false));
+    restoreMockParams(paramsBefore);
+    QVERIFY(vpm->linkCurrentVehicleMotorTable(QString()));
     vpm->setBatterySeriesCells(seriesBefore);
     vpm->setBatteryParallelCells(parallelBefore);
     vpm->setBatteryCellMah(mahBefore);

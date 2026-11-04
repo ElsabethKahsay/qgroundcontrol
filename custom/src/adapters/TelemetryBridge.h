@@ -874,6 +874,9 @@ signals:
     void preArmMessageChanged();
     void motorCountChanged();
     void servoOutputsChanged();
+    /// Every SERVO_OUTPUT_RAW for outputs 1–16, changed or not (the
+    /// motor-table estimate counts the charge on each).
+    void motorOutputsReceived();
     void missionCountChanged();
     void missionFirstWpDistanceChanged();
     void missionTotalDistanceChanged();

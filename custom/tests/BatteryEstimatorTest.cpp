@@ -789,7 +789,8 @@ private slots:
         QVERIFY(near(restingSocPct(3.70, QStringLiteral("LiPo")), 12.5, 1e-9));   // between 3.69 (10) and 3.71 (15)
         QCOMPARE(restingSocPct(3.0, QStringLiteral("LiPo")), 0.0);
         QCOMPARE(restingSocPct(4.10, QStringLiteral("LiHV")), 70.0);              // LiHV: 0.15 V higher
-        QCOMPARE(restingSocPct(3.70, QStringLiteral("LiIon")), 50.0);
+        QCOMPARE(restingSocPct(3.73, QStringLiteral("LiIon")), 50.0);   // Li-ion used 4.3 → 2.9 V
+        QVERIFY(qAbs(restingSocPct(3.70, QStringLiteral("LiIon")) - 46.25) < 1e-9);
         QCOMPARE(restingSocPct(1.2, QStringLiteral("LiPo")), -1.0);                // not a cell voltage
         QCOMPARE(fullCellVolts(QStringLiteral("LiHV")), 4.30);
         QCOMPARE(fullCellVolts(QStringLiteral("LiPo")), kFullCellV);
@@ -832,114 +833,105 @@ private slots:
 
     // ── Motor table (MotorTable.h) ───────────────────────────────────────
 
-    // The rows compiled into the app are the ones in the table's CSV, and the
-    // CSV is the maker's 23 V table moved to 30.7 V: throttle × 23 ÷ 30.7,
-    // the same thrust, power and speed.
+    // The rows compiled into the app are the ones in the maker's CSV.
     void testMotorTableMatchesItsCsv()
     {
         QDir src(QCoreApplication::applicationDirPath());
         const QString rel = QStringLiteral("custom/tools/motor_tables/");
         for (int i = 0; i < 5 && !QFileInfo::exists(src.filePath(rel)); ++i)
             src.cdUp();
-        auto readCsv = [&](const QString &name) {
-            QVector<QStringList> rows;
-            QFile f(src.filePath(rel + name));
-            if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
-                return rows;
-            bool header = true;
-            while (!f.atEnd()) {
-                const QString line = QString::fromUtf8(f.readLine()).trimmed();
-                if (line.isEmpty() || line.startsWith(QLatin1Char('#')))
-                    continue;
-                if (header) { header = false; continue; }
-                rows.append(line.split(QLatin1Char(',')));
-            }
-            return rows;
-        };
-        const QVector<QStringList> derived = readCsv(QStringLiteral("M6215_HighProt_320KV_MSC22x7.8_8S_30.7V_derived.csv"));
-        const QVector<QStringList> measured = readCsv(QStringLiteral("M6215_HighProt_320KV_MSC22x7.8_23V.csv"));
-        const MotorTable::Table &t = MotorTable::m6215_320kv_22x78_8s();
-        QCOMPARE(derived.size(), t.rows.size());
-        QCOMPARE(measured.size(), t.rows.size());
+        QVector<QStringList> rows;
+        QFile f(src.filePath(rel + QStringLiteral("M6215_HighProt_320KV_MSC22x7.8_23V.csv")));
+        QVERIFY(f.open(QIODevice::ReadOnly | QIODevice::Text));
+        bool header = true;
+        while (!f.atEnd()) {
+            const QString line = QString::fromUtf8(f.readLine()).trimmed();
+            if (line.isEmpty() || line.startsWith(QLatin1Char('#')))
+                continue;
+            if (header) { header = false; continue; }
+            rows.append(line.split(QLatin1Char(',')));
+        }
+        const MotorTable::Table &t = MotorTable::m6215_320kv_22x78_6s();
+        QCOMPARE(t.volts, 23.0);
+        QCOMPARE(rows.size(), t.rows.size());
         for (int i = 0; i < t.rows.size(); ++i) {
             const MotorTable::Row &r = t.rows.at(i);
-            QCOMPARE(derived.at(i).at(0).toDouble(), r.throttlePct);
-            QCOMPARE(derived.at(i).at(1).toDouble(), r.thrustG);
-            QCOMPARE(derived.at(i).at(3).toDouble(), r.powerInW);
-            QCOMPARE(derived.at(i).at(4).toDouble(), r.rpm);
-            QVERIFY(qAbs(derived.at(i).at(2).toDouble() - r.powerInW / t.volts) < 0.051);
-            QVERIFY(qAbs(measured.at(i).at(0).toDouble() * 23.0 / t.volts - r.throttlePct) < 0.051);
-            QCOMPARE(measured.at(i).at(3).toDouble(), r.powerInW);
-            QCOMPARE(measured.at(i).at(1).toDouble(), r.thrustG);
+            QCOMPARE(rows.at(i).at(0).toDouble(), r.throttlePct);
+            QCOMPARE(rows.at(i).at(1).toDouble(), r.thrustG);
+            QCOMPARE(rows.at(i).at(3).toDouble(), r.powerInW);
+            QCOMPARE(rows.at(i).at(4).toDouble(), r.rpm);
+            // The maker's current column is power ÷ 23 V (to its 0.1 A rounding).
+            QVERIFY(qAbs(rows.at(i).at(2).toDouble() - r.powerInW / t.volts) < 0.2);
         }
         QCOMPARE(MotorTable::byId(t.id), &t);
         QVERIFY(!MotorTable::byId(QStringLiteral("nope")));
     }
 
-    // The 12 kg quad from MOTOR_TABLE_PLAN.md: 3000 g per motor needs 37.1 %
-    // throttle, 357 W, 11.6 A per motor at 30.7 V, 47.6 A for the battery; a
-    // drained 28 V pack holds the same hover at a higher throttle and draws
-    // the same power, so more amps.
+    // The 12 kg quad from MOTOR_TABLE_PLAN.md on 6S: 3000 g per motor needs
+    // 49.5 % throttle, 357 W, 15.5 A per motor at 23 V, 63.1 A for the
+    // battery; a drained 21 V pack holds the same hover at a higher throttle
+    // and draws the same power, so more amps.
     void testMotorTableWorkedExample()
     {
         using namespace MotorTable;
-        const Table &t = m6215_320kv_22x78_8s();
+        const Table &t = m6215_320kv_22x78_6s();
         auto near = [](double a, double b, double tol) { return qAbs(a - b) <= tol; };
 
-        QVERIFY(near(powerAt(t, 0.450).watts, 562.6, 1e-9));       // a row exactly
-        QVERIFY(near(powerAt(t, 0.461).watts, (562.6 + 630.1) / 2, 1e-6));   // half way between rows
+        QVERIFY(near(powerAt(t, 0.60).watts, 562.6, 1e-9));       // a row exactly
+        QVERIFY(near(powerAt(t, 0.615).watts, (562.6 + 630.1) / 2, 1e-6));   // half way between rows
 
         const double hover = throttleForThrust(t, 3000.0);
-        QVERIFY2(near(hover, 0.37086, 1e-4), qPrintable(QString::number(hover, 'f', 5)));
-        const MotorCurrent one = motorCurrent(t, hover, 30.7);
-        QVERIFY2(near(one.amps, 11.636, 0.005), qPrintable(QString::number(one.amps)));
+        QVERIFY2(near(hover, 0.49481, 1e-4), qPrintable(QString::number(hover, 'f', 5)));
+        const MotorCurrent one = motorCurrent(t, hover, 23.0);
+        QVERIFY2(near(one.amps, 15.531, 0.005), qPrintable(QString::number(one.amps)));
         QVERIFY(!one.beyond);
-        const BatteryCurrent all4 = batteryCurrent(t, {hover, hover, hover, hover}, 30.7);
-        QVERIFY2(near(all4.amps, 47.54, 0.02), qPrintable(QString::number(all4.amps)));
+        const BatteryCurrent all4 = batteryCurrent(t, {hover, hover, hover, hover}, 23.0);
+        QVERIFY2(near(all4.amps, 63.12, 0.02), qPrintable(QString::number(all4.amps)));
         QCOMPARE(all4.motorsBeyond, 0);
 
-        // 28 V: the same motor voltage needs throttle × 30.7 ÷ 28; the same
-        // power over 28 V.
-        const double hover28 = hover * 30.7 / 28.0;
-        QVERIFY(near(motorCurrent(t, hover28, 28.0).amps, one.amps * 30.7 / 28.0, 1e-6));
+        // 21 V: the same motor voltage needs throttle × 23 ÷ 21; the same
+        // power over 21 V.
+        const double hover21 = hover * 23.0 / 21.0;
+        QVERIFY(near(motorCurrent(t, hover21, 21.0).amps, one.amps * 23.0 / 21.0, 1e-6));
         // An unknown pack voltage reads the table at its own voltage.
         QVERIFY(near(motorCurrent(t, hover, -1.0).amps, one.amps, 1e-9));
         QVERIFY(near(motorCurrent(t, hover, qQNaN()).amps, one.amps, 1e-9));
 
         // Uneven motors (wind) draw more than the same average throttle.
-        const BatteryCurrent windy = batteryCurrent(t, {hover + 0.05, hover + 0.05, hover - 0.05, hover - 0.05}, 30.7);
+        const BatteryCurrent windy = batteryCurrent(t, {hover + 0.05, hover + 0.05, hover - 0.05, hover - 0.05}, 23.0);
         QVERIFY(windy.amps > all4.amps);
 
-        // Usable 16 Ah of the 20 Ah pack at 47.5 A: about 20 minutes of hover.
-        QVERIFY(near(16.0 / all4.amps * 60.0, 20.2, 0.1));
+        // Usable 16 Ah of the 20 Ah pack at 63.1 A: about 15 minutes of hover.
+        QVERIFY(near(16.0 / all4.amps * 60.0, 15.2, 0.1));
     }
 
     void testMotorTableOutsideItsRows()
     {
         using namespace MotorTable;
-        const Table &t = m6215_320kv_22x78_8s();
+        const Table &t = m6215_320kv_22x78_6s();
         auto near = [](double a, double b, double tol) { return qAbs(a - b) <= tol; };
 
         // Below the first row: the first two rows' curve, down to 0 at 0 %.
         QCOMPARE(powerAt(t, 0.0).watts, 0.0);
         QCOMPARE(powerAt(t, -0.1).watts, 0.0);
-        const double k = std::log(146.9 / 127.5) / std::log(26.2 / 24.7);
-        QVERIFY(near(powerAt(t, 0.10).watts, 127.5 * std::pow(10.0 / 24.7, k), 1e-9));
+        const double k = std::log(146.9 / 127.5) / std::log(35.0 / 33.0);
+        QVERIFY(near(powerAt(t, 0.10).watts, 127.5 * std::pow(10.0 / 33.0, k), 1e-9));
         QVERIFY(powerAt(t, 0.10).watts < powerAt(t, 0.20).watts);
         QVERIFY(!powerAt(t, 0.10).beyond);
 
-        // Above the last row: throttle³ from it, and marked.
-        const PowerAt hi = powerAt(t, 0.80);
+        // Above the last row (a full 25.2 V pack at full throttle reads the
+        // 23 V table at 110 %): throttle³ from it, and marked.
+        const PowerAt hi = powerAt(t, 1.05);
         QVERIFY(hi.beyond);
-        QVERIFY(near(hi.watts, 1705.3 * std::pow(80.0 / 74.9, 3.0), 1e-9));
-        QVERIFY(!powerAt(t, 0.749).beyond);
-        const BatteryCurrent b = batteryCurrent(t, {0.80, 0.80, 0.40, 0.40}, 30.7);
+        QVERIFY(near(hi.watts, 1705.3 * std::pow(105.0 / 100.0, 3.0), 1e-9));
+        QVERIFY(!powerAt(t, 1.0).beyond);
+        const BatteryCurrent b = batteryCurrent(t, {1.0, 1.0, 0.40, 0.40}, 25.2);
         QCOMPARE(b.motorsBeyond, 2);
 
         // Thrust outside the table has no throttle.
         QCOMPARE(throttleForThrust(t, 1000.0), -1.0);
         QCOMPARE(throttleForThrust(t, 9000.0), -1.0);
-        QVERIFY(near(throttleForThrust(t, 1392.0), 0.247, 1e-9));
+        QVERIFY(near(throttleForThrust(t, 1392.0), 0.33, 1e-9));
     }
 
     void testMotorTableInputs()
@@ -960,36 +952,36 @@ private slots:
         QCOMPARE(motorChannels({33, 34, 0, 36}), QVector<int>({1, 2, 4}));   // motor 3 has no output
         QVERIFY(motorChannels({0, 0, 19, 70}).isEmpty());
 
-        QCOMPARE(cellsFromVoltMax(33.6), 8);
         QCOMPARE(cellsFromVoltMax(25.2), 6);
+        QCOMPARE(cellsFromVoltMax(33.6), 8);
         QCOMPARE(cellsFromVoltMax(0.0), 0);
 
-        // ArduPilot's hover output for this drone: MOT_THST_HOVER 0.1297,
-        // default spin and expo, 8S voltage compensation, 30.7 V resting:
-        // curve 0.2525 ÷ (30.7 ÷ 33.6) = 0.2763 → 0.15 + 0.8 × 0.2763 = 0.371.
+        // ArduPilot's hover output for this drone: MOT_THST_HOVER 0.2383,
+        // default spin and expo, 6S voltage compensation, 23 V resting:
+        // curve 0.3934 ÷ (23 ÷ 25.2) = 0.4310 → 0.15 + 0.8 × 0.4310 = 0.4948.
         HoverParams p;
-        p.thstHover = 0.1297;
-        p.battVoltMax = 33.6;
-        p.battVoltMin = 26.4;
-        QVERIFY2(near(hoverMotorThrottle(p, 30.7), 0.371, 0.001), qPrintable(QString::number(hoverMotorThrottle(p, 30.7))));
+        p.thstHover = 0.2383;
+        p.battVoltMax = 25.2;
+        p.battVoltMin = 19.8;
+        QVERIFY2(near(hoverMotorThrottle(p, 23.0), 0.4948, 0.001), qPrintable(QString::number(hoverMotorThrottle(p, 23.0))));
         // A lower pack voltage raises the output (until MOT_BAT_VOLT_MIN).
-        QVERIFY(hoverMotorThrottle(p, 28.0) > hoverMotorThrottle(p, 30.7));
-        QCOMPARE(hoverMotorThrottle(p, 20.0), hoverMotorThrottle(p, 26.4));
-        QCOMPARE(hoverMotorThrottle(p, 40.0), hoverMotorThrottle(p, 33.6));
+        QVERIFY(hoverMotorThrottle(p, 21.0) > hoverMotorThrottle(p, 23.0));
+        QCOMPARE(hoverMotorThrottle(p, 15.0), hoverMotorThrottle(p, 19.8));
+        QCOMPARE(hoverMotorThrottle(p, 30.0), hoverMotorThrottle(p, 25.2));
         // No voltage compensation (MOT_BAT_VOLT_MAX 0): the curve alone.
         HoverParams flat = p;
         flat.battVoltMax = 0.0;
-        QVERIFY(near(hoverMotorThrottle(flat, 30.7), 0.15 + 0.8 * 0.2525, 0.001));
+        QVERIFY(near(hoverMotorThrottle(flat, 23.0), 0.15 + 0.8 * 0.3934, 0.001));
         // Linear thrust curve (expo 0).
         HoverParams lin = flat;
         lin.expo = 0.0;
-        QVERIFY(near(hoverMotorThrottle(lin, 30.7), 0.15 + 0.8 * 0.1297, 1e-9));
+        QVERIFY(near(hoverMotorThrottle(lin, 23.0), 0.15 + 0.8 * 0.2383, 1e-9));
         // MOT_BAT_VOLT_MIN below 0.6 × max is raised to it, as ArduPilot does.
         HoverParams lowMin = p;
         lowMin.battVoltMin = 10.0;
-        QCOMPARE(hoverMotorThrottle(lowMin, 15.0), hoverMotorThrottle(lowMin, 0.6 * 33.6));
+        QCOMPARE(hoverMotorThrottle(lowMin, 12.0), hoverMotorThrottle(lowMin, 0.6 * 25.2));
         HoverParams unknown;
-        QCOMPARE(hoverMotorThrottle(unknown, 30.7), -1.0);
+        QCOMPARE(hoverMotorThrottle(unknown, 23.0), -1.0);
     }
 
     // Each motor's throttle from the 16 output signals: the ESC range ArduPilot
@@ -1031,6 +1023,289 @@ private slots:
         QVERIFY(motorThrottles({}, {1, 2, 3, 4}, 4, escRange(0, 0)).isEmpty());
         // The ESC range scales the signal.
         QVERIFY(near(motorThrottles(out, {3}, 1, escRange(1100, 1900)).at(0), 0.5));
+    }
+
+    // The hover from thrust: thrust per motor turns into power (the thrust and
+    // power columns, the same at any voltage), then current at the pack
+    // voltage. The 12 kg quad: 3000 g per motor, 357 W, 63.1 A at 23 V,
+    // 69.0 A at 21 V; the thrust read back from the motors' throttle; and
+    // ArduPilot's MOT_THST_HOVER 0.2383 lands on the same hover.
+    void testMotorTableHoverFromThrust()
+    {
+        using namespace MotorTable;
+        const Table &t = m6215_320kv_22x78_6s();
+        auto near = [](double a, double b, double tol) { return qAbs(a - b) <= tol; };
+
+        QCOMPARE(thrustAt(t, 0.60).grams, 4147.0);
+        QVERIFY(near(thrustAt(t, 0.615).grams, (4147.0 + 4494.0) / 2, 1e-6));
+        QVERIFY(thrustAt(t, 1.05).beyond);
+        QVERIFY(near(thrustAt(t, 1.05).grams, 8801.0 * std::pow(1.05, 2.0), 1e-9));
+        QCOMPARE(thrustAt(t, 0.0).grams, 0.0);
+        QVERIFY(thrustAt(t, 0.10).grams > 0.0 && thrustAt(t, 0.10).grams < 1392.0);
+
+        QCOMPARE(powerForThrust(t, 4147.0).watts, 562.6);
+        const double p3000 = powerForThrust(t, 3000.0).watts;
+        QVERIFY2(near(p3000, 357.215, 0.01), qPrintable(QString::number(p3000)));
+        QVERIFY(powerForThrust(t, 9500.0).beyond);
+        QVERIFY(near(powerForThrust(t, 9500.0).watts, 1705.3 * std::pow(9500.0 / 8801.0, 1.5), 1e-9));
+        QVERIFY(powerForThrust(t, 1000.0).watts > 0.0 && powerForThrust(t, 1000.0).watts < 127.5);
+
+        QVERIFY(near(hoverCurrent(t, 3000.0, 4, 23.0), 63.12, 0.02));
+        QVERIFY(near(hoverCurrent(t, 3000.0, 4, 21.0), 4 * p3000 / 21.0 + 1.0, 1e-9));
+        QVERIFY(near(hoverCurrent(t, 3000.0, 4, -1.0), hoverCurrent(t, 3000.0, 4, 23.0), 1e-9));
+        QCOMPARE(hoverCurrent(t, 3000.0, 0, 23.0), -1.0);
+        QCOMPARE(hoverCurrent(t, -5.0, 4, 23.0), -1.0);
+        QVERIFY(near(hoverThrottleAt(t, 3000.0, 23.0), 0.49481, 1e-4));
+        QVERIFY(near(hoverThrottleAt(t, 3000.0, 21.0), 0.49481 * 23.0 / 21.0, 1e-4));
+        QCOMPARE(hoverThrottleAt(t, 9000.0, 23.0), -1.0);
+
+        // The motors' throttle at the pack voltage gives back the thrust.
+        const double h = throttleForThrust(t, 3000.0);
+        QVERIFY(near(averageThrust(t, {h, h, h, h}, 23.0), 3000.0, 0.5));
+        const double h21 = h * 23.0 / 21.0;
+        QVERIFY(near(averageThrust(t, {h21, h21, h21, h21}, 21.0), 3000.0, 0.5));
+        QVERIFY(near(averageThrust(t, {h + 0.02, h - 0.02}, 23.0),
+                     (thrustAt(t, h + 0.02).grams + thrustAt(t, h - 0.02).grams) / 2, 1e-9));
+        QCOMPARE(averageThrust(t, {}, 23.0), -1.0);
+
+        HoverParams p;
+        p.thstHover = 0.2383;
+        p.battVoltMax = 25.2;
+        p.battVoltMin = 19.8;
+        const double act = hoverMotorThrottle(p, 23.0);
+        QVERIFY2(near(thrustAt(t, act).grams, 3000.0, 30.0), qPrintable(QString::number(thrustAt(t, act).grams)));
+    }
+
+    // The pack's voltage through a flight: one curve per chemistry read both
+    // ways (charge from voltage, voltage from charge); Li-ion from 4.3 V full
+    // to 2.9 V empty per cell.
+    void testPackVoltageCurves()
+    {
+        using namespace PowerTypeModel;
+        for (const char *chem : {"LiPo", "LiHV", "LiIon"}) {
+            const QString c = QLatin1String(chem);
+            for (double soc : {0.0, 5.0, 12.5, 37.0, 50.0, 81.0, 99.0, 100.0})
+                QVERIFY2(qAbs(restingSocPct(restingCellVolts(soc, c), c) - soc) < 1e-6,
+                         qPrintable(QStringLiteral("%1 at %2 %").arg(c).arg(soc)));
+        }
+        QCOMPARE(restingCellVolts(100.0, QStringLiteral("LiIon")), 4.30);
+        QCOMPARE(restingCellVolts(0.0, QStringLiteral("LiIon")), 2.90);
+        QCOMPARE(restingCellVolts(50.0, QStringLiteral("LiIon")), 3.73);
+        QCOMPARE(restingCellVolts(100.0, QStringLiteral("LiPo")), 4.20);
+        QVERIFY(qAbs(restingCellVolts(100.0, QStringLiteral("LiHV")) - 4.35) < 1e-9);
+        QCOMPARE(restingCellVolts(150.0, QStringLiteral("LiIon")), 4.30);   // clamped
+        QCOMPARE(restingCellVolts(-5.0, QStringLiteral("LiIon")), 2.90);
+        QCOMPARE(fullCellVolts(QStringLiteral("LiIon")), 4.25);
+    }
+
+    // Time left for a power the motors take, through the rest of the pack:
+    // the voltage falls as the pack empties (its curve, and the drop under
+    // load), so the same power needs more current later. The 12 kg quad
+    // (4 × 357.2 W) on a 6S Li-ion 20 Ah pack, 25 mΩ: the current rises
+    // through the flight, and costing it all at the starting current would
+    // overstate the time to the 20 % reserve.
+    void testPackTimeToReserve()
+    {
+        using namespace MotorTable;
+        auto near = [](double a, double b, double tol) { return qAbs(a - b) <= tol; };
+
+        // Current for a power: (I − 1) × (V − I × R) = W.
+        QVERIFY(near(packCurrent(1428.9, 23.0, 0.0), 1428.9 / 23.0 + 1.0, 1e-9));
+        const double i = packCurrent(1428.9, 25.8, 0.025);
+        QVERIFY(near((i - kElectronicsA) * (25.8 - i * 0.025), 1428.9, 1e-6));
+        QVERIFY(i > 1428.9 / 25.8 + 1.0);                 // the drop under load costs current
+        QCOMPARE(packCurrent(1e6, 25.8, 0.025), -1.0);    // voltage would collapse
+        QCOMPARE(packCurrent(100.0, 0.0, 0.0), -1.0);
+
+        Pack p;
+        p.cells = 6;
+        p.chemistry = QStringLiteral("LiIon");
+        p.capacityAh = 20.0;
+        p.resistanceOhm = 0.025;
+        const double w = 4 * 357.2;
+        QVERIFY(near(loadedVolts(p, 50.0, w), 6 * 3.73 - packCurrent(w, 6 * 3.73, 0.025) * 0.025, 1e-9));
+
+        // The sum against a much finer one done here.
+        double fine = 0.0;
+        for (double soc = 100.0; soc > 20.0 + 1e-9; soc -= 0.01) {
+            const double rest = 6 * PowerTypeModel::restingCellVolts(soc - 0.005, p.chemistry);
+            fine += 20.0 * 0.0001 / packCurrent(w, rest, 0.025);
+        }
+        const double h = hoursBetween(p, w, 100.0, 20.0);
+        QVERIFY2(near(h, fine, fine * 0.0001), qPrintable(QStringLiteral("%1 h vs %2 h").arg(h, 0, 'f', 7).arg(fine, 0, 'f', 7)));
+        QCOMPARE(hoursBetween(p, w, 20.0, 30.0), 0.0);
+        QCOMPARE(hoursBetween(p, 0.0, 100.0, 20.0), -1.0);
+        Pack none;
+        QCOMPARE(hoursBetween(none, w, 100.0, 20.0), -1.0);
+
+        // Average current: between the current at the start and at the reserve.
+        const double avg = averageCurrent(p, w, 100.0, 20.0);
+        const double atStart = packCurrent(w, 6 * 4.30, 0.025);
+        const double atReserve = packCurrent(w, 6 * PowerTypeModel::restingCellVolts(20.0, p.chemistry), 0.025);
+        QVERIFY(near(avg, 16.0 / h, 1e-9));
+        QVERIFY(avg > atStart && avg < atReserve);
+        // Costing the flight at the starting current would overstate the time
+        // to the reserve by more than 10 % on this pack.
+        const double naiveH = 16.0 / atStart;
+        QVERIFY2(naiveH > h * 1.10, qPrintable(QStringLiteral("naive %1 h, real %2 h").arg(naiveH).arg(h)));
+        // Less charge left, less time, and part-way the average is higher.
+        QVERIFY(hoursBetween(p, w, 60.0, 20.0) < h);
+        QVERIFY(averageCurrent(p, w, 60.0, 20.0) > avg);
+
+        // The pack's resistance read back from the voltage under load.
+        const double rest50 = 6 * PowerTypeModel::restingCellVolts(50.0, p.chemistry);
+        QVERIFY(near(observedResistance(p, 50.0, rest50 - 70.0 * 0.03, 70.0), 0.03, 1e-9));
+        QCOMPARE(observedResistance(p, 50.0, rest50 - 1.0, 2.0), -1.0);    // too little current to tell
+        QCOMPARE(observedResistance(p, 50.0, rest50 + 1.0, 70.0), -1.0);   // above resting: not plausible
+    }
+
+    // Air density: σ from pressure, temperature and humidity; the standard
+    // atmosphere; the motor model fitted to the table; and the corrections,
+    // which leave the table exact at its own density. At 4000 m (σ 0.669) the
+    // 12 kg quad needs about 24 % more power to hover; in flight the reading
+    // from throttle and voltage moves by only about 1 % (the motor spins
+    // faster in thin air at the same throttle); and the thrust the GCS reads
+    // back from the motors is the copter's real weight.
+    void testMotorTableAirDensity()
+    {
+        using namespace MotorTable;
+        const Table &t = m6215_320kv_22x78_6s();
+        auto near = [](double a, double b, double tol) { return qAbs(a - b) <= tol; };
+
+        QVERIFY(near(densityRatio(1013.25, 15.0), 1.0, 0.001));
+        QVERIFY(near(densityRatio(isaPressureHpa(2900.0), isaTempC(2900.0)), 0.750, 0.002));
+        QVERIFY(near(densityRatio(isaPressureHpa(4000.0), isaTempC(4000.0)), 0.669, 0.002));
+        QVERIFY(near(densityRatio(isaPressureHpa(2000.0), isaTempC(2000.0)), 0.822, 0.002));
+        QVERIFY(densityRatio(900.0, 25.0, 100.0) < densityRatio(900.0, 25.0, 0.0));   // humid air is lighter
+        QVERIFY(densityRatio(900.0, 30.0) < densityRatio(900.0, 10.0));               // warm air is lighter
+        QVERIFY(near(densityRatio(900.0, 20.0, qQNaN()), densityRatio(900.0, 20.0, 0.0), 1e-12));
+        QCOMPARE(densityRatio(-1.0, 15.0), -1.0);
+        QVERIFY(near(isaAltitudeM(isaPressureHpa(3500.0)), 3500.0, 0.5));
+
+        // The motor model matches the table's rows: losses within 4 W, motor
+        // voltage within 3 throttle points.
+        const MotorModel &m = modelOf(t);
+        QVERIFY(m.valid);
+        for (const Row &r : t.rows) {
+            QVERIFY2(qAbs(m.losses(r.torqueNm, r.rpm) - (r.powerInW - r.powerOutW)) < 4.0, qPrintable(QString::number(r.rpm)));
+            QVERIFY(qAbs(m.e * r.rpm + m.f * r.torqueNm + m.g - t.volts * r.throttlePct / 100.0) < 0.03 * t.volts);
+        }
+
+        // At the table's density nothing changes.
+        QCOMPARE(densityPowerRatio(t, 11.4, kTableDensityRatio), 1.0);
+        QCOMPARE(densityThrustRatio(t, 11.4, kTableDensityRatio), 1.0);
+        QCOMPARE(powerForThrustAt(t, 3000.0, 1.0).watts, powerForThrust(t, 3000.0).watts);
+        QCOMPARE(motorCurrent(t, 0.495, 23.0, 1.0).amps, motorCurrent(t, 0.495, 23.0).amps);
+        QCOMPARE(hoverThrottleAtDensity(t, 3000.0, 23.0, 1.0), hoverThrottleAt(t, 3000.0, 23.0));
+
+        // Hover at altitude: more power, more so the thinner the air.
+        const double sea = powerForThrust(t, 3000.0).watts;
+        const double s2900 = densityRatio(isaPressureHpa(2900.0), isaTempC(2900.0));
+        const double s4000 = densityRatio(isaPressureHpa(4000.0), isaTempC(4000.0));
+        const double p2900 = powerForThrustAt(t, 3000.0, s2900).watts;
+        const double p4000 = powerForThrustAt(t, 3000.0, s4000).watts;
+        QVERIFY2(p4000 / sea > 1.21 && p4000 / sea < 1.26, qPrintable(QStringLiteral("%1 W vs %2 W").arg(p4000).arg(sea)));
+        QVERIFY(p2900 > sea && p2900 < p4000);
+        QVERIFY(near(thrustForPowerAt(t, p4000, s4000), 3000.0, 1.0));
+        QVERIFY(near(thrustForPowerAt(t, sea, 1.0), 3000.0, 1.0));
+        QCOMPARE(thrustForPowerAt(t, 0.0, 1.0), -1.0);
+
+        // The throttle to hover rises in thin air, but less than the thrust
+        // the prop loses (the motor spins faster with the lighter load).
+        const double thr4000 = hoverThrottleAtDensity(t, 3000.0, 23.0, s4000);
+        QVERIFY2(thr4000 > hoverThrottleAt(t, 3000.0, 23.0) && thr4000 < 0.58, qPrintable(QString::number(thr4000)));
+
+        // In flight at 4000 m the reading from throttle and voltage moves by
+        // under 2 % (the sea-level table reads that throttle slightly low);
+        // and from the hover throttle there, the GCS reads
+        // back the real thrust and the power needed for it.
+        const double ratio = densityPowerRatio(t, 23.0 * thr4000, s4000);
+        QVERIFY2(ratio > 0.99 && ratio < 1.02, qPrintable(QString::number(ratio)));
+        QVERIFY2(near(averageThrust(t, {thr4000, thr4000, thr4000, thr4000}, 23.0, s4000), 3000.0, 3000.0 * 0.015),
+                 qPrintable(QString::number(averageThrust(t, {thr4000, thr4000, thr4000, thr4000}, 23.0, s4000))));
+        QVERIFY2(near(motorCurrent(t, thr4000, 23.0, s4000).amps * 23.0, p4000, p4000 * 0.02),
+                 qPrintable(QStringLiteral("%1 W vs %2 W").arg(motorCurrent(t, thr4000, 23.0, s4000).amps * 23.0).arg(p4000)));
+        // Without the correction the sea-level table reads that throttle as a
+        // heavier copter.
+        QVERIFY(averageThrust(t, {thr4000, thr4000, thr4000, thr4000}, 23.0) > 3300.0);
+    }
+
+    // A reading counts as steady cruise at 70 km/h within ±15 %, level.
+    void testMotorTableCruiseSample()
+    {
+        using namespace MotorTable;
+        QVERIFY(qAbs(kCruiseSpeedMs - 19.444) < 0.001);
+        QVERIFY(isCruiseSample(19.4, 0.0));
+        QVERIFY(isCruiseSample(16.6, 0.3));          // 15 % slow
+        QVERIFY(!isCruiseSample(16.4, 0.0));         // too slow
+        QVERIFY(!isCruiseSample(22.5, 0.0));         // too fast
+        QVERIFY(!isCruiseSample(19.4, 0.6));         // climbing
+        QVERIFY(!isCruiseSample(19.4, -0.6));        // sinking
+        QVERIFY(!isCruiseSample(qQNaN(), 0.0));
+        QVERIFY(isCruiseSample(10.0, 0.0, 10.0));
+    }
+
+    // The table is for a quad on 6S with a pack size: anything else turns the
+    // estimate off; hover above 60 % throttle and missing motor outputs warn.
+    void testMotorTableSetupIssues()
+    {
+        using namespace MotorTable;
+        const Table &t = m6215_320kv_22x78_6s();
+        auto levels = [&](const SetupFacts &f) {
+            QStringList out;
+            for (const SetupIssue &i : setupIssues(t, f))
+                out << i.level;
+            return out;
+        };
+        SetupFacts ok;
+        ok.motors = 4; ok.cells = 6; ok.capacityAh = 20.0; ok.thrustToWeight = 2.3; ok.outputsFresh = true;
+        QVERIFY(setupIssues(t, ok).isEmpty());
+        SetupFacts unknown = ok;
+        unknown.motors = 0; unknown.cells = 0; unknown.thrustToWeight = -1.0;
+        QVERIFY(setupIssues(t, unknown).isEmpty());   // not known is not wrong
+
+        SetupFacts hexa = ok;  hexa.motors = 6;
+        QCOMPARE(levels(hexa), QStringList({QStringLiteral("off")}));
+        QVERIFY(setupIssues(t, hexa).first().text.contains(QStringLiteral("6")));
+        SetupFacts eight = ok; eight.cells = 8;
+        QCOMPARE(levels(eight), QStringList({QStringLiteral("off")}));
+        QVERIFY(setupIssues(t, eight).first().text.contains(QStringLiteral("8S")));
+        SetupFacts noPack = ok; noPack.capacityAh = 0.0;
+        QCOMPARE(levels(noPack), QStringList({QStringLiteral("off")}));
+        SetupFacts thin = ok; thin.thrustToWeight = 1.95;
+        QCOMPARE(levels(thin), QStringList({QStringLiteral("warn")}));
+        QVERIFY2(setupIssues(t, thin).first().text.contains(QStringLiteral("1.95")), qPrintable(setupIssues(t, thin).first().text));
+        SetupFacts justOk = ok; justOk.thrustToWeight = 2.0;
+        QVERIFY(setupIssues(t, justOk).isEmpty());
+
+        // Full-throttle thrust: the table's top row at 23 V; less on a lower
+        // pack, and less in thin air.
+        QCOMPARE(maxThrustAt(t, 23.0).grams, 8801.0);
+        QVERIFY(!maxThrustAt(t, 23.0).beyond);
+        QVERIFY(maxThrustAt(t, 25.8).beyond);   // a fresh pack is above the table's voltage
+        QVERIFY(maxThrustAt(t, 18.5).grams < 8801.0 && maxThrustAt(t, 18.5).grams > 5000.0);
+        const double s4000 = densityRatio(isaPressureHpa(4000.0), isaTempC(4000.0));
+        QVERIFY(maxThrustAt(t, 18.5, s4000).grams < maxThrustAt(t, 18.5).grams);
+        // 12 kg at 4000 m at the reserve (about 18.4 V): just under 2.
+        const double tw = maxThrustAt(t, 18.44, s4000).grams / 3000.0;
+        QVERIFY2(tw > 1.8 && tw < 2.0, qPrintable(QString::number(tw)));
+        QCOMPARE(maxThrustAt(t, 0.0).grams, 0.0);
+        // The pack's continuous rating (4C on 20 Ah = 80 A): hover over it, on
+        // average or by the reserve, warns.
+        QCOMPARE(t.packCRating, 4.0);
+        SetupFacts rated = ok; rated.ratingA = 80.0; rated.hoverAvgA = 76.5; rated.hoverPeakA = 79.9;
+        QVERIFY(setupIssues(t, rated).isEmpty());
+        SetupFacts peak = rated; peak.hoverPeakA = 84.0;
+        QCOMPARE(levels(peak), QStringList({QStringLiteral("warn")}));
+        QVERIFY2(setupIssues(t, peak).first().text.contains(QStringLiteral("84.0 A by the reserve")), qPrintable(setupIssues(t, peak).first().text));
+        SetupFacts avg = rated; avg.hoverAvgA = 85.7; avg.hoverPeakA = 94.3;
+        QCOMPARE(levels(avg), QStringList({QStringLiteral("warn")}));
+        QVERIFY2(setupIssues(t, avg).first().text.contains(QStringLiteral("85.7 A on average (94.3 A by the reserve)")),
+                 qPrintable(setupIssues(t, avg).first().text));
+        SetupFacts noRating = avg; noRating.ratingA = 0.0;
+        QVERIFY(setupIssues(t, noRating).isEmpty());
+        SetupFacts noOutputs = ok; noOutputs.outputsFresh = false;
+        QCOMPARE(levels(noOutputs), QStringList({QStringLiteral("warn")}));
     }
 };
 
