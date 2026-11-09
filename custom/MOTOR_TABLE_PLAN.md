@@ -117,7 +117,7 @@ motor model fitted to the maker's table (speed, torque, power columns) and stand
 | # | Issue | Size now | Fix | After the fix |
 |---|---|---|---|---|
 | A1 (**done**) | **Time left uses the current now**, but the Li-ion pack falls from about 25 V to 18.9 V at the reserve and the same hover then needs about 30 % more amps (71.6 A → 94.3 A at 4000 m) | **14 % optimistic** at the start of a flight (13.4 min shown, 11.8 min real at 4000 m) | Work in power: time left = charge left ÷ (motor power ÷ the average voltage still to come + 1 A), with the pack's voltage curve from now to the reserve. The curve starts as a generic Li-ion curve between 4.3 and 2.9 V per cell and is then learned per pack from each flight (voltage against charge used, and the sag under load). | about 2–3 % until learned, about 1 % after |
-| A2 (**done**) | **Air density** at 2000–4000 m. In flight the throttle-and-voltage reading stays within about 1 % (the motor spins faster in thin air at the same throttle, which nearly cancels). But before take-off the remembered hover is read as thrust at sea-level density | weight shown 13.9 kg instead of 12; payload and overload checks off by the same; a hover remembered at 2900 m used at 4000 m plans **5.6 % low** | Density from the flight controller's pressure and the outdoor temperature (the weather service; standard atmosphere if missing). Remember the hover as power and density; turn it into thrust and back with the table's speed, thrust, torque and power columns at each density. | within about 1–2 % (temperature error of 5 °C is about 1.7 %) |
+| A2 (**done**) | **Air density** at 2000–4000 m. In flight the table lists too much power for a throttle in thin air (the motor speeds up by only a few percent, so the lighter prop draws less: about 14 % less at 2900 m in a 12 kg hover); the speed-up comes from the motor's 320 KV rating and its resistance (0.065 Ω assumed), not from a fit to the rows. Before take-off the remembered hover is read as thrust at sea-level density | weight shown 13.9 kg instead of 12; payload and overload checks off by the same; a hover remembered at 2900 m used at 4000 m plans **5.6 % low** | Density from the flight controller's pressure and the outdoor temperature (the weather service; standard atmosphere if missing). Remember the hover as power and density; turn it into thrust and back with the table's speed, thrust, torque and power columns at each density. | within about 1–2 % (temperature error of 5 °C is about 1.7 %) |
 | A3 (**done**) | **Planning voltage** 3.7 V per cell is LiPo; the pack is Li-ion 4.3–2.9 V | about 1 % with a straight-line curve; depends on the real curve | Plan with the same voltage curve as A1 | as A1 |
 | A4 (**done**) | **Only one motor reading per 2 s** is counted | noise in gusts; current curves upwards with throttle | Count every motor reading as it arrives; ask for 5 per second | under 1 % |
 | A5 (**done**) | **Payload as a straight line** in amps per kg | up to 2.9 % low at 4 kg (through the rest of the pack, after A1) | Read the table at the real thrust, at the density | exact |
@@ -131,7 +131,7 @@ motor model fitted to the maker's table (speed, torque, power columns) and stand
 | Part | Now | After the fixes |
 |---|---|---|
 | Reading the maker's table | exact (straight line between rows) | exact |
-| Motor current from throttle and voltage, in flight | about 1 % at 2000–4000 m | about 1 % |
+| Motor current from throttle and voltage, in flight | +7 to +30 % at 2000–4000 m with the first fitted motor model | within 0.1 % if the resistance is 0.065 Ω; −8 to +5 % across its likely range |
 | Time left during a flight | up to 14 % optimistic early on | 2–3 %, then about 1 % once the pack's curve is learned |
 | Hover before take-off | 5–6 % low across sites; wrong weight | 1–2 % |
 | Trip with cruise at 70 km/h | unknown (± 20 %) | known after a few recorded flights |
@@ -287,7 +287,7 @@ charge counted by the GCS from the motor signals the whole flight, the flight
 recorded with 42 s of hover and 50 s of cruise and waiting for its charger
 number, the hover remembered, no QML errors.
 
-What it measured, and why these are not accuracy results:
+What it measured, and why these are not accuracy results (flown before the altitude fix of 9 Nov and not re-run, so the GCS's weight and charge below include that error):
 
 | | GCS | Simulator | Why they differ |
 |---|---|---|---|

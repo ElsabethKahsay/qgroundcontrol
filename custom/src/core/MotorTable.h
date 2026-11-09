@@ -107,6 +107,8 @@ struct Table {
     int motors = 0;       ///< motors on the drone type it is for
     int cells = 0;        ///< cells of the pack it is for
     double packCRating = 0.0;  ///< the drone type's pack: continuous discharge rating, × its Ah (0 = not known)
+    double kv = 0.0;           ///< the motor's rating, rpm per volt
+    double circuitOhm = 0.0;   ///< resistance of the winding and ESC, used only for the altitude correction
     QVector<Row> rows;    ///< ascending throttle
     bool isValid() const { return volts > 0.0 && rows.size() >= 2; }
 };
@@ -120,6 +122,7 @@ inline const Table &m6215_320kv_22x78_6s()
         QStringLiteral("m6215-320kv-msc22x7.8-6s"),
         QStringLiteral("M6215 HighProt 320KV · MSC 22×7.8 · 6S quad"),
         23.0, 4, 6, 4.0,   // a 6S Li-ion pack rated 4C continuous
+        320.0, 0.065,      // the 320 KV rating; the 100 % row implies 0.063 Ω, the maker has not confirmed it
         {
             {33, 1392, 127.5, 2403, 0.37, 93.6},     {35, 1564, 146.9, 2537, 0.42, 110.6},
             {37, 1745, 169.1, 2674, 0.46, 129.8},    {39, 1935, 193.9, 2813, 0.51, 151.2},
@@ -613,13 +616,11 @@ inline double byRpm(const Table &t, double rpm, double Row::*col, double exponen
 }
 } // namespace detail
 
-/// The motor model fitted to the table's rows: losses (power in − shaft power)
-/// = a·torque² + b·torque + c + d·speed (winding, ESC, iron); and the motor
-/// voltage, table voltage × throttle = e·speed + f·torque + g (back-EMF, the
-/// drop with current, the ESC). Used only for density correction ratios.
+/// The motor's losses (power in − shaft power) fitted to the table's rows:
+/// a·torque² + b·torque + c + d·speed (winding, ESC, iron). Used only for the
+/// density correction ratios.
 struct MotorModel {
     double a = 0, b = 0, c = 0, d = 0;   ///< losses, W
-    double e = 0, f = 0, g = 0;          ///< motor voltage, V
     bool valid = false;
     double losses(double torque, double rpm) const { return std::max(0.0, a * torque * torque + b * torque + c + d * rpm); }
 };
@@ -627,19 +628,15 @@ struct MotorModel {
 inline MotorModel motorModel(const Table &t)
 {
     MotorModel m;
-    QVector<QVector<double>> xl, xv;
-    QVector<double> yl, yv;
+    QVector<QVector<double>> xl;
+    QVector<double> yl;
     for (const Row &r : t.rows) {
         xl.append({r.torqueNm * r.torqueNm, r.torqueNm, 1.0, r.rpm});
         yl.append(r.powerInW - r.powerOutW);
-        xv.append({r.rpm, r.torqueNm, 1.0});
-        yv.append(t.volts * r.throttlePct / 100.0);
     }
     const QVector<double> l = detail::fit(xl, yl);
-    const QVector<double> v = detail::fit(xv, yv);
-    if (l.size() == 4 && v.size() == 3) {
+    if (l.size() == 4) {
         m.a = l[0]; m.b = l[1]; m.c = l[2]; m.d = l[3];
-        m.e = v[0]; m.f = v[1]; m.g = v[2];
         m.valid = true;
     }
     return m;
@@ -668,27 +665,39 @@ inline double modelPowerIn(const Table &t, double rpm, double sigma)
     return k * detail::byRpm(t, rpm, &Row::powerOutW, 3.0) + m.losses(q, rpm);
 }
 
+/// The voltage the motor needs at speed `rpm` in air of density ratio `sigma`.
+/// The motor voltage is speed ÷ Kv plus (R ÷ Kt) × torque. The table already
+/// holds that sum for its own air, so only the torque part changes: thinner
+/// air lightens the torque, and the winding needs (R ÷ Kt) × (1 − σ) × torque
+/// less voltage at the same speed. The constants come from the motor's rating
+/// and not from a fit to the rows, because speed and torque rise together in a
+/// thrust test and a fit cannot tell their effects apart.
+inline double modelVoltsAt(const Table &t, double rpm, double sigma)
+{
+    const double k = sigma / kTableDensityRatio;
+    const double voltsPerNm = t.circuitOhm * 2.0 * M_PI * t.kv / 60.0;   // R ÷ Kt, with Kt = 60 ÷ (2π·Kv)
+    return t.volts * detail::byRpm(t, rpm, &Row::throttlePct, 1.0) / 100.0
+           - voltsPerNm * (1.0 - k) * detail::byRpm(t, rpm, &Row::torqueNm, 2.0);
+}
+
 /// The motor's speed for a motor voltage (pack voltage × throttle) in air of
 /// density ratio `sigma`: thinner air loads the prop less, so it spins faster.
 inline double modelRpmForVoltage(const Table &t, double motorVolts, double sigma)
 {
-    const MotorModel &m = modelOf(t);
-    if (!m.valid || !(motorVolts > m.g))
+    if (!(motorVolts > 0.0))
         return 0.0;
-    const double k = sigma / kTableDensityRatio;
     double lo = 0.0, hi = 3.0 * t.rows.last().rpm;
     for (int i = 0; i < 60; ++i) {
         const double mid = (lo + hi) / 2.0;
-        const double v = m.e * mid + m.f * k * detail::byRpm(t, mid, &Row::torqueNm, 2.0) + m.g;
-        (v < motorVolts ? lo : hi) = mid;
+        (modelVoltsAt(t, mid, sigma) < motorVolts ? lo : hi) = mid;
     }
     return (lo + hi) / 2.0;
 }
 
 /// Correction to the table's power at a motor voltage for air of density
 /// ratio `sigma`: the model's power in at that density ÷ at the table's. 1 at
-/// the table's density; within about 1 % of 1 at 2000–4000 m (the motor spins
-/// faster in thin air, which nearly makes up for the lighter load).
+/// the table's density and below 1 in thinner air: the motor speeds up only a
+/// few percent, which does not make up for the lighter load.
 inline double densityPowerRatio(const Table &t, double motorVolts, double sigma)
 {
     if (!(sigma > 0.0) || std::abs(sigma - kTableDensityRatio) < 1e-9)
@@ -768,7 +777,6 @@ inline double hoverThrottleAtDensity(const Table &t, double thrustG, double pack
     const double base = hoverThrottleAt(t, thrustG, packVolts);
     if (base < 0.0 || !(sigma > 0.0) || std::abs(sigma - kTableDensityRatio) < 1e-9)
         return base;
-    const MotorModel &m = modelOf(t);
     const double k = sigma / kTableDensityRatio;
     auto rpmForTableThrust = [&](double tg) {
         double lo = 0.0, hi = 3.0 * t.rows.last().rpm;
@@ -780,8 +788,8 @@ inline double hoverThrottleAtDensity(const Table &t, double thrustG, double pack
     };
     const double n1 = rpmForTableThrust(thrustG);
     const double ns = rpmForTableThrust(thrustG / k);
-    const double v1 = m.e * n1 + m.f * detail::byRpm(t, n1, &Row::torqueNm, 2.0) + m.g;
-    const double vs = m.e * ns + m.f * k * detail::byRpm(t, ns, &Row::torqueNm, 2.0) + m.g;
+    const double v1 = modelVoltsAt(t, n1, kTableDensityRatio);
+    const double vs = modelVoltsAt(t, ns, sigma);
     return v1 > 0.0 ? base * vs / v1 : base;
 }
 

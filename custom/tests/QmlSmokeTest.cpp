@@ -2407,9 +2407,7 @@ void LivePluginBenchTest::testMotorTableLiveEstimate()
     QCOMPARE(live().value(QStringLiteral("densityRatio")).toDouble(), sigma);
     const double expectA = channels.size() * MotorTable::motorCurrent(table, thr, packV, sigma).amps + MotorTable::kElectronicsA;
     const double nowA = live().value(QStringLiteral("tableCurrentA")).toDouble();
-    // Exactly the table's current at the mock's pack voltage and air density
-    // (in flight the density correction is small, so only a tight check sees
-    // it).
+    // Exactly the table's current at the mock's pack voltage and air density.
     QVERIFY2(qAbs(nowA - expectA) < 1e-4 * expectA,
              qPrintable(QStringLiteral("%1 A, expected %2 A at %3 V, density %4").arg(nowA, 0, 'f', 5).arg(expectA, 0, 'f', 5).arg(packV).arg(sigma)));
 

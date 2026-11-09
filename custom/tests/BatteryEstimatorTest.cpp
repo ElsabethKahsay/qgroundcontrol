@@ -1182,13 +1182,15 @@ private slots:
         QCOMPARE(densityRatio(-1.0, 15.0), -1.0);
         QVERIFY(near(isaAltitudeM(isaPressureHpa(3500.0)), 3500.0, 0.5));
 
-        // The motor model matches the table's rows: losses within 4 W, motor
-        // voltage within 3 throttle points.
+        // The losses fit matches the table's rows within 4 W. The motor voltage
+        // is the table's own in its own air; in thin air the winding needs
+        // R ÷ Kt (0.065 Ω, 320 KV: 2.178 V per Nm) × (1 − σ) × torque less.
         const MotorModel &m = modelOf(t);
         QVERIFY(m.valid);
         for (const Row &r : t.rows) {
             QVERIFY2(qAbs(m.losses(r.torqueNm, r.rpm) - (r.powerInW - r.powerOutW)) < 4.0, qPrintable(QString::number(r.rpm)));
-            QVERIFY(qAbs(m.e * r.rpm + m.f * r.torqueNm + m.g - t.volts * r.throttlePct / 100.0) < 0.03 * t.volts);
+            QVERIFY(near(modelVoltsAt(t, r.rpm, 1.0), t.volts * r.throttlePct / 100.0, 1e-9));
+            QVERIFY(near(modelVoltsAt(t, r.rpm, 0.75), t.volts * r.throttlePct / 100.0 - 2.178 * 0.25 * r.torqueNm, 0.002));
         }
 
         // At the table's density nothing changes.
@@ -1210,21 +1212,33 @@ private slots:
         QVERIFY(near(thrustForPowerAt(t, sea, 1.0), 3000.0, 1.0));
         QCOMPARE(thrustForPowerAt(t, 0.0, 1.0), -1.0);
 
-        // The throttle to hover rises in thin air, but less than the thrust
-        // the prop loses (the motor spins faster with the lighter load).
-        const double thr4000 = hoverThrottleAtDensity(t, 3000.0, 23.0, s4000);
-        QVERIFY2(thr4000 > hoverThrottleAt(t, 3000.0, 23.0) && thr4000 < 0.58, qPrintable(QString::number(thr4000)));
+        // At half throttle at 2900 m the motor speeds up by only a few percent.
+        const double speedUp = modelRpmForVoltage(t, 11.5, s2900) / modelRpmForVoltage(t, 11.5, 1.0);
+        QVERIFY2(speedUp > 1.03 && speedUp < 1.04, qPrintable(QString::number(speedUp)));
 
-        // In flight at 4000 m the reading from throttle and voltage moves by
-        // under 2 % (the sea-level table reads that throttle slightly low);
-        // and from the hover throttle there, the GCS reads
-        // back the real thrust and the power needed for it.
+        // The throttle to hover rises in thin air: 12 kg at 2900 m is the
+        // README's worked example (56.2 %).
+        QVERIFY2(near(hoverThrottleAtDensity(t, 3000.0, 23.0, s2900), 0.562, 0.002),
+                 qPrintable(QString::number(hoverThrottleAtDensity(t, 3000.0, 23.0, s2900))));
+        const double thr4000 = hoverThrottleAtDensity(t, 3000.0, 23.0, s4000);
+        QVERIFY2(thr4000 > hoverThrottleAt(t, 3000.0, 23.0) && near(thr4000, 0.592, 0.003), qPrintable(QString::number(thr4000)));
+
+        // In flight in thin air the table lists more power than the motor
+        // takes at that throttle, because the lighter prop draws less; and
+        // from the hover throttle there, the GCS reads back the real thrust
+        // and the power needed for it.
         const double ratio = densityPowerRatio(t, 23.0 * thr4000, s4000);
-        QVERIFY2(ratio > 0.99 && ratio < 1.02, qPrintable(QString::number(ratio)));
-        QVERIFY2(near(averageThrust(t, {thr4000, thr4000, thr4000, thr4000}, 23.0, s4000), 3000.0, 3000.0 * 0.015),
-                 qPrintable(QString::number(averageThrust(t, {thr4000, thr4000, thr4000, thr4000}, 23.0, s4000))));
-        QVERIFY2(near(motorCurrent(t, thr4000, 23.0, s4000).amps * 23.0, p4000, p4000 * 0.02),
-                 qPrintable(QStringLiteral("%1 W vs %2 W").arg(motorCurrent(t, thr4000, 23.0, s4000).amps * 23.0).arg(p4000)));
+        QVERIFY2(ratio > 0.79 && ratio < 0.83, qPrintable(QString::number(ratio)));
+        for (double thrustG : {2250.0, 3000.0}) {
+            for (double sigma : {s2900, s4000}) {
+                const double thr = hoverThrottleAtDensity(t, thrustG, 23.0, sigma);
+                const double real = powerForThrustAt(t, thrustG, sigma).watts;
+                const double read = motorCurrent(t, thr, 23.0, sigma).amps * 23.0;
+                const double back = averageThrust(t, {thr, thr, thr, thr}, 23.0, sigma);
+                QVERIFY2(near(back, thrustG, thrustG * 0.005), qPrintable(QStringLiteral("%1 g vs %2 g").arg(back).arg(thrustG)));
+                QVERIFY2(near(read, real, real * 0.005), qPrintable(QStringLiteral("%1 W vs %2 W").arg(read).arg(real)));
+            }
+        }
         // Without the correction the sea-level table reads that throttle as a
         // heavier copter.
         QVERIFY(averageThrust(t, {thr4000, thr4000, thr4000, thr4000}, 23.0) > 3300.0);
@@ -1326,9 +1340,16 @@ private slots:
         QVERIFY(maxThrustAt(t, 18.5).grams < 8801.0 && maxThrustAt(t, 18.5).grams > 5000.0);
         const double s4000 = densityRatio(isaPressureHpa(4000.0), isaTempC(4000.0));
         QVERIFY(maxThrustAt(t, 18.5, s4000).grams < maxThrustAt(t, 18.5).grams);
-        // 12 kg at 4000 m at the reserve (about 18.4 V): just under 2.
+        // 12 kg by the reserve voltage: at about the 2.0 limit at 2000 m and
+        // under it from 2900 m up.
+        const double s2000 = densityRatio(isaPressureHpa(2000.0), isaTempC(2000.0));
+        const double s2900 = densityRatio(isaPressureHpa(2900.0), isaTempC(2900.0));
+        const double tw2000 = maxThrustAt(t, 18.71, s2000).grams / 3000.0;
+        const double tw2900 = maxThrustAt(t, 18.60, s2900).grams / 3000.0;
         const double tw = maxThrustAt(t, 18.44, s4000).grams / 3000.0;
-        QVERIFY2(tw > 1.8 && tw < 2.0, qPrintable(QString::number(tw)));
+        QVERIFY2(tw2000 > 1.97 && tw2000 < 2.04, qPrintable(QString::number(tw2000)));
+        QVERIFY2(tw2900 > 1.81 && tw2900 < 1.91, qPrintable(QString::number(tw2900)));
+        QVERIFY2(tw > 1.63 && tw < 1.75, qPrintable(QString::number(tw)));
         QCOMPARE(maxThrustAt(t, 0.0).grams, 0.0);
         // The pack's continuous rating (4C on 20 Ah = 80 A): hover over it, on
         // average or by the reserve, warns.

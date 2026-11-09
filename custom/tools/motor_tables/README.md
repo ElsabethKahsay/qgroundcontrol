@@ -202,12 +202,11 @@ so the prop's shaft power is × σ too. The motor's own losses depend on its cur
 A day 10 °C warmer than standard at 4000 m gives σ 0.644 instead of 0.669: about 2 % more power to hover.
 
 **How σ is applied.** In thin air the prop must spin faster for the same thrust: the table's thrust at that speed must be
-thrust ÷ σ. The table stays exact at its own density: each result is the table's own value × a correction, and the
-correction comes from a model of the motor fitted to the table's rows. The model has two parts, both fitted to all 22
-rows:
+thrust ÷ σ. The table stays exact at its own density: each result is the table's own value × a correction. The correction
+uses two things:
 
-- losses (power in − shaft power) = *a* × torque² + *b* × torque + *c* + *d* × speed (within 4 W of every row)
-- motor voltage, 23 V × throttle = *e* × speed + *f* × torque + *g* (within 3 throttle points of every row)
+- losses (power in − shaft power) = *a* × torque² + *b* × torque + *c* + *d* × speed, fitted to all 22 rows (within 4 W of every row)
+- motor voltage at a speed *n* in air σ = the table's voltage at *n* − (*R* ÷ *Kt*) × (1 − σ) × table torque at *n*, using the motor's own constants (explained in the next section)
 
 | Used for | Formula |
 |---|---|
@@ -215,9 +214,105 @@ rows:
 | Power in flight from throttle and voltage | *P* = formula 3 × [model power at the speed the motor voltage gives in air σ] ÷ [model power at the speed it gives in table air] |
 | Thrust in flight (the hover the GCS remembers) | table thrust at *t*ₑ × σ × [table thrust at the faster speed] ÷ [table thrust at the table speed] |
 
-In flight the correction is small (+0.3 % at 4000 m): in thin air the motor spins faster at the same throttle, which nearly
-makes up for the lighter load, so throttle and voltage already show the extra power. Before take-off it is large,
-because there is no throttle to read: the hover power for 12 kg rises by 24 % at 4000 m.
+Before take-off, there is no throttle to read, so the hover power for 12 kg is worked from the thrust: it rises by 24 % at
+4000 m. In flight the GCS starts from the throttle, and the correction lowers the table's power, by about 14 % at 2900 m in
+a 12 kg hover. The next section explains why.
+
+### Altitude: the physics, and how the GCS applies it
+
+*Status: built into the GCS. The figures are calculated from the maker's table, the motor's 320 KV rating and an assumed
+winding-and-ESC resistance of 0.065 Ω, which the maker has not confirmed. They have not been measured on the aircraft.*
+
+**1. What thin air does to the prop.** At the same speed, thrust and torque are both × σ, so the shaft power is × σ too.
+To give the same thrust the prop must spin faster: fast enough that the table's thrust at that speed = thrust ÷ σ.
+
+**2. What the motor does.** The voltage reaching the motor has two jobs: to match the voltage the spinning motor generates
+(back-EMF), and to push the current through the winding and the ESC:
+
+  **motor voltage = speed ÷ *Kv* + (*R* ÷ *Kt*) × torque**
+
+| Quantity | Value | Where it comes from |
+|---|---|---|
+| *Kv* | 320 rpm per volt, so 0.003125 V per rpm | the motor's rating |
+| *Kt*, torque per amp | 60 ÷ (2π × 320) = 0.0298 Nm per A | follows from *Kv* |
+| *R*, winding + ESC | about 0.065 Ω, **to be confirmed by the maker** | the 100 % row: 23 V − 5814 ÷ 320 = 4.83 V, at 2.29 ÷ 0.0298 = 76.8 A, gives 0.063 Ω |
+| *R* ÷ *Kt* | about 2.2 V per Nm; **1.5 to 3.5** used below | the lower rows imply a smaller *R* (under 0.02 Ω at half throttle), so the table cannot settle it |
+
+**3. So at the same throttle, thin air speeds the motor up, by a little.** The table already holds the voltage needed at
+each speed in its own air. In thinner air the torque is × σ, so the winding needs less voltage at the same speed:
+
+  **motor voltage at speed *n* in air σ = table voltage at *n* − (*R* ÷ *Kt*) × (1 − σ) × *Q*(*n*)**
+
+where *Q*(*n*) is the table's torque at *n*. The GCS solves this for *n* at the voltage the motor gets, pack voltage × throttle.
+
+The speed-up is only a few percent, and shaft power goes with σ × speed³. At 2900 m and half throttle the motor speeds up
+about 3.4 %: 0.750 × 1.034³ = 0.83, so **about 17 % less shaft power at the same throttle.** A copter flying in thin air
+therefore draws less power than the table lists for the throttle it is using. The motor's own losses barely change, so
+total power falls by a little less: about 13 % at that point.
+
+**4. Why the table on its own cannot show this.** In a thrust test, speed and torque always rise together (torque goes
+roughly with speed²). A line of the form *e* × speed + *f* × torque + *g* can match every row with very different *e* and
+*f*, because the rows never change one without the other. Separating them needs the motor's own constants. An earlier
+version of the GCS used a line fitted to the rows. It matched them to within 3 throttle points, but its constants were wrong:
+
+| | Fitted to the rows (no longer used) | The motor's physics (GCS now) |
+|---|---|---|
+| Speed per volt | 700 rpm/V | 320 rpm/V |
+| Volts per Nm of torque | 5.1 | 2.18 |
+| Speed-up at half throttle, 2900 m | 9 % | 3.4 % |
+| Shaft power at the same throttle (σ × speed³) | 0.750 × 1.09³ = 0.97 | 0.750 × 1.034³ = 0.83 |
+
+**5. Worked example: 12 kg hover at 2900 m, *R* ÷ *Kt* = 2.2 V per Nm, 23 V at the motors.** Each motor gives 3000 g; σ = 0.750.
+
+| Step | Working | Result |
+|---|---|---|
+| Table thrust needed | 3000 ÷ 0.750 | 4000 g |
+| Speed for it | between the 57 % row (3810 g, 3921 rpm) and the 60 % row (4147 g, 4079 rpm): 3921 + (4000 − 3810) ÷ 337 × 158 | 4010 rpm |
+| Table torque there | 1.00 + (4010 − 3921) ÷ 158 × 0.09 | 1.051 Nm |
+| Shaft power in this air | table 442.4 W × 0.750 | 331.7 W |
+| Motor losses (torque 0.750 × 1.051 = 0.788 Nm) | 62.01 × 0.788² − 85.07 × 0.788 − 30.10 + 0.03581 × 4010 | 85.0 W |
+| **Real power per motor** | 331.7 + 85.0 | **416.7 W** |
+| Throttle the table lists for 4010 rpm | 57 + (4010 − 3921) ÷ 158 × 3 | 58.7 % |
+| Voltage saved by the lighter torque | 2.2 × (1 − 0.750) × 1.051 = 0.578 V; ÷ 23 V | 2.5 points |
+| **Throttle actually flown** | 58.7 − 2.5 | **56.2 %** |
+| What the table lists at 56.2 % | 440.1 + (56.2 − 54) ÷ 3 × (499.5 − 440.1) | 483.7 W |
+| GCS correction in this air, from its code | model power at the faster speed and σ ÷ at the table speed | × 0.862 |
+| **What the GCS reads** | 483.7 × 0.862 | **416.9 W** |
+| **GCS reading against real** | 416.9 ÷ 416.7 | **within 0.1 %** |
+
+**6. The results at each site** (12 kg, standard atmosphere, worked by the GCS's code, with *R* = 0.065 Ω):
+
+| Site | σ | Real power per motor | GCS in flight: before the fix | GCS in flight: now | Weight: before the fix | Weight: now | Spare thrust by the reserve: before the fix | Spare thrust: now |
+|---|---|---|---|---|---|---|---|---|
+| 2000 m | 0.822 | 397.4 W | +7 to +14 % | within 0.1 % | 12.6–13.2 kg | 12.00 kg | 2.15 | 2.00 |
+| 2900 m | 0.750 | 416.6 W | +9 to +20 % | within 0.1 % | 12.8–13.8 kg | 12.00 kg | 2.08 | 1.85 |
+| 3500 m | 0.705 | 429.9 W | +11 to +25 % | within 0.1 % | 13.0–14.2 kg | 12.00 kg | 2.03 | 1.76 |
+| 4000 m | 0.669 | 441.2 W | +13 to +30 % | within 0.1 % | 13.2–14.6 kg | 12.00 kg | 1.98 | 1.68 |
+
+"Now" assumes the real motor has the resistance the GCS uses. Spare thrust is full-throttle thrust per motor at the reserve
+voltage, by the equation in step 3, ÷ 3000 g.
+
+**7. If the real resistance is not 0.065 Ω.** The table cannot settle *R*, so the GCS could still be off by this much:
+
+| Site | If *R* ÷ *Kt* is really 1.5 V per Nm (0.045 Ω): GCS power | Weight it reads | True spare thrust | If really 3.5 V per Nm (0.104 Ω): GCS power | Weight it reads | True spare thrust |
+|---|---|---|---|---|---|---|
+| 2000 m | +2.2 % | 12.19 kg | 1.96 | −4.2 % | 11.63 kg | 2.08 |
+| 2900 m | +3.2 % | 12.28 kg | 1.80 | −6.0 % | 11.45 kg | 1.96 |
+| 3500 m | +3.9 % | 12.35 kg | 1.70 | −7.2 % | 11.33 kg | 1.87 |
+| 4000 m | +4.5 % | 12.41 kg | 1.62 | −8.2 % | 11.23 kg | 1.79 |
+
+**8. What this means.**
+
+- **By the physics, the 12 kg quad is at about the 2.0 spare-thrust limit at 2000 m and under it from 2900 m up.** The GCS
+  now shows this.
+- **Hover power, current and time for a known weight** (the "Power per motor", "Average current" and "Hover time" columns
+  below) did not use the fitted line and have not changed.
+- **Charger fine-tuning** can absorb what is left at one site, within its limits of × 0.80 to × 1.20. Any error left from
+  *R* still grows with altitude, so a factor learned at one site does not fully carry over to another.
+
+**What this rests on:** thrust and torque × σ at the same speed; the ESC giving the motor a voltage in proportion to
+throttle; the maker's test having been run near sea level at about 15 °C (not stated on the table, to be confirmed); and
+the value of *R*. The maker's *R* and charger numbers from flights at altitude are what will confirm it.
 
 ### 9. Checks before take-off
 
@@ -347,10 +442,10 @@ moment, 66.1 A, would have said 9.7 min.)
 | Site | σ | Power per motor | Average current | Hover time | Hover throttle at 23 V | At the reserve voltage | Weight the GCS reads back (without density) |
 |---|---|---|---|---|---|---|---|
 | Sea level | 1.000 | 357.2 W | 68.2 A | 14.1 min | 49.5 % | 60.0 % at 18.96 V | 12.0 kg |
-| 2000 m | 0.822 | 397.4 W | 76.5 A | 12.6 min | 51.5 % | 63.3 % at 18.71 V | 12.0 kg (12.9) |
-| 2900 m | 0.750 | 416.6 W | 80.5 A | 11.9 min | 52.5 % | 65.0 % at 18.60 V | 12.0 kg (13.3) |
-| 3500 m | 0.705 | 429.9 W | 83.3 A | 11.5 min | 53.3 % | 66.2 % at 18.51 V | 12.0 kg (13.6) |
-| 4000 m | 0.669 | 441.2 W | 85.7 A | 11.2 min | 53.9 % | 67.2 % at 18.44 V | 12.0 kg (13.9) |
+| 2000 m | 0.822 | 397.4 W | 76.5 A | 12.6 min | 53.9 % | 66.3 % at 18.71 V | 12.0 kg (13.9) |
+| 2900 m | 0.750 | 416.6 W | 80.5 A | 11.9 min | 56.2 % | 69.5 % at 18.60 V | 12.0 kg (14.9) |
+| 3500 m | 0.705 | 429.9 W | 83.3 A | 11.5 min | 57.8 % | 71.9 % at 18.51 V | 12.0 kg (15.6) |
+| 4000 m | 0.669 | 441.2 W | 85.7 A | 11.2 min | 59.2 % | 73.9 % at 18.44 V | 12.0 kg (16.2) |
 
 Worked for 4000 m, before take-off: table thrust needed = 3000 ÷ 0.669 = 4484 g, which the table reaches at a higher
 speed; the model's power there in 4000 m air ÷ its power at the sea-level hover speed = 1.235; 357.2 W × 1.235 =
@@ -358,12 +453,179 @@ speed; the model's power there in 4000 m air ÷ its power at the sea-level hover
 
 ### All checks for 12 kg at the sites
 
-| Site | Hover time | Average current | By the reserve | vs 80 A (4C) | Spare thrust at the reserve | vs 2.0 |
-|---|---|---|---|---|---|---|
-| 2000 m | 12.6 min | 76.5 A | 85.9 A at 18.71 V | over by the reserve | 2.15 | OK |
-| 2900 m | 11.9 min | 80.5 A | 90.6 A at 18.60 V | over | 2.08 | OK |
-| 3500 m | 11.5 min | 83.3 A | 93.9 A at 18.51 V | over | 2.03 | OK |
-| 4000 m | 11.2 min | 85.7 A | 96.7 A at 18.44 V | over | 1.98 | **under** |
+| Site | Hover time | Average current | By the reserve | vs 80 A (4C) | Spare thrust by the reserve | If *R* is 0.104 Ω to 0.045 Ω | vs 2.0 |
+|---|---|---|---|---|---|---|---|
+| 2000 m | 12.6 min | 76.5 A | 85.9 A at 18.71 V | over by the reserve | 2.00 | 1.96–2.08 | **at the limit** |
+| 2900 m | 11.9 min | 80.5 A | 90.6 A at 18.60 V | over | 1.85 | 1.80–1.96 | **under** |
+| 3500 m | 11.5 min | 83.3 A | 93.9 A at 18.51 V | over | 1.76 | 1.70–1.87 | **under** |
+| 4000 m | 11.2 min | 85.7 A | 96.7 A at 18.44 V | over | 1.68 | 1.62–1.79 | **under** |
 
 At 12 kg the pack is at or above its 4C rating just hovering at every site, and climbs and 70 km/h cruise draw more.
-At 4000 m the spare thrust falls just under 2.0 by the reserve.
+Spare thrust is at about the 2.0 limit by the reserve at 2000 m and under it from 2900 m up.
+
+## Planned: waypoint times and mission assessment
+
+*Status: designed, not built. The list at the end of this section must be settled first. The same list is in
+`custom/MISSION_ESTIMATE_OPEN_ITEMS.md` for sharing on its own.*
+
+As well as battery % and current, the GCS will give a time estimate for each waypoint in the mission and an assessment of
+whether the mission can be flown. The mission is read from the autopilot, where it was originally loaded by Mission
+Planner. The autopilot for now is ArduPilot.
+
+**The assessment is advice only.** The drone is RC-primary, so the GCS never holds arming because of it. Stock
+QGroundControl arming logic is not changed.
+
+### How each waypoint is worked out
+
+| Quantity | How | Depends on the weight or payload? |
+|---|---|---|
+| Time to the waypoint | Horizontal distance ÷ cruise speed, or height change ÷ climb or descent speed if that takes longer, plus speeding up and slowing down, plus any hold in the mission | No |
+| Speeds | The autopilot's parameters (`WP_SPD`, or `WPNAV_SPEED` on older firmware, and the climb, descent, return and landing speeds) and any speed changes in the mission | No |
+| Charge on arrival | Formula 6 stepped along the legs, using the power for the weight at that point in the mission and the air density at that height | Yes |
+| Charge left if it turned home here | The same sum for the flight home from that waypoint | Yes |
+
+ArduPilot holds ground speed in a mission, so wind mostly changes the battery used and not the waypoint times, until the
+headwind needs more tilt than the copter is allowed. The payload changes only the battery figures after the drop.
+
+### What the assessment says
+
+Each mission gets a result, the reasons for it, and how sure the estimate is. The limits are proposals to agree.
+
+**Whole mission** (the worst one that applies):
+
+| Result | Meaning |
+|---|---|
+| Comfortable | Lands at least 10 points above the reserve, even in the pessimistic case |
+| Fits | Lands above the reserve in the pessimistic case, with less margin |
+| Tight | Lands above the reserve in the likely case only |
+| Uses the reserve | Likely case lands between 10 % and 20 % |
+| One way only | Reaches the far point but cannot get home |
+| Can't be done | Runs out before landing, even in the best case |
+| Too heavy to fly safely | Spare thrust is below the minimum, even at take-off |
+| Can't assess | Says what is missing, such as the table, the weight or an endless loiter |
+
+**Each waypoint:**
+
+| State | Meaning |
+|---|---|
+| On track | Reached, with enough charge to continue as planned |
+| Last safe turn-back point | The furthest waypoint from which it can still get home above the reserve |
+| Past the turn-back point | Reached, but it could no longer get home above the reserve from here |
+| Reached only on the reserve | Arrives with less than the reserve left |
+| Autopilot will turn back before here | The autopilot's own battery failsafe is expected to trigger first |
+| Not reachable | The battery runs out before this waypoint |
+
+**Reasons shown alongside:** over the battery's current limit on a leg; low spare thrust on a leg; the autopilot's battery
+failsafe triggering at a named waypoint; a headwind beyond the tilt limit, or gusts over the limit; above the tested
+altitude; too close to terrain; landing after dark; old weather or an old copy of the mission.
+
+**How sure:** *High* when cruise power is measured and agrees with the charger; *Medium* when some of that is missing;
+*Low* when the table is unproven and cruise power is estimated.
+
+### Example: how far with a 4 kg payload
+
+*Calculated, not measured.* 6S 20 Ah pack, 70 km/h, no wind, full charge to the 20 % reserve. Not included: take-off, climb,
+landing and hovering at the drop point. The cruise power is hover power × a ratio that has not been measured yet: × 1.2 is
+the likely case, × 1.1 to × 1.4 the range. The 9 kg column assumes the same pack and the same drag as the 12 kg copter.
+The weights are examples and are not settings in the GCS.
+
+**Furthest drop point, carrying the 4 kg out and flying back without it:**
+
+| Site | 12 kg: × 1.4 / **× 1.2** / × 1.1 | 9 kg: × 1.4 / **× 1.2** / × 1.1 | Gain at × 1.2 |
+|---|---|---|---|
+| 2000 m | 6.1 / **7.4** / 8.3 km | 8.2 / **10.7** / 12.6 km | +3.3 km |
+| 2900 m | 5.7 / **7.0** / 7.9 km | 7.8 / **10.2** / 11.9 km | +3.1 km |
+| 3500 m | 5.5 / **6.8** / 7.6 km | 7.5 / **9.8** / 11.5 km | +3.0 km |
+| 4000 m | 5.3 / **6.6** / 7.4 km | 7.3 / **9.5** / 11.1 km | +2.9 km |
+
+**Charge and range left after the drop, at 2900 m, × 1.2:**
+
+| Payload carried for | 12 kg: charge at the drop | 12 kg: left after the drop | 9 kg: charge at the drop | 9 kg: left after the drop |
+|---|---|---|---|---|
+| 2 km | 87 % | 12.8 min, 15.0 km | 91 % | 20.8 min, 24.3 km |
+| 4 km | 74 % | 10.1 min, 11.8 km | 82 % | 17.8 min, 20.8 km |
+| 6 km | 60 % | 7.4 min, 8.6 km | 72 % | 14.9 min, 17.4 km |
+| 8 km | 46 % | 4.6 min, 5.4 km | 62 % | 11.9 min, 13.9 km |
+| 10 km | 31 % | 1.9 min, 2.2 km | 52 % | 8.9 min, 10.4 km |
+| 12 km | at the reserve | 0 | 42 % | 5.9 min, 6.9 km |
+
+To get home from the drop point, the distance left must be at least the distance carried.
+
+### What we need before building
+
+**Aircraft and battery**
+
+| # | Item | From | Status |
+|---|---|---|---|
+| 1 | Empty weight, and what makes up 9 or 12 kg | Operator | Missing |
+| 2 | Real capacity of the packs, from the charger | Tests | Missing (20 Ah assumed) |
+| 3 | Pack resistance | Measure | Assumed 25.2 mΩ |
+| 4 | Battery continuous and peak current limits | Battery maker | 4C (80 A) only |
+| 5 | Motor resistance and the thrust test's air conditions | HobbyWing | Assumed 0.065 Ω |
+| 6 | ESC current and heat limits at altitude | Maker | Missing |
+| 7 | Battery capacity when cold at altitude | Tests or maker | Missing |
+| 8 | Accuracy of the autopilot's current sensor | Charger comparison | Missing |
+
+**Time estimate**
+
+| # | Item | From | Status |
+|---|---|---|---|
+| 9 | ArduPilot version on the aircraft (parameter names change between versions) | Operator | Missing |
+| 10 | `.params` export: cruise, climb, descent, acceleration, return and landing speeds, return height | Operator | Missing |
+| 11 | Real `.waypoints` files from Mission Planner | Operator | Missing |
+| 12 | Commands used: holds, speed changes, loops, splines, loiters | The files | Missing |
+| 13 | Height type used: relative, sea level or terrain | The files | Missing |
+| 14 | Do missions end with a return or a landing? | Operator | Missing |
+| 15 | Can the mission change after the GCS has connected? | Operator | Missing |
+| 16 | How the flight starts. If the pilot takes off on RC and then switches to Auto, when does the clock start? | Operator | Missing |
+| 17 | How to show time: from take-off, countdown or clock time | Group | Missing |
+
+**Battery use along the mission**
+
+| # | Item | From | Status |
+|---|---|---|---|
+| 18 | Payload weight, and the waypoint where it is dropped | Operator | 4 kg example only |
+| 19 | How the drop appears in the mission; can there be several? | Operator | Missing |
+| 20 | Must the trip also work if the payload fails to release? | Group | Missing |
+| 21 | Measured cruise power at 70 km/h, loaded and empty | Test flights | Missing (estimated × 1.1 to × 1.4 of hover) |
+| 22 | Power at other speeds, if missions change speed | Test flights | Missing |
+| 23 | Autopilot battery failsafe levels and actions | `.params` export | Missing |
+
+**Environment**
+
+| # | Item | From | Status |
+|---|---|---|---|
+| 24 | Internet at the site, or data saved beforehand | Operator | Missing |
+| 25 | Terrain data and minimum clearance | Group | Missing |
+| 26 | Wind at flight height; the forecast is at ground level | Group | Missing |
+| 27 | Temperature at the site: height-corrected or pilot-entered | Group | Pending |
+| 28 | Wind and gust limits for this copter | Group | Missing |
+
+**Limits to agree**
+
+| # | Item | Status |
+|---|---|---|
+| 29 | Landing reserve | 20 % default |
+| 30 | Lowest acceptable landing charge | Proposed 10 % |
+| 31 | Pessimistic cruise case before flights measure it | Proposed × 1.4 |
+| 32 | Whether going over 80 A is only a warning | Missing |
+| 33 | Minimum spare thrust | 2.0 set |
+| 34 | Acceptable error for time and charge | Missing |
+
+**Screen and scope**
+
+| # | Item | Status |
+|---|---|---|
+| 35 | Where it appears: preflight, Fly view, Plan view | Missing |
+| 36 | Live updating in flight, and any alert sounds | Missing |
+| 37 | Copters with a motor table only, or others too | Proposed: these only |
+| 38 | Saving each prediction to compare with the real flight | Proposed: yes |
+
+**Before coding**
+
+| # | Item | Status |
+|---|---|---|
+| 39 | Fix the altitude error in the motor table code and correct the plan and report | Done in code; to be confirmed by the maker's *R* and flights |
+| 40 | Stop our `custom/` code holding arming: the Mission check and our arming gate. Stock QGroundControl arming logic stays as it is | Deferred: to fix later, not part of the current work |
+| 41 | Simulator missions covering each result | To build |
+| 42 | Test flights at the operating altitude, with charger readings | To schedule |
