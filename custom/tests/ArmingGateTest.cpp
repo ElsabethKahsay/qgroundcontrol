@@ -9,7 +9,6 @@
 #include "core/BatteryPackCheck.h"
 #include "core/PayloadCheck.h"
 #include "core/PowerTypeCheck.h"
-#include "core/MissionCheck.h"
 #include "PreflightManager.h"
 #include "VehicleProfileManager.h"
 #include "utils/DatabaseManager.h"
@@ -43,8 +42,6 @@ private slots:
     void testBatteryPackWarnsOnFcCapacityMismatch();
     void testPowerTypeItemNeedsConfirmedProps();
     void testPowerTypeItemWithMotorTable();
-    void testMissionCheckBlocksOnlyWhenValidated();
-    void testMissionCheckOnMotorTable();
     void testPowerTypeWaiversAndTimeAtTarget();
 
 private:
@@ -482,108 +479,8 @@ void ArmingGateTest::testPowerTypeItemNeedsConfirmedProps()
     QVERIFY(!g.failing(id));
 }
 
-// "Mission check": a short trip blocks (Failed) only for a validated type and
-// can be waived; before validation it warns; no target never blocks; a
-// validated type cannot be dodged by leaving the payload out.
-void ArmingGateTest::testMissionCheckBlocksOnlyWhenValidated()
-{
-    QVariantMap r;
-    auto *item = new MissionCheck([&r]() { return r; });
-    OneCheckGate g(item);
-    const QString id = QStringLiteral("power.mission");
-    auto status = [&]() { item->evaluate(); return item->status(); };
-
-    r = {{QStringLiteral("applicable"), false}};
-    QCOMPARE(status(), CheckStatus::Skipped);
-    r = {{QStringLiteral("applicable"), true}, {QStringLiteral("linked"), false}};
-    QCOMPARE(status(), CheckStatus::Skipped);
-    r = {{QStringLiteral("applicable"), true}, {QStringLiteral("linked"), true}, {QStringLiteral("packWaived"), true}};
-    QCOMPARE(status(), CheckStatus::Skipped);
-    r = {{QStringLiteral("applicable"), true}, {QStringLiteral("linked"), true}, {QStringLiteral("modelUsable"), false},
-         {QStringLiteral("advice"), QStringLiteral("Fly one mostly-hover flight without payload")}};
-    QCOMPARE(status(), CheckStatus::Warning);
-    QVERIFY(item->message().contains(QStringLiteral("mostly-hover")));
-
-    // The worked example's numbers: 5 km, 0.8 kg, 2 min, 12.8 Ah usable.
-    const QVariantMap base{{QStringLiteral("applicable"), true}, {QStringLiteral("linked"), true},
-                           {QStringLiteral("modelUsable"), true}, {QStringLiteral("validated"), true},
-                           {QStringLiteral("hasTarget"), true}, {QStringLiteral("positionKnown"), true},
-                           {QStringLiteral("payloadEntered"), true}, {QStringLiteral("timeAtTargetEntered"), true},
-                           {QStringLiteral("payloadKg"), 0.8}, {QStringLiteral("minAtTarget"), 2.0},
-                           {QStringLiteral("targetKm"), 5.0}, {QStringLiteral("usableAh"), 12.8},
-                           {QStringLiteral("totalAh"), 6.56}, {QStringLiteral("spareAh"), 6.24},
-                           {QStringLiteral("maxTargetKm"), 12.46}, {QStringLiteral("fits"), true},
-                           {QStringLiteral("cruiseSpeedMs"), 15.0}};
-    r = base;
-    QCOMPARE(status(), CheckStatus::Passed);
-    QVERIFY2(item->message().contains(QStringLiteral("OK, 6.2 Ah spare (max 12.5 km)")), qPrintable(item->message()));
-    QVERIFY(!g.failing(id));
-
-    r[QStringLiteral("targetKm")] = 20.0;
-    r[QStringLiteral("totalAh")] = 19.1;
-    r[QStringLiteral("spareAh")] = -6.3;
-    r[QStringLiteral("fits")] = false;
-    QCOMPARE(status(), CheckStatus::Failed);
-    QVERIFY2(item->message().contains(QStringLiteral("short by 6.3 Ah")), qPrintable(item->message()));
-    QVERIFY(g.failing(id));
-    item->confirm(QStringLiteral("Action completed"));
-    QCOMPARE(item->status(), CheckStatus::Failed);
-
-    r[QStringLiteral("waivedBy")] = QStringLiteral("Waiver Pilot");
-    QCOMPARE(status(), CheckStatus::Warning);
-    QVERIFY(item->message().contains(QStringLiteral("waived by Waiver Pilot")));
-    QVERIFY(!g.failing(id));
-
-    r.remove(QStringLiteral("waivedBy"));
-    r[QStringLiteral("validated")] = false;
-    QCOMPARE(status(), CheckStatus::Warning);
-    QVERIFY(item->message().contains(QStringLiteral("not yet validated")));
-
-    // Validated: no payload entered, or no position yet, holds the gate.
-    r = base;
-    r[QStringLiteral("payloadEntered")] = false;
-    QCOMPARE(status(), CheckStatus::Pending);
-    QVERIFY(g.failing(id));
-    r[QStringLiteral("validated")] = false;
-    QCOMPARE(status(), CheckStatus::Warning);
-    r = base;
-    r[QStringLiteral("positionKnown")] = false;
-    QCOMPARE(status(), CheckStatus::Pending);
-
-    // A pack that is not full (charge from its resting voltage): a
-    // validated type holds the arm until a full pack or a waiver; after the
-    // waiver the trip is checked as usual; before validation it is amber.
-    r = base;
-    r[QStringLiteral("packFull")] = false;
-    r[QStringLiteral("packCellV")] = 3.95;
-    r[QStringLiteral("packSocPct")] = 70.0;
-    QCOMPARE(status(), CheckStatus::Pending);
-    QVERIFY2(item->message().contains(QStringLiteral("Pack not full")) && item->message().contains(QStringLiteral("70 %")),
-             qPrintable(item->message()));
-    QVERIFY(g.failing(id));
-    r[QStringLiteral("partialPackWaivedBy")] = QStringLiteral("Pack Pilot");
-    QCOMPARE(status(), CheckStatus::Passed);
-    QVERIFY2(item->message().contains(QStringLiteral("waived by Pack Pilot")), qPrintable(item->message()));
-    r[QStringLiteral("fits")] = false;
-    r[QStringLiteral("spareAh")] = -1.0;
-    QCOMPARE(status(), CheckStatus::Failed);                       // the waiver is for the pack, not the trip
-    r.remove(QStringLiteral("partialPackWaivedBy"));
-    r[QStringLiteral("validated")] = false;
-    r[QStringLiteral("fits")] = true;
-    QCOMPARE(status(), CheckStatus::Warning);
-    QVERIFY(!g.failing(id));
-
-    r = base;
-    r[QStringLiteral("hasTarget")] = false;
-    QCOMPARE(status(), CheckStatus::Passed);
-    r[QStringLiteral("packFull")] = false;
-    QCOMPARE(status(), CheckStatus::Warning);                      // no target: never blocks, amber when not full
-    QVERIFY2(item->message().contains(QStringLiteral("No target")) && item->message().contains(QStringLiteral("12.5 km")),
-             qPrintable(item->message()));
-}
-
-// The per-flight state behind the two items: waivers need a name and are
-// logged; confirming props needs a linked type; time at target is 0–600 min
+// The per-flight state behind the Power type item: a waiver needs a name
+// and is logged; confirming props needs a linked type; time at target is 0–600 min
 // and goes with the payload entry; the end of a flight clears it all.
 void ArmingGateTest::testPowerTypeWaiversAndTimeAtTarget()
 {
@@ -597,12 +494,6 @@ void ArmingGateTest::testPowerTypeWaiversAndTimeAtTarget()
     QVERIFY(!vpm.waivePowerType(QStringLiteral("  ")));
     QVERIFY(vpm.waivePowerType(QStringLiteral("Type Pilot")));
     QCOMPARE(vpm.powerTypeWaivedBy(), QStringLiteral("Type Pilot"));
-    QVERIFY(!vpm.waiveMissionCheck(QString()));
-    QVERIFY(vpm.waiveMissionCheck(QStringLiteral("Trip Pilot")));
-    QCOMPARE(vpm.missionCheckWaivedBy(), QStringLiteral("Trip Pilot"));
-    QVERIFY(!vpm.waivePartialPack(QStringLiteral(" ")));
-    QVERIFY(vpm.waivePartialPack(QStringLiteral("Pack Pilot")));
-    QCOMPARE(vpm.partialPackWaivedBy(), QStringLiteral("Pack Pilot"));
 
     QStringList events;
     for (const QString &id : db.listComplianceLogs(QStringLiteral("unknown"), 100000)) {
@@ -611,9 +502,7 @@ void ArmingGateTest::testPowerTypeWaiversAndTimeAtTarget()
         const QJsonObject e = QJsonDocument::fromJson(db.loadComplianceLog(id).toUtf8()).object();
         events << e.value(QStringLiteral("event")).toString() + QLatin1Char(':') + e.value(QStringLiteral("pilot")).toString();
     }
-    QVERIFY2(events.contains(QStringLiteral("power_type_waived:Type Pilot"))
-                 && events.contains(QStringLiteral("mission_check_waived:Trip Pilot"))
-                 && events.contains(QStringLiteral("partial_pack_waived:Pack Pilot")),
+    QVERIFY2(events.contains(QStringLiteral("power_type_waived:Type Pilot")),
              qPrintable(events.join(QStringLiteral(", "))));
 
     QCOMPARE(vpm.timeAtTargetMin(), -1.0);
@@ -624,8 +513,6 @@ void ArmingGateTest::testPowerTypeWaiversAndTimeAtTarget()
 
     vpm.clearPowerTypeFlightState();
     QVERIFY(vpm.powerTypeWaivedBy().isEmpty());
-    QVERIFY(vpm.missionCheckWaivedBy().isEmpty());
-    QVERIFY(vpm.partialPackWaivedBy().isEmpty());
     vpm.clearPayloadEntry();
     QCOMPARE(vpm.timeAtTargetMin(), -1.0);
 
@@ -644,60 +531,6 @@ void ArmingGateTest::testPowerTypeWaiversAndTimeAtTarget()
     QCOMPARE(VehicleProfileManager::frameName(1, 1), QStringLiteral("Quad X"));
     QCOMPARE(VehicleProfileManager::frameName(2, 0), QStringLiteral("Hexa Plus"));
     QCOMPARE(VehicleProfileManager::frameName(99, 1), QString());
-}
-
-// "Mission check" for a copter on a motor table: what is missing is said
-// plainly (no hover yet, a different frame), the table's warnings keep the item
-// amber, and a short trip warns but never blocks (the table is not validated
-// until its flights agree with the charger).
-void ArmingGateTest::testMissionCheckOnMotorTable()
-{
-    QVariantMap r;
-    auto *item = new MissionCheck([&r]() { return r; });
-    OneCheckGate g(item);
-    const QString id = QStringLiteral("power.mission");
-    auto status = [&]() { item->evaluate(); return item->status(); };
-
-    const QVariantMap linked{{QStringLiteral("applicable"), true}, {QStringLiteral("linked"), true},
-                             {QStringLiteral("source"), QStringLiteral("motor table")}, {QStringLiteral("validated"), false}};
-    r = linked;
-    r[QStringLiteral("modelUsable")] = false;
-    r[QStringLiteral("notReadyText")] = QStringLiteral("Hover not known yet: fly once");
-    QCOMPARE(status(), CheckStatus::Warning);
-    QCOMPARE(item->message(), QStringLiteral("Hover not known yet: fly once"));
-    QVERIFY(!g.failing(id));
-
-    r = linked;
-    r[QStringLiteral("modelUsable")] = true;
-    for (const char *k : {"hasTarget", "positionKnown", "payloadEntered", "timeAtTargetEntered", "fits"})
-        r[QLatin1String(k)] = true;
-    r[QStringLiteral("targetKm")] = 3.0;
-    r[QStringLiteral("usableAh")] = 16.0;
-    r[QStringLiteral("totalAh")] = 11.9;
-    r[QStringLiteral("spareAh")] = 4.1;
-    r[QStringLiteral("maxTargetKm")] = 4.5;
-    r[QStringLiteral("cruiseSpeedMs")] = 10.0;
-    r[QStringLiteral("speedAssumed")] = true;
-    QCOMPARE(status(), CheckStatus::Passed);
-    QVERIFY2(item->message().contains(QStringLiteral("OK, 4.1 Ah spare")), qPrintable(item->message()));
-    // Cruise not yet measured: said, still green.
-    r[QStringLiteral("cruiseNote")] = QStringLiteral("cruise power not measured yet: taken as hover");
-    QCOMPARE(status(), CheckStatus::Passed);
-    QVERIFY2(item->message().contains(QStringLiteral("cruise power not measured yet")), qPrintable(item->message()));
-    r.remove(QStringLiteral("cruiseNote"));
-
-    r[QStringLiteral("setupWarning")] = QStringLiteral("Little spare thrust: 1.95 × the weight at the reserve (want 2.0)");
-    QCOMPARE(status(), CheckStatus::Warning);
-    QVERIFY2(item->message().contains(QStringLiteral("Little spare thrust")), qPrintable(item->message()));
-    QVERIFY(!g.failing(id));
-    r.remove(QStringLiteral("setupWarning"));
-
-    r[QStringLiteral("fits")] = false;
-    r[QStringLiteral("spareAh")] = -2.0;
-    r[QStringLiteral("totalAh")] = 18.0;
-    QCOMPARE(status(), CheckStatus::Warning);
-    QVERIFY2(item->message().contains(QStringLiteral("not yet validated")), qPrintable(item->message()));
-    QVERIFY(!g.failing(id));
 }
 
 // "Power type" for a copter linked to a motor table: no power type or props

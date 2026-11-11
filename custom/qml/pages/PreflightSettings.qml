@@ -163,7 +163,7 @@ Rectangle {
                 Label { text: qsTr("Default ICAO"); color: qgcPal.text }
                 QGCTextField {
                     Layout.fillWidth: true
-                    placeholderText: qsTr("e.g. KLAX")
+                    placeholderText: qsTr("e.g. HAAB")
                     // ICAO airport identifiers are exactly 4 letters.
                     maximumLength: 4
                     text: PreflightSettingsManager.defaultIcao
@@ -209,6 +209,78 @@ Rectangle {
                     onValueChanged: PreflightSettingsManager.weatherUpdateIntervalMin = value
                     Layout.fillWidth: true
                 }
+            }
+
+            // Payload release: the servo output the release is on (9 or 10 on
+            // the 22-inch copter). Only that output's PWM is watched, whatever
+            // moves it; each move to "released" in flight releases the next
+            // payload, is written on the flight record, and the estimate goes
+            // on with the lighter copter.
+            Label {
+                text: qsTr("Payload release")
+                font.bold: true
+                color: qgcPal.text
+            }
+            GridLayout {
+                columns: 2
+                columnSpacing: ScreenTools.defaultFontPixelWidth * 2
+                rowSpacing: ScreenTools.defaultFontPixelHeight * 0.5
+
+                Label { text: qsTr("Release servo output (0 = not set)"); color: qgcPal.text }
+                SpinBox {
+                    id: dropOutputBox
+                    objectName: "payloadDropOutput"
+                    from: 0; to: 16; stepSize: 1
+                    value: PreflightSettingsManager.payloadDropOutput
+                    onValueChanged: PreflightSettingsManager.payloadDropOutput = value
+                    Layout.fillWidth: true
+                }
+
+                // That output's range on the copter and where "released" starts.
+                Item { width: 1; height: 1 }
+                Label {
+                    objectName: "payloadDropOutputInfo"
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    font.pointSize: ScreenTools.smallFontPointSize
+                    color: qgcPal.text
+                    // Read again when the output or "released when low" changes.
+                    text: {
+                        var low = PreflightSettingsManager.payloadDropOnWhenLow
+                        return typeof VehicleProfileManager !== "undefined"
+                               ? VehicleProfileManager.servoOutputInfo(dropOutputBox.value).text : ""
+                    }
+                }
+
+                Label { text: qsTr("Released when the output is low"); color: qgcPal.text }
+                QGCCheckBox {
+                    checked: PreflightSettingsManager.payloadDropOnWhenLow
+                    onClicked: PreflightSettingsManager.payloadDropOnWhenLow = !PreflightSettingsManager.payloadDropOnWhenLow
+                }
+
+                Label { text: qsTr("Payload pieces (1, or 2 dropped one by one)"); color: qgcPal.text }
+                SpinBox {
+                    from: 1; to: 2; stepSize: 1
+                    value: PreflightSettingsManager.payloadCount
+                    onValueChanged: PreflightSettingsManager.payloadCount = value
+                    Layout.fillWidth: true
+                }
+
+                Label { text: qsTr("Planned drop at mission item (0 = carried home)"); color: qgcPal.text }
+                SpinBox {
+                    from: 0; to: 999; stepSize: 1
+                    value: PreflightSettingsManager.payloadDropItem
+                    onValueChanged: PreflightSettingsManager.payloadDropItem = value
+                    Layout.fillWidth: true
+                }
+            }
+            Label {
+                text: qsTr("\"Released\" is past the middle of the output's range (SERVOn_MIN and SERVOn_MAX on the copter, else 1500 µs)."
+                           + " The output must not be at \"released\" at take-off; each move there in flight releases one payload.")
+                wrapMode: Text.WordWrap
+                color: qgcPal.text
+                font.pointSize: ScreenTools.smallFontPointSize
+                Layout.fillWidth: true
             }
 
             Label {

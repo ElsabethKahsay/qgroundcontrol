@@ -16,6 +16,10 @@
 #include "PowerModel.h"
 #include "PowerTypeModel.h"
 #include "MotorTable.h"
+#include "MissionWalk.h"
+#include "MissionCost.h"
+#include "MissionAssess.h"
+#include "MissionEstimateCheck.h"
 #include <QCoreApplication>
 #include <QFileInfo>
 
@@ -90,6 +94,75 @@ private:
     }
 
     static bool near(double a, double b, double tol) { return std::abs(a - b) <= tol; }
+
+    // The 22-inch copter's settings, as in custom/tools/22Inches.params
+    // (ArduPilot 4.7 names).
+    static QHash<QString, double> params22()
+    {
+        return {{QStringLiteral("WP_SPD"), 10.0},          {QStringLiteral("WP_SPD_UP"), 2.5},
+                {QStringLiteral("WP_SPD_DN"), 1.5},        {QStringLiteral("WP_ACC"), 2.5},
+                {QStringLiteral("WP_ACC_Z"), 1.0},         {QStringLiteral("WP_JERK"), 1.0},
+                {QStringLiteral("RTL_ALT_M"), 15.0},       {QStringLiteral("RTL_SPEED_MS"), 0.0},
+                {QStringLiteral("RTL_LOIT_TIME"), 5000.0}, {QStringLiteral("RTL_ALT_FINAL_M"), 0.0},
+                {QStringLiteral("LAND_SPD_MS"), 0.5},      {QStringLiteral("LAND_SPD_HIGH_MS"), 0.0},
+                {QStringLiteral("LAND_ALT_LOW_M"), 10.0},  {QStringLiteral("CIRCLE_RATE"), 20.0}};
+    }
+    static MissionWalk::Lookup lookup(const QHash<QString, double> &p)
+    {
+        return [p](const QString &name, double *v) {
+            if (!p.contains(name))
+                return false;
+            *v = p.value(name);
+            return true;
+        };
+    }
+    // custom/tools/mission_template.waypoints: take-off to 30 m, two
+    // waypoints, return home.
+    static QString templateMission()
+    {
+        return QStringLiteral(
+            "QGC WPL 110\n"
+            "0\t1\t0\t16\t0\t0\t0\t0\t37.7749000\t-122.4194000\t10.000000\t1\n"
+            "1\t0\t3\t22\t15\t0\t0\t0\t37.7749000\t-122.4194000\t30.000000\t1\n"
+            "2\t0\t3\t16\t0\t0\t0\t0\t37.7755000\t-122.4185000\t30.000000\t1\n"
+            "3\t0\t3\t16\t0\t0\t0\t0\t37.7760000\t-122.4198000\t30.000000\t1\n"
+            "4\t0\t3\t20\t0\t0\t0\t0\t0.0000000\t0.0000000\t0.000000\t1\n");
+    }
+    // The 22-inch copter for the costing: its table, 4 motors, a 6S Li-ion
+    // 20 Ah pack, 8.09 kg without payload and 4 kg of payload, sea-level
+    // table air, no wind, reserve 20 %, nothing measured.
+    static MissionCost::Inputs inputs22()
+    {
+        MissionCost::Inputs in;
+        in.table = &MotorTable::m6215_320kv_22x78_6s();
+        in.motors = 4;
+        in.pack.cells = 6;
+        in.pack.chemistry = QStringLiteral("LiIon");
+        in.pack.capacityAh = 20.0;
+        in.pack.resistanceOhm = 6 * MotorTable::kDefaultCellGroupOhm;
+        in.emptyKg = 8.09;
+        in.payloadKg = 4.0;
+        in.reserveSocPct = 20.0;
+        return in;
+    }
+    static double hoverW(const MissionCost::Inputs &in, double kg)
+    {
+        return in.motors * MotorTable::powerForThrustAt(*in.table, kg * 1000.0 / in.motors, in.sigma).watts;
+    }
+    static MissionWalk::Item item(int seq, int command, double lat, double lon, double alt, double p1 = 0.0,
+                                  double p2 = 0.0, int frame = MissionWalk::FrameGlobalRelative)
+    {
+        MissionWalk::Item it;
+        it.seq = seq;
+        it.command = command;
+        it.lat = lat;
+        it.lon = lon;
+        it.alt = alt;
+        it.p1 = p1;
+        it.p2 = p2;
+        it.frame = frame;
+        return it;
+    }
 
 private slots:
     void init() override { UnitTest::init(); }
@@ -1244,19 +1317,874 @@ private slots:
         QVERIFY(averageThrust(t, {thr4000, thr4000, thr4000, thr4000}, 23.0) > 3300.0);
     }
 
-    // A reading counts as steady cruise at 70 km/h within ±15 %, level.
+    // Cruise is measured at whatever level speed is flown, kept per 2 m/s
+    // band centred on even speeds; there is no fixed cruise speed.
     void testMotorTableCruiseSample()
     {
         using namespace MotorTable;
-        QVERIFY(qAbs(kCruiseSpeedMs - 19.444) < 0.001);
-        QVERIFY(isCruiseSample(19.4, 0.0));
-        QVERIFY(isCruiseSample(16.6, 0.3));          // 15 % slow
-        QVERIFY(!isCruiseSample(16.4, 0.0));         // too slow
-        QVERIFY(!isCruiseSample(22.5, 0.0));         // too fast
-        QVERIFY(!isCruiseSample(19.4, 0.6));         // climbing
-        QVERIFY(!isCruiseSample(19.4, -0.6));        // sinking
+        QVERIFY(isCruiseSample(10.0, 0.0));
+        QVERIFY(isCruiseSample(19.4, 0.3));
+        QVERIFY(isCruiseSample(kMinCruiseSpeedMs, 0.0));
+        QVERIFY(!isCruiseSample(2.9, 0.0));          // hover-like
+        QVERIFY(!isCruiseSample(10.0, 0.6));         // climbing
+        QVERIFY(!isCruiseSample(10.0, -0.6));        // sinking
         QVERIFY(!isCruiseSample(qQNaN(), 0.0));
-        QVERIFY(isCruiseSample(10.0, 0.0, 10.0));
+        // A copter holding 10 m/s stays in one band either side of it.
+        QCOMPARE(cruiseBand(9.1), 5);
+        QCOMPARE(cruiseBand(10.0), 5);
+        QCOMPARE(cruiseBand(10.9), 5);
+        QCOMPARE(cruiseBand(11.1), 6);
+        QCOMPARE(cruiseBand(19.4), 10);
+        QCOMPARE(cruiseBand(0.0), -1);
+        QCOMPARE(cruiseBand(qQNaN()), -1);
+    }
+
+    // ── Waypoint times (MissionWalk) ─────────────────────────────────────
+
+    // The copter's settings are read under the ArduPilot 4.7 names, or the
+    // older names in cm and cm/s converted; what is missing is named.
+    void testMissionSettingsRead()
+    {
+        using namespace MissionWalk;
+        const Settings s = Settings::read(lookup(params22()));
+        QVERIFY2(s.complete(), qPrintable(s.missing.join(QLatin1Char(','))));
+        QCOMPARE(s.speedMs, 10.0);
+        QCOMPARE(s.rtlAltM, 15.0);
+        QCOMPARE(s.rtlLoiterS, 5.0);
+        QCOMPARE(s.landAltLowM, 10.0);
+        QCOMPARE(s.source.value(QStringLiteral("speed")), QStringLiteral("WP_SPD"));
+        QCOMPARE(missionSpeedMs(lookup(params22())), 10.0);
+
+        // Older firmware (the mock copter's Copter 3.6 file).
+        const QHash<QString, double> old = {
+            {QStringLiteral("WPNAV_SPEED"), 500.0},  {QStringLiteral("WPNAV_SPEED_UP"), 250.0},
+            {QStringLiteral("WPNAV_SPEED_DN"), 150.0}, {QStringLiteral("WPNAV_ACCEL"), 100.0},
+            {QStringLiteral("RTL_ALT"), 1500.0},     {QStringLiteral("RTL_SPEED"), 0.0},
+            {QStringLiteral("RTL_LOIT_TIME"), 5000.0}, {QStringLiteral("LAND_SPEED"), 50.0},
+            {QStringLiteral("LAND_SPEED_HIGH"), 0.0}, {QStringLiteral("LAND_ALT_LOW"), 1000.0}};
+        const Settings o = Settings::read(lookup(old));
+        QVERIFY2(o.complete(), qPrintable(o.missing.join(QLatin1Char(','))));
+        QVERIFY(near(o.speedMs, 5.0, 1e-9));
+        QVERIFY(near(o.accelMss, 1.0, 1e-9));
+        QVERIFY(near(o.rtlAltM, 15.0, 1e-9));
+        QVERIFY(near(o.landSpeedMs, 0.5, 1e-9));
+        QVERIFY(near(o.landAltLowM, 10.0, 1e-9));
+        QCOMPARE(o.accelZMss, -1.0);   // optional, not in the file
+        QCOMPARE(o.source.value(QStringLiteral("speed")), QStringLiteral("WPNAV_SPEED"));
+        QVERIFY(near(missionSpeedMs(lookup(old)), 5.0, 1e-9));
+
+        // Nothing read: every needed setting is named, no speed is assumed.
+        const Settings none = Settings::read(lookup({}));
+        QVERIFY(!none.complete());
+        QVERIFY(none.missing.contains(QStringLiteral("WP_SPD")));
+        QVERIFY(none.missing.contains(QStringLiteral("LAND_ALT_LOW_M")));
+        QCOMPARE(missionSpeedMs(lookup({})), -1.0);
+        QHash<QString, double> zero = params22();
+        zero[QStringLiteral("WP_SPD")] = 0.0;
+        QVERIFY(Settings::read(lookup(zero)).missing.contains(QStringLiteral("WP_SPD")));
+        QCOMPARE(missionSpeedMs(lookup(zero)), -1.0);
+    }
+
+    // Moves: an S-curve speed-up (jerk to the acceleration, then the
+    // acceleration) costs half its time per stop or start.
+    void testMissionMoveTime()
+    {
+        using namespace MissionWalk;
+        // 10 m/s at 2.5 m/s² reached at 1 m/s³: 10/2.5 + 2.5/1 = 6.5 s.
+        QVERIFY(near(accelTimeS(10.0, 2.5, 1.0), 6.5, 1e-9));
+        // Below a²/j (6.25 m/s) the acceleration never reaches its limit.
+        QVERIFY(near(accelTimeS(5.0, 2.5, 1.0), 2.0 * std::sqrt(5.0), 1e-9));
+        QVERIFY(near(accelTimeS(10.0, 2.5, 0.0), 4.0, 1e-9));
+        // 200 m stop to stop: 20 s at speed + 6.5 s; flown through: 20 s.
+        QVERIFY(near(moveTimeS(200.0, 10.0, 2.5, 1.0, true, true), 26.5, 1e-9));
+        QVERIFY(near(moveTimeS(200.0, 10.0, 2.5, 1.0, true, false), 23.25, 1e-9));
+        QVERIFY(near(moveTimeS(200.0, 10.0, 2.5, 1.0, false, false), 20.0, 1e-9));
+        // Too short to reach 10 m/s (65 m needed stop to stop): it peaks
+        // lower, and takes longer than at 10 m/s but less than at 5 m/s.
+        const double shortT = moveTimeS(40.0, 10.0, 2.5, 1.0, true, true);
+        QVERIFY(shortT > 40.0 / 10.0 + 6.5 * 0.5);
+        QVERIFY(shortT < moveTimeS(40.0, 5.0, 2.5, 1.0, true, true));
+        QVERIFY(near(moveTimeS(0.0, 10.0, 2.5, 1.0, true, true), 0.0, 1e-12));
+    }
+
+    // The template mission with the 22-inch copter's settings, worked out by
+    // hand: climb 30 m at 2.5 m/s (speed-up 2.5 s at WP_ACC_Z 1 m/s²), fly
+    // through waypoint 2, stop at waypoint 3 (a return follows), return at
+    // 30 m (above RTL_ALT_M, so no climb), hold 5 s, land 20 m at WP_SPD_DN
+    // then 10 m at LAND_SPD_MS.
+    // The operator's mission A (custom/tools/motor_tables/A.waypoints): take-off
+    // to 100 m, two waypoints, then LOITER_TO_ALT (31) and no return. Copter
+    // flies to item 4 and stops there; the mission then ends in the air, and
+    // the RTL the pilot switches to is added and marked as assumed.
+    void testMissionWalkLoiterToAlt()
+    {
+        using namespace MissionWalk;
+        const QString a = QStringLiteral(
+            "QGC WPL 110\r\n"
+            "0\t1\t0\t16\t0\t0\t0\t0\t9.0481706\t38.8186616\t2632.240000\t1\r\n"
+            "1\t0\t3\t22\t0\t0\t0\t0\t0\t0\t100.000000\t1\r\n"
+            "2\t0\t3\t16\t0\t0\t0\t0\t9.04787650\t38.81798300\t100.000000\t1\r\n"
+            "3\t0\t3\t16\t0\t0\t0\t0\t9.04717460\t38.81813590\t100.000000\t1\r\n"
+            "4\t0\t3\t31\t0\t0\t0\t0\t9.04743150\t38.81884660\t100.000000\t1\r\n");
+        QString err;
+        QVector<Item> items = parseWaypoints(a, &err);
+        QVERIFY2(err.isEmpty(), qPrintable(err));
+        const Settings s = Settings::read(lookup(params22()));
+        const Result r = walk(items, s, items[0].lat, items[0].lon);
+        QVERIFY2(r.ok, qPrintable(r.problem));
+        QVERIFY(r.endsLanded);
+        QVERIFY(r.returnAssumed);
+
+        const double d1 = PowerTypeModel::distanceM(items[0].lat, items[0].lon, items[2].lat, items[2].lon);
+        const double d2 = PowerTypeModel::distanceM(items[2].lat, items[2].lon, items[3].lat, items[3].lon);
+        const double d3 = PowerTypeModel::distanceM(items[3].lat, items[3].lon, items[4].lat, items[4].lon);
+        const double climb = 100.0 / 2.5 + 2.5;
+        const double leg1 = d1 / 10.0 + 6.5 / 2.0;    // flies through waypoint 2
+        const double leg2 = d2 / 10.0 + 6.5 / 2.0;    // stops at 3: item 4 is not a waypoint
+        const double leg3 = d3 / 10.0 + 6.5;          // stop to stop
+        QCOMPARE(r.arrivals.size(), 5);
+        QCOMPARE(r.arrivals[3].command, int(NavLoiterToAlt));
+        QVERIFY(near(r.arrivals[2].timeS, climb + leg1 + leg2, 1e-6));
+        QVERIFY(near(r.arrivals[3].timeS, climb + leg1 + leg2 + leg3, 1e-6));
+        QVERIFY(near(r.missionEndS, r.arrivals[3].timeS, 1e-9));
+        QVERIFY(qAbs(r.missionEndS - 79.9) < 0.1);
+
+        // The assumed return: from 100 m (above RTL_ALT_M) straight home at
+        // WP_SPD, RTL_LOIT_TIME 5 s, then land 90 m at WP_SPD_DN and 10 m at
+        // LAND_SPD_MS. Its steps and arrival carry seq -1.
+        const double dHome = PowerTypeModel::distanceM(items[4].lat, items[4].lon, items[0].lat, items[0].lon);
+        const double back = dHome / 10.0 + 6.5 + 5.0 + 90.0 / 1.5 + 10.0 / 0.5;
+        QCOMPARE(r.arrivals[4].seq, -1);
+        QCOMPARE(r.arrivals[4].command, int(NavReturnToLaunch));
+        QVERIFY(near(r.totalS, r.missionEndS + back, 1e-6));
+        QVERIFY(near(r.arrivals[4].timeS, r.totalS, 1e-9));
+        QCOMPARE(r.steps.last().seq, -1);
+        QCOMPARE(r.steps.last().kind, StepKind::Land);
+        QVERIFY(qAbs(r.totalS - 180.0) < 1.0);        // about 3 minutes
+
+        // Asked for the mission alone: it ends hovering at item 4.
+        Start alone;
+        alone.assumeReturn = false;
+        const Result ra = walk(items, s, items[0].lat, items[0].lon, alone);
+        QVERIFY(ra.ok && !ra.endsLanded && !ra.returnAssumed);
+        QVERIFY(near(ra.totalS, r.missionEndS, 1e-9));
+        QCOMPARE(ra.arrivals.size(), 4);
+
+        // On the spot, down to 40 m: the height change at WP_SPD_DN.
+        items[4].lat = items[3].lat;
+        items[4].lon = items[3].lon;
+        items[4].alt = 40.0;
+        const Result down = walk(items, s, items[0].lat, items[0].lon);
+        QVERIFY2(down.ok, qPrintable(down.problem));
+        QVERIFY(near(down.missionEndS - down.arrivals[2].timeS, heightTimeS(-60.0, s), 1e-6));
+        QVERIFY(near(down.arrivals[3].altM, 40.0, 1e-9));
+    }
+
+    // The pack stepped through for a time gives back the charge the time
+    // from hoursBetween() says; a headwind adds to the airspeed.
+    void testMissionCostPackAndAirspeed()
+    {
+        const MissionCost::Inputs in = inputs22();
+        const double w = 1700.0;
+        const double h = MotorTable::hoursBetween(in.pack, w, 100.0, 50.0);
+        QVERIFY(h > 0.0);
+        bool empty = false;
+        QVERIFY(near(MissionCost::socAfter(in.pack, w, 100.0, h * 3600.0, 1.0, &empty), 50.0, 1e-6));
+        QVERIFY(!empty);
+        // The fine-tuning factor scales the current: 10 % more current, the same
+        // charge in 1/1.1 of the time.
+        QVERIFY(near(MissionCost::socAfter(in.pack, w, 100.0, h * 3600.0 / 1.1, 1.1, &empty), 50.0, 1e-6));
+        // Far past the end: empty.
+        QCOMPARE(MissionCost::socAfter(in.pack, w, 100.0, 10 * 3600.0, 1.0, &empty), 0.0);
+        QVERIFY(empty);
+
+        QVERIFY(near(MissionCost::airspeedMs(10, 0, 5, 0), 15.0, 1e-9));     // flying north, wind from north
+        QVERIFY(near(MissionCost::airspeedMs(10, 0, 5, 180), 5.0, 1e-9));    // wind from behind
+        QVERIFY(near(MissionCost::airspeedMs(10, 0, 5, 90), std::sqrt(125.0), 1e-9));
+        QVERIFY(near(MissionCost::airspeedMs(10, 0, 5, qQNaN()), 15.0, 1e-9));   // direction unknown: headwind
+        QVERIFY(near(MissionCost::airspeedMs(10, 0, qQNaN(), 0), 10.0, 1e-9));
+        QVERIFY(near(MissionCost::bearingDeg(0, 0, 1, 0), 0.0, 1e-9));
+        QVERIFY(near(MissionCost::bearingDeg(0, 0, 0, 1), 90.0, 1e-9));
+    }
+
+    // Each step's power from the table at the weight aboard; cruise ratios;
+    // the climb's extra; the charge on arrival and the return from each point.
+    void testMissionCostSteps()
+    {
+        using namespace MissionWalk;
+        const QVector<Item> items = parseWaypoints(templateMission());
+        const Settings s = Settings::read(lookup(params22()));
+        const double hLat = items[0].lat, hLon = items[0].lon;
+        const Result w = walk(items, s, hLat, hLon);
+        QVERIFY(w.ok);
+        MissionCost::Inputs in = inputs22();
+        const MissionCost::Result r = MissionCost::cost(w, s, hLat, hLon, in);
+        QVERIFY2(r.ok, qPrintable(r.problem));
+        QCOMPARE(r.likely.size(), w.steps.size());
+        const double full = 12.09;
+        const double hover = hoverW(in, full);
+
+        // Climb: hover + m g dz / t / 0.5. Moves: hover × 1.0 likely, × 1.4
+        // pessimistic (nothing measured). Hold and landing: hover.
+        QCOMPARE(w.steps[0].kind, StepKind::Climb);
+        QVERIFY(near(r.likely[0].motorW, hover + full * MissionCost::kG * 30.0 / w.steps[0].timeS / 0.5, 1e-6));
+        QCOMPARE(w.steps[1].kind, StepKind::Move);
+        QVERIFY(near(r.likely[1].motorW, hover, 1e-6));
+        QVERIFY(near(r.pessimistic[1].motorW, 1.4 * hover, 1e-6));
+        QCOMPARE(w.steps.last().kind, StepKind::Land);
+        QVERIFY(near(r.pessimistic.last().motorW, hover, 1e-6));
+        QVERIFY(!r.ratioMeasured);
+        QVERIFY(r.reasons.join(QString()).contains(QStringLiteral("not measured")));
+        QVERIFY(r.landPessimisticPct < r.landLikelyPct);
+        QVERIFY(r.landLikelyPct < 100.0 && r.landPessimisticPct > 20.0);
+
+        // Charge on arrival is the end of the step that reaches the point.
+        QCOMPARE(r.arrivals.size(), w.arrivals.size());
+        QVERIFY(near(r.arrivals[1].socLikelyPct, r.likely[1].socEndPct, 1e-9));
+        // The return from waypoint 3 is the mission's own return.
+        QVERIFY(near(r.arrivals[2].returnLandLikelyPct, r.landLikelyPct, 1e-6));
+        QVERIFY(near(r.arrivals[2].returnLandPessimisticPct, r.landPessimisticPct, 1e-6));
+        QVERIFY(r.arrivals[2].canReturn);
+        QCOMPARE(r.turnBackSeq, -2);
+        QVERIFY(!r.reasons.join(QString()).contains(QStringLiteral("turn-back")));
+
+        // A measured ratio is used in both cases.
+        in.measuredRatio = [](double air) { return air >= 3.0 ? 1.2 : -1.0; };
+        const MissionCost::Result rm = MissionCost::cost(w, s, hLat, hLon, in);
+        QVERIFY(near(rm.likely[1].motorW, 1.2 * hover, 1e-6));
+        QVERIFY(near(rm.pessimistic[1].motorW, 1.2 * hover, 1e-6));
+        QVERIFY(rm.ratioMeasured);
+        QVERIFY(!rm.reasons.join(QString()).contains(QStringLiteral("not measured")));
+
+        // No weight: not costed.
+        MissionCost::Inputs noWeight = inputs22();
+        noWeight.emptyKg = qQNaN();
+        QVERIFY(MissionCost::cost(w, s, hLat, hLon, noWeight).problem.contains(QStringLiteral("Weight missing")));
+    }
+
+    // Payload comes off at its drop time: the steps after it are lighter. Two
+    // 2 kg drops; the "payload comes back" case lands lower.
+    void testMissionCostDrops()
+    {
+        using namespace MissionWalk;
+        const QVector<Item> items = parseWaypoints(templateMission());
+        const Settings s = Settings::read(lookup(params22()));
+        const double hLat = items[0].lat, hLon = items[0].lon;
+        const Result w = walk(items, s, hLat, hLon);
+        MissionCost::Inputs in = inputs22();
+        in.drops = {{w.arrivals[1].timeS, 2.0}, {w.arrivals[2].timeS, 2.0}};
+        const MissionCost::Result r = MissionCost::cost(w, s, hLat, hLon, in);
+        QVERIFY(r.ok);
+        QVERIFY(near(r.likely[1].motorW, hoverW(in, 12.09), 1e-6));    // to waypoint 2: all aboard
+        QVERIFY(near(r.likely[2].motorW, hoverW(in, 10.09), 1e-6));    // to 3: one dropped
+        QVERIFY(near(r.likely.last().motorW, hoverW(in, 8.09), 1e-6)); // landing: both dropped
+        QVERIFY(near(r.arrivals[1].weightKg, 10.09, 1e-9));
+        QVERIFY(near(r.arrivals[2].weightKg, 8.09, 1e-9));
+        // The return from waypoint 3 is at the weight then aboard (both
+        // dropped): the same as the mission's own return from there.
+        QVERIFY(near(r.arrivals[2].returnLandLikelyPct, r.landLikelyPct, 1e-6));
+        QVERIFY(near(r.arrivals[2].returnLandPessimisticPct, r.landPessimisticPct, 1e-6));
+
+        const MissionCost::Result back = MissionCost::costPayloadReturned(w, s, hLat, hLon, in);
+        QVERIFY(near(back.likely.last().motorW, hoverW(in, 12.09), 1e-6));
+        QVERIFY(back.landLikelyPct < r.landLikelyPct);
+        QVERIFY(back.landPessimisticPct < r.landPessimisticPct);
+    }
+
+    // A headwind leg costs more than the same leg downwind; the pessimistic
+    // case uses the gust.
+    void testMissionCostWind()
+    {
+        using namespace MissionWalk;
+        const Settings s = Settings::read(lookup(params22()));
+        // Out 500 m north and back south, then land.
+        QVector<Item> items;
+        items << item(0, NavWaypoint, 9.0, 38.8, 0) << item(1, NavTakeoff, 0, 0, 30)
+              << item(2, NavWaypoint, 9.0045, 38.8, 30) << item(3, NavWaypoint, 9.0, 38.8, 30)
+              << item(4, NavLand, 0, 0, 0);
+        const Result w = walk(items, s, 9.0, 38.8);
+        QVERIFY2(w.ok, qPrintable(w.problem));
+        MissionCost::Inputs in = inputs22();
+        in.measuredRatio = [](double air) { return air >= 3.0 ? 1.0 + 0.02 * air : -1.0; };
+        in.wind.speedMs = 5.0;
+        in.wind.fromDeg = 0.0;   // from the north
+        const MissionCost::Result r = MissionCost::cost(w, s, 9.0, 38.8, in);
+        QVERIFY(r.ok);
+        QCOMPARE(w.steps[1].kind, StepKind::Move);
+        QCOMPARE(w.steps[2].kind, StepKind::Move);
+        const double g1 = w.steps[1].horizM / w.steps[1].timeS;
+        const double g2 = w.steps[2].horizM / w.steps[2].timeS;
+        QVERIFY(near(r.likely[1].airspeedMs, g1 + 5.0, 1e-3));   // north into the wind
+        QVERIFY(near(r.likely[2].airspeedMs, std::abs(g2 - 5.0), 1e-3));
+        QVERIFY(r.likely[1].motorW > r.likely[2].motorW);
+        in.wind.gustMs = 9.0;
+        const MissionCost::Result rg = MissionCost::cost(w, s, 9.0, 38.8, in);
+        QVERIFY(near(rg.pessimistic[1].airspeedMs, g1 + 9.0, 1e-3));
+        QVERIFY(near(rg.likely[1].airspeedMs, g1 + 5.0, 1e-3));
+    }
+
+    // Turn-back point, current limit, spare thrust and the autopilot's
+    // battery voltages show up as reasons.
+    void testMissionCostLimits()
+    {
+        using namespace MissionWalk;
+        const Settings s = Settings::read(lookup(params22()));
+        // Four legs of 500 m out, then return.
+        QVector<Item> items;
+        items << item(0, NavWaypoint, 9.0, 38.8, 0) << item(1, NavTakeoff, 0, 0, 30);
+        for (int k = 1; k <= 4; ++k)
+            items << item(1 + k, NavWaypoint, 9.0 + 0.0045 * k, 38.8, 30, 1.0);   // 1 s hold: stops each time
+        items << item(6, NavReturnToLaunch, 0, 0, 0);
+        const Result w = walk(items, s, 9.0, 38.8);
+        QVERIFY2(w.ok, qPrintable(w.problem));
+        MissionCost::Inputs in = inputs22();
+        in.pack.capacityAh = 6.0;   // a small pack: the far points cannot return
+        const MissionCost::Result r = MissionCost::cost(w, s, 9.0, 38.8, in);
+        QVERIFY(r.ok);
+        QVERIFY2(r.firstPastSeq > 2, qPrintable(QString::number(r.firstPastSeq)));
+        QCOMPARE(r.turnBackSeq, r.firstPastSeq - 1);
+        for (const MissionCost::ArrivalCost &a : r.arrivals) {
+            if (a.seq >= 1 && a.seq < r.firstPastSeq)
+                QVERIFY(a.canReturn && a.returnLandPessimisticPct >= 20.0);
+            if (a.seq == r.firstPastSeq)
+                QVERIFY(!a.canReturn && a.returnLandPessimisticPct < 20.0);
+        }
+        QVERIFY(r.reasons.join(QString()).contains(QStringLiteral("Past the turn-back point at item %1").arg(r.firstPastSeq)));
+
+        // The turn-back point is judged on the pessimistic case: with the
+        // reserve between the two cases' landings from waypoint 2, the likely
+        // return would make it but the pessimistic one does not.
+        MissionCost::Inputs mid = inputs22();
+        const MissionCost::Result base = MissionCost::cost(w, s, 9.0, 38.8, mid);
+        const MissionCost::ArrivalCost &a2 = base.arrivals[1];   // [0] is the take-off
+        QCOMPARE(a2.seq, 2);
+        QVERIFY(a2.returnLandLikelyPct > a2.returnLandPessimisticPct + 0.5);
+        mid.reserveSocPct = (a2.returnLandLikelyPct + a2.returnLandPessimisticPct) / 2.0;
+        const MissionCost::Result rmid = MissionCost::cost(w, s, 9.0, 38.8, mid);
+        QVERIFY(rmid.arrivals[0].canReturn);
+        QVERIFY(!rmid.arrivals[1].canReturn);
+        QCOMPARE(rmid.firstPastSeq, 2);
+
+        MissionCost::Inputs lim = inputs22();
+        lim.currentLimitA = 50.0;
+        lim.battLowV = 25.0;          // above the pack: reached at once
+        lim.battCrtV = 10.0;          // never
+        const MissionCost::Result rl = MissionCost::cost(w, s, 9.0, 38.8, lim);
+        const QString why = rl.reasons.join(QStringLiteral("|"));
+        QVERIFY2(why.contains(QStringLiteral("above the pack's 50 A")), qPrintable(why));
+        QVERIFY(rl.overCurrent);
+        QVERIFY(!r.overCurrent);                        // no limit given: not judged
+        QVERIFY(MissionAssess::assess(w, rl, nullptr, MissionAssess::Limits(), MissionAssess::Context()).overCurrent);
+        QVERIFY(why.contains(QStringLiteral("BATT_LOW_VOLT (25.0 V) at item 1")));
+        QVERIFY(!why.contains(QStringLiteral("BATT_CRT_VOLT")));
+        QVERIFY(!why.contains(QStringLiteral("Spare thrust")));
+        lim.emptyKg = 26.0;           // far too heavy for 2:1
+        QVERIFY(MissionCost::cost(w, s, 9.0, 38.8, lim).reasons.join(QString()).contains(QStringLiteral("Spare thrust")));
+    }
+
+    // The release servo output: a move to "released", held 300 ms, in flight,
+    // releases the next payload; glitches, the ground and 0 µs do not count.
+    void testPayloadReleaseSwitch()
+    {
+        using namespace PayloadRelease;
+        QCOMPARE(threshold(1100, 1900), 1500.0);          // SERVO10_MIN / MAX on the 22-inch copter
+        QCOMPARE(threshold(1000, 2100), 1550.0);
+        QCOMPARE(threshold(qQNaN(), 1900), 1500.0);
+        QCOMPARE(threshold(1900, 1100), 1500.0);
+
+        Config c;
+        c.totalKg = 4.0;
+        Detector off;
+        QCOMPARE(off.feed(c, 0, 1900, true, true), Seen::Nothing);   // no output set
+        c.output = 10;
+
+        // One 4 kg payload.
+        Detector d;
+        QCOMPARE(d.feed(c, 0, 1100, false, false), Seen::Nothing);  // off on the ground
+        QCOMPARE(d.feed(c, 100, 1100, true, false), Seen::Nothing); // armed, off
+        QCOMPARE(d.feed(c, 1000, 1100, true, true), Seen::Nothing);
+        QCOMPARE(d.feed(c, 2000, 1900, true, true), Seen::Nothing);  // on, not yet held
+        QCOMPARE(d.feed(c, 2200, 1100, true, true), Seen::Nothing);  // back off after 200 ms: a glitch
+        QCOMPARE(d.feed(c, 2600, 1100, true, true), Seen::Nothing);
+        QCOMPARE(d.released(), 0);
+        QCOMPARE(d.feed(c, 3000, 1900, true, true), Seen::Nothing);
+        QCOMPARE(d.feed(c, 3299, 1900, true, true), Seen::Nothing);
+        QCOMPARE(d.feed(c, 3300, 1900, true, true), Seen::Released); // held 300 ms
+        QCOMPARE(d.released(), 1);
+        QCOMPARE(d.releasedKg(c), 4.0);
+        QCOMPARE(d.feed(c, 3400, 0, true, true), Seen::Nothing);      // 0 µs: no reading, not "off"
+        QCOMPARE(d.feed(c, 4000, 1900, true, true), Seen::Nothing);
+        QCOMPARE(d.feed(c, 4400, 1100, true, true), Seen::Nothing);   // off …
+        QCOMPARE(d.feed(c, 4800, 1100, true, true), Seen::Nothing);
+        QCOMPARE(d.feed(c, 5000, 1900, true, true), Seen::Nothing);   // … and on again: nothing left
+        QCOMPARE(d.feed(c, 5400, 1900, true, true), Seen::Nothing);
+        QCOMPARE(d.released(), 1);
+        QVERIFY(!d.tap(c));
+
+        // Two of 2 kg: one move each.
+        Config two = c;
+        two.payloads = 2;
+        Detector d2;
+        d2.feed(two, 0, 1100, true, true);
+        auto flip = [&](Detector &x, const Config &cfg, qint64 t0, bool airborne) {
+            x.feed(cfg, t0, 1900, true, airborne);
+            const Seen on = x.feed(cfg, t0 + 400, 1900, true, airborne);
+            x.feed(cfg, t0 + 800, 1100, true, airborne);
+            x.feed(cfg, t0 + 1200, 1100, true, airborne);
+            return on;
+        };
+        QCOMPARE(flip(d2, two, 1000, true), Seen::Released);
+        QCOMPARE(d2.releasedKg(two), 2.0);
+        QCOMPARE(flip(d2, two, 5000, true), Seen::Released);
+        QCOMPARE(d2.releasedKg(two), 4.0);
+        QCOMPARE(flip(d2, two, 7000, true), Seen::Nothing);
+        QCOMPARE(d2.released(), 2);
+
+        // Output left at "released", then 1 s of 0 µs (no data) and still
+        // released: the gap is not "off", so payload 2 stays aboard.
+        Detector gap;
+        gap.feed(two, 0, 1100, true, true);
+        gap.feed(two, 1000, 1900, true, true);
+        QCOMPARE(gap.feed(two, 1400, 1900, true, true), Seen::Released);
+        gap.feed(two, 1500, 0, true, true);
+        gap.feed(two, 2500, 0, true, true);
+        QCOMPARE(gap.feed(two, 2600, 1900, true, true), Seen::Nothing);
+        QCOMPARE(gap.feed(two, 3000, 1900, true, true), Seen::Nothing);
+        QCOMPARE(gap.released(), 1);
+        // Back, and out again: payload 2.
+        gap.feed(two, 3100, 1100, true, true);
+        gap.feed(two, 3500, 1100, true, true);
+        QCOMPARE(flip(gap, two, 4000, true), Seen::Released);
+        QCOMPARE(gap.released(), 2);
+
+        // Armed on the ground: reported, not counted. Disarmed: nothing.
+        Detector g;
+        g.feed(c, 0, 1100, true, false);
+        QCOMPARE(flip(g, c, 1000, false), Seen::OnOnGround);
+        QCOMPARE(g.released(), 0);
+        Detector dis;
+        dis.feed(c, 0, 1100, false, false);
+        dis.feed(c, 100, 1900, false, false);
+        QCOMPARE(dis.feed(c, 500, 1900, false, false), Seen::Nothing);
+        QCOMPARE(dis.released(), 0);
+
+        // On at arming: reported; a drop then needs off and on again.
+        QCOMPARE(dis.feed(c, 600, 1900, true, false), Seen::OnAtArm);
+        QCOMPARE(dis.feed(c, 1000, 1900, true, true), Seen::Nothing);
+        QCOMPARE(dis.released(), 0);
+        dis.feed(c, 1100, 1100, true, true);
+        dis.feed(c, 1500, 1100, true, true);
+        QCOMPARE(flip(dis, c, 2000, true), Seen::Released);
+        // A new flight (disarm, arm) has everything aboard again.
+        dis.feed(c, 9000, 1100, false, false);
+        dis.feed(c, 9100, 1100, true, false);
+        QCOMPARE(dis.released(), 0);
+
+        // Released when low.
+        Config low = c;
+        low.onWhenLow = true;
+        Detector l;
+        l.feed(low, 0, 1900, true, true);
+        l.feed(low, 100, 1100, true, true);
+        QCOMPARE(l.feed(low, 500, 1100, true, true), Seen::Released);
+
+        // The tap releases the next one.
+        Detector tp;
+        QVERIFY(tp.tap(two));
+        QVERIFY(tp.tap(two));
+        QVERIFY(!tp.tap(two));
+    }
+
+    // The whole-mission result: each level from the landing charges against
+    // the reserve, the lowest acceptable charge and the comfort margin.
+    void testMissionAssessResults()
+    {
+        using namespace MissionWalk;
+        const QVector<Item> items = parseWaypoints(templateMission());
+        const Settings s = Settings::read(lookup(params22()));
+        const double hLat = items[0].lat, hLon = items[0].lon;
+        const Result w = walk(items, s, hLat, hLon);
+        const MissionCost::Result c = MissionCost::cost(w, s, hLat, hLon, inputs22());
+        QVERIFY(c.ok);
+        const double L = c.landLikelyPct, P = c.landPessimisticPct;
+        QVERIFY(L > P + 1.0);
+        MissionAssess::Context ctx;
+        auto run = [&](double reserve, double lowest) {
+            MissionAssess::Limits lim;
+            lim.reservePct = reserve;
+            lim.lowestPct = lowest;
+            return MissionAssess::assess(w, c, nullptr, lim, ctx).result;
+        };
+        QCOMPARE(run(20.0, 10.0), int(MissionAssess::Comfortable));       // lands ~95 %
+        QCOMPARE(run(P - 10.0 + 0.01, 10.0), int(MissionAssess::Fits));   // just under 10 points of margin
+        QCOMPARE(run(P - 10.0 - 0.01, 10.0), int(MissionAssess::Comfortable));
+        QCOMPARE(run((L + P) / 2.0, 10.0), int(MissionAssess::Tight));
+        QCOMPARE(run(L + 1.0, L - 1.0), int(MissionAssess::UsesReserve));
+        QCOMPARE(run(L + 5.0, L + 1.0), int(MissionAssess::OneWayOnly));
+        QCOMPARE(MissionAssess::resultColour(MissionAssess::Tight), QStringLiteral("amber"));
+        QCOMPARE(MissionAssess::resultColour(MissionAssess::OneWayOnly), QStringLiteral("red"));
+
+        // Too heavy: spare thrust below 2 at take-off, whatever the charge.
+        MissionCost::Inputs heavy = inputs22();
+        heavy.emptyKg = 26.0;
+        const MissionCost::Result ch = MissionCost::cost(w, s, hLat, hLon, heavy);
+        const MissionAssess::Assessment ah = MissionAssess::assess(w, ch, nullptr, MissionAssess::Limits(), ctx);
+        QCOMPARE(ah.result, int(MissionAssess::TooHeavy));
+        QVERIFY(ah.reasons.first().startsWith(QStringLiteral("Spare thrust")));
+        // A pack that cannot even give the hover power (its voltage would
+        // collapse): no spare thrust at all, too heavy.
+        MissionCost::Inputs weak = inputs22();
+        weak.pack.resistanceOhm = 2.0;
+        const MissionCost::Result cw = MissionCost::cost(w, s, hLat, hLon, weak);
+        QCOMPARE(cw.spareAtTakeOff, 0.0);
+        QCOMPARE(MissionAssess::assess(w, cw, nullptr, MissionAssess::Limits(), ctx).result, int(MissionAssess::TooHeavy));
+
+        // Can't assess: says why.
+        MissionCost::Inputs noWeight = inputs22();
+        noWeight.emptyKg = qQNaN();
+        const MissionAssess::Assessment an = MissionAssess::assess(
+            w, MissionCost::cost(w, s, hLat, hLon, noWeight), nullptr, MissionAssess::Limits(), ctx);
+        QCOMPARE(an.result, int(MissionAssess::CantAssess));
+        QVERIFY(an.problem.contains(QStringLiteral("Weight missing")));
+        QCOMPARE(MissionAssess::resultColour(an.result), QStringLiteral("grey"));
+    }
+
+    // Each waypoint's state, the autopilot's failsafe, the payload-comes-back
+    // reason, gusts and how sure.
+    void testMissionAssessWaypoints()
+    {
+        using namespace MissionWalk;
+        const Settings s = Settings::read(lookup(params22()));
+        QVector<Item> items;
+        items << item(0, NavWaypoint, 9.0, 38.8, 0) << item(1, NavTakeoff, 0, 0, 30);
+        for (int k = 1; k <= 4; ++k)
+            items << item(1 + k, NavWaypoint, 9.0 + 0.0045 * k, 38.8, 30, 1.0);
+        items << item(6, NavReturnToLaunch, 0, 0, 0);
+        const Result w = walk(items, s, 9.0, 38.8);
+        MissionCost::Inputs in = inputs22();
+        in.pack.capacityAh = 6.0;
+        const MissionCost::Result c = MissionCost::cost(w, s, 9.0, 38.8, in);
+        QVERIFY(c.firstPastSeq > 2);
+        MissionAssess::Context ctx;
+        MissionAssess::Limits lim;
+        const MissionAssess::Assessment a = MissionAssess::assess(w, c, nullptr, lim, ctx);
+        QCOMPARE(a.waypoints.size(), c.arrivals.size());
+        for (const MissionAssess::Waypoint &wp : a.waypoints) {
+            if (wp.seq == c.turnBackSeq)
+                QCOMPARE(wp.state, int(MissionAssess::LastSafeTurnBack));
+            if (wp.seq == c.firstPastSeq && wp.socPessimisticPct >= 20.0)
+                QCOMPARE(wp.state, int(MissionAssess::PastTurnBack));
+            if (wp.seq >= 1 && wp.seq < c.turnBackSeq)
+                QCOMPARE(wp.state, int(MissionAssess::OnTrack));
+            if (wp.socPessimisticPct < 20.0 && wp.socLikelyPct > 0.5)
+                QVERIFY(wp.state == MissionAssess::OnReserve || wp.state == MissionAssess::PastTurnBack
+                        || wp.state == MissionAssess::OnReserve);
+        }
+        QVERIFY(a.result <= MissionAssess::Tight);
+
+        // A 1 Ah pack runs out on the way out: Can't be done, Not reachable.
+        MissionCost::Inputs tiny = inputs22();
+        tiny.pack.capacityAh = 1.0;
+        const MissionCost::Result ct = MissionCost::cost(w, s, 9.0, 38.8, tiny);
+        const MissionAssess::Assessment at = MissionAssess::assess(w, ct, nullptr, lim, ctx);
+        QCOMPARE(at.result, int(MissionAssess::CantBeDone));
+        QCOMPARE(at.waypoints.last().state, int(MissionAssess::NotReachable));
+
+        // The autopilot's battery failsafe: only when it has an action.
+        MissionAssess::Limits fs;
+        fs.battLowV = 25.0;           // above the pack: from the first step
+        const MissionAssess::Assessment noAction = MissionAssess::assess(w, c, nullptr, fs, ctx);
+        for (const MissionAssess::Waypoint &wp : noAction.waypoints)
+            QVERIFY(wp.state != MissionAssess::AutopilotTurnsBack);
+        fs.battLowAction = 2;         // RTL
+        const MissionAssess::Assessment withAction = MissionAssess::assess(w, c, nullptr, fs, ctx);
+        QCOMPARE(withAction.waypoints[1].state, int(MissionAssess::AutopilotTurnsBack));
+        QVERIFY(withAction.reasons.join(QString()).contains(QStringLiteral("battery failsafe (BATT_LOW_VOLT)")));
+
+        // The template with two 2 kg drops: the payload-comes-back case is a
+        // reason when it lands below the reserve.
+        const QVector<Item> tItems = parseWaypoints(templateMission());
+        const double hLat = tItems[0].lat, hLon = tItems[0].lon;
+        const Result tw = walk(tItems, s, hLat, hLon);
+        MissionCost::Inputs drops = inputs22();
+        drops.drops = {{tw.arrivals[1].timeS, 2.0}, {tw.arrivals[2].timeS, 2.0}};
+        const MissionCost::Result cd = MissionCost::cost(tw, s, hLat, hLon, drops);
+        const MissionCost::Result cb = MissionCost::costPayloadReturned(tw, s, hLat, hLon, drops);
+        QVERIFY(cb.landPessimisticPct < cd.landPessimisticPct);
+        MissionAssess::Limits between;
+        between.reservePct = (cb.landPessimisticPct + cd.landPessimisticPct) / 2.0;
+        MissionAssess::Context withDrops;
+        withDrops.hasDrops = true;
+        QVERIFY(MissionAssess::assess(tw, cd, &cb, between, withDrops).reasons.join(QString())
+                    .contains(QStringLiteral("If the payload comes back")));
+        QVERIFY(!MissionAssess::assess(tw, cd, &cb, MissionAssess::Limits(), withDrops).reasons.join(QString())
+                     .contains(QStringLiteral("If the payload comes back")));
+
+        // Gusts at the flight height above the limit: red, with the reason;
+        // exactly at the limit is not above it.
+        MissionAssess::Limits gl;
+        gl.gustLimitMs = 12.0;
+        MissionAssess::Context gusty;
+        gusty.gustMs = 12.1;
+        gusty.flightHeightM = 100.0;
+        gusty.weatherKnown = true;
+        gusty.weatherConfidence = SiteWeather::High;
+        const MissionAssess::Assessment ag = MissionAssess::assess(tw, cd, nullptr, gl, gusty);
+        QVERIFY(ag.weatherRed);
+        QVERIFY(ag.reasons.join(QString()).contains(QStringLiteral("Gusts 12.1 m/s at 100 m, above the 12 m/s gust limit")));
+        gusty.gustMs = 12.0;
+        QVERIFY(!MissionAssess::assess(tw, cd, nullptr, gl, gusty).weatherRed);
+
+        // How sure.
+        MissionAssess::Context sure;
+        sure.weatherKnown = true;
+        sure.weatherConfidence = SiteWeather::High;
+        QCOMPARE(MissionAssess::assess(tw, cd, nullptr, gl, sure).confidence, int(SiteWeather::Low));
+        sure.cruiseMeasured = true;
+        QCOMPARE(MissionAssess::assess(tw, cd, nullptr, gl, sure).confidence, int(SiteWeather::Medium));
+        sure.tableProven = true;
+        QCOMPARE(MissionAssess::assess(tw, cd, nullptr, gl, sure).confidence, int(SiteWeather::High));
+        sure.weatherConfidence = SiteWeather::Low;     // airport only: one level down
+        const MissionAssess::Assessment as = MissionAssess::assess(tw, cd, nullptr, gl, sure);
+        QCOMPARE(as.confidence, int(SiteWeather::Medium));
+        QVERIFY(as.confidenceWhy.join(QString()).contains(QStringLiteral("airport")));
+        sure.weatherKnown = false;
+        QVERIFY(MissionAssess::assess(tw, cd, nullptr, gl, sure).reasons.join(QString())
+                    .contains(QStringLiteral("wind not costed")));
+    }
+
+    // The "Mission estimate" item: green results pass, amber and Can't assess
+    // warn, red fails; gusts make green amber. Never mandatory.
+    void testMissionEstimateCheckStatuses()
+    {
+        QVariantMap r;
+        MissionEstimateCheck item([&r]() { return r; });
+        QVERIFY(!item.mandatory());
+        QCOMPARE(item.id(), QStringLiteral("power.mission_estimate"));
+        QCOMPARE(item.status(), CheckStatus::Skipped);           // not applicable
+        r[QStringLiteral("applicable")] = true;
+        r[QStringLiteral("result")] = int(MissionAssess::CantAssess);
+        r[QStringLiteral("problem")] = QStringLiteral("Weight missing");
+        item.evaluate();
+        QCOMPARE(item.status(), CheckStatus::Warning);
+        QCOMPARE(item.message(), QStringLiteral("Can't assess: Weight missing"));
+        auto set = [&r](int result) {
+            r[QStringLiteral("result")] = result;
+            r[QStringLiteral("resultName")] = MissionAssess::resultName(result);
+            r[QStringLiteral("colour")] = MissionAssess::resultColour(result);
+            r[QStringLiteral("landLikelyPct")] = 84.4;
+            r[QStringLiteral("landPessimisticPct")] = 81.6;
+            r[QStringLiteral("totalText")] = QStringLiteral("2:59");
+        };
+        set(MissionAssess::Comfortable);
+        item.evaluate();
+        QCOMPARE(item.status(), CheckStatus::Passed);
+        QCOMPARE(item.message(), QStringLiteral("Comfortable — lands with 84 % (pessimistic 82 %), 2:59"));
+        set(MissionAssess::Fits);
+        item.evaluate();
+        QCOMPARE(item.status(), CheckStatus::Passed);
+        set(MissionAssess::Tight);
+        item.evaluate();
+        QCOMPARE(item.status(), CheckStatus::Warning);
+        set(MissionAssess::UsesReserve);
+        item.evaluate();
+        QCOMPARE(item.status(), CheckStatus::Warning);
+        for (int red : {int(MissionAssess::OneWayOnly), int(MissionAssess::CantBeDone), int(MissionAssess::TooHeavy)}) {
+            set(red);
+            item.evaluate();
+            QCOMPARE(item.status(), CheckStatus::Failed);
+        }
+        set(MissionAssess::Comfortable);
+        r[QStringLiteral("weatherRed")] = true;
+        item.evaluate();
+        QCOMPARE(item.status(), CheckStatus::Warning);
+        QVERIFY(item.message().endsWith(QStringLiteral("gusts over the limit")));
+        // Over the pack's current limit: a warning, green turns amber.
+        r[QStringLiteral("weatherRed")] = false;
+        r[QStringLiteral("overCurrent")] = true;
+        item.evaluate();
+        QCOMPARE(item.status(), CheckStatus::Warning);
+        QVERIFY(item.message().endsWith(QStringLiteral("over the pack's current limit")));
+        set(MissionAssess::OneWayOnly);
+        item.evaluate();
+        QCOMPARE(item.status(), CheckStatus::Failed);     // red stays red
+        r[QStringLiteral("overCurrent")] = false;
+        // A pass by hand is undone: the verdict is computed.
+        r[QStringLiteral("weatherRed")] = false;
+        set(MissionAssess::Tight);
+        item.evaluate();
+        item.confirm(QStringLiteral("by hand"));
+        QCOMPARE(item.status(), CheckStatus::Warning);
+    }
+
+    void testMissionWalkTemplate()
+    {
+        using namespace MissionWalk;
+        QString err;
+        const QVector<Item> items = parseWaypoints(templateMission(), &err);
+        QVERIFY2(err.isEmpty(), qPrintable(err));
+        QCOMPARE(items.size(), 5);
+        QCOMPARE(items[4].command, int(NavReturnToLaunch));
+        const Settings s = Settings::read(lookup(params22()));
+        const Result r = walk(items, s, items[0].lat, items[0].lon);
+        QVERIFY2(r.ok, qPrintable(r.problem));
+        QVERIFY(r.endsLanded);
+        QVERIFY(r.events.isEmpty());
+
+        const double d1 = PowerTypeModel::distanceM(items[0].lat, items[0].lon, items[2].lat, items[2].lon);
+        const double d2 = PowerTypeModel::distanceM(items[2].lat, items[2].lon, items[3].lat, items[3].lon);
+        const double d3 = PowerTypeModel::distanceM(items[3].lat, items[3].lon, items[0].lat, items[0].lon);
+        const double climb = 30.0 / 2.5 + 2.5;
+        const double leg1 = d1 / 10.0 + 6.5 / 2.0;   // starts stopped, flies through
+        const double leg2 = d2 / 10.0 + 6.5 / 2.0;   // flown into, stops
+        const double home = d3 / 10.0 + 6.5;         // stop to stop
+        const double landT = 20.0 / 1.5 + 10.0 / 0.5;
+        QCOMPARE(r.arrivals.size(), 4);
+        QCOMPARE(r.arrivals[0].seq, 1);
+        QVERIFY(near(r.arrivals[0].timeS, climb, 1e-6));
+        QVERIFY(near(r.arrivals[1].timeS, climb + leg1, 1e-6));
+        QVERIFY(near(r.arrivals[2].timeS, climb + leg1 + leg2, 1e-6));
+        QVERIFY(near(r.totalS, climb + leg1 + leg2 + home + 5.0 + landT, 1e-6));
+        QCOMPARE(r.arrivals[3].seq, 4);
+        QVERIFY(near(r.arrivals[3].timeS, r.totalS, 1e-9));
+        // About 1 min 42 s in all.
+        QVERIFY(r.totalS > 100.0 && r.totalS < 103.0);
+        // Steps: climb, two moves, return, the hold above home, landing.
+        QCOMPARE(r.steps.size(), 6);
+        QCOMPARE(r.steps[0].kind, StepKind::Climb);
+        QCOMPARE(r.steps[3].kind, StepKind::Return);
+        QVERIFY(r.steps[4].hover);
+        QCOMPARE(r.steps[5].kind, StepKind::Land);
+        QVERIFY(near(r.steps[5].climbM, -30.0, 1e-9));
+
+        // Below RTL_ALT_M the return climbs first.
+        QVector<Item> low = items;
+        low[1].alt = low[2].alt = low[3].alt = 10.0;
+        const Result rl = walk(low, s, items[0].lat, items[0].lon);
+        QVERIFY2(rl.ok, qPrintable(rl.problem));
+        QCOMPARE(rl.steps[3].kind, StepKind::Climb);
+        QVERIFY(near(rl.steps[3].climbM, 5.0, 1e-9));
+        QVERIFY(near(rl.steps.last().climbM, -15.0, 1e-9));
+    }
+
+    // A servo command is where a payload may drop; a speed change sets the
+    // speed of the legs after it.
+    void testMissionWalkDropsAndSpeed()
+    {
+        using namespace MissionWalk;
+        const QVector<Item> base = parseWaypoints(templateMission());
+        const Settings s = Settings::read(lookup(params22()));
+        QVector<Item> items = {base[0], base[1], base[2],
+                               item(3, DoSetServo, 0, 0, 0, 10, 1900, FrameMission),
+                               item(4, DoChangeSpeed, 0, 0, 0, 1, 5.0, FrameMission),
+                               base[3], base[4]};
+        items[5].seq = 5;
+        items[6].seq = 6;
+        const Result r = walk(items, s, base[0].lat, base[0].lon);
+        QVERIFY2(r.ok, qPrintable(r.problem));
+        QCOMPARE(r.events.size(), 1);
+        QCOMPARE(r.events[0].command, int(DoSetServo));
+        QCOMPARE(r.events[0].p1, 10.0);
+        QCOMPARE(r.events[0].p2, 1900.0);
+        // Released on reaching waypoint 2, there.
+        QVERIFY(near(r.events[0].timeS, r.arrivals[1].timeS, 1e-9));
+        QVERIFY(near(r.events[0].lat, base[2].lat, 1e-9));
+        // Waypoint 3 at 5 m/s: below a²/j its speed-up takes 2√5 s.
+        const double d2 = PowerTypeModel::distanceM(base[2].lat, base[2].lon, base[3].lat, base[3].lon);
+        QVERIFY(near(r.arrivals[2].timeS - r.arrivals[1].timeS, d2 / 5.0 + std::sqrt(5.0), 1e-6));
+        // The return is at WP_SPD (RTL_SPEED_MS 0), not the mission's 5 m/s.
+        const double d3 = PowerTypeModel::distanceM(base[3].lat, base[3].lon, base[0].lat, base[0].lon);
+        for (const Step &st : r.steps)
+            if (st.kind == StepKind::Return)
+                QVERIFY(near(st.timeS, d3 / 10.0 + 6.5, 1e-6));
+    }
+
+    // Holds, loops, landing elsewhere, starting in flight, and what cannot
+    // be timed (said, not guessed).
+    void testMissionWalkHoldsJumpsAndProblems()
+    {
+        using namespace MissionWalk;
+        const QVector<Item> base = parseWaypoints(templateMission());
+        const Settings s = Settings::read(lookup(params22()));
+        const double hLat = base[0].lat, hLon = base[0].lon;
+        const Result plain = walk(base, s, hLat, hLon);
+
+        // A 10 s hold at waypoint 2: a stop there, then the hold.
+        QVector<Item> hold = base;
+        hold[2].p1 = 10.0;
+        const Result rh = walk(hold, s, hLat, hLon);
+        QVERIFY(near(rh.totalS - plain.totalS, 10.0 + 6.5, 1e-6));   // the hold, a stop and a start
+
+        // Waypoints 2–3 flown twice (one jump back).
+        QVector<Item> loop = base;
+        loop.insert(4, item(4, DoJump, 0, 0, 0, 2, 1, FrameMission));
+        loop[5].seq = 5;
+        const Result rj = walk(loop, s, hLat, hLon);
+        QVERIFY2(rj.ok, qPrintable(rj.problem));
+        QCOMPARE(rj.arrivals.size(), 6);
+        QCOMPARE(rj.arrivals[3].seq, 2);
+        QVERIFY(rj.totalS > plain.totalS + 20.0);
+        loop[4].p2 = -1;
+        QVERIFY(walk(loop, s, hLat, hLon).problem.contains(QStringLiteral("no end")));
+
+        // Landing at waypoint 3 instead of returning: no flight home, no hold.
+        QVector<Item> landThere = base;
+        landThere[4] = item(4, NavLand, base[3].lat, base[3].lon, 0);
+        const Result rland = walk(landThere, s, hLat, hLon);
+        QVERIFY(rland.ok && rland.endsLanded);
+        QVERIFY(near(rland.totalS, plain.arrivals[2].timeS + 20.0 / 1.5 + 10.0 / 0.5, 1e-6));
+
+        // In flight: from waypoint 2, already at speed, heading for 3.
+        Start st;
+        st.lat = base[2].lat;
+        st.lon = base[2].lon;
+        st.altM = 30.0;
+        st.nextSeq = 3;
+        st.moving = true;
+        const Result rf = walk(base, s, hLat, hLon, st);
+        QVERIFY2(rf.ok, qPrintable(rf.problem));
+        QVERIFY(near(rf.totalS, plain.totalS - plain.arrivals[1].timeS, 1e-6));
+
+        // A mission that ends in the air is timed, and says so; the return
+        // after it is added unless the mission alone is asked for.
+        QVector<Item> noEnd = base;
+        noEnd.removeLast();
+        const Result rn = walk(noEnd, s, hLat, hLon);
+        QVERIFY(rn.ok && rn.endsLanded && rn.returnAssumed);
+        QVERIFY(!plain.returnAssumed);
+        Start alone;
+        alone.assumeReturn = false;
+        const Result rn2 = walk(noEnd, s, hLat, hLon, alone);
+        QVERIFY(rn2.ok && !rn2.endsLanded && !rn2.returnAssumed);
+
+        // Sea-level heights need home's height above sea level.
+        QVector<Item> amsl = base;
+        for (int k = 1; k <= 3; ++k) {
+            amsl[k].frame = FrameGlobal;
+            amsl[k].alt = 2930.0;
+        }
+        QVERIFY(walk(amsl, s, hLat, hLon).problem.contains(QStringLiteral("sea-level")));
+        const Result ra = walk(amsl, s, hLat, hLon, Start(), 2900.0);
+        QVERIFY2(ra.ok, qPrintable(ra.problem));
+        QVERIFY(near(ra.totalS, plain.totalS, 1e-6));
+
+        QVector<Item> terrain = base;
+        terrain[2].frame = FrameTerrain;
+        QVERIFY(walk(terrain, s, hLat, hLon).problem.contains(QStringLiteral("terrain")));
+        QVector<Item> endless = base;
+        endless[3] = item(3, NavLoiterUnlimited, base[3].lat, base[3].lon, 30);
+        QVERIFY(walk(endless, s, hLat, hLon).problem.contains(QStringLiteral("no end")));
+        QVector<Item> unknown = base;
+        unknown.insert(3, item(3, 999, 0, 0, 0, 0, 0, FrameMission));
+        QVERIFY(walk(unknown, s, hLat, hLon).problem.contains(QStringLiteral("command 999")));
+        const Result noSettings = walk(base, Settings::read(lookup({})), hLat, hLon);
+        QVERIFY(!noSettings.ok);
+        QVERIFY(noSettings.problem.contains(QStringLiteral("WP_SPD")));
+
+        // Not a .waypoints file.
+        QString err;
+        QVERIFY(parseWaypoints(QStringLiteral("hello"), &err).isEmpty());
+        QVERIFY(!err.isEmpty());
     }
 
     // The charger comparison: charger ÷ count per flight that started full;

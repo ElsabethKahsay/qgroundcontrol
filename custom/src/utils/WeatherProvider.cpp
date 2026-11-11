@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QEventLoop>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -16,6 +17,7 @@
 #include <cmath>
 
 #include "utils/Config.h"
+#include "utils/PreflightSettingsManager.h"
 
 WeatherProvider *WeatherProvider::s_instance = nullptr;
 
@@ -35,6 +37,9 @@ WeatherProvider::WeatherProvider(QObject *parent)
     m_cache->setCacheDirectory(cacheDir);
     m_cache->setMaximumCacheSize(kWeatherCacheMaxBytes); // 50 MB
     m_nam.setCache(m_cache);
+    m_siteFilePath = QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
+                         .filePath(QStringLiteral("site_weather.json"));
+    loadSite();
     s_instance = this;
 }
 
@@ -139,6 +144,15 @@ void WeatherProvider::clearCache()
 
 void WeatherProvider::fetchWeather(double latitude, double longitude)
 {
+    fetchForecast(latitude, longitude, QNetworkRequest::PreferCache);
+}
+
+// One request gives both the current values (the weather panels) and the
+// hourly forecast at the site kept for the mission estimate: temperature and
+// humidity at 2 m, wind at 10, 80 and 120 m and gusts at 10 m, for the next
+// hours. Times come as Unix seconds so no time zone is involved.
+void WeatherProvider::fetchForecast(double latitude, double longitude, QNetworkRequest::CacheLoadControl load)
+{
     m_loading = true;
     m_lastError.clear();
     emit loadingChanged();
@@ -150,16 +164,21 @@ void WeatherProvider::fetchWeather(double latitude, double longitude)
     query.addQueryItem(QStringLiteral("current"),
         QStringLiteral("temperature_2m,relative_humidity_2m,weather_code,"
                        "wind_speed_10m,wind_direction_10m,wind_gusts_10m,visibility"));
+    query.addQueryItem(QStringLiteral("hourly"),
+        QStringLiteral("temperature_2m,relative_humidity_2m,"
+                       "wind_speed_10m,wind_speed_80m,wind_speed_120m,"
+                       "wind_direction_10m,wind_direction_80m,wind_direction_120m,wind_gusts_10m"));
+    query.addQueryItem(QStringLiteral("forecast_hours"), QString::number(SiteWeather::kForecastHours));
     // Open-Meteo defaults to km/h; m_windSpeed is m/s everywhere else
     // (METAR path converts kt -> m/s, display converts m/s -> kt).
     query.addQueryItem(QStringLiteral("wind_speed_unit"), QStringLiteral("ms"));
+    query.addQueryItem(QStringLiteral("timeformat"), QStringLiteral("unixtime"));
     query.addQueryItem(QStringLiteral("timezone"), QStringLiteral("auto"));
     url.setQuery(query);
 
     QNetworkRequest req(url);
     req.setTransferTimeout(4000);
-    req.setAttribute(QNetworkRequest::CacheLoadControlAttribute,
-                     QNetworkRequest::PreferCache);
+    req.setAttribute(QNetworkRequest::CacheLoadControlAttribute, load);
     req.setAttribute(QNetworkRequest::CacheSaveControlAttribute, true);
 
     QNetworkReply *reply = m_nam.get(req);
@@ -175,7 +194,9 @@ void WeatherProvider::fetchWeather(double latitude, double longitude)
             return;
         }
 
-        handleForecastJson(reply->readAll());
+        const QByteArray data = reply->readAll();
+        handleForecastJson(data);
+        keepSiteForecast(data);
         emit loadingChanged();
     });
 }
@@ -220,6 +241,11 @@ void WeatherProvider::handleForecastJson(const QByteArray &data)
 
 void WeatherProvider::fetchMetar(const QString &icaoCode)
 {
+    fetchMetarFrom(icaoCode, QNetworkRequest::PreferCache);
+}
+
+void WeatherProvider::fetchMetarFrom(const QString &icaoCode, QNetworkRequest::CacheLoadControl load)
+{
     if (icaoCode.trimmed().isEmpty()) return;
 
     m_stationId = icaoCode.trimmed().toUpper();
@@ -236,8 +262,7 @@ void WeatherProvider::fetchMetar(const QString &icaoCode)
 
     QNetworkRequest req(url);
     req.setTransferTimeout(4000);
-    req.setAttribute(QNetworkRequest::CacheLoadControlAttribute,
-                     QNetworkRequest::PreferCache);
+    req.setAttribute(QNetworkRequest::CacheLoadControlAttribute, load);
     req.setAttribute(QNetworkRequest::CacheSaveControlAttribute, true);
 
     QNetworkReply *reply = m_nam.get(req);
@@ -251,7 +276,9 @@ void WeatherProvider::fetchMetar(const QString &icaoCode)
             return;
         }
 
-        handleMetarJson(reply->readAll());
+        const QByteArray data = reply->readAll();
+        handleMetarJson(data);
+        keepSiteMetar(data);
         emit loadingChanged();
     });
 }
@@ -760,4 +787,131 @@ QString WeatherProvider::lookupIcao(double latitude, double longitude, QString *
     }
 
     return arr.first().toObject().value(QStringLiteral("icaoId")).toString();
+}
+
+// ── Weather kept for the mission estimate ────────────────────────────
+
+void WeatherProvider::keepSiteForecast(const QByteArray &data)
+{
+    QString error;
+    SiteWeather::Forecast f = SiteWeather::parseOpenMeteo(data, &error);
+    if (!f.ok)
+        return;   // keep what was there; a bad reply never wipes good data
+    m_siteForecast = f;
+    m_siteForecastRaw = data;
+    m_siteSavedUtc = QDateTime::currentSecsSinceEpoch();
+    saveSite();
+    ++m_siteRevision;
+    emit siteWeatherChanged();
+}
+
+void WeatherProvider::keepSiteMetar(const QByteArray &data)
+{
+    SiteWeather::Station st = SiteWeather::parseMetar(data);
+    if (!st.ok)
+        return;
+    m_siteStation = st;
+    m_siteMetarRaw = data;
+    m_siteSavedUtc = QDateTime::currentSecsSinceEpoch();
+    saveSite();
+    ++m_siteRevision;
+    emit siteWeatherChanged();
+}
+
+// The file holds the replies as they came, so reading them back goes
+// through the same parsers as a fresh reply.
+void WeatherProvider::saveSite() const
+{
+    if (m_siteFilePath.isEmpty())
+        return;
+    QJsonObject o;
+    o[QStringLiteral("savedUtc")] = double(m_siteSavedUtc);
+    o[QStringLiteral("forecast")] = QString::fromUtf8(m_siteForecastRaw);
+    o[QStringLiteral("metar")] = QString::fromUtf8(m_siteMetarRaw);
+    QDir().mkpath(QFileInfo(m_siteFilePath).absolutePath());
+    QFile file(m_siteFilePath);
+    if (file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        file.write(QJsonDocument(o).toJson(QJsonDocument::Compact));
+}
+
+void WeatherProvider::loadSite()
+{
+    m_siteForecast = {};
+    m_siteStation = {};
+    m_siteForecastRaw.clear();
+    m_siteMetarRaw.clear();
+    m_siteSavedUtc = 0;
+    QFile file(m_siteFilePath);
+    if (!m_siteFilePath.isEmpty() && file.open(QIODevice::ReadOnly)) {
+        const QJsonObject o = QJsonDocument::fromJson(file.readAll()).object();
+        m_siteSavedUtc = qint64(o.value(QStringLiteral("savedUtc")).toDouble());
+        const QByteArray f = o.value(QStringLiteral("forecast")).toString().toUtf8();
+        const QByteArray m = o.value(QStringLiteral("metar")).toString().toUtf8();
+        m_siteForecast = SiteWeather::parseOpenMeteo(f);
+        if (m_siteForecast.ok)
+            m_siteForecastRaw = f;
+        m_siteStation = SiteWeather::parseMetar(m);
+        if (m_siteStation.ok)
+            m_siteMetarRaw = m;
+    }
+    ++m_siteRevision;
+    emit siteWeatherChanged();
+}
+
+SiteWeather::Conditions WeatherProvider::conditionsAt(double siteLat, double siteLon, double siteAmslM,
+                                                      double heightAglM, qint64 nowUtc) const
+{
+    return SiteWeather::conditionsAt(m_siteForecast, m_siteStation, nowUtc, siteLat, siteLon, siteAmslM, heightAglM);
+}
+
+QVariantMap WeatherProvider::siteConditions(double siteLat, double siteLon, double siteAmslM, double heightAglM) const
+{
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    const SiteWeather::Conditions c = conditionsAt(siteLat, siteLon, siteAmslM, heightAglM, now);
+    auto localTime = [](qint64 utc) {
+        return QDateTime::fromSecsSinceEpoch(utc, QTimeZone::UTC).toLocalTime().toString(QStringLiteral("HH:mm"));
+    };
+    QVariantMap m;
+    m[QStringLiteral("windKnown")] = c.windKnown;
+    m[QStringLiteral("windMs")] = c.windMs;
+    m[QStringLiteral("windFromDeg")] = c.windFromDeg;
+    m[QStringLiteral("gustMs")] = c.gustMs;
+    m[QStringLiteral("tempC")] = c.tempC;
+    m[QStringLiteral("humidityPct")] = c.humidityPct;
+    m[QStringLiteral("windSource")] = c.windSource;
+    m[QStringLiteral("tempSource")] = c.tempSource;
+    m[QStringLiteral("forecastHour")] = c.forecastHourUtc > 0 ? localTime(c.forecastHourUtc) : QString();
+    m[QStringLiteral("forecastAgeS")] = c.forecastAgeS;
+    m[QStringLiteral("forecastAge")] = std::isfinite(c.forecastAgeS) ? SiteWeather::hoursText(c.forecastAgeS) : QString();
+    m[QStringLiteral("confidence")] = SiteWeather::confidenceName(c.confidence);
+    m[QStringLiteral("reasons")] = c.reasons;
+    m[QStringLiteral("metarWindMs")] = c.metarWindMs;
+    m[QStringLiteral("metarGustMs")] = c.metarGustMs;
+    // The gust limit from Preflight Settings ("Wind gust max").
+    auto *settings = PreflightSettingsManager::instance();
+    const double limit = settings ? settings->windThresholdGust() : qQNaN();
+    m[QStringLiteral("gustLimitMs")] = limit;
+    m[QStringLiteral("gustRed")] = SiteWeather::gustAbove(c, limit);
+
+    // What is kept for use without internet.
+    QStringList kept;
+    if (m_siteForecast.ok)
+        kept << QStringLiteral("forecast %1 to %2")
+                    .arg(localTime(m_siteForecast.hours.first().utc),
+                         localTime(m_siteForecast.hours.last().utc + 3600));
+    if (m_siteStation.ok)
+        kept << QStringLiteral("METAR %1 of %2")
+                    .arg(m_siteStation.id,
+                         m_siteStation.obsUtc > 0 ? localTime(m_siteStation.obsUtc) : QStringLiteral("unknown time"));
+    m[QStringLiteral("savedText")] = kept.isEmpty() ? QStringLiteral("Nothing kept yet")
+                                                    : QStringLiteral("Kept: ") + kept.join(QStringLiteral(", "));
+    return m;
+}
+
+void WeatherProvider::prepareForSite(double latitude, double longitude, const QString &icaoCode)
+{
+    if (std::isfinite(latitude) && std::isfinite(longitude) && (qAbs(latitude) > 0.01 || qAbs(longitude) > 0.01))
+        fetchForecast(latitude, longitude, QNetworkRequest::PreferNetwork);
+    if (!icaoCode.trimmed().isEmpty())
+        fetchMetarFrom(icaoCode, QNetworkRequest::PreferNetwork);
 }

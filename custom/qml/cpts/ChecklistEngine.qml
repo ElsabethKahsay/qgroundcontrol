@@ -518,172 +518,195 @@ QtObject {
         }
     }
 
-    // The "Mission check" item (copters): the trip to the saved target, leg
-    // by leg, as VehicleProfileManager.missionCheck() costs it. When it comes
-    // out short the pilot can waive it for the flight (logged).
-    component MissionCheckDialog: SkyDialog {
-        id: mcDialog
-        title:            qsTr("Mission Check")
+    // The mission estimate for the mission on the copter: the result, the
+    // landing charge, each waypoint's time and charge on arrival (likely and
+    // pessimistic) and state, the reasons, what is assumed and the weather
+    // used. The empty weight and the RC drop item are entered here. Advice
+    // only: nothing here holds arming. The waypoint list is one rich-text
+    // table (a Repeater inside a page-level dialog's inline component crashed
+    // the checklist pages in Qt 6.8).
+    component MissionEstimateDialog: SkyDialog {
+        id: meDialog
+        title:            qsTr("Mission Estimate")
         modal:            true
         closePolicy:      Popup.CloseOnEscape
         anchors.centerIn: Overlay.overlay
-        width:            Math.min(460, (parent ? parent.width : 460) - 32)
+        width:            Math.min(560, (parent ? parent.width : 560) - 32)
 
         readonly property var _vpm: (typeof VehicleProfileManager !== "undefined") ? VehicleProfileManager : null
+        readonly property var _settings: (typeof PreflightSettingsManager !== "undefined") ? PreflightSettingsManager : null
         property var _r: ({})
-        readonly property bool _costed: _r.modelUsable === true && _r.hasTarget === true && _r.positionKnown === true
 
-        function _ah(v) { return (v === undefined || isNaN(v)) ? "--" : Number(v).toFixed(2) + " Ah" }
+        function refresh() { _r = _vpm ? _vpm.missionEstimate() : ({}) }
+        function _pct(v) { return (v === undefined || isNaN(v)) ? "--" : Math.round(v) + " %" }
+        function _colour(c) {
+            return c === "green" ? Colors.statusPass : c === "amber" ? Colors.statusWarn
+                 : c === "red" ? Colors.statusFail : Colors.textSecondary
+        }
 
         onAboutToShow: {
-            mcWaiveBox.checked = false
-            ppWaiveBox.checked = false
-            mcPilotField.text = (typeof OperatorManager !== "undefined" && OperatorManager)
-                    ? OperatorManager.currentOperatorName : ""
-            ppPilotField.text = mcPilotField.text
-            _r = _vpm ? _vpm.missionCheck() : ({})
+            var kg = _vpm ? _vpm.emptyWeightKg() : -1
+            meWeightField.text = kg > 0 ? Number(kg).toFixed(2) : ""
+            refresh()
         }
 
         ColumnLayout {
             width:   parent.width
             spacing: Config.spacingMedium
 
-            Text {
+            // The result and the landing charge.
+            RowLayout {
                 Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-                text: !mcDialog._r.applicable ? qsTr("Copters only.")
-                    : !mcDialog._r.linked ? qsTr("Link a power type first (Power type item).")
-                    : mcDialog._r.modelUsable !== true ? qsTr("Not enough learned flights yet. %1").arg(mcDialog._r.advice || "")
-                    : mcDialog._r.hasTarget !== true ? qsTr("No target saved. Furthest out-and-back with %1 kg: %2 km.")
-                                                       .arg(Number(mcDialog._r.payloadKg).toFixed(1)).arg(Number(mcDialog._r.maxTargetKm).toFixed(1))
-                    : mcDialog._r.positionKnown !== true ? qsTr("Waiting for the GPS position.")
-                    : qsTr("%1 · target %2 km · %3 kg dropped · %4 min at target · cruise %5 m/s%6")
-                          .arg(mcDialog._r.typeName).arg(Number(mcDialog._r.targetKm).toFixed(2))
-                          .arg(Number(mcDialog._r.payloadKg).toFixed(1)).arg(Number(mcDialog._r.minAtTarget).toFixed(0))
-                          .arg(Number(mcDialog._r.cruiseSpeedMs).toFixed(0)).arg(mcDialog._r.speedAssumed ? qsTr(" (assumed)") : "")
-                font.pixelSize: Config.fontSizeDialog
-                color: Colors.textPrimary
-            }
-
-            // The legs as one small table. (A Repeater here crashed the
-            // checklist pages in Qt 6.8: a delegate inside an inline
-            // component of a page-level dialog.)
-            Text {
-                visible: mcDialog._costed
-                Layout.fillWidth: true
-                textFormat: Text.RichText
-                font.pixelSize: Config.fontSizeDialog
-                color: Colors.textSecondary
-                text: {
-                    var r = mcDialog._r
-                    var rows = [
-                        [qsTr("Take-off and climb (with payload)"), r.takeoffAh],
-                        [qsTr("Cruise out (with payload)"),         r.outAh],
-                        [qsTr("At the target (with payload)"),      r.targetAh],
-                        [qsTr("Cruise back (empty)"),               r.backAh],
-                        [qsTr("Landing (empty)"),                   r.landAh],
-                        [qsTr("Total needed"),                      r.totalAh],
-                        [qsTr("Usable above the reserve"),          r.usableAh]
-                    ]
-                    var html = "<table width='100%'>"
-                    for (var i = 0; i < rows.length; ++i)
-                        html += "<tr><td>" + rows[i][0] + "</td><td align='right'><tt>" + mcDialog._ah(rows[i][1]) + "</tt></td></tr>"
-                    return html + "</table>"
+                Text {
+                    objectName: "meResult"
+                    text: (meDialog._r.resultName || "").toUpperCase()
+                    font.pixelSize: Config.fontSizeH3
+                    font.weight: Font.Bold
+                    color: meDialog._colour(meDialog._r.colour)
+                }
+                Item { Layout.fillWidth: true }
+                Text {
+                    text: qsTr("Confidence: %1").arg(meDialog._r.confidence || "--")
+                          + ((meDialog._r.confidenceWhy || []).length > 0 ? " (" + meDialog._r.confidenceWhy.join(", ") + ")" : "")
+                    font.pixelSize: Config.fontSizeSmall
+                    color: Colors.textSecondary
+                    wrapMode: Text.WordWrap
+                    Layout.maximumWidth: meDialog.width * 0.6
+                    horizontalAlignment: Text.AlignRight
                 }
             }
-
             Text {
-                visible: mcDialog._costed
                 Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-                text: mcDialog._r.fits ? qsTr("OK: %1 Ah spare. Furthest target with this payload: %2 km.")
-                                             .arg(Number(mcDialog._r.spareAh).toFixed(1)).arg(Number(mcDialog._r.maxTargetKm).toFixed(1))
-                                       : qsTr("Short by %1 Ah. Furthest target with this payload: %2 km.%3")
-                                             .arg((-Number(mcDialog._r.spareAh)).toFixed(1)).arg(Number(mcDialog._r.maxTargetKm).toFixed(1))
-                                             .arg(mcDialog._r.validated ? "" : qsTr(" (estimate not yet validated: a warning only)"))
+                visible: meDialog._r.ready === true
+                text: qsTr("Lands with %1 (pessimistic %2) · total %3")
+                          .arg(meDialog._pct(meDialog._r.landLikelyPct)).arg(meDialog._pct(meDialog._r.landPessimisticPct))
+                          .arg(meDialog._r.totalText || "--")
                 font.pixelSize: Config.fontSizeDialog
                 font.weight: Font.DemiBold
-                color: mcDialog._r.fits ? Colors.statusPass : (mcDialog._r.validated ? Colors.statusFail : Colors.statusWarn)
+                color: Colors.textPrimary
             }
-
-            // A pack that is not full: its charge comes from its resting
-            // voltage. A validated type holds the arm until a full pack is
-            // fitted or the pilot flies this one (logged).
             Text {
-                visible: mcDialog._r.packFull === false
                 Layout.fillWidth: true
+                visible: meDialog._r.ready !== true
                 wrapMode: Text.WordWrap
-                text: qsTr("Pack not full: %1 V per cell, about %2 % from its voltage. The trip is costed from that estimate.%3")
-                          .arg(Number(mcDialog._r.packCellV).toFixed(2)).arg(Math.round(mcDialog._r.packSocPct))
-                          .arg(mcDialog._r.partialPackWaivedBy ? qsTr(" Flown on purpose: %1.").arg(mcDialog._r.partialPackWaivedBy) : "")
+                text: qsTr("Can't assess: %1").arg(meDialog._r.problem || "")
                 font.pixelSize: Config.fontSizeDialog
                 color: Colors.statusWarn
             }
 
+            // The weights and the drop.
             RowLayout {
                 Layout.fillWidth: true
-                visible: mcDialog._r.packFull === false && !mcDialog._r.partialPackWaivedBy
-                CheckBox { id: ppWaiveBox; objectName: "ppWaiveBox" }
+                spacing: Config.spacingSmall
+                Text { text: qsTr("Weight without payload (kg)"); font.pixelSize: Config.fontSizeDialog; color: Colors.textSecondary }
+                TextField {
+                    id: meWeightField
+                    objectName: "meWeightField"
+                    Layout.preferredWidth: 90
+                    placeholderText: qsTr("kg")
+                    inputMethodHints: Qt.ImhFormattedNumbersOnly
+                }
+                Button {
+                    objectName: "meWeightSave"
+                    text: qsTr("Save")
+                    enabled: parseFloat(meWeightField.text) > 0
+                    onClicked: if (meDialog._vpm && meDialog._vpm.setEmptyWeightKg(parseFloat(meWeightField.text))) meDialog.refresh()
+                }
+                Item { Layout.fillWidth: true }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Config.spacingSmall
                 Text {
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                    text: qsTr("Fly with this pack. I accept its charge is only estimated from its voltage.")
+                    text: meDialog._r.payloadKg > 0
+                          ? qsTr("Payload %1 kg in %2 piece(s) · RC drop at item")
+                                .arg(Number(meDialog._r.payloadKg).toFixed(1)).arg(meDialog._r.payloadCount || 1)
+                          : qsTr("No payload entered (Payload item) · RC drop at item")
                     font.pixelSize: Config.fontSizeDialog
-                    color: Colors.textPrimary
-                    MouseArea { anchors.fill: parent; onClicked: ppWaiveBox.toggle() }
+                    color: Colors.textSecondary
+                }
+                SpinBox {
+                    objectName: "meDropItem"
+                    from: 0; to: 999
+                    value: meDialog._settings ? meDialog._settings.payloadDropItem : 0
+                    onValueModified: if (meDialog._settings) { meDialog._settings.payloadDropItem = value; meDialog.refresh() }
+                }
+                Item { Layout.fillWidth: true }
+            }
+            Text {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: meDialog._r.dropText || ""
+                visible: text.length > 0
+                font.pixelSize: Config.fontSizeSmall
+                color: Colors.textSecondary
+            }
+
+            // Each waypoint: time, charge on arrival (pessimistic), state.
+            Text {
+                objectName: "meWaypoints"
+                visible: (meDialog._r.waypoints || []).length > 0
+                Layout.fillWidth: true
+                textFormat: Text.RichText
+                font.pixelSize: Config.fontSizeDialog
+                color: Colors.textPrimary
+                text: {
+                    var w = meDialog._r.waypoints || []
+                    var html = "<table width='100%' cellspacing='2'><tr><th align='left'>" + qsTr("Item") + "</th><th align='left'>"
+                             + qsTr("What") + "</th><th align='right'>" + qsTr("Time") + "</th><th align='right'>"
+                             + qsTr("Charge (pess.)") + "</th><th align='left'>&nbsp;" + qsTr("State") + "</th></tr>"
+                    for (var i = 0; i < w.length; ++i) {
+                        var st = w[i].state
+                        var c = st === 0 ? Colors.statusPass : st === 1 ? Colors.statusWarn : Colors.statusFail
+                        html += "<tr><td>" + (w[i].seq >= 0 ? w[i].seq : "–") + "</td><td>" + w[i].what + "</td><td align='right'><tt>"
+                              + w[i].timeText + "</tt></td><td align='right'><tt>" + meDialog._pct(w[i].socLikelyPct) + " ("
+                              + meDialog._pct(w[i].socPessimisticPct) + ")</tt></td><td><font color='" + c + "'>&nbsp;"
+                              + w[i].stateName + "</font></td></tr>"
+                    }
+                    return html + "</table>"
                 }
             }
 
-            RowLayout {
+            // Reasons, assumptions and the weather used.
+            Text {
+                objectName: "meReasons"
                 Layout.fillWidth: true
-                visible: ppWaiveBox.checked
-                Text { font.pixelSize: Config.fontSizeDialog; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Pilot:") }
-                TextField { id: ppPilotField; objectName: "ppPilotField"; Layout.fillWidth: true; placeholderText: qsTr("pilot name") }
+                visible: (meDialog._r.reasons || []).length > 0
+                wrapMode: Text.WordWrap
+                textFormat: Text.RichText
+                font.pixelSize: Config.fontSizeSmall
+                color: meDialog._r.weatherRed ? Colors.statusFail : Colors.textPrimary
+                text: qsTr("<b>Reasons</b><br>") + (meDialog._r.reasons || []).join("<br>")
             }
-
-            RowLayout {
+            Text {
                 Layout.fillWidth: true
-                visible: mcDialog._costed && !mcDialog._r.fits
-                CheckBox { id: mcWaiveBox }
-                Text {
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                    text: qsTr("Fly this trip anyway. I accept the estimate says the battery is short.")
-                    font.pixelSize: Config.fontSizeDialog
-                    color: Colors.textPrimary
-                    MouseArea { anchors.fill: parent; onClicked: mcWaiveBox.toggle() }
-                }
+                visible: (meDialog._r.assumed || []).length > 0
+                wrapMode: Text.WordWrap
+                text: qsTr("Assumed: %1").arg((meDialog._r.assumed || []).join("; "))
+                font.pixelSize: Config.fontSizeSmall
+                font.italic: true
+                color: Colors.textSecondary
             }
-
-            RowLayout {
+            Text {
                 Layout.fillWidth: true
-                visible: mcWaiveBox.checked
-                Text { font.pixelSize: Config.fontSizeDialog; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Pilot:") }
-                TextField { id: mcPilotField; Layout.fillWidth: true; placeholderText: qsTr("pilot name") }
+                wrapMode: Text.WordWrap
+                text: qsTr("Weather: %1").arg(meDialog._r.weatherText || "--")
+                font.pixelSize: Config.fontSizeSmall
+                color: Colors.textSecondary
+            }
+            Text {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: qsTr("Advice only: this estimate never holds arming.")
+                font.pixelSize: Config.fontSizeSmall
+                color: Colors.textSecondary
             }
 
             RowLayout {
                 Layout.fillWidth: true
                 spacing: Config.spacingSmall
-                Button { text: qsTr("Close"); Layout.fillWidth: true; onClicked: mcDialog.close() }
-                Button {
-                    objectName: "ppWaiveButton"
-                    visible: ppWaiveBox.checked
-                    text: qsTr("Fly with this pack")
-                    enabled: ppPilotField.text.trim().length > 0
-                    Layout.fillWidth: true
-                    onClicked: if (mcDialog._vpm && mcDialog._vpm.waivePartialPack(ppPilotField.text.trim())) {
-                                   ppWaiveBox.checked = false
-                                   mcDialog._r = mcDialog._vpm.missionCheck()
-                               }
-                }
-                Button {
-                    visible: mcWaiveBox.checked
-                    text: qsTr("Fly anyway")
-                    enabled: mcPilotField.text.trim().length > 0
-                    Layout.fillWidth: true
-                    onClicked: if (mcDialog._vpm && mcDialog._vpm.waiveMissionCheck(mcPilotField.text.trim())) mcDialog.close()
-                }
+                Button { text: qsTr("Refresh"); Layout.fillWidth: true; onClicked: meDialog.refresh() }
+                Button { text: qsTr("Close"); Layout.fillWidth: true; onClicked: meDialog.close() }
             }
         }
     }

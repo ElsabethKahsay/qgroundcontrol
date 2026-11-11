@@ -37,6 +37,37 @@
 #include "MAVLink/QGCMAVLink.h"
 #include "QmlObjectListModel.h"
 #include "Vehicle/FactGroups/VehicleBatteryFactGroup.h"
+#include "MissionWalk.h"
+#include "MissionAssess.h"
+#include "MissionManager/MissionManager.h"
+#include "MissionManager/MissionItem.h"
+#include "managers/FlightSession.h"
+#include "FactSystem/ParameterManager.h"
+#include "FactSystem/Fact.h"
+#include "utils/PreflightSettingsManager.h"
+
+// The copter's parameters as MissionWalk reads them: true and the value when
+// the bridge has read it from the copter.
+static MissionWalk::Lookup copterParams(const TelemetryBridge *bridge)
+{
+    return [bridge](const QString &name, double *value) {
+        if (!bridge || !bridge->hasParameter(name))
+            return false;
+        *value = static_cast<double>(bridge->parameterValue(name));
+        return true;
+    };
+}
+
+// The cruise ratio (cruise power ÷ hover power) last measured on this copter
+// in the speed band of @p speedMs; -1 when that band has not been flown long
+// enough.
+static double storedCruiseRatio(const QString &uid, double speedMs)
+{
+    const int band = MotorTable::cruiseBand(speedMs);
+    if (band < 0)
+        return -1.0;
+    return QSettings().value(QStringLiteral("MotorTable/cruiseBand/%1/%2").arg(uid).arg(band), -1.0).toDouble();
+}
 
 VehicleProfileManager *VehicleProfileManager::s_instance = nullptr;
 
@@ -148,6 +179,7 @@ void VehicleProfileManager::setTelemetryBridge(TelemetryBridge *bridge)
         });
         connect(m_telemetry, &TelemetryBridge::parametersReadyChanged, this, &VehicleProfileManager::resolveVehicleTypeAndMotorCount);
         connect(m_telemetry, &TelemetryBridge::motorOutputsReceived, this, &VehicleProfileManager::_onMotorOutputs);
+        connect(m_telemetry, &TelemetryBridge::motorOutputsReceived, this, &VehicleProfileManager::_onOutputsForDrop);
         connect(m_telemetry, &TelemetryBridge::parameterUpdated, this, [this](const QString &, float) {
             resolveVehicleTypeAndMotorCount();
         });
@@ -1142,11 +1174,13 @@ QVariantMap VehicleProfileManager::motorTableSetup() const
         out[QStringLiteral("hoverAPerKg")] = (withPayloadA - hoverA) / payloadKg;
         out[QStringLiteral("hoverAWithPayload")] = withPayloadA;
         out[QStringLiteral("payloadKgCosted")] = payloadKg;
-        // Cruise at 70 km/h: the hover power × the copter's measured cruise
-        // ratio, through the rest of the pack; the hover itself until a
-        // flight has measured it (at this speed drag is large, so cruise may
-        // need more than hover, not less).
-        const double stored = QSettings().value(QStringLiteral("MotorTable/cruiseRatio/%1").arg(m_currentDeviceUid), -1.0).toDouble();
+        // Cruise at the copter's own mission speed (WP_SPD): the hover power
+        // × the cruise ratio measured on this copter at that speed, through
+        // the rest of the pack; the hover itself until a flight has measured
+        // it (at speed drag is large, so cruise may need more than hover, not
+        // less). No speed is assumed: until WP_SPD is read it is not known.
+        const double cruiseSpeed = MissionWalk::missionSpeedMs(copterParams(m_telemetry));
+        const double stored = storedCruiseRatio(m_currentDeviceUid, cruiseSpeed);
         const bool cruiseMeasured = stored > 0.0;
         const double ratio = cruiseMeasured ? stored : 1.0;
         auto cruiseAt = [&](double thrustG) {
@@ -1159,7 +1193,7 @@ QVariantMap VehicleProfileManager::motorTableSetup() const
         out[QStringLiteral("cruiseAPerKg")] = (cruiseAt(thrust + payloadKg * 1000.0 / motorsUsed) - cruiseA) / payloadKg;
         out[QStringLiteral("cruiseRatio")] = ratio;
         out[QStringLiteral("cruiseMeasured")] = cruiseMeasured;
-        out[QStringLiteral("cruiseSpeedMs")] = MotorTable::kCruiseSpeedMs;
+        out[QStringLiteral("cruiseSpeedMs")] = cruiseSpeed;
         out[QStringLiteral("hoverThrottle")] = hoverThrottle;
     }
 
@@ -1307,6 +1341,7 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         m_packOhmSamples = 0;
         m_cruiseRatioSum = 0.0;
         m_cruiseSamples = 0;
+        m_cruiseBands.clear();
         m_hoverThrustSum = 0.0;
         m_hoverSamples = 0;
         m_gcsCounting = true;
@@ -1355,13 +1390,17 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
                                                               m_hoverSamples);
         m_hoverThrustSum = 0.0;
         m_hoverSamples = 0;
-        // A flight with enough readings under load leaves the pack's
-        // resistance for the next take-off.
-        if (table && m_cruiseSamples >= MotorTable::kMinHoverSamples)
-            QSettings().setValue(QStringLiteral("MotorTable/cruiseRatio/%1").arg(m_currentDeviceUid),
-                                 m_cruiseRatioSum / m_cruiseSamples);
+        // Each speed band flown level for long enough (30 s) leaves its
+        // cruise ratio for the next take-off; bands not flown keep theirs.
+        if (table) {
+            for (auto it = m_cruiseBands.cbegin(); it != m_cruiseBands.cend(); ++it)
+                if (it.value().second >= MotorTable::kMinHoverSamples)
+                    QSettings().setValue(QStringLiteral("MotorTable/cruiseBand/%1/%2").arg(m_currentDeviceUid).arg(it.key()),
+                                         it.value().first / it.value().second);
+        }
         m_cruiseRatioSum = 0.0;
         m_cruiseSamples = 0;
+        m_cruiseBands.clear();
         if (table && m_packOhmSamples >= MotorTable::kMinHoverSamples && m_packOhmLive > 0.0) {
             m_packOhm = m_packOhmLive;
             QSettings().setValue(QStringLiteral("MotorTable/packOhm/%1").arg(m_currentDeviceUid), m_packOhm);
@@ -1476,9 +1515,9 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
                 m_tableLog.hoverWSum += (now.amps - MotorTable::kElectronicsA) * packV;
                 m_tableLog.hoverS += 2.0;
             }
-            // Steady cruise at 70 km/h without payload: its power ÷ the power
+            // Level cruise at any speed without payload: its power ÷ the power
             // this copter (its remembered hover thrust) needs to hover in this
-            // air.
+            // air, kept in the band of the ground speed.
             const double hoverThrust = setup.value(QStringLiteral("hoverThrustG")).toDouble();
             if (haveNow && fromOutputs && !m_livePayloadAboard && packV > 0.0 && hoverThrust > 0.0
                 && std::isfinite(alt) && alt > PowerTypeModel::kAirborneAltM
@@ -1486,8 +1525,12 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
                 const int n = static_cast<int>(thr.size());
                 const double hoverW = n * MotorTable::powerForThrustAt(*table, hoverThrust, sigma).watts;
                 if (hoverW > 0.0) {
-                    m_cruiseRatioSum += (now.amps - MotorTable::kElectronicsA) * packV / hoverW;
+                    const double ratio = (now.amps - MotorTable::kElectronicsA) * packV / hoverW;
+                    m_cruiseRatioSum += ratio;
                     ++m_cruiseSamples;
+                    QPair<double, int> &band = m_cruiseBands[MotorTable::cruiseBand(gsNow)];
+                    band.first += ratio;
+                    ++band.second;
                     m_tableLog.cruiseS += 2.0;
                 }
             }
@@ -1603,7 +1646,7 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
                     // only once airborne, the way the recorder does.
                     if (airborne)
                         m_gcsUsedAh += PowerTypeModel::chargeStepAh(in.model, hover,
-                                                                    m_livePayloadAboard ? m_payloadWeightKg : 0.0,
+                                                                    livePayloadAboardKg(),
                                                                     throttleRatio, (nowMs - m_gcsLastMs) / 1000.0);
                 }
                 m_gcsLastMs = nowMs;
@@ -1643,9 +1686,11 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         }
         // Before the arm the payload entered is what will be aboard.
         in.payloadAboard = armed ? m_livePayloadAboard : (m_payloadEntered && m_payloadWeightKg > 0.0);
-        in.payloadKg = m_payloadWeightKg;
+        // After a drop only what is still aboard is carried.
+        in.payloadKg = armed ? livePayloadAboardKg() : m_payloadWeightKg;
+        in.payloadAboard = in.payloadAboard && in.payloadKg > 0.0;
         in.minAtTarget = m_timeAtTargetMin >= 0.0 ? m_timeAtTargetMin : 0.0;
-        in.cruiseSpeedMs = table ? MotorTable::kCruiseSpeedMs : m_powerCruiseSpeedMs;
+        in.cruiseSpeedMs = table ? setup.value(QStringLiteral("cruiseSpeedMs"), -1.0).toDouble() : m_powerCruiseSpeedMs;
         in.landMin = landMin();
         in.armed = armed;
         const PowerTypeModel::LiveResult r = PowerTypeModel::liveEstimate(in);
@@ -1665,6 +1710,10 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         out[QStringLiteral("tripShortAh")] = r.tripShortAh;
         out[QStringLiteral("returnNow")] = r.returnNow;
         out[QStringLiteral("payloadAboard")] = in.payloadAboard;
+        out[QStringLiteral("payloadAboardKg")] = in.payloadAboard ? in.payloadKg : 0.0;
+        out[QStringLiteral("payloadsReleased")] = m_drop.released();
+        out[QStringLiteral("payloadCount")] = dropConfig().payloads;
+        out[QStringLiteral("dropOutputSet")] = dropConfig().isSet();
         out[QStringLiteral("startSocPct")] = in.startSocPct;
         out[QStringLiteral("source")] = table ? QStringLiteral("motor table") : m_powerSummary.value(QStringLiteral("source"));
         out[QStringLiteral("typeName")] = table ? table->name : m_powerSummary.value(QStringLiteral("name"));
@@ -2315,29 +2364,12 @@ bool VehicleProfileManager::waivePowerType(const QString &pilot)
     return true;
 }
 
-bool VehicleProfileManager::waiveMissionCheck(const QString &pilot)
-{
-    const QVariantMap r = missionCheck();
-    const QString reason = QStringLiteral("Trip short by %1 Ah (target %2 km, payload %3 kg)")
-                               .arg(-r.value(QStringLiteral("spareAh")).toDouble(), 0, 'f', 1)
-                               .arg(r.value(QStringLiteral("targetKm")).toDouble(), 0, 'f', 1)
-                               .arg(r.value(QStringLiteral("payloadKg")).toDouble(), 0, 'f', 1);
-    if (!recordWaiver(QStringLiteral("mission_check_waived"), pilot, reason, QStringLiteral("power.mission")))
-        return false;
-    m_missionWaivedBy = pilot.trimmed();
-    emit powerTypeChanged();
-    return true;
-}
-
 void VehicleProfileManager::clearPowerTypeFlightState()
 {
-    if (!m_propsConfirmed && m_powerTypeWaivedBy.isEmpty() && m_missionWaivedBy.isEmpty()
-        && m_partialPackWaivedBy.isEmpty())
+    if (!m_propsConfirmed && m_powerTypeWaivedBy.isEmpty())
         return;
     m_propsConfirmed = false;
     m_powerTypeWaivedBy.clear();
-    m_missionWaivedBy.clear();
-    m_partialPackWaivedBy.clear();
     emit powerTypeChanged();
 }
 
@@ -2350,19 +2382,6 @@ double VehicleProfileManager::packRestingSocPct(double packVolts) const
         return 100.0;
     const double soc = PowerTypeModel::restingSocPct(cellV, m_batteryType);
     return soc >= 0.0 ? std::min(soc, 99.0) : 100.0;
-}
-
-bool VehicleProfileManager::waivePartialPack(const QString &pilot)
-{
-    const double volts = m_telemetry ? m_telemetry->batteryVoltage() : 0.0;
-    const QString reason = QStringLiteral("Pack not full: %1 V per cell, about %2 %")
-                               .arg(m_batterySeriesCells > 0 ? volts / m_batterySeriesCells : 0.0, 0, 'f', 2)
-                               .arg(qRound(packRestingSocPct(volts)));
-    if (!recordWaiver(QStringLiteral("partial_pack_waived"), pilot, reason, QStringLiteral("power.mission")))
-        return false;
-    m_partialPackWaivedBy = pilot.trimmed();
-    emit powerTypeChanged();
-    return true;
 }
 
 QString VehicleProfileManager::frameName(int frameClass, int frameType)
@@ -2398,7 +2417,6 @@ QVariantMap VehicleProfileManager::missionCheck()
     out[QStringLiteral("linked")] = m_powerTypeId > 0 || table;
     out[QStringLiteral("powerTypeWaivedBy")] = table ? QString() : m_powerTypeWaivedBy;
     out[QStringLiteral("packWaived")] = batteryPackWaived();
-    out[QStringLiteral("waivedBy")] = m_missionWaivedBy;
 
     PowerTypeModel::Model model;
     double cruise = 10.0;
@@ -2407,7 +2425,7 @@ QVariantMap VehicleProfileManager::missionCheck()
         // A copter on a motor table: the hover remembered from its last flight
         // (or its learned MOT_THST_HOVER) at the planning voltage, the payload
         // added from the table's thrust column, cruise taken at hover (safe
-        // side), 10 m/s assumed. The table is not proven on this copter until
+        // side) until measured, at the copter's mission speed. The table is not proven on this copter until
         // its flights agree with the charger, so a trip that does not fit is
         // a warning, not a block.
         out[QStringLiteral("source")] = QStringLiteral("motor table");
@@ -2452,7 +2470,13 @@ QVariantMap VehicleProfileManager::missionCheck()
         model.hoverK = setup.value(QStringLiteral("hoverAPerKg")).toDouble();
         model.cruise0 = setup.value(QStringLiteral("cruiseA"), model.hover0).toDouble();
         model.cruiseK = setup.value(QStringLiteral("cruiseAPerKg"), model.hoverK).toDouble();
-        cruise = MotorTable::kCruiseSpeedMs;
+        cruise = setup.value(QStringLiteral("cruiseSpeedMs"), -1.0).toDouble();
+        speedAssumed = false;
+        if (!(cruise > 0.0)) {
+            out[QStringLiteral("modelUsable")] = false;
+            out[QStringLiteral("notReadyText")] = QStringLiteral("Mission speed not known yet: WP_SPD not read from the copter");
+            return out;
+        }
         out[QStringLiteral("cruiseMeasured")] = setup.value(QStringLiteral("cruiseMeasured"));
         if (!setup.value(QStringLiteral("cruiseMeasured")).toBool())
             out[QStringLiteral("cruiseNote")] = QStringLiteral("cruise power not measured yet: taken as hover");
@@ -2510,7 +2534,6 @@ QVariantMap VehicleProfileManager::missionCheck()
     out[QStringLiteral("packCellV")] = cellV;
     out[QStringLiteral("packFull")] = soc >= 100.0;
     out[QStringLiteral("packSocPct")] = soc;
-    out[QStringLiteral("partialPackWaivedBy")] = m_partialPackWaivedBy;
     out[QStringLiteral("payloadEntered")] = m_payloadEntered;
     out[QStringLiteral("payloadKg")] = x.payloadKg;
     out[QStringLiteral("timeAtTargetEntered")] = m_timeAtTargetMin >= 0.0;
@@ -2622,5 +2645,397 @@ QVariantMap VehicleProfileManager::ampPerVoltSuggestion()
         out[QStringLiteral("fcMah")] = fc;
         break;
     }
+    return out;
+}
+
+// ── Payload release ─────────────────────────────────────────────────
+// The release servo output (core/PayloadRelease.h) or the pilot's tap. Each
+// release takes one payload's weight off the live estimate and is written on
+// the flight record as PAYLOAD_RELEASED.
+
+// A copter parameter from QGroundControl's parameter list (the bridge keeps
+// only the watched ones); NaN when it is not there.
+double VehicleProfileManager::copterParam(const QString &name) const
+{
+    Vehicle *v = m_telemetry ? m_telemetry->vehicle() : nullptr;
+    ParameterManager *pm = v ? v->parameterManager() : nullptr;
+    if (!pm || !pm->parametersReady() || !pm->parameterExists(v->defaultComponentId(), name))
+        return qQNaN();
+    Fact *f = pm->getParameter(v->defaultComponentId(), name);
+    return f ? f->rawValue().toDouble() : qQNaN();
+}
+
+PayloadRelease::Config VehicleProfileManager::dropConfig() const
+{
+    PayloadRelease::Config c;
+    auto *settings = PreflightSettingsManager::instance();
+    if (settings) {
+        c.output = settings->payloadDropOutput();
+        c.onWhenLow = settings->payloadDropOnWhenLow();
+        c.payloads = settings->payloadCount();
+    }
+    c.totalKg = (m_payloadEntered && m_payloadWeightKg > 0.0) ? m_payloadWeightKg : 0.0;
+    // "Released" is past the middle of the output's range on the copter, the
+    // same value the settings page shows.
+    if (c.output > 0)
+        c.thresholdUs = servoOutputInfo(c.output).value(QStringLiteral("thresholdUs"),
+                                                        PayloadRelease::kDefaultMidUs).toDouble();
+    return c;
+}
+
+QVariantMap VehicleProfileManager::servoOutputInfo(int output) const
+{
+    QVariantMap m;
+    m[QStringLiteral("known")] = false;
+    if (output <= 0) {
+        m[QStringLiteral("text")] = QStringLiteral("Not set: no release is detected; use the \"Payload dropped\" button");
+        return m;
+    }
+    const double lo = copterParam(QStringLiteral("SERVO%1_MIN").arg(output));
+    const double hi = copterParam(QStringLiteral("SERVO%1_MAX").arg(output));
+    const double mid = PayloadRelease::threshold(lo, hi);
+    m[QStringLiteral("thresholdUs")] = mid;
+    const bool onWhenLow = PreflightSettingsManager::instance() && PreflightSettingsManager::instance()->payloadDropOnWhenLow();
+    const QString side = onWhenLow ? QStringLiteral("below") : QStringLiteral("above");
+    if (!std::isfinite(lo) || !std::isfinite(hi) || !(hi > lo)) {
+        m[QStringLiteral("text")] = QStringLiteral("SERVO%1_MIN / SERVO%1_MAX not read from the copter yet: released %2 %3 us")
+                                        .arg(output).arg(side).arg(mid, 0, 'f', 0);
+        return m;
+    }
+    m[QStringLiteral("known")] = true;
+    m[QStringLiteral("minUs")] = lo;
+    m[QStringLiteral("maxUs")] = hi;
+    m[QStringLiteral("text")] = QStringLiteral("Servo output %1: %2-%3 us on the copter; released %4 %5 us")
+                                    .arg(output).arg(lo, 0, 'f', 0).arg(hi, 0, 'f', 0).arg(side).arg(mid, 0, 'f', 0);
+    return m;
+}
+
+double VehicleProfileManager::livePayloadAboardKg() const
+{
+    if (!m_livePayloadAboard)
+        return 0.0;
+    return std::max(0.0, m_payloadWeightKg - m_drop.releasedKg(dropConfig()));
+}
+
+void VehicleProfileManager::_onOutputsForDrop()
+{
+    if (!m_telemetry)
+        return;
+    const PayloadRelease::Config c = dropConfig();
+    const QVariantList out = m_telemetry->motorOutputs();
+    const double pwm = (c.output > 0 && c.output <= out.size()) ? out.at(c.output - 1).toDouble() : qQNaN();
+    const bool armed = m_telemetry->armed();
+    const double alt = m_telemetry->altitudeRelative();
+    const bool airborne = armed && std::isfinite(alt) && alt > PowerTypeModel::kAirborneAltM;
+    switch (m_drop.feed(c, QDateTime::currentMSecsSinceEpoch(), pwm, armed, airborne)) {
+    case PayloadRelease::Seen::Released: {
+        const int n = m_drop.released();
+        const QString detail = QStringLiteral("Payload %1 of %2 released (%3 kg), servo output %4 at %5 us")
+                                   .arg(n).arg(c.payloads).arg(c.eachKg(), 0, 'f', 1).arg(c.output).arg(pwm, 0, 'f', 0);
+        _recordDrop(QStringLiteral("PAYLOAD_RELEASED"), detail);
+        emit payloadReleased(n, c.eachKg(), QStringLiteral("output"));
+        emit liveDataChanged();
+        break;
+    }
+    case PayloadRelease::Seen::OnAtArm: {
+        const QString what = QStringLiteral("Release servo (output %1) is at \"released\" at arming: a drop needs it to move there in flight")
+                                 .arg(c.output);
+        _recordDrop(QStringLiteral("PAYLOAD_RELEASE_ON_AT_ARM"), what);
+        emit payloadSwitchWarning(what);
+        break;
+    }
+    case PayloadRelease::Seen::OnOnGround: {
+        const QString what = QStringLiteral("Release servo (output %1) moved to \"released\" on the ground: not counted as a drop")
+                                 .arg(c.output);
+        _recordDrop(QStringLiteral("PAYLOAD_RELEASED_ON_GROUND"), what);
+        emit payloadSwitchWarning(what);
+        break;
+    }
+    case PayloadRelease::Seen::Nothing:
+        break;
+    }
+}
+bool VehicleProfileManager::payloadDroppedTap()
+{
+    const PayloadRelease::Config c = dropConfig();
+    if (!m_livePayloadAboard || !m_drop.tap(c))
+        return false;
+    const int n = m_drop.released();
+    _recordDrop(QStringLiteral("PAYLOAD_RELEASED"),
+                QStringLiteral("Payload %1 of %2 released (%3 kg), tapped by the pilot").arg(n).arg(c.payloads)
+                    .arg(c.eachKg(), 0, 'f', 1));
+    emit payloadReleased(n, c.eachKg(), QStringLiteral("tap"));
+    emit liveDataChanged();
+    return true;
+}
+
+// On the flight's event list (the Flight History row the recorder has open,
+// where its ARM and DISARM go; else the session's flight), with where the
+// copter was and the battery.
+void VehicleProfileManager::_recordDrop(const QString &eventType, const QString &detail)
+{
+    auto *session = FlightSession::instance();
+    int flightId = DatabaseManager::instance().recordingHistoryFlightId();
+    if (flightId <= 0)
+        flightId = session ? session->currentFlightId() : -1;
+    if (flightId <= 0 || !m_telemetry)
+        return;
+    Vehicle *v = m_telemetry->vehicle();
+    const QGeoCoordinate pos = v ? v->coordinate() : QGeoCoordinate();
+    DatabaseManager::instance().insertTelemetryEventSnapshot(
+        flightId, eventType, detail, m_telemetry->batteryVoltage(), m_telemetry->altitudeRelative(),
+        m_telemetry->gpsSatellites(), m_telemetry->flightMode(), pos.isValid() ? pos.latitude() : 0.0,
+        pos.isValid() ? pos.longitude() : 0.0, m_telemetry->gpsHdop(), 0.0, m_telemetry->heading());
+}
+
+// ── Mission estimate ────────────────────────────────────────────────
+// The waypoint times, the charge on arrival and the assessment for the
+// mission on the copter, from the motor table, the copter's parameters, the
+// operator's weights and drop point, and the site weather. Advice only.
+
+double VehicleProfileManager::emptyWeightKg() const
+{
+    if (m_currentDeviceUid.isEmpty())
+        return -1.0;
+    return QSettings().value(QStringLiteral("MissionEstimate/emptyKg/%1").arg(m_currentDeviceUid), -1.0).toDouble();
+}
+
+bool VehicleProfileManager::setEmptyWeightKg(double kg)
+{
+    if (m_currentDeviceUid.isEmpty() || !std::isfinite(kg) || kg <= 0.0 || kg > 200.0)
+        return false;
+    QSettings().setValue(QStringLiteral("MissionEstimate/emptyKg/%1").arg(m_currentDeviceUid), kg);
+    emit emptyWeightChanged();
+    return true;
+}
+
+static QString clockText(double s)
+{
+    if (!std::isfinite(s) || s < 0.0)
+        return QStringLiteral("--");
+    const int t = qRound(s);
+    return QStringLiteral("%1:%2").arg(t / 60).arg(t % 60, 2, 10, QLatin1Char('0'));
+}
+
+static QString commandText(int command, int seq)
+{
+    if (seq < 0)
+        return QStringLiteral("Home (assumed RTL)");
+    switch (command) {
+    case MissionWalk::NavTakeoff: return QStringLiteral("Take-off");
+    case MissionWalk::NavWaypoint: return QStringLiteral("Waypoint");
+    case MissionWalk::NavSplineWaypoint: return QStringLiteral("Spline waypoint");
+    case MissionWalk::NavLoiterTime: return QStringLiteral("Hold");
+    case MissionWalk::NavLoiterTurns: return QStringLiteral("Circle");
+    case MissionWalk::NavLoiterToAlt: return QStringLiteral("Loiter to altitude");
+    case MissionWalk::NavDelay: return QStringLiteral("Delay");
+    case MissionWalk::NavReturnToLaunch: return QStringLiteral("Return and land");
+    case MissionWalk::NavLand: return QStringLiteral("Land");
+    default: return QStringLiteral("Command %1").arg(command);
+    }
+}
+
+QVariantMap VehicleProfileManager::missionEstimate()
+{
+    QVariantMap out;
+    out[QStringLiteral("applicable")] = m_kind == VehicleKind::Multirotor;
+    out[QStringLiteral("ready")] = false;
+    out[QStringLiteral("result")] = int(MissionAssess::CantAssess);
+    out[QStringLiteral("resultName")] = MissionAssess::resultName(MissionAssess::CantAssess);
+    out[QStringLiteral("colour")] = MissionAssess::resultColour(MissionAssess::CantAssess);
+    auto notReady = [&out](const QString &why) {
+        out[QStringLiteral("problem")] = why;
+        out[QStringLiteral("reasons")] = QStringList{why};
+        return out;
+    };
+    const double emptyKg = emptyWeightKg();
+    out[QStringLiteral("emptyKg")] = emptyKg;
+    const PayloadRelease::Config drop = dropConfig();
+    const double payloadKg = (m_payloadEntered && m_payloadWeightKg > 0.0) ? m_payloadWeightKg : 0.0;
+    out[QStringLiteral("payloadKg")] = payloadKg;
+    out[QStringLiteral("payloadCount")] = drop.payloads;
+    if (m_kind != VehicleKind::Multirotor)
+        return notReady(QStringLiteral("Copters only"));
+    const MotorTable::Table *table = MotorTable::byId(m_motorTableId);
+    if (!table || !m_telemetry)
+        return notReady(QStringLiteral("No motor table linked to this copter"));
+    Vehicle *v = m_telemetry->vehicle();
+    MissionManager *mm = v ? v->missionManager() : nullptr;
+    if (!mm || mm->missionItems().size() < 2)
+        return notReady(QStringLiteral("No mission on the copter"));
+    const double homeLat = m_telemetry->homeLatitude();
+    const double homeLon = m_telemetry->homeLongitude();
+    if (qAbs(homeLat) < 1e-6 && qAbs(homeLon) < 1e-6)
+        return notReady(QStringLiteral("Home position not known yet"));
+    const double homeAmsl = m_telemetry->homeAltitude();
+
+    // The mission as the copter has it (item 0 is home).
+    QVector<MissionWalk::Item> items;
+    for (const MissionItem *mi : mm->missionItems()) {
+        MissionWalk::Item it;
+        it.seq = mi->sequenceNumber();
+        it.frame = int(mi->frame());
+        it.command = int(mi->command());
+        it.p1 = mi->param1();
+        it.p2 = mi->param2();
+        it.p3 = mi->param3();
+        it.p4 = mi->param4();
+        it.lat = mi->param5();
+        it.lon = mi->param6();
+        it.alt = mi->param7();
+        it.autocontinue = mi->autoContinue();
+        items.append(it);
+    }
+    const MissionWalk::Settings ws = MissionWalk::Settings::read(copterParams(m_telemetry));
+    const MissionWalk::Result w = MissionWalk::walk(items, ws, homeLat, homeLon, MissionWalk::Start(), homeAmsl);
+
+    // The motor table, the pack and the air, as the battery estimate has them.
+    const QVariantMap setup = motorTableSetup();
+    const int motors = setup.value(QStringLiteral("motors")).toInt() > 0 ? setup.value(QStringLiteral("motors")).toInt()
+                                                                         : table->motors;
+    const int cells = setup.value(QStringLiteral("cells")).toInt() > 0 ? setup.value(QStringLiteral("cells")).toInt()
+                                                                       : table->cells;
+    MissionCost::Inputs in;
+    in.table = table;
+    in.motors = motors;
+    in.pack = motorTablePack(cells);
+    in.sigma = setup.value(QStringLiteral("densityRatio"), MotorTable::kTableDensityRatio).toDouble();
+    in.calibration = setup.value(QStringLiteral("calibrationFactor"), 1.0).toDouble();
+    in.emptyKg = emptyKg > 0.0 ? emptyKg : qQNaN();
+    in.payloadKg = payloadKg;
+    const double socNow = packRestingSocPct(m_telemetry->batteryVoltage());
+    in.startSocPct = socNow > 0.0 ? socNow : 100.0;
+    in.reserveSocPct = m_batteryReserve * 100.0;
+    const QString uid = m_currentDeviceUid;
+    in.measuredRatio = [uid](double air) { return storedCruiseRatio(uid, air); };
+    in.currentLimitA = table->packCRating * capacityAh();
+    auto param = [this](const char *name) {
+        return m_telemetry->hasParameter(QLatin1String(name)) ? double(m_telemetry->parameterValue(QLatin1String(name)))
+                                                              : copterParam(QLatin1String(name));
+    };
+    in.battLowV = param("BATT_LOW_VOLT");
+    in.battCrtV = param("BATT_CRT_VOLT");
+
+    // Where the payload comes off: the mission's own release commands on the
+    // release output (or a gripper release), in order, one payload each;
+    // otherwise the item the operator picked for an RC drop (all of it there);
+    // otherwise it is carried home (the safe case).
+    QString dropText;
+    if (payloadKg > 0.0 && w.ok) {
+        int found = 0;
+        for (const MissionWalk::Event &e : w.events) {
+            const bool servo = (e.command == MissionWalk::DoSetServo || e.command == MissionWalk::DoRepeatServo)
+                               && drop.output > 0 && qRound(e.p1) == drop.output
+                               && (drop.onWhenLow ? e.p2 < drop.thresholdUs : e.p2 > drop.thresholdUs);
+            const bool gripper = e.command == MissionWalk::DoGripper && qRound(e.p2) == 0;
+            if ((servo || gripper) && found < drop.payloads) {
+                in.drops.append({e.timeS, drop.eachKg()});
+                ++found;
+            }
+        }
+        if (found > 0) {
+            dropText = QStringLiteral("%1 drop command%2 in the mission").arg(found).arg(found > 1 ? "s" : "");
+        } else {
+            const int item = PreflightSettingsManager::instance() ? PreflightSettingsManager::instance()->payloadDropItem() : 0;
+            for (const MissionWalk::Arrival &a : w.arrivals)
+                if (item > 0 && a.seq == item && in.drops.isEmpty())
+                    in.drops.append({a.timeS, payloadKg});
+            dropText = in.drops.isEmpty()
+                           ? (item > 0 ? QStringLiteral("Drop item %1 is not a waypoint of this mission: payload costed as carried home").arg(item)
+                                       : QStringLiteral("No drop point given: payload costed as carried home"))
+                           : QStringLiteral("Dropped by the pilot at item %1").arg(item);
+        }
+    } else if (payloadKg <= 0.0) {
+        dropText = m_payloadEntered ? QStringLiteral("No payload") : QStringLiteral("Payload not entered");
+    }
+    out[QStringLiteral("dropText")] = dropText;
+
+    // The weather at the highest point of the mission.
+    double topM = 0.0;
+    for (const MissionWalk::Arrival &a : w.arrivals)
+        topM = std::max(topM, a.altM);
+    MissionAssess::Context ctx;
+    ctx.flightHeightM = topM;
+    ctx.hasDrops = !in.drops.isEmpty();
+    ctx.cruiseMeasured = false;
+    ctx.tableProven = setup.value(QStringLiteral("proven")).toBool();
+    QString weatherText = QStringLiteral("No weather for the site");
+    if (WeatherProvider *wp = WeatherProvider::instance()) {
+        const SiteWeather::Conditions wc =
+            wp->conditionsAt(homeLat, homeLon, homeAmsl, topM, QDateTime::currentSecsSinceEpoch());
+        if (wc.windKnown) {
+            in.wind.speedMs = wc.windMs;
+            in.wind.fromDeg = wc.windFromDeg;
+            in.wind.gustMs = wc.gustMs;
+            ctx.weatherKnown = true;
+            ctx.gustMs = std::isfinite(wc.gustMs) ? wc.gustMs : wc.windMs;
+            weatherText = QStringLiteral("Wind %1 m/s%2 at %3 m, from the %4%5")
+                              .arg(wc.windMs, 0, 'f', 1)
+                              .arg(std::isfinite(wc.gustMs) ? QStringLiteral(" gusting %1").arg(wc.gustMs, 0, 'f', 1) : QString())
+                              .arg(qRound(topM)).arg(wc.windSource)
+                              .arg(std::isfinite(wc.forecastAgeS) ? QStringLiteral(" (%1 old)").arg(SiteWeather::hoursText(wc.forecastAgeS)) : QString());
+        }
+        ctx.weatherConfidence = wc.confidence;
+        ctx.weatherReasons = wc.reasons;
+    }
+    out[QStringLiteral("weatherText")] = weatherText;
+
+    const MissionCost::Result cost = MissionCost::cost(w, ws, homeLat, homeLon, in);
+    ctx.cruiseMeasured = cost.ok && cost.ratioMeasured;
+    MissionCost::Result returned;
+    if (ctx.hasDrops)
+        returned = MissionCost::costPayloadReturned(w, ws, homeLat, homeLon, in);
+    MissionAssess::Limits lim;
+    lim.reservePct = in.reserveSocPct;
+    lim.battLowV = in.battLowV;
+    lim.battCrtV = in.battCrtV;
+    lim.battLowAction = int(param("BATT_FS_LOW_ACT"));
+    lim.battCrtAction = int(param("BATT_FS_CRT_ACT"));
+    if (PreflightSettingsManager::instance())
+        lim.gustLimitMs = PreflightSettingsManager::instance()->windThresholdGust();
+    const MissionAssess::Assessment a = MissionAssess::assess(w, cost, ctx.hasDrops ? &returned : nullptr, lim, ctx);
+
+    out[QStringLiteral("ready")] = a.result != MissionAssess::CantAssess;
+    out[QStringLiteral("problem")] = a.problem;
+    out[QStringLiteral("result")] = a.result;
+    out[QStringLiteral("resultName")] = MissionAssess::resultName(a.result);
+    out[QStringLiteral("colour")] = MissionAssess::resultColour(a.result);
+    out[QStringLiteral("landLikelyPct")] = a.landLikelyPct;
+    out[QStringLiteral("landPessimisticPct")] = a.landPessimisticPct;
+    out[QStringLiteral("totalS")] = a.totalS;
+    out[QStringLiteral("totalText")] = clockText(a.totalS);
+    out[QStringLiteral("confidence")] = SiteWeather::confidenceName(a.confidence);
+    out[QStringLiteral("confidenceWhy")] = a.confidenceWhy;
+    out[QStringLiteral("reasons")] = a.reasons;
+    out[QStringLiteral("weatherRed")] = a.weatherRed;
+    out[QStringLiteral("overCurrent")] = a.overCurrent;
+    QStringList assumed;
+    if (!ctx.cruiseMeasured)
+        assumed << QStringLiteral("cruise power (hover in the likely case, %1× in the pessimistic case)")
+                       .arg(MissionCost::kUnmeasuredPessimisticRatio, 0, 'f', 1);
+    assumed << QStringLiteral("climb: half of the extra power lost");
+    if (w.returnAssumed)
+        assumed << QStringLiteral("RTL from the mission's last point");
+    if (in.drops.isEmpty() && payloadKg > 0.0)
+        assumed << QStringLiteral("payload carried home");
+    out[QStringLiteral("assumed")] = assumed;
+
+    QVariantList wps;
+    for (const MissionAssess::Waypoint &p : a.waypoints) {
+        int command = MissionWalk::NavReturnToLaunch;
+        for (const MissionWalk::Arrival &ar : w.arrivals)
+            if (ar.seq == p.seq && qAbs(ar.timeS - p.timeS) < 1e-6)
+                command = ar.command;
+        QVariantMap m;
+        m[QStringLiteral("seq")] = p.seq;
+        m[QStringLiteral("what")] = commandText(command, p.seq);
+        m[QStringLiteral("timeText")] = clockText(p.timeS);
+        m[QStringLiteral("socLikelyPct")] = p.socLikelyPct;
+        m[QStringLiteral("socPessimisticPct")] = p.socPessimisticPct;
+        m[QStringLiteral("state")] = p.state;
+        m[QStringLiteral("stateName")] = MissionAssess::stateName(p.state);
+        wps.append(m);
+    }
+    out[QStringLiteral("waypoints")] = wps;
     return out;
 }

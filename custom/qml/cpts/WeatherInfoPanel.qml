@@ -70,6 +70,145 @@ Rectangle {
         color: Colors.border
     }
 
+    // The forecast at the flying site that the mission estimate uses: wind
+    // at 10, 80 and 120 m, temperature corrected for the site's height, how
+    // old it is and how sure, with the airport METAR as a check. "Prepare for
+    // the site" fetches and keeps it while there is internet, for use at a
+    // site without. The site is the vehicle's home, else its GPS position,
+    // else the map centre (pan the map to the site before preparing).
+    component SiteWeatherSection: Column {
+        id: site
+        spacing: 8
+
+        property int _tick: 0
+        readonly property bool _homeSet: typeof TelemetryProvider !== "undefined"
+                                         && (Math.abs(TelemetryProvider.homeLatitude) > 0.01
+                                             || Math.abs(TelemetryProvider.homeLongitude) > 0.01)
+        readonly property bool _gpsSet: typeof TelemetryProvider !== "undefined" && TelemetryProvider.gpsSatellites > 0
+        readonly property var _mapPos: QGroundControl.flightMapPosition
+        readonly property double siteLat: _homeSet ? TelemetryProvider.homeLatitude
+                                        : _gpsSet ? TelemetryProvider.gpsLatitude
+                                        : (_mapPos && _mapPos.isValid ? _mapPos.latitude : NaN)
+        readonly property double siteLon: _homeSet ? TelemetryProvider.homeLongitude
+                                        : _gpsSet ? TelemetryProvider.gpsLongitude
+                                        : (_mapPos && _mapPos.isValid ? _mapPos.longitude : NaN)
+        readonly property double siteAmsl: _homeSet ? TelemetryProvider.homeAltitude
+                                         : _gpsSet ? TelemetryProvider.globalAltitude : NaN
+        readonly property string siteFrom: _homeSet ? qsTr("home") : _gpsSet ? qsTr("aircraft GPS") : qsTr("map centre")
+
+        function _at(h) {
+            var r = WeatherProvider.siteRevision + _tick   // re-read when the data or the clock moves
+            return WeatherProvider.siteConditions(siteLat, siteLon, siteAmsl, h)
+        }
+        function _wind(c) {
+            if (!c.windKnown) return "—"
+            var s = c.windMs.toFixed(1) + " m/s"
+            if (isFinite(c.gustMs) && c.gustMs > c.windMs + 0.05) s += " G" + c.gustMs.toFixed(1)
+            if (isFinite(c.windFromDeg)) s += qsTr(" from %1°").arg(Math.round(c.windFromDeg))
+            return s
+        }
+        function _windColor(c) { return c.gustRed ? Colors.error : Colors.textPrimary }
+        // The highest height whose gust is above the limit, for the red line.
+        readonly property var _redAt: c120.gustRed ? [120, c120] : c80.gustRed ? [80, c80] : c10.gustRed ? [10, c10] : null
+        readonly property var c0: _at(0)
+        readonly property var c10: _at(10)
+        readonly property var c80: _at(80)
+        readonly property var c120: _at(120)
+
+        Timer { interval: 60000; running: true; repeat: true; onTriggered: site._tick++ }
+
+        Label {
+            text: qsTr("At the site")
+            font.bold: true
+            font.pixelSize: Config.fontSizeH3
+        }
+        GridLayout {
+            width: parent.width
+            columns: 2
+            columnSpacing: 16
+            rowSpacing: 10
+
+            InfoCell { label: qsTr("Wind at 10 m"); value: site._wind(site.c10); valueColor: site._windColor(site.c10) }
+            InfoCell { label: qsTr("Wind at 80 m"); value: site._wind(site.c80); valueColor: site._windColor(site.c80) }
+            InfoCell { label: qsTr("Wind at 120 m"); value: site._wind(site.c120); valueColor: site._windColor(site.c120) }
+            InfoCell {
+                label: qsTr("Temperature, humidity")
+                value: (isFinite(site.c0.tempC) ? site.c0.tempC.toFixed(1) + " °C" : "—")
+                       + (isFinite(site.c0.humidityPct) ? ", " + Math.round(site.c0.humidityPct) + " %" : "")
+            }
+            InfoCell {
+                label: qsTr("Confidence")
+                value: site.c10.confidence
+                valueColor: site.c10.confidence === "High" ? Colors.success
+                          : site.c10.confidence === "Medium" ? Colors.checkWarn
+                          : site.c10.confidence === "Low" ? Colors.checkWarn : Colors.error
+            }
+            InfoCell {
+                label: qsTr("METAR check")
+                value: isFinite(site.c10.metarWindMs)
+                       ? site.c10.metarWindMs.toFixed(1) + " m/s"
+                         + (site.c10.metarGustMs > 0 ? " G" + site.c10.metarGustMs.toFixed(1) : "")
+                       : "—"
+            }
+        }
+        Label {
+            width: parent.width
+            wrapMode: Text.Wrap
+            font.pixelSize: Config.fontSizeSmall
+            color: Colors.textSecondary
+            text: (site.c10.windSource.length > 0
+                   ? qsTr("Wind from the %1").arg(site.c10.windSource)
+                     + (site.c10.forecastHour.length > 0 ? qsTr(", hour of %1").arg(site.c10.forecastHour) : "")
+                     + (site.c10.forecastAge.length > 0 ? qsTr(", %1 old").arg(site.c10.forecastAge) : "")
+                     + ". "
+                   : "")
+                  + qsTr("Site: %1.").arg(site.siteFrom)
+        }
+        Label {
+            width: parent.width
+            visible: site._redAt !== null
+            wrapMode: Text.Wrap
+            font.bold: true
+            color: Colors.error
+            text: site._redAt === null ? ""
+                  : qsTr("\u2716 Gusts %1 m/s at %2 m: above the %3 m/s gust limit")
+                    .arg((isFinite(site._redAt[1].gustMs) ? site._redAt[1].gustMs : site._redAt[1].windMs).toFixed(1))
+                    .arg(site._redAt[0])
+                    .arg(site._redAt[1].gustLimitMs.toFixed(0))
+        }
+        Repeater {
+            model: site.c10.reasons
+            Label {
+                width: site.width
+                wrapMode: Text.Wrap
+                font.pixelSize: Config.fontSizeSmall
+                color: Colors.checkWarn
+                text: "⚠ " + modelData
+            }
+        }
+        Label {
+            width: parent.width
+            wrapMode: Text.Wrap
+            font.pixelSize: Config.fontSizeSmall
+            color: Colors.textSecondary
+            text: site.c10.savedText
+        }
+        Button {
+            text: WeatherProvider.isFetching ? qsTr("Fetching...") : qsTr("Prepare for the site")
+            enabled: !WeatherProvider.isFetching && isFinite(site.siteLat)
+            onClicked: WeatherProvider.prepareForSite(site.siteLat, site.siteLon,
+                                                      typeof PreflightSettingsManager !== "undefined"
+                                                      ? PreflightSettingsManager.defaultIcao : "")
+        }
+        Label {
+            width: parent.width
+            wrapMode: Text.Wrap
+            font.pixelSize: Config.fontSizeSmall
+            color: Colors.textSecondary
+            text: qsTr("No internet at the site? Prepare here first. Download the map with Application Settings → Offline Maps.")
+        }
+    }
+
     // ── Scrollable content ─────────────────────────────────────────
     Flickable {
         anchors { fill: parent; margins: 16 }
@@ -278,6 +417,11 @@ Rectangle {
                     font.bold: true
                 }
             }
+
+            SectionDivider {}
+
+            // ── At the site: the weather the mission estimate uses ──
+            SiteWeatherSection { width: parent.width }
 
             SectionDivider {}
 

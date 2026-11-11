@@ -55,7 +55,7 @@ int qInitResources_qmlcache_VehicleSetupModule();
 #include "core/PayloadCheck.h"
 #include "core/PowerTypeCheck.h"
 #include "core/MotorTable.h"
-#include "core/MissionCheck.h"
+#include "core/MissionEstimateCheck.h"
 #include "core/PowerTypeModel.h"
 #include "core/SessionRecorder.h"
 #include "Vehicle/VehicleLinkManager.h"
@@ -376,18 +376,26 @@ void PreflightPlugin::init()
     }, _preflightManager);
     _preflightManager->addCheck(powerTypeCheck);
 
-    auto *missionCheck = new MissionCheck([this]() -> QVariantMap {
-        return _vehicleProfileManager ? _vehicleProfileManager->missionCheck() : QVariantMap();
+    // The mission estimate: advice only (not mandatory), never holds arming.
+    auto *missionEstimateCheck = new MissionEstimateCheck([this]() -> QVariantMap {
+        return _vehicleProfileManager ? _vehicleProfileManager->missionEstimate() : QVariantMap();
     }, _preflightManager);
-    _preflightManager->addCheck(missionCheck);
+    _preflightManager->addCheck(missionEstimateCheck);
 
     // Action items are not re-run on the evaluation timer: re-check on every
     // input they read, and every 5 s for the live ones (battery voltage and
     // charge, the copter's position).
-    auto reevaluatePower = [powerTypeCheck, missionCheck]() {
+    auto reevaluatePower = [powerTypeCheck, missionEstimateCheck]() {
         powerTypeCheck->evaluate();
-        missionCheck->evaluate();
+        missionEstimateCheck->evaluate();
     };
+    connect(_vehicleProfileManager, &VehicleProfileManager::emptyWeightChanged, this, reevaluatePower);
+    connect(_telemetryBridge, &TelemetryBridge::missionCountChanged, this, reevaluatePower);
+    connect(_telemetryBridge, &TelemetryBridge::homePositionChanged, this, reevaluatePower);
+    if (_weatherProvider)
+        connect(_weatherProvider, &WeatherProvider::siteWeatherChanged, this, reevaluatePower);
+    if (auto *settings = PreflightSettingsManager::instance())
+        connect(settings, &PreflightSettingsManager::payloadDropChanged, this, reevaluatePower);
     connect(_vehicleProfileManager, &VehicleProfileManager::powerTypeChanged, this, reevaluatePower);
     connect(_vehicleProfileManager, &VehicleProfileManager::vehicleTypeResolved, this, reevaluatePower);
     connect(_vehicleProfileManager, &VehicleProfileManager::payloadWeightChanged, this, reevaluatePower);
@@ -567,7 +575,13 @@ QQmlApplicationEngine *PreflightPlugin::createQmlApplicationEngine(QObject *pare
     qmlRegisterSingletonType<PreflightSettingsManager>("com.uav.preflight", 1, 0, "PreflightSettingsManager",
         [](QQmlEngine *engine, QJSEngine *jsEngine) -> QObject * {
             Q_UNUSED(engine) Q_UNUSED(jsEngine)
-            return PreflightSettingsManager::instance();
+            // The plugin owns the settings: without this, the first QML engine
+            // to use them would delete them when it is destroyed (each test
+            // engine, a second window), leaving instance() null.
+            QObject *settings = PreflightSettingsManager::instance();
+            if (settings)
+                QJSEngine::setObjectOwnership(settings, QJSEngine::CppOwnership);
+            return settings;
         });
 
     // FlightSession and OperatorManager are C++ singletons created in the plugin
@@ -1209,8 +1223,11 @@ void PreflightPlugin::_setupForVehicle(Vehicle *vehicle)
 }
 
 // ---------------------------------------------------------------------------
-// _refreshWeather() — Fetches weather data using either a configured ICAO code
-// or the vehicle's current GPS position as a fallback.
+// _refreshWeather() — Fetches the airport's METAR and TAF (the station set in
+// Preflight Settings, HAAB by default) and the forecast at the site, both
+// together: the mission estimate uses the site forecast and checks it against
+// the METAR. The site is the vehicle's home, or its GPS position before home
+// is set. A fresh METAR keeps priority in the weather panels.
 // ---------------------------------------------------------------------------
 void PreflightPlugin::_refreshWeather()
 {
@@ -1219,14 +1236,16 @@ void PreflightPlugin::_refreshWeather()
     auto *settings = PreflightSettingsManager::instance();
     if (!settings || !settings->autoWeatherEnabled()) return;
 
-    QString icao = settings->defaultIcao();
-    if (!icao.isEmpty()) {
-        // Prefer manual ICAO station override
+    const QString icao = settings->defaultIcao();
+    if (!icao.isEmpty())
         _weatherProvider->refreshAll(icao);
-    } else if (_telemetryBridge->vehicle()) {
-        // Fall back to vehicle GPS coordinates
-        double lat = _telemetryBridge->vehicle()->latitude();
-        double lon = _telemetryBridge->vehicle()->longitude();
+    if (_telemetryBridge->vehicle()) {
+        double lat = _telemetryBridge->homeLatitude();
+        double lon = _telemetryBridge->homeLongitude();
+        if (qAbs(lat) <= 0.01 && qAbs(lon) <= 0.01) {
+            lat = _telemetryBridge->vehicle()->latitude();
+            lon = _telemetryBridge->vehicle()->longitude();
+        }
         if (qAbs(lat) > 0.01 || qAbs(lon) > 0.01)
             _weatherProvider->fetchWeather(lat, lon);
     }

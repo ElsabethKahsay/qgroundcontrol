@@ -78,11 +78,14 @@ constexpr double kHoverMaxClimbMs = 0.5;
 constexpr double kDefaultCellGroupOhm = 0.0042;
 /// Steps of charge for the time-left sum, % of the pack.
 constexpr double kPackStepPct = 1.0;
-/// The drone type's cruise speed: 70 km/h.
-constexpr double kCruiseSpeedMs = 70.0 / 3.6;
-/// A reading counts as cruise when the ground speed is within this share of
-/// the cruise speed and the copter is level (climb as for hover).
-constexpr double kCruiseSpeedBand = 0.15;
+/// Cruise power is measured at whatever steady speed the copter flies and
+/// kept per speed band this wide, centred on multiples of it (band 5 covers
+/// 9–11 m/s), so a copter holding 10 m/s does not split across two bands.
+/// There is no fixed cruise speed: the planning speed is the copter's own
+/// mission speed (WP_SPD).
+constexpr double kCruiseBandMs = 2.0;
+/// Below this ground speed a level reading is hover-like, not cruise.
+constexpr double kMinCruiseSpeedMs = 3.0;
 /// MOT_THST_HOVER's default: a copter that has not learned its hover yet.
 constexpr double kDefaultThstHover = 0.35;
 /// ArduPilot's ESC range when MOT_PWM_MIN / MOT_PWM_MAX are not usable.
@@ -376,13 +379,20 @@ inline double averageThrust(const Table &t, const QVector<double> &motorThrottle
     return sum / motorThrottles.size();
 }
 
-/// A reading is steady cruise: airborne, at the cruise speed (within
-/// kCruiseSpeedBand), neither climbing nor sinking.
-inline bool isCruiseSample(double groundSpeedMs, double climbMs, double cruiseSpeedMs = kCruiseSpeedMs)
+/// A reading is level cruise: moving at kMinCruiseSpeedMs or faster, neither
+/// climbing nor sinking. Any speed counts; the reading is kept in the band of
+/// its speed (cruiseBand).
+inline bool isCruiseSample(double groundSpeedMs, double climbMs)
 {
-    return std::isfinite(groundSpeedMs) && std::isfinite(climbMs) && cruiseSpeedMs > 0.0
-           && std::abs(groundSpeedMs - cruiseSpeedMs) <= kCruiseSpeedBand * cruiseSpeedMs
+    return std::isfinite(groundSpeedMs) && std::isfinite(climbMs) && groundSpeedMs >= kMinCruiseSpeedMs
            && std::abs(climbMs) < kHoverMaxClimbMs;
+}
+
+/// The speed band a speed falls in (the nearest multiple of kCruiseBandMs);
+/// -1 for no usable speed.
+inline int cruiseBand(double speedMs)
+{
+    return (std::isfinite(speedMs) && speedMs > 0.0) ? static_cast<int>(std::lround(speedMs / kCruiseBandMs)) : -1;
 }
 
 /// The pack, for working out how its voltage falls through the rest of a

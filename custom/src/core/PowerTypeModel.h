@@ -591,7 +591,7 @@ struct LiveInput {
     bool   payloadAboard = false;   ///< Until the copter first reached the target
     double payloadKg     = 0.0;
     double minAtTarget   = 0.0;
-    double cruiseSpeedMs = 10.0;    ///< The type's learned cruise speed
+    double cruiseSpeedMs = 10.0;    ///< The type's learned cruise speed, or the copter's WP_SPD; ≤ 0 = not known
     double landMin       = 1.0;
     bool   armed         = false;
     /// Charge the pack had when the count started (%): 100 for a full pack,
@@ -659,21 +659,26 @@ inline LiveResult liveEstimate(const LiveInput &in)
     else
         r.ratio = liveRatio(in.currentA, in.factor, modelA);
     r.currentA = modelA * r.ratio;
+    // Distances need a speed: the ground speed while moving, the cruise speed
+    // while hovering. With no cruise speed known (the copter's WP_SPD not
+    // read yet) they stay unknown (-1) and the trip is not costed.
+    const bool speedKnown = in.cruiseSpeedMs > 0.0;
     if (r.currentA > 0.0) {
         r.timeLeftMin = r.usableAh / r.currentA * 60.0;
-        const double speed = r.hover ? in.cruiseSpeedMs : gs;
-        r.distLeftKm = r.timeLeftMin * 60.0 * speed / 1000.0;
+        if (!r.hover || speedKnown)
+            r.distLeftKm = r.timeLeftMin * 60.0 * (r.hover ? in.cruiseSpeedMs : gs) / 1000.0;
     }
     if (in.model.hoverA(kg) > 0.0)
         r.hoverMin = r.usableAh / in.model.hoverA(kg) * 60.0;
     if (in.model.cruiseA(kg) > 0.0) {
         r.cruiseMin = r.usableAh / in.model.cruiseA(kg) * 60.0;
-        r.cruiseKm = r.cruiseMin * 60.0 * in.cruiseSpeedMs / 1000.0;
+        if (speedKnown)
+            r.cruiseKm = r.cruiseMin * 60.0 * in.cruiseSpeedMs / 1000.0;
     }
 
     const bool posValid = std::isfinite(in.lat) && std::isfinite(in.lon);
     const bool homeValid = std::isfinite(in.homeLat) && std::isfinite(in.homeLon);
-    if (!posValid || !homeValid)
+    if (!posValid || !homeValid || !speedKnown)
         return r;
     RemainingTrip t;
     t.payloadKg = in.payloadKg;

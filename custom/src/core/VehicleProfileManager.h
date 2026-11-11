@@ -13,10 +13,12 @@
 #include <QString>
 #include <QJsonObject>
 #include <QElapsedTimer>
+#include <QHash>
 #include <QPair>
 #include <QTimer>
 
 #include "MotorTable.h"
+#include "PayloadRelease.h"
 #include <QVector>
 
 class TelemetryBridge;
@@ -66,10 +68,6 @@ class VehicleProfileManager : public QObject {
     /// a vehicle change; a different type also clears the confirmation.
     Q_PROPERTY(bool powerTypePropsConfirmed READ powerTypePropsConfirmed NOTIFY powerTypeChanged)
     Q_PROPERTY(QString powerTypeWaivedBy READ powerTypeWaivedBy NOTIFY powerTypeChanged)
-    Q_PROPERTY(QString missionCheckWaivedBy READ missionCheckWaivedBy NOTIFY powerTypeChanged)
-    /// The pilot chose to fly a pack that is not full (its charge is then
-    /// estimated from the resting voltage). Per flight, like the waivers above.
-    Q_PROPERTY(QString partialPackWaivedBy READ partialPackWaivedBy NOTIFY powerTypeChanged)
     /// Minutes the copter stays at the target this flight; -1 = not entered.
     Q_PROPERTY(double timeAtTargetMin READ timeAtTargetMin NOTIFY payloadWeightChanged)
     /// Take-off and landing minutes the mission check costs as hover
@@ -161,6 +159,16 @@ public:
     /// The pilot's payload entry: sets the weight (kg, >= 0) and marks it
     /// entered. Returns false (nothing changes) for a negative or non-finite value.
     Q_INVOKABLE bool enterPayloadWeightKg(double kg);
+    /// The pilot tapped "Payload dropped": the next payload is released (when
+    /// no release output is set, or as a backup). False when none is aboard.
+    Q_INVOKABLE bool payloadDroppedTap();
+    /// A servo output's range on the copter, for the settings page:
+    /// {known, minUs, maxUs (SERVOn_MIN / SERVOn_MAX), thresholdUs (the
+    /// middle: "released" is past it), text}.
+    Q_INVOKABLE QVariantMap servoOutputInfo(int output) const;
+    /// The payload aboard now (kg): the entered payload less what has been
+    /// released this flight; 0 after the target is reached.
+    double livePayloadAboardKg() const;
     /// Forget the payload entry (vehicle change): weight back to 0, not entered.
     void clearPayloadEntry();
 
@@ -351,10 +359,6 @@ public:
 
     bool powerTypePropsConfirmed() const { return m_propsConfirmed; }
     QString powerTypeWaivedBy() const { return m_powerTypeWaivedBy; }
-    QString missionCheckWaivedBy() const { return m_missionWaivedBy; }
-    QString partialPackWaivedBy() const { return m_partialPackWaivedBy; }
-    /// Fly a pack that is not full; needs the pilot's name; logged.
-    Q_INVOKABLE bool waivePartialPack(const QString &pilot);
     /// The selected pack's charge (%) from its resting voltage: 100 when full
     /// (or the voltage is not known), else PowerTypeModel::restingSocPct.
     double packRestingSocPct(double packVolts) const;
@@ -363,24 +367,38 @@ public:
     Q_INVOKABLE bool enterTimeAtTargetMin(double minutes);
     /// The props fitted are the linked type's. False with no type linked.
     Q_INVOKABLE bool confirmPowerTypeProps();
-    /// Fly this flight without a power type / with a mission check that came
-    /// out short. Need the pilot's name; written to compliance_logs.
+    /// Fly this flight without a power type. Needs the pilot's name; written
+    /// to compliance_logs.
     Q_INVOKABLE bool waivePowerType(const QString &pilot);
-    Q_INVOKABLE bool waiveMissionCheck(const QString &pilot);
     /// End of a (non-bench) flight or a vehicle change.
     void clearPowerTypeFlightState();
     /// The connected copter's FRAME_CLASS/FRAME_TYPE as a name ("Quad X"),
     /// empty when not reported; prefills a new power type's frame.
     Q_INVOKABLE QString currentFrameName() const;
     static QString frameName(int frameClass, int frameType);
-    /// What the "Mission check" item and its dialog show: the trip to the
-    /// saved target costed with the linked type's model. {applicable, linked,
+    /// The out-and-back trip to the saved target costed with the linked
+    /// type's model or motor table (the battery estimate's numbers; the old
+    /// "Mission check" item that showed it is replaced by the mission
+    /// estimate). {applicable, linked,
     /// typeName, powerTypeWaivedBy, packWaived, modelUsable, validated,
     /// source, advice, payloadEntered, payloadKg, timeAtTargetEntered,
     /// minAtTarget, cruiseSpeedMs, speedAssumed, usableAh, hasTarget,
     /// positionKnown, targetKm, takeoffAh, outAh, targetAh, backAh, landAh,
-    /// totalAh, totalMin, spareAh, maxTargetKm, fits, waivedBy}.
+    /// totalAh, totalMin, spareAh, maxTargetKm, fits}.
     Q_INVOKABLE QVariantMap missionCheck();
+
+    /// The mission estimate (MissionWalk → MissionCost → MissionAssess) for
+    /// the mission on the copter, now. Keys: applicable, ready, problem,
+    /// result, resultName, colour, landLikelyPct, landPessimisticPct, totalS,
+    /// totalText, confidence, confidenceWhy, reasons, waypoints (list of
+    /// {seq, what, timeText, socLikelyPct, socPessimisticPct, state,
+    /// stateName}), emptyKg, payloadKg, payloadCount, dropText, weatherText,
+    /// assumed, weatherRed, overCurrent. Advice only.
+    Q_INVOKABLE QVariantMap missionEstimate();
+    /// The copter's weight without payload (kg) for the mission estimate,
+    /// typed in by the operator and kept per copter; -1 when not entered.
+    Q_INVOKABLE double emptyWeightKg() const;
+    Q_INVOKABLE bool setEmptyWeightKg(double kg);
 
     double takeoffMin() const;
     double landMin() const;
@@ -407,6 +425,13 @@ signals:
     void planLongitudeChanged();
     void vehicleReconnected(const QString &deviceUid, const QString &friendlyName);
     void vehicleTypeResolved();
+    /// A payload came off in flight: `index` 1 or 2, `how` "output" or "tap".
+    void payloadReleased(int index, double kg, const QString &how);
+    /// The release output was at "released" at arming, or moved there while
+    /// on the ground (`what` says which); nothing was counted as a drop.
+    void payloadSwitchWarning(const QString &what);
+    /// The empty weight was entered or changed.
+    void emptyWeightChanged();
 
 private slots:
     void onConnectionChanged();
@@ -453,11 +478,14 @@ private:
     /// The pack's internal resistance (Ω): remembered from its last flight
     /// (QSettings, per aircraft), and measured again in each flight.
     double m_packOhm = -1.0;
-    /// This flight's steady-cruise readings: cruise power ÷ hover power for
-    /// the same copter and air, summed. Remembered per aircraft at the disarm
-    /// (QSettings MotorTable/cruiseRatio/<uid>).
+    /// This flight's level-cruise readings: cruise power ÷ hover power for
+    /// the same copter and air, summed over all speeds (for the flight record)
+    /// and per speed band (MotorTable::cruiseBand). A band with enough
+    /// readings is remembered per aircraft at the disarm (QSettings
+    /// MotorTable/cruiseBand/<uid>/<band>).
     double m_cruiseRatioSum = 0.0;
     int m_cruiseSamples = 0;
+    QHash<int, QPair<double, int>> m_cruiseBands;
     /// This flight's record for the charger comparison (motor_table_flights),
     /// written at the disarm of a flight that got airborne.
     struct TableFlightLog {
@@ -491,8 +519,6 @@ private:
     int m_hoverSamples = 0;
     bool m_propsConfirmed = false;
     QString m_powerTypeWaivedBy;
-    QString m_missionWaivedBy;
-    QString m_partialPackWaivedBy;
     double m_armStartSocPct = 100.0;    ///< Pack charge (%) just before this flight's arm.
     double m_fcMahAtArm = -1.0;         ///< The FC's mAh counter at this flight's arm (it counts from power-up).
     double m_timeAtTargetMin = -1.0;
@@ -516,6 +542,13 @@ private:
     double m_powerCruiseSpeedMs = 10.0; ///< Its used flights' average cruise speed.
     bool m_liveWasArmed = false;
     bool m_livePayloadAboard = false;   ///< This flight's payload, until the target is reached.
+    /// The release servo output (Preflight Settings); counts the payloads
+    /// released this flight.
+    PayloadRelease::Detector m_drop;
+    PayloadRelease::Config dropConfig() const;
+    double copterParam(const QString &name) const;
+    void _onOutputsForDrop();
+    void _recordDrop(const QString &eventType, const QString &detail);
     /// The GCS's own count of the charge used this flight (copters whose FC
     /// reports no current that follows throttle), from the arm.
     double m_gcsUsedAh = 0.0;

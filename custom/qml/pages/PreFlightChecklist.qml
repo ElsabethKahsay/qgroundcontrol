@@ -45,8 +45,8 @@ Page {
         id: powerTypeDialog
         parent: Overlay.overlay
     }
-    CE.ChecklistEngine.MissionCheckDialog {
-        id: missionCheckDialog
+    CE.ChecklistEngine.MissionEstimateDialog {
+        id: missionEstimateDialog
         parent: Overlay.overlay
     }
 
@@ -615,14 +615,14 @@ Page {
                                                                                         readonly property bool isPackCheck: chk && chk.checkId === "power.battery.pack"
                                                                                         readonly property bool isPayloadCheck: chk && chk.checkId === "airframe.payload"
                                                                                         readonly property bool isPowerTypeCheck: chk && chk.checkId === "power.power_type"
-                                                                                        readonly property bool isMissionCheck: chk && chk.checkId === "power.mission"
-                                                                                        readonly property bool hasDialog: isPackCheck || isPayloadCheck || isPowerTypeCheck || isMissionCheck
+                                                                                        readonly property bool isMissionEstimate: chk && chk.checkId === "power.mission_estimate"
+                                                                                        readonly property bool hasDialog: isPackCheck || isPayloadCheck || isPowerTypeCheck || isMissionEstimate
                                                                                         // Items with a dialog stay clickable once passed, to change or review them.
                                                                                         visible: ((isManual || isAction) && !isPassed) || hasDialog
                                                                                         text: isPackCheck ? (isPassed ? qsTr("Change") : qsTr("Select"))
                                                                                               : isPayloadCheck ? (isPassed ? qsTr("Change") : qsTr("Enter"))
                                                                                               : isPowerTypeCheck ? (isPassed ? qsTr("Change") : qsTr("Confirm"))
-                                                                                              : isMissionCheck ? qsTr("Details")
+                                                                                              : isMissionEstimate ? qsTr("Details")
                                                                                               : isManual ? "Confirm" : "Run"
                                                                                         highlighted: true
                                                                                         font.pixelSize: Config.fontSizeSmall
@@ -638,9 +638,9 @@ Page {
                                                                                             } else if (isPowerTypeCheck) {
                                                                                                 // Only a confirmed type (or a waiver) passes it.
                                                                                                 powerTypeDialog.open();
-                                                                                            } else if (isMissionCheck) {
-                                                                                                // Computed, never confirmed by hand.
-                                                                                                missionCheckDialog.open();
+                                                                                            } else if (isMissionEstimate) {
+                                                                                                // Advice only, computed.
+                                                                                                missionEstimateDialog.open();
                                                                                             } else if (isAction) {
                                                                                                 var c = PreflightManager.checkById(chk.checkId);
                                                                                                 if (c) {

@@ -39,6 +39,18 @@ class PreflightSettingsManager : public QObject {
     Q_PROPERTY(double ceilingThresholdM READ ceilingThresholdM WRITE setCeilingThresholdM NOTIFY ceilingThresholdMChanged)
     Q_PROPERTY(int weatherUpdateIntervalMin READ weatherUpdateIntervalMin WRITE setWeatherUpdateIntervalMin NOTIFY weatherUpdateIntervalMinChanged)
 
+    // Payload release (see core/PayloadRelease.h).
+    /// The release servo output (SERVOn), 1-16; 0 = not set (nothing detected).
+    /// On the 22-inch copter output 9 or 10.
+    Q_PROPERTY(int payloadDropOutput READ payloadDropOutput WRITE setPayloadDropOutput NOTIFY payloadDropChanged)
+    /// The payload is released when the output is low (below the middle).
+    Q_PROPERTY(bool payloadDropOnWhenLow READ payloadDropOnWhenLow WRITE setPayloadDropOnWhenLow NOTIFY payloadDropChanged)
+    /// How many pieces the payload is in: 1 (e.g. 4 kg) or 2 (e.g. 2 × 2 kg).
+    Q_PROPERTY(int payloadCount READ payloadCount WRITE setPayloadCount NOTIFY payloadDropChanged)
+    /// The mission item where the pilot drops on the RC, for the estimate
+    /// before take-off; 0 = not given (the payload is costed as carried home).
+    Q_PROPERTY(int payloadDropItem READ payloadDropItem WRITE setPayloadDropItem NOTIFY payloadDropChanged)
+
 public:
     static PreflightSettingsManager *instance();
 
@@ -90,6 +102,15 @@ public:
     int weatherUpdateIntervalMin() const;
     void setWeatherUpdateIntervalMin(int v);
 
+    int payloadDropOutput() const;
+    void setPayloadDropOutput(int v);
+    bool payloadDropOnWhenLow() const;
+    void setPayloadDropOnWhenLow(bool v);
+    int payloadCount() const;
+    void setPayloadCount(int v);
+    int payloadDropItem() const;
+    void setPayloadDropItem(int v);
+
 signals:
     void pilotNameChanged();
     void pilotLicenseChanged();
@@ -106,6 +127,7 @@ signals:
     void visibilityThresholdKmChanged();
     void ceilingThresholdMChanged();
     void weatherUpdateIntervalMinChanged();
+    void payloadDropChanged();
 
 private:
     static PreflightSettingsManager *s_instance;

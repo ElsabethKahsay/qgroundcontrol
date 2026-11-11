@@ -149,7 +149,9 @@ void PreflightSettingsManager::setAutoWeatherEnabled(bool v)
 
 QString PreflightSettingsManager::defaultIcao() const
 {
-    return m_settings.value("defaultIcao", "").toString();
+    // Addis Ababa Bole, the airport nearest the base; changeable in Preflight
+    // Settings, and an empty entry turns the METAR off.
+    return m_settings.value("defaultIcao", "HAAB").toString();
 }
 
 void PreflightSettingsManager::setDefaultIcao(const QString &v)
@@ -176,7 +178,9 @@ void PreflightSettingsManager::setWindThresholdSustained(double v)
 
 double PreflightSettingsManager::windThresholdGust() const
 {
-    return m_settings.value("windThresholdGust", 10.0).toDouble();
+    // The operators' gust limit for the 22-inch copter: anything above 12 m/s
+    // turns the weather red. Changeable in Preflight Settings.
+    return m_settings.value("windThresholdGust", 12.0).toDouble();
 }
 
 void PreflightSettingsManager::setWindThresholdGust(double v)
@@ -227,5 +231,62 @@ void PreflightSettingsManager::setWeatherUpdateIntervalMin(int v)
     if (v != weatherUpdateIntervalMin()) {
         m_settings.setValue("weatherUpdateIntervalMin", v);
         emit weatherUpdateIntervalMinChanged();
+    }
+}
+
+// ── Payload release ─────────────────────────────────────────────────
+
+int PreflightSettingsManager::payloadDropOutput() const
+{
+    return m_settings.value("payloadDropOutput", 0).toInt();
+}
+
+void PreflightSettingsManager::setPayloadDropOutput(int v)
+{
+    v = qBound(0, v, 16);
+    if (v != payloadDropOutput()) {
+        m_settings.setValue("payloadDropOutput", v);
+        emit payloadDropChanged();
+    }
+}
+
+bool PreflightSettingsManager::payloadDropOnWhenLow() const
+{
+    return m_settings.value("payloadDropOnWhenLow", false).toBool();
+}
+
+void PreflightSettingsManager::setPayloadDropOnWhenLow(bool v)
+{
+    if (v != payloadDropOnWhenLow()) {
+        m_settings.setValue("payloadDropOnWhenLow", v);
+        emit payloadDropChanged();
+    }
+}
+
+int PreflightSettingsManager::payloadCount() const
+{
+    return m_settings.value("payloadCount", 1).toInt();
+}
+
+void PreflightSettingsManager::setPayloadCount(int v)
+{
+    v = qBound(1, v, 2);
+    if (v != payloadCount()) {
+        m_settings.setValue("payloadCount", v);
+        emit payloadDropChanged();
+    }
+}
+
+int PreflightSettingsManager::payloadDropItem() const
+{
+    return m_settings.value("payloadDropItem", 0).toInt();
+}
+
+void PreflightSettingsManager::setPayloadDropItem(int v)
+{
+    v = qMax(0, v);
+    if (v != payloadDropItem()) {
+        m_settings.setValue("payloadDropItem", v);
+        emit payloadDropChanged();
     }
 }

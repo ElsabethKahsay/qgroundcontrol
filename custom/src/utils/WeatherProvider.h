@@ -29,6 +29,9 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QtMath>
+#include <QVariantMap>
+
+#include "core/SiteWeather.h"
 
 class WeatherProvider : public QObject
 {
@@ -67,6 +70,10 @@ class WeatherProvider : public QObject
     /// Where the shown values come from, e.g. "METAR HAAB, observed 09:00Z"
     /// or "Forecast (Open-Meteo), fetched 12:00Z"; empty before any data.
     Q_PROPERTY(QString weatherSource READ weatherSource NOTIFY weatherUpdated)
+    /// Goes up each time the site forecast or the airport observation kept for
+    /// the mission estimate changes; QML bindings on siteConditions() read it
+    /// so they are worked out again.
+    Q_PROPERTY(int siteRevision READ siteRevision NOTIFY siteWeatherChanged)
 
 public:
     static WeatherProvider *instance();
@@ -104,6 +111,24 @@ public:
     QString lastUpdated() const;
     bool isFetching() const { return m_loading; }
     QString weatherSource() const;
+    int siteRevision() const { return m_siteRevision; }
+
+    /// The weather at a flight height above the site, now (see SiteWeather.h).
+    /// siteAmslM may be NaN when the site's height is not known.
+    SiteWeather::Conditions conditionsAt(double siteLat, double siteLon, double siteAmslM, double heightAglM,
+                                         qint64 nowUtc) const;
+    const SiteWeather::Forecast &siteForecast() const { return m_siteForecast; }
+    const SiteWeather::Station &siteStation() const { return m_siteStation; }
+    /// conditionsAt() for QML, now. Keys: windKnown, windMs, windFromDeg,
+    /// gustMs, tempC, humidityPct, windSource, tempSource, forecastHour,
+    /// forecastAge, forecastAgeS, confidence, reasons, metarWindMs,
+    /// metarGustMs, savedText, gustLimitMs (Preflight Settings' gust limit)
+    /// and gustRed (gust above it). Unknown numbers are NaN.
+    Q_INVOKABLE QVariantMap siteConditions(double siteLat, double siteLon, double siteAmslM, double heightAglM) const;
+    /// "Prepare for the site": fetches the site forecast and the airport's
+    /// METAR from the network (not the cache) while there is internet. Both
+    /// are kept on disk and used at the site without internet.
+    Q_INVOKABLE void prepareForSite(double latitude, double longitude, const QString &icaoCode);
 
     Q_INVOKABLE void fetchWeather(double latitude, double longitude);
     Q_INVOKABLE void fetchMetar(const QString &icaoCode);
@@ -119,6 +144,7 @@ signals:
     void loadingChanged();
     void notamsChanged();
     void tafUpdated();
+    void siteWeatherChanged();
 
 private:
     friend class WeatherProviderTest;
@@ -131,6 +157,17 @@ private:
     void handleNotamJson(const QByteArray &data);
     void parsePrecipitation(const QString &metar);
     void handleForecastJson(const QByteArray &data);
+    void fetchForecast(double latitude, double longitude, QNetworkRequest::CacheLoadControl load);
+    void fetchMetarFrom(const QString &icaoCode, QNetworkRequest::CacheLoadControl load);
+
+    // The site forecast and the airport observation are kept in one file
+    // (site_weather.json in the application's data folder) so they are there
+    // at a site without internet. Only a response that reads correctly
+    // replaces what is kept.
+    void keepSiteForecast(const QByteArray &data);
+    void keepSiteMetar(const QByteArray &data);
+    void saveSite() const;
+    void loadSite();
 
     // The current aviationweather.gov METAR JSON format.
     /// obsTime is Unix seconds (an ISO string is still accepted).
@@ -175,4 +212,13 @@ private:
 
     // NOTAM
     QVariantList m_notams;
+
+    // Kept for the mission estimate (see keepSiteForecast()).
+    SiteWeather::Forecast m_siteForecast;
+    SiteWeather::Station m_siteStation;
+    QByteArray m_siteForecastRaw;
+    QByteArray m_siteMetarRaw;
+    qint64 m_siteSavedUtc = 0;
+    QString m_siteFilePath;
+    int m_siteRevision = 0;
 };

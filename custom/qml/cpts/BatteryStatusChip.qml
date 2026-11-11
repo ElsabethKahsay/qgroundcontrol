@@ -158,6 +158,10 @@ Rectangle {
     }
     readonly property bool _timeShown: _socKnown && _timeMin >= 0 && !_packWaived
 
+    // A distance from the live estimate; "-- km" while it is not known (no
+    // mission speed read from the copter yet).
+    function _km(km) { return km >= 0 ? Number(km).toFixed(1) + " km" : "-- km" }
+
     readonly property string _tooltip: {
         if (!_connected)            return "No vehicle connected"
         if (!_fresh)                return "No battery telemetry (stale)"
@@ -166,12 +170,12 @@ Rectangle {
         if (_returnNow)             return "The rest of the trip needs " + Number(_pl.tripNeedAh).toFixed(1) + " Ah, "
                                            + Number(_pl.usableAh).toFixed(1) + " Ah left above the reserve: return now"
         if (_plActive && !_armed)   return _pl.typeName + ": cruise ~" + Math.round(_pl.cruiseMin) + " min / "
-                                           + Number(_pl.cruiseKm).toFixed(1) + " km, hover ~" + Math.round(_pl.hoverMin)
+                                           + root._km(_pl.cruiseKm) + ", hover ~" + Math.round(_pl.hoverMin)
                                            + " min with the payload entered"
                                            + (_pl.startSocPct < 100 ? " (pack not full: about " + Math.round(_pl.startSocPct)
                                                                        + " % from its voltage)" : "")
         if (_plActive)              return _pl.typeName + ": ~" + Math.round(_pl.timeLeftMin) + " min / "
-                                           + Number(_pl.distLeftKm).toFixed(1) + " km left at the current draw \u2014 tap for detail"
+                                           + root._km(_pl.distLeftKm) + " left at the current draw \u2014 tap for detail"
         if (_preEstShown)           return "Pre-flight estimate for the selected pack (" + _preEst.sourceLabel + ") \u2014 the live estimate starts once armed"
         if (!_gateOk)               return "Arm and draw ≥ " + kMinGateA.toFixed(1) + " A to estimate flight time"
         if (!_canComputeTime)       return "Configure battery pack (N_S · N_P · mAh) to estimate flight time"
@@ -390,7 +394,7 @@ Rectangle {
             DetailRow { label: qsTr("Left");
                         visible: root._plActive
                         value: root._plActive && root._pl.timeLeftMin >= 0
-                               ? "~" + Math.round(root._pl.timeLeftMin) + " min / " + Number(root._pl.distLeftKm).toFixed(1) + " km"
+                               ? "~" + Math.round(root._pl.timeLeftMin) + " min / " + root._km(root._pl.distLeftKm)
                                : "—"
                         valueColor: Colors.textPrimary }
             DetailRow { label: qsTr("Rest of the trip");
@@ -399,6 +403,32 @@ Rectangle {
                                : root._returnNow ? "short by " + Number(root._pl.tripShortAh).toFixed(1) + " Ah"
                                : Number(root._pl.tripNeedAh).toFixed(1) + " of " + Number(root._pl.usableAh).toFixed(1) + " Ah"
                         valueColor: root._returnNow ? Colors.error : Colors.success }
+            // The payload: what is still aboard, and how many were released
+            // (seen on the release servo output, or the button below).
+            DetailRow { label: qsTr("Payload");
+                        objectName: "chipPayload"
+                        visible: root._plActive && root._armed
+                        value: !root._plActive ? ""
+                               : (root._pl.payloadAboardKg > 0 ? Number(root._pl.payloadAboardKg).toFixed(1) + " kg aboard"
+                                                                : qsTr("none aboard"))
+                                 + (root._pl.payloadsReleased > 0
+                                    ? qsTr(", %1 of %2 released").arg(root._pl.payloadsReleased).arg(root._pl.payloadCount) : "")
+                        valueColor: Colors.textPrimary }
+            Text {
+                Layout.fillWidth: true
+                visible: root._plActive && root._armed && !root._pl.dropOutputSet
+                text: qsTr("No release servo output set (Preflight Settings): tap below when a payload is dropped")
+                wrapMode: Text.Wrap
+                font.pixelSize: Config.fontSizeSmall
+                color: Colors.textSecondary
+            }
+            Button {
+                objectName: "chipPayloadDropped"
+                Layout.fillWidth: true
+                visible: root._plActive && root._armed && root._pl.payloadAboardKg > 0
+                text: qsTr("Payload dropped")
+                onClicked: if (root._profile) root._profile.payloadDroppedTap()
+            }
             DetailRow { label: qsTr("Based on");
                         visible: root._preEstShown
                         value: root._preEstShown

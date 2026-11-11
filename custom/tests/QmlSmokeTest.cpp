@@ -57,6 +57,10 @@
 #include "mocks/MockTelemetryBridge.h"
 #include "QGCPalette.h"
 #include "FlightSession.h"
+#include "MissionManager/MissionManager.h"
+#include "MissionManager/MissionItem.h"
+#include "MissionAssess.h"
+#include "utils/PreflightSettingsManager.h"
 #include "TelemetryBridge.h"
 #include "VehicleProfileManager.h"
 #include "MotorTable.h"
@@ -1182,6 +1186,8 @@ private slots:
     void testAnalyzeChecklistShowsBatteryPack();
     void testFlyChecklistShowsBatteryPack();
     void testTrainerDefaultIsShLowInstructor();
+    void testWeatherPanelShowsSite();
+    void testSettingsShowPayloadRelease();
 
 private:
     QSharedPointer<QQmlApplicationEngine> _engine;
@@ -1257,6 +1263,31 @@ void ChecklistPagesSmokeTest::testTrainerDefaultIsShLowInstructor()
     QVERIFY(PreflightPlugin::trainerHighIsInstructorFromSetting(QStringLiteral("1")));   // box ticked
 }
 
+// The weather panel shows the site weather the mission estimate uses, and
+// the button that keeps it for a site without internet.
+void ChecklistPagesSmokeTest::testWeatherPanelShowsSite()
+{
+    _load(QStringLiteral("custom/qml/cpts/PreflightChecklistView.qml"));
+    const QStringList texts = _texts(_root.data());
+    for (const char *t : {"At the site", "Wind at 10 m", "Wind at 80 m", "Wind at 120 m", "Confidence",
+                          "METAR check", "Prepare for the site"})
+        QVERIFY2(texts.contains(QLatin1String(t)), t);
+    bool kept = false;
+    for (const QString &t : texts)
+        kept = kept || t.startsWith(QStringLiteral("Kept: ")) || t == QStringLiteral("Nothing kept yet");
+    QVERIFY2(kept, qPrintable(texts.join(QStringLiteral(" | "))));
+}
+
+// Preflight Settings has the payload release rows.
+void ChecklistPagesSmokeTest::testSettingsShowPayloadRelease()
+{
+    _load(QStringLiteral("custom/qml/pages/PreflightSettings.qml"));
+    const QStringList texts = _texts(_root.data());
+    for (const char *t : {"Payload release", "Release servo output (0 = not set)", "Released when the output is low",
+                          "Payload pieces (1, or 2 dropped one by one)", "Planned drop at mission item (0 = carried home)"})
+        QVERIFY2(texts.contains(QLatin1String(t)), qPrintable(QLatin1String(t) + QStringLiteral(" | ") + texts.join(QStringLiteral(" | "))));
+}
+
 void ChecklistPagesSmokeTest::testFlyChecklistShowsBatteryPack()
 {
     _load(QStringLiteral("custom/qml/pages/PreFlightChecklist.qml"));
@@ -1310,6 +1341,7 @@ private slots:
     void testMotorOutputsReadForTheEstimate();
     void testMotorTableLiveEstimate();
     void testMotorTableBeforeTakeoff();
+    void testMissionEstimateLive();
     void testMotorTableCountsEveryReading();
     void testMotorTableInTheApp();
     void testTelemetryReadInMetricUnits();
@@ -1554,6 +1586,23 @@ void LivePluginBenchTest::testPayloadEnteredIsOnTheFlightRecord()
     QVERIFY(vpm->enterPayloadWeightKg(1.35));
     QCOMPARE(item->status(), CheckStatus::Passed);
 
+    // The settings page shows the release output's range on the copter and
+    // where "released" starts (SERVO10_MIN / MAX on the mock: 1100-1900 us).
+    for (int i = 0; i < 100 && !_vehicle->parameterManager()->parametersReady(); ++i)
+        QTest::qWait(50);
+    QVERIFY(vpm->servoOutputInfo(0).value(QStringLiteral("text")).toString().startsWith(QStringLiteral("Not set")));
+    Fact *max10 = _vehicle->parameterManager()->getParameter(_vehicle->defaultComponentId(), QStringLiteral("SERVO10_MAX"));
+    QVERIFY(max10);
+    const QVariant max10Was = max10->rawValue();
+    QVariantMap info = vpm->servoOutputInfo(10);
+    QVERIFY(info.value(QStringLiteral("known")).toBool());
+    QCOMPARE(info.value(QStringLiteral("thresholdUs")).toDouble(), 1500.0);
+    QVERIFY2(info.value(QStringLiteral("text")).toString().contains(QStringLiteral("1100-1900 us")),
+             qPrintable(info.value(QStringLiteral("text")).toString()));
+    max10->setRawValue(2100);                          // the middle follows the copter's range
+    QCOMPARE(vpm->servoOutputInfo(10).value(QStringLiteral("thresholdUs")).toDouble(), 1600.0);
+    max10->setRawValue(max10Was);
+
     const QString uid = vpm->currentDeviceUid();
     FlightSession::instance()->setMode(QStringLiteral("FLIGHT"));
     _vehicle->setArmed(true, false);
@@ -1570,6 +1619,34 @@ void LivePluginBenchTest::testPayloadEnteredIsOnTheFlightRecord()
             logged = q.value(0).toDouble();
     }
     QVERIFY2(qFuzzyCompare(logged, 1.35), qPrintable(QStringLiteral("flight record payload = %1").arg(logged)));
+
+    // Two pieces: the pilot's "Payload dropped" takes the first off the live
+    // weight and writes PAYLOAD_RELEASED on this flight's events.
+    auto *settings = PreflightSettingsManager::instance();
+    QVERIFY(settings);
+    const int countWas = settings->payloadCount();
+    settings->setPayloadCount(2);
+    for (int i = 0; i < 100 && vpm->livePayloadAboardKg() <= 0.0; ++i)
+        QTest::qWait(50);
+    QVERIFY(qFuzzyCompare(vpm->livePayloadAboardKg(), 1.35));
+    QSignalSpy released(vpm, &VehicleProfileManager::payloadReleased);
+    QVERIFY(vpm->payloadDroppedTap());
+    QCOMPARE(released.count(), 1);
+    QCOMPARE(released.at(0).at(0).toInt(), 1);
+    QCOMPARE(released.at(0).at(2).toString(), QStringLiteral("tap"));
+    QVERIFY(qFuzzyCompare(vpm->livePayloadAboardKg(), 0.675));
+    {
+        QSqlQuery q(QSqlDatabase::database());
+        q.prepare(QStringLiteral("SELECT triggered_by FROM flight_telemetry_events WHERE flight_id = ? "
+                                 "AND event_type = 'PAYLOAD_RELEASED'"));
+        q.addBindValue(DatabaseManager::instance().recordingHistoryFlightId());
+        QVERIFY(q.exec() && q.next());
+        QVERIFY2(q.value(0).toString().contains(QStringLiteral("Payload 1 of 2")), qPrintable(q.value(0).toString()));
+    }
+    QVERIFY(vpm->payloadDroppedTap());
+    QCOMPARE(vpm->livePayloadAboardKg(), 0.0);
+    QVERIFY(!vpm->payloadDroppedTap());                 // nothing left
+    settings->setPayloadCount(countWas);
 
     _vehicle->setArmed(false, false);
     QVERIFY(_waitArmed(false));
@@ -1707,11 +1784,10 @@ void LivePluginBenchTest::testPowerTypeFlightRecordedLive()
     QVERIFY(vpm->linkCurrentVehiclePowerType(0));
 }
 
-// The real plugin's "Power type" and "Mission check" items on the mock copter:
-// Pending until linked and the props are confirmed; with a validated type
-// (the worked example's four flights) a target far beyond reach fails the
-// mission check, which blocks the gate until waived; a near one passes; an
-// RC flight's disarm clears the props confirmation and the waiver.
+// The real plugin's "Power type" item on the mock copter: Pending until linked
+// and the props are confirmed; linking another type drops the confirmation;
+// an RC flight's disarm clears it. The old "Mission check" item is gone: the
+// mission estimate (never mandatory) replaced it.
 void LivePluginBenchTest::testPowerTypeAndMissionItemsLive()
 {
     QVERIFY2(_connectPlane(), "mock copter did not connect / resolve its UID");
@@ -1719,8 +1795,8 @@ void LivePluginBenchTest::testPowerTypeAndMissionItemsLive()
     auto *gate = _pluginChild<ArmingGate>();
     QVERIFY(mgr && gate);
     AbstractCheck *typeItem = mgr->checkById(QStringLiteral("power.power_type"));
-    AbstractCheck *tripItem = mgr->checkById(QStringLiteral("power.mission"));
-    QVERIFY2(typeItem && tripItem, "the two items are not registered");
+    QVERIFY2(typeItem, "the Power type item is not registered");
+    QVERIFY2(!mgr->checkById(QStringLiteral("power.mission")), "the old Mission check item is still registered");
     VehicleProfileManager *vpm = VehicleProfileManager::instance();
     for (int i = 0; i < 100 && vpm->kind() != VehicleKind::Multirotor; ++i)
         QTest::qWait(50);
@@ -1733,7 +1809,6 @@ void LivePluginBenchTest::testPowerTypeAndMissionItemsLive()
     QVERIFY(vpm->linkCurrentVehiclePowerType(0));
     QCOMPARE(typeItem->status(), CheckStatus::Pending);
     QVERIFY(gate->currentRequest(0).failingMandatoryIds.contains(QStringLiteral("power.power_type")));
-    QCOMPARE(tripItem->status(), CheckStatus::Skipped);
 
     // A type validated by the worked example's four flights.
     const int type = _validatedPowerType();
@@ -1752,32 +1827,6 @@ void LivePluginBenchTest::testPowerTypeAndMissionItemsLive()
     QCOMPARE(typeItem->status(), CheckStatus::Pending);
     QVERIFY(vpm->confirmPowerTypeProps());
 
-    // A pack, a payload and a target 60 km away: far beyond any pack.
-    QVERIFY(vpm->enterPayloadWeightKg(0.8));
-    QVERIFY(vpm->enterTimeAtTargetMin(2.0));
-    const QGeoCoordinate here = _vehicle->coordinate();
-    QVERIFY(FlightSession::instance()->saveTargetLocation(here.latitude() + 60.0 / 111.195, here.longitude(),
-                                                          QStringLiteral("typed")));
-    tripItem->evaluate();
-    QCOMPARE(tripItem->status(), CheckStatus::Failed);
-    QVERIFY2(tripItem->message().contains(QStringLiteral("short by")), qPrintable(tripItem->message()));
-    QVERIFY(gate->currentRequest(0).failingMandatoryIds.contains(QStringLiteral("power.mission")));
-
-    QVERIFY(vpm->waiveMissionCheck(QStringLiteral("Live Pilot")));
-    QCOMPARE(tripItem->status(), CheckStatus::Warning);
-    QVERIFY(!gate->currentRequest(0).failingMandatoryIds.contains(QStringLiteral("power.mission")));
-
-    // 50 m away: the trip fits whatever the mock battery reads (about 2.4 Ah).
-    QVERIFY(FlightSession::instance()->saveTargetLocation(here.latitude() + 0.05 / 111.195, here.longitude(),
-                                                          QStringLiteral("typed")));
-    vpm->clearPowerTypeFlightState();
-    QVERIFY(vpm->confirmPowerTypeProps());
-    tripItem->evaluate();
-    QVERIFY2(tripItem->status() == CheckStatus::Passed || tripItem->status() == CheckStatus::Failed,
-             qPrintable(tripItem->message()));
-    const QVariantMap near = vpm->missionCheck();
-    QCOMPARE(tripItem->status() == CheckStatus::Passed, near.value(QStringLiteral("fits")).toBool());
-
     // An RC flight in Flight mode: its disarm ends the confirmation.
     FlightSession::instance()->setMode(QStringLiteral("FLIGHT"));
     _vehicle->setArmed(true, false);
@@ -1795,8 +1844,8 @@ void LivePluginBenchTest::testPowerTypeAndMissionItemsLive()
 // The three dialogs the checklist pages open (ChecklistEngine inline
 // components, through the same "cpts" import the pages use), driven like a
 // pilot would: the payload dialog saves the weight and the time at target;
-// "Props fitted match" confirms the type; the mission dialog shows the trip
-// VehicleProfileManager costs.
+// "Props fitted match" confirms the type; the mission estimate dialog shows
+// what VehicleProfileManager works out.
 void LivePluginBenchTest::testPowerDialogsDriveTheItems()
 {
     QVERIFY2(_connectPlane(), "mock copter did not connect / resolve its UID");
@@ -1831,7 +1880,7 @@ void LivePluginBenchTest::testPowerDialogsDriveTheItems()
         "    CE.ChecklistEngine.PayloadDialog { id: payload }\n"
         "    CE.ChecklistEngine.BatteryPackDialog { id: pack }\n"
         "    CE.ChecklistEngine.PowerTypeDialog { id: powerType }\n"
-        "    CE.ChecklistEngine.MissionCheckDialog { id: mission }\n"
+        "    CE.ChecklistEngine.MissionEstimateDialog { id: mission }\n"
         "}\n"), QUrl(QStringLiteral("qrc:/qml/cpts/PowerDialogsTest.qml")));
     QVERIFY2(component.status() == QQmlComponent::Ready, qPrintable(component.errorString()));
     QScopedPointer<QObject> rootObj(component.create());
@@ -1878,17 +1927,18 @@ void LivePluginBenchTest::testPowerDialogsDriveTheItems()
     QVERIFY(vpm->powerTypePropsConfirmed());
     QVERIFY(!pt->property("visible").toBool());
 
-    // Mission check: shows what VehicleProfileManager costs.
+    // Mission estimate: shows what VehicleProfileManager works out (no
+    // motor table here, so it says why it cannot assess).
     QObject *mc = dialog("mission");
     QVERIFY(mc);
     QMetaObject::invokeMethod(mc, "open");
     pumpQml(200);
-    grabScreen(window.data(), QStringLiteral("dialog-mission-check"));
+    grabScreen(window.data(), QStringLiteral("dialog-mission-estimate"));
     const QVariantMap shown = mc->property("_r").toMap();
     QVERIFY(shown.value(QStringLiteral("applicable")).toBool());
-    QVERIFY(shown.value(QStringLiteral("linked")).toBool());
     QCOMPARE(shown.value(QStringLiteral("payloadKg")).toDouble(), 0.8);
-    QCOMPARE(shown.value(QStringLiteral("minAtTarget")).toDouble(), 2.0);
+    QCOMPARE(shown.value(QStringLiteral("resultName")).toString(), QStringLiteral("Can't assess"));
+    QVERIFY(!shown.value(QStringLiteral("problem")).toString().isEmpty());
     QMetaObject::invokeMethod(mc, "close");
 
     // The battery pack dialog (same look; only pictured here).
@@ -2612,16 +2662,29 @@ void LivePluginBenchTest::testMotorTableBeforeTakeoff()
     vpm->clearPayloadEntry();
     setup = vpm->motorTableSetup();
 
-    // Cruise at 70 km/h: the hover until a flight has measured it (said in
-    // the Mission check), then the hover power × the measured ratio.
-    QCOMPARE(setup.value(QStringLiteral("cruiseSpeedMs")).toDouble(), MotorTable::kCruiseSpeedMs);
+    // Cruise at the copter's own mission speed: the mock copter's Copter 3.6
+    // parameters give WPNAV_SPEED 500 cm/s (5 m/s); set to 1000 it is 10 m/s.
+    // The hover until a flight has measured that speed band (said in the
+    // Mission check), then the hover power × the band's measured ratio.
+    QVERIFY2(qAbs(setup.value(QStringLiteral("cruiseSpeedMs")).toDouble() - 5.0) < 1e-6,
+             qPrintable(setup.value(QStringLiteral("cruiseSpeedMs")).toString()));
+    const auto speedBefore = setMockParams(_vehicle, bridge, {{QStringLiteral("WPNAV_SPEED"), 1000.0}});
+    setup = vpm->motorTableSetup();
+    QVERIFY(qAbs(setup.value(QStringLiteral("cruiseSpeedMs")).toDouble() - 10.0) < 1e-6);
     const QString uid = vpm->currentDeviceUid();
-    const QVariant cruiseBefore = QSettings().value(QStringLiteral("MotorTable/cruiseRatio/%1").arg(uid));
-    if (!setup.value(QStringLiteral("cruiseMeasured")).toBool()) {
-        QCOMPARE(setup.value(QStringLiteral("cruiseA")).toDouble(), setup.value(QStringLiteral("hoverA")).toDouble());
-        QVERIFY(vpm->missionCheck().value(QStringLiteral("cruiseNote")).toString().contains(QStringLiteral("not measured")));
-    }
-    QSettings().setValue(QStringLiteral("MotorTable/cruiseRatio/%1").arg(uid), 1.15);
+    const QString bandKey = QStringLiteral("MotorTable/cruiseBand/%1/%2").arg(uid).arg(MotorTable::cruiseBand(10.0));
+    const QVariant cruiseBefore = QSettings().value(bandKey);
+    QSettings().remove(bandKey);
+    setup = vpm->motorTableSetup();
+    QVERIFY(!setup.value(QStringLiteral("cruiseMeasured")).toBool());
+    QCOMPARE(setup.value(QStringLiteral("cruiseA")).toDouble(), setup.value(QStringLiteral("hoverA")).toDouble());
+    QVERIFY(vpm->missionCheck().value(QStringLiteral("cruiseNote")).toString().contains(QStringLiteral("not measured")));
+    // A ratio measured at another speed is not used for this one.
+    const QString otherKey = QStringLiteral("MotorTable/cruiseBand/%1/%2").arg(uid).arg(MotorTable::cruiseBand(19.4));
+    const QVariant otherBefore = QSettings().value(otherKey);
+    QSettings().setValue(otherKey, 1.4);
+    QVERIFY(!vpm->motorTableSetup().value(QStringLiteral("cruiseMeasured")).toBool());
+    QSettings().setValue(bandKey, 1.15);
     setup = vpm->motorTableSetup();
     QVERIFY(setup.value(QStringLiteral("cruiseMeasured")).toBool());
     const double cruiseExpect = MotorTable::averageCurrent(
@@ -2630,11 +2693,15 @@ void LivePluginBenchTest::testMotorTableBeforeTakeoff()
              qPrintable(QStringLiteral("%1 A vs %2 A").arg(setup.value(QStringLiteral("cruiseA")).toDouble()).arg(cruiseExpect)));
     QVERIFY(setup.value(QStringLiteral("cruiseA")).toDouble() > setup.value(QStringLiteral("hoverA")).toDouble());
     QVERIFY(vpm->missionCheck().value(QStringLiteral("cruiseNote")).toString().isEmpty());
-    QCOMPARE(vpm->missionCheck().value(QStringLiteral("cruiseSpeedMs")).toDouble(), MotorTable::kCruiseSpeedMs);
-    if (cruiseBefore.isValid())
-        QSettings().setValue(QStringLiteral("MotorTable/cruiseRatio/%1").arg(uid), cruiseBefore);
-    else
-        QSettings().remove(QStringLiteral("MotorTable/cruiseRatio/%1").arg(uid));
+    QVERIFY(qAbs(vpm->missionCheck().value(QStringLiteral("cruiseSpeedMs")).toDouble() - 10.0) < 1e-6);
+    QVERIFY(!vpm->missionCheck().value(QStringLiteral("speedAssumed")).toBool());
+    for (const auto &kv : {qMakePair(bandKey, cruiseBefore), qMakePair(otherKey, otherBefore)}) {
+        if (kv.second.isValid())
+            QSettings().setValue(kv.first, kv.second);
+        else
+            QSettings().remove(kv.first);
+    }
+    restoreMockParams(speedBefore);
     mc = vpm->missionCheck();
     QVERIFY(mc.value(QStringLiteral("modelUsable")).toBool());
     QVERIFY(!mc.value(QStringLiteral("validated")).toBool());
@@ -3052,6 +3119,168 @@ void LivePluginBenchTest::testMotorTableInTheApp()
     chip->setParentItem(nullptr);
     page->setParentItem(nullptr);
     restoreMockParams(paramsBefore);
+    vpm->setBatterySeriesCells(seriesBefore);
+    vpm->setBatteryParallelCells(parallelBefore);
+    vpm->setBatteryCellMah(mahBefore);
+}
+
+// The mission estimate on the mock copter: a mission written to it (take-off,
+// two waypoints 80 m apart, RTL), the empty weight and an RC drop at item 3.
+// The "Mission estimate" item shows the result and never counts for the gate;
+// the dialog reads the same estimate; and the release output (servo 10)
+// moving to "released" on the ground is reported, not counted as a drop.
+void LivePluginBenchTest::testMissionEstimateLive()
+{
+    QVERIFY2(_connectPlane(), "mock copter did not connect / resolve its UID");
+    VehicleProfileManager *vpm = VehicleProfileManager::instance();
+    auto *bridge = _pluginChild<TelemetryBridge>();
+    auto *gate = _pluginChild<ArmingGate>();
+    auto *mgr = _pluginChild<PreflightManager>();
+    QVERIFY(bridge && gate && mgr);
+    for (int i = 0; i < 100 && (!bridge->parametersReady() || vpm->kind() != VehicleKind::Multirotor); ++i)
+        QTest::qWait(50);
+    AbstractCheck *item = nullptr;
+    for (AbstractCheck *c : mgr->checks())
+        if (c && c->id() == QLatin1String("power.mission_estimate"))
+            item = c;
+    QVERIFY2(item, "no power.mission_estimate item in the live roster");
+    QVERIFY(!item->mandatory());
+
+    const MotorTable::Table &table = MotorTable::m6215_320kv_22x78_6s();
+    QVERIFY(vpm->linkCurrentVehiclePowerType(0));
+    QVERIFY(vpm->linkCurrentVehicleMotorTable(table.id));
+    const int seriesBefore = vpm->batterySeriesCells(), parallelBefore = vpm->batteryParallelCells(),
+              mahBefore = vpm->batteryCellMah();
+    vpm->setBatterySeriesCells(6);
+    vpm->setBatteryParallelCells(1);
+    vpm->setBatteryCellMah(20000);
+    auto *settings = PreflightSettingsManager::instance();
+    const int dropItemWas = settings->payloadDropItem(), outputWas = settings->payloadDropOutput();
+    const QString weightKey = QStringLiteral("MissionEstimate/emptyKg/%1").arg(vpm->currentDeviceUid());
+    const QVariant weightWas = QSettings().value(weightKey);
+    QSettings().remove(weightKey);
+
+    // The mission, written to the mock (item 0 is home, as ArduPilot keeps it).
+    for (int i = 0; i < 200 && !(qAbs(bridge->homeLatitude()) > 1e-6); ++i)
+        QTest::qWait(50);
+    const double hLat = bridge->homeLatitude(), hLon = bridge->homeLongitude();
+    QVERIFY2(qAbs(hLat) > 1e-6, "no home on the mock copter");
+    const double dLat = 80.0 / 111195.0;
+    MissionManager *mm = _vehicle->missionManager();
+    QList<MissionItem *> plan;
+    auto add = [&](int seq, MAV_CMD cmd, double lat, double lon, double alt) {
+        plan << new MissionItem(seq, cmd, seq == 0 ? MAV_FRAME_GLOBAL : MAV_FRAME_GLOBAL_RELATIVE_ALT, 0, 0, 0, 0,
+                                lat, lon, alt, true, seq == 0, mm);
+    };
+    add(0, MAV_CMD_NAV_WAYPOINT, hLat, hLon, bridge->homeAltitude());
+    add(1, MAV_CMD_NAV_TAKEOFF, 0, 0, 30);
+    add(2, MAV_CMD_NAV_WAYPOINT, hLat + dLat, hLon, 30);
+    add(3, MAV_CMD_NAV_WAYPOINT, hLat + 2 * dLat, hLon, 30);
+    add(4, MAV_CMD_NAV_RETURN_TO_LAUNCH, 0, 0, 0);
+    mm->writeMissionItems(plan);
+    for (int i = 0; i < 200 && mm->missionItems().size() != 5; ++i)
+        QTest::qWait(50);
+    QCOMPARE(mm->missionItems().size(), 5);
+
+    // No weight yet: can't assess, an amber item that the gate ignores.
+    QVERIFY(vpm->enterPayloadWeightKg(4.0));
+    settings->setPayloadDropItem(3);
+    QVariantMap e = vpm->missionEstimate();
+    QCOMPARE(e.value(QStringLiteral("result")).toInt(), int(MissionAssess::CantAssess));
+    QVERIFY2(e.value(QStringLiteral("problem")).toString().contains(QStringLiteral("Weight missing")),
+             qPrintable(e.value(QStringLiteral("problem")).toString()));
+    item->evaluate();
+    QCOMPARE(item->status(), CheckStatus::Warning);
+    QVERIFY(!gate->currentRequest(0).failingMandatoryIds.contains(QStringLiteral("power.mission_estimate")));
+
+    // With the weight: timed and costed, the payload off at item 3.
+    QVERIFY(!vpm->setEmptyWeightKg(-1.0));
+    QVERIFY(vpm->setEmptyWeightKg(8.09));
+    QCOMPARE(vpm->emptyWeightKg(), 8.09);
+    e = vpm->missionEstimate();
+    QVERIFY2(e.value(QStringLiteral("ready")).toBool(), qPrintable(e.value(QStringLiteral("problem")).toString()));
+    const QVariantList wps = e.value(QStringLiteral("waypoints")).toList();
+    QCOMPARE(wps.size(), 4);
+    QCOMPARE(wps.at(0).toMap().value(QStringLiteral("what")).toString(), QStringLiteral("Take-off"));
+    QCOMPARE(wps.at(3).toMap().value(QStringLiteral("what")).toString(), QStringLiteral("Return and land"));
+    QCOMPARE(e.value(QStringLiteral("dropText")).toString(), QStringLiteral("Dropped by the pilot at item 3"));
+    QVERIFY(e.value(QStringLiteral("landLikelyPct")).toDouble() > e.value(QStringLiteral("landPessimisticPct")).toDouble());
+    item->evaluate();
+    QVERIFY2(item->message().startsWith(e.value(QStringLiteral("resultName")).toString()), qPrintable(item->message()));
+    QVERIFY(!gate->currentRequest(0).failingMandatoryIds.contains(QStringLiteral("power.mission_estimate")));
+    // Dropped at item 3 lands higher than carried home.
+    settings->setPayloadDropItem(0);
+    const QVariantMap home = vpm->missionEstimate();
+    QVERIFY(home.value(QStringLiteral("dropText")).toString().contains(QStringLiteral("carried home")));
+    QVERIFY(home.value(QStringLiteral("landLikelyPct")).toDouble() < e.value(QStringLiteral("landLikelyPct")).toDouble());
+    settings->setPayloadDropItem(3);
+
+    // The dialog reads the same estimate.
+    QSharedPointer<QQmlApplicationEngine> engine(QGCCorePlugin::instance()->createQmlApplicationEngine(nullptr));
+    QVERIFY(engine);
+    QGCPalette palette;
+    engine->rootContext()->setContextProperty(QStringLiteral("qgcPal"), &palette);
+    QSharedPointer<QQuickWindow> window(createWindow(engine, 1100, 800));
+    QDir src(QCoreApplication::applicationDirPath());
+    for (int i = 0; i < 4 && !QFileInfo::exists(src.filePath(QStringLiteral("custom/qml/cpts/PreflightChecklistView.qml"))); ++i)
+        src.cdUp();
+    QString err;
+    QScopedPointer<QQuickItem> view(createComponent(engine, window.data(),
+        src.filePath(QStringLiteral("custom/qml/cpts/PreflightChecklistView.qml")).toUtf8().constData(), &err));
+    QVERIFY2(view, qPrintable(err));
+    pumpQml(300);
+    QObject *dialog = view->findChild<QObject *>(QStringLiteral("missionEstimateDialog"));
+    QVERIFY(dialog);
+    QVERIFY(QMetaObject::invokeMethod(dialog, "open"));
+    pumpQml(300);
+    const QVariantMap shown = dialog->property("_r").toMap();
+    QCOMPARE(shown.value(QStringLiteral("resultName")).toString(), e.value(QStringLiteral("resultName")).toString());
+    QCOMPARE(shown.value(QStringLiteral("waypoints")).toList().size(), 4);
+    QVERIFY(QMetaObject::invokeMethod(dialog, "close"));
+    pumpQml(100);
+    view->setParentItem(nullptr);
+
+    // The release output on the ground: servo 10 to "released" while armed
+    // on the ground is reported, not counted.
+    settings->setPayloadDropOutput(10);
+    QSignalSpy warned(vpm, &VehicleProfileManager::payloadSwitchWarning);
+    QSignalSpy released(vpm, &VehicleProfileManager::payloadReleased);
+    uint16_t pwm[16] = {};
+    pwm[9] = 1100;
+    QTimer feed;
+    connect(&feed, &QTimer::timeout, this, [&]() {
+        mavlink_message_t msg;
+        mavlink_msg_servo_output_raw_pack_chan(static_cast<uint8_t>(_vehicle->id()), static_cast<uint8_t>(_vehicle->defaultComponentId()),
+                                               0, &msg, 0, 0, pwm[0], pwm[1], pwm[2], pwm[3], pwm[4], pwm[5], pwm[6], pwm[7],
+                                               pwm[8], pwm[9], pwm[10], pwm[11], pwm[12], pwm[13], pwm[14], pwm[15]);
+        emit _vehicle->mavlinkMessageReceived(msg);
+    });
+    feed.start(100);
+    FlightSession::instance()->setMode(QStringLiteral("FLIGHT"));
+    _vehicle->setArmed(true, false);
+    QVERIFY(_waitArmed(true));
+    QTest::qWait(500);
+    pwm[9] = 1900;
+    for (int i = 0; i < 40 && warned.isEmpty(); ++i)
+        QTest::qWait(50);
+    QCOMPARE(warned.count(), 1);
+    QVERIFY2(warned.at(0).at(0).toString().contains(QStringLiteral("on the ground")), qPrintable(warned.at(0).at(0).toString()));
+    QCOMPARE(released.count(), 0);                       // not a drop
+    feed.stop();
+    _vehicle->setArmed(false, false);
+    QVERIFY(_waitArmed(false));
+
+    // Put everything back.
+    mm->removeAll();
+    for (int i = 0; i < 100 && !mm->missionItems().isEmpty(); ++i)
+        QTest::qWait(50);
+    settings->setPayloadDropOutput(outputWas);
+    settings->setPayloadDropItem(dropItemWas);
+    if (weightWas.isValid())
+        QSettings().setValue(weightKey, weightWas);
+    else
+        QSettings().remove(weightKey);
+    vpm->clearPayloadEntry();
     vpm->setBatterySeriesCells(seriesBefore);
     vpm->setBatteryParallelCells(parallelBefore);
     vpm->setBatteryCellMah(mahBefore);
