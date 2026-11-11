@@ -223,7 +223,9 @@ void DatabaseManagerTest::testBatteryCycleNeedsTwentyPercent()
 }
 
 // The gimbal-page target is saved during preflight (no flight row
-// yet), survives a restart, and is copied onto the next flight session.
+// yet), survives a restart of the database, and is copied onto the next
+// flight session. clearVehicleTarget() forgets it (one vehicle, or all: the
+// plugin clears them all when the GCS starts and one when its flight ends).
 void DatabaseManagerTest::testVehicleTargetSavedBeforeAnyFlight()
 {
     DatabaseManager &db = DatabaseManager::instance();
@@ -251,6 +253,18 @@ void DatabaseManagerTest::testVehicleTargetSavedBeforeAnyFlight()
     QVERIFY(q.next());
     QCOMPARE(q.value(0).toDouble(), 9.03);
     QCOMPARE(q.value(1).toString(), QStringLiteral("map center"));
+
+    // Cleared on the vehicle; the flight session keeps its copy.
+    QVERIFY(db.upsertVehicle(QStringLiteral("UID-U"), QStringLiteral("Quad"), QStringLiteral("ArduPilot"), QStringLiteral("Copter")));
+    QVERIFY(db.saveVehicleTarget(QStringLiteral("UID-U"), 9.05, 38.81, QStringLiteral("typed")));
+    QVERIFY(db.clearVehicleTarget(QStringLiteral("UID-T")));
+    QVERIFY(db.vehicleTarget(QStringLiteral("UID-T")).isEmpty());
+    QVERIFY(!db.vehicleTarget(QStringLiteral("UID-U")).isEmpty());   // only that vehicle
+    QVERIFY(q.exec(QStringLiteral("SELECT target_lat FROM flight_sessions WHERE id = %1").arg(session)));
+    QVERIFY(q.next());
+    QCOMPARE(q.value(0).toDouble(), 9.03);
+    QVERIFY(db.clearVehicleTarget());                                   // all vehicles
+    QVERIFY(db.vehicleTarget(QStringLiteral("UID-U")).isEmpty());
 }
 
 // ── SessionRecorder — no vehicle, no MockLink ──────────────

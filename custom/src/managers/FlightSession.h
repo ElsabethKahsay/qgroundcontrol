@@ -76,6 +76,9 @@ public:
     Q_INVOKABLE bool saveTargetLocation(double lat, double lon, const QString &source);
     /// Re-reads the persisted target location for the current flight id.
     Q_INVOKABLE void reloadTargetLocation();
+    /// Forgets the target (it belongs to one flight; optional): the
+    /// connected vehicle's kept target and the one shown.
+    Q_INVOKABLE void clearTargetLocation();
 
     /// Wires this session to a live vehicle so armed state is tracked from the
     /// vehicle's own armedChanged signal (force-arm, normal arm, or external GCS

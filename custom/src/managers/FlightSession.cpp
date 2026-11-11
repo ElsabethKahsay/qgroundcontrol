@@ -323,6 +323,19 @@ void FlightSession::reloadTargetLocation()
     emit targetLocationChanged();
 }
 
+void FlightSession::clearTargetLocation()
+{
+    const QString key = currentVehicleKey();
+    if (!key.isEmpty())
+        DatabaseManager::instance().clearVehicleTarget(key);
+    if (std::isnan(m_targetLat) && std::isnan(m_targetLon) && m_targetSource.isEmpty())
+        return;
+    m_targetLat = std::numeric_limits<double>::quiet_NaN();
+    m_targetLon = std::numeric_limits<double>::quiet_NaN();
+    m_targetSource.clear();
+    emit targetLocationChanged();
+}
+
 void FlightSession::onPreFlightComplete()
 {
     if (m_state != SessionState::PreFlight) return;

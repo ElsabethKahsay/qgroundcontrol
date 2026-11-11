@@ -1564,6 +1564,24 @@ void LivePluginBenchTest::testFlyViewTargetDistanceFromVehicle()
     QVERIFY2(!sys.contains(QStringLiteral("Bat")) && !sys.contains(QStringLiteral("Brg")) && !sys.contains(QStringLiteral("Trip")),
              qPrintable(sys.join(QLatin1Char(','))));
 
+    // The target belongs to one flight: a flight (not a bench arm) clears it,
+    // so the next one starts without a target (no "Tgt" row, no trip to it).
+    const QString uid = VehicleProfileManager::instance()->currentDeviceUid();
+    QVERIFY(!DatabaseManager::instance().vehicleTarget(uid).isEmpty());
+    FlightSession::instance()->setMode(QStringLiteral("FLIGHT"));
+    _vehicle->setArmed(true, false);
+    QVERIFY(_waitArmed(true));
+    QTest::qWait(300);
+    QVERIFY2(!DatabaseManager::instance().vehicleTarget(uid).isEmpty(), "the target went before the flight ended");
+    _vehicle->setArmed(false, false);
+    QVERIFY(_waitArmed(false));
+    for (int i = 0; i < 100 && !DatabaseManager::instance().vehicleTarget(uid).isEmpty(); ++i)
+        QTest::qWait(50);
+    QVERIFY2(DatabaseManager::instance().vehicleTarget(uid).isEmpty(), "the target outlived its flight");
+    QVERIFY(std::isnan(FlightSession::instance()->targetLat()));
+    pumpQml(200);
+    QCOMPARE(strip->property("_tgtDist").toDouble(), -1.0);           // "--": no target
+
     strip->setParentItem(nullptr);
 }
 

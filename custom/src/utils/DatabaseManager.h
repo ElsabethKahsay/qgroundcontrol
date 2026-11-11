@@ -282,6 +282,10 @@ public:
     /// when the vehicle has no row in vehicles.
     bool saveVehicleTarget(const QString &deviceUid, double lat, double lon, const QString &source);
     QVariantMap vehicleTarget(const QString &deviceUid);
+    /// Forgets the target kept on a vehicle's row (all vehicles when
+    /// @p deviceUid is empty). A target belongs to one flight: it is cleared
+    /// when that flight ends and when the GCS starts.
+    bool clearVehicleTarget(const QString &deviceUid = QString());
     /// Copies the vehicle's target onto a flight_sessions row (at session start).
     bool copyVehicleTargetToSession(int sessionId, const QString &deviceUid);
     Q_INVOKABLE bool endFlightSession(int sessionId, double durationSeconds);

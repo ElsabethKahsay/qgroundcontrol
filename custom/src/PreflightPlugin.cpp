@@ -252,6 +252,10 @@ void PreflightPlugin::init()
     if (!DatabaseManager::instance().initialize()) {
         qgcApp()->showAppMessage(tr("Flight logging is OFF: %1")
                                      .arg(DatabaseManager::instance().startupError()));
+    } else {
+        // A target belongs to one flight and is optional: none carries over
+        // from an earlier run of the GCS.
+        DatabaseManager::instance().clearVehicleTarget();
     }
 
     _noFlyZoneModel = new NoFlyZoneModel(this);
@@ -471,6 +475,14 @@ void PreflightPlugin::init()
         return s;
     });
     _sessionRecorder->setFlightClosedHandler([this](const SessionRecorder::FlightEnd &end) {
+        // The target was for this flight (it stays on the flight's own
+        // records); the next flight starts without one. A bench or test arm
+        // keeps it.
+        if (!end.bench) {
+            DatabaseManager::instance().clearVehicleTarget(end.deviceUid);
+            if (FlightSession::instance())
+                FlightSession::instance()->clearTargetLocation();
+        }
         // Battery cycle: non-bench flights only, >= 20 % of the pack.
         if (!end.bench && end.mahUsed >= 0
             && DatabaseManager::instance().recordBatteryFlight(end.flightId, end.batterySerial, end.mahUsed)

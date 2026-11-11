@@ -4569,6 +4569,22 @@ QVariantMap DatabaseManager::vehicleTarget(const QString &deviceUid)
     return out;
 }
 
+bool DatabaseManager::clearVehicleTarget(const QString &deviceUid)
+{
+    assertMainThread();
+    if (!m_initialized) return false;
+    QSqlQuery q(m_db);
+    if (deviceUid.isEmpty()) {
+        q.prepare("UPDATE vehicles SET target_lat = NULL, target_lon = NULL, target_source = NULL, "
+                  "target_set_at = NULL WHERE target_lat IS NOT NULL OR target_lon IS NOT NULL");
+    } else {
+        q.prepare("UPDATE vehicles SET target_lat = NULL, target_lon = NULL, target_source = NULL, "
+                  "target_set_at = NULL WHERE device_uid = ?");
+        q.addBindValue(deviceUid);
+    }
+    return execOrWarn(q, "clearVehicleTarget");
+}
+
 bool DatabaseManager::copyVehicleTargetToSession(int sessionId, const QString &deviceUid)
 {
     assertMainThread();
