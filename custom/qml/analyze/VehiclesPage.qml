@@ -357,6 +357,7 @@ AnalyzePage {
                 property var mtSetup: ({})
                 property var tableFlights: []      // the copter's motor-table flights, newest first
                 property var tableCal: ({})        // their fine-tuning and proof
+                property var missionAcc: ({})      // how accurate the mission estimate has been on them
 
                 function reload() {
                     if (!_vpm) return
@@ -375,6 +376,7 @@ AnalyzePage {
                     mtSetup = _vpm.motorTableId !== "" ? _vpm.motorTableSetup() : ({})
                     tableFlights = _vpm.motorTableFlights()
                     tableCal = _vpm.motorTableCalibration()
+                    missionAcc = _vpm.missionAccuracy()
                     var idx = 0
                     for (var k = 0; k < motorTables.length; ++k)
                         if (motorTables[k].id === _vpm.motorTableId) idx = k + 1
@@ -660,9 +662,9 @@ AnalyzePage {
                                 color: _ptPane.tableCal.proven ? Colors.success : Colors.textSecondary
                                 text: (_ptPane.tableCal.proven
                                        ? qsTr("Proven on this copter: the last 3 flights agree with the charger within 10 %. "
-                                              + "A trip that does not fit now holds the arm (it can be waived).")
+                                              + "The mission estimate counts it as proven (its confidence goes up). It never holds the arm.")
                                        : qsTr("%1 more flight(s) with a charger number to prove the table; until then the "
-                                              + "trip check only warns.").arg(_ptPane.tableCal.needed))
+                                              + "mission estimate's confidence stays lower.").arg(_ptPane.tableCal.needed))
                                       + (_ptPane.tableCal.usable >= 2
                                          ? qsTr(" Fine-tuned × %1 from %2 flights.").arg(Number(_ptPane.tableCal.factor).toFixed(3))
                                                                                      .arg(_ptPane.tableCal.usable)
@@ -677,6 +679,18 @@ AnalyzePage {
                                       ? qsTr("Charge the pack straight after landing and enter the mAh the charger put back. "
                                              + "Only flights that started on a full pack count.")
                                       : qsTr("No flights on the motor table yet. Each flight that gets airborne is recorded here.")
+                            }
+
+                            // The mission estimate against the recorded flights
+                            // (predicted at take-off, flown): how far off it has been.
+                            Text {
+                                objectName: "mtMissionAccuracy"
+                                Layout.fillWidth: true
+                                visible: _ptPane.tableFlights.length > 0
+                                wrapMode: Text.Wrap
+                                font.pixelSize: fs(11)
+                                color: Colors.textSecondary
+                                text: _ptPane.missionAcc.text || ""
                             }
 
                             Repeater {
@@ -718,6 +732,16 @@ AnalyzePage {
                                                   : !f.startedFull ? qsTr("Started on a pack that was not full: not counted.")
                                                   : f.ratio > 0 ? qsTr("Charger ÷ count: %1").arg(Number(f.ratio).toFixed(3))
                                                   : qsTr("Waiting: enter the charger number.")
+                                        }
+                                        // Predicted at take-off against flown.
+                                        Text {
+                                            objectName: "mtFlightMission_" + f.id
+                                            Layout.fillWidth: true
+                                            visible: (f.missionSummary || "").length > 0
+                                            wrapMode: Text.Wrap
+                                            font.pixelSize: fs(11)
+                                            color: Colors.textSecondary
+                                            text: f.missionSummary || ""
                                         }
                                         RowLayout {
                                             Layout.fillWidth: true

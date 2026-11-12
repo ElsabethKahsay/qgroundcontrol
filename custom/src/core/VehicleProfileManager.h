@@ -405,6 +405,10 @@ public:
     /// stateName}), emptyKg, payloadKg, payloadCount, dropText, weatherText,
     /// assumed, weatherRed, overCurrent. Advice only.
     Q_INVOKABLE QVariantMap missionEstimate();
+    /// How accurate the mission estimate has been on this copter's recorded
+    /// flights (MissionRecord.h): {flights, meanAbsSocPts, meanAbsTimePct,
+    /// atOrAbovePessimistic, text}.
+    Q_INVOKABLE QVariantMap missionAccuracy() const;
     QVariantMap missionLive() const { return m_missionLive; }
 
     /// Where the in-flight estimate starts: the copter now.
@@ -589,6 +593,9 @@ private:
     // the mission item flown last, and what has been alerted already.
     qint64 m_flightStartMs = 0;
     QHash<int, QPair<double, double>> m_takeoffPrediction;
+    QVariantMap m_takeoffEstimate;      ///< missionEstimate() at the arm, for the flight's record
+    QVariantList m_dropEvents;          ///< payload releases this flight: {index, kg, timeS, how}
+    void _noteDrop(int index, double kg, const QString &how);
     QVariantList m_passed;
     int m_lastMissionIndex = -1;
     int m_lastAlertResult = -1;

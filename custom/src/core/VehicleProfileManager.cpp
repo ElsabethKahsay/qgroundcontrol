@@ -39,6 +39,7 @@
 #include "Vehicle/FactGroups/VehicleBatteryFactGroup.h"
 #include "MissionWalk.h"
 #include "MissionAssess.h"
+#include "MissionRecord.h"
 #include "MissionManager/MissionManager.h"
 #include "MissionManager/MissionItem.h"
 #include "managers/FlightSession.h"
@@ -1012,6 +1013,8 @@ QVariantList VehicleProfileManager::motorTableFlights() const
         f.dismissed = m.value(QStringLiteral("state")).toString() == QLatin1String("dismissed");
         m[QStringLiteral("usable")] = f.usable();
         m[QStringLiteral("ratio")] = f.chargerAh > 0.0 && f.gcsAh > 0.0 ? f.ratio() : -1.0;
+        const MissionRecord::Record rec = MissionRecord::fromJson(m.value(QStringLiteral("missionJson")).toString());
+        m[QStringLiteral("missionSummary")] = MissionRecord::summary(rec);
         out.prepend(m);
     }
     return out;
@@ -1346,7 +1349,9 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         m_windLastMs = 0;
         m_windK = QSettings().value(QStringLiteral("WindFromLean/k/%1").arg(m_currentDeviceUid), 0.0).toDouble();
         m_takeoffPrediction.clear();
-        for (const QVariant &wv : missionEstimate().value(QStringLiteral("waypoints")).toList()) {
+        m_dropEvents.clear();
+        m_takeoffEstimate = missionEstimate();
+        for (const QVariant &wv : m_takeoffEstimate.value(QStringLiteral("waypoints")).toList()) {
             const QVariantMap wp = wv.toMap();
             m_takeoffPrediction.insert(wp.value(QStringLiteral("seq")).toInt(),
                                        {wp.value(QStringLiteral("timeS")).toDouble(),
@@ -1402,6 +1407,35 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
             if (l.densityN > 0)
                 f[QStringLiteral("density")] = l.densitySum / l.densityN;
             f[QStringLiteral("packOhm")] = m_packOhmLive;
+            // The mission estimate against this flight (when one was made at
+            // take-off): predicted and real by item, the landing, the drops.
+            if (m_takeoffEstimate.value(QStringLiteral("ready")).toBool() && m_flightStartMs > 0) {
+                MissionRecord::Record rec;
+                rec.resultAtTakeoff = m_takeoffEstimate.value(QStringLiteral("resultName")).toString();
+                rec.predTotalS = m_takeoffEstimate.value(QStringLiteral("totalS")).toDouble();
+                rec.predLandLikely = m_takeoffEstimate.value(QStringLiteral("landLikelyPct")).toDouble();
+                rec.predLandPess = m_takeoffEstimate.value(QStringLiteral("landPessimisticPct")).toDouble();
+                rec.realTotalS = (nowMs - m_flightStartMs) / 1000.0;
+                rec.realLandSoc = m_liveSOC >= 0 ? double(m_liveSOC) : -1.0;
+                for (const QVariant &wv : m_takeoffEstimate.value(QStringLiteral("waypoints")).toList()) {
+                    const QVariantMap wp = wv.toMap();
+                    MissionRecord::Item it;
+                    it.seq = wp.value(QStringLiteral("seq")).toInt();
+                    it.predTimeS = wp.value(QStringLiteral("timeS")).toDouble();
+                    it.predSocLikely = wp.value(QStringLiteral("socLikelyPct")).toDouble();
+                    it.predSocPess = wp.value(QStringLiteral("socPessimisticPct")).toDouble();
+                    for (const QVariant &pv : m_passed) {
+                        const QVariantMap p = pv.toMap();
+                        if (p.value(QStringLiteral("seq")).toInt() == it.seq && it.seq >= 0) {
+                            it.realTimeS = p.value(QStringLiteral("timeS")).toDouble();
+                            it.realSoc = p.value(QStringLiteral("socPct")).toDouble();
+                        }
+                    }
+                    rec.items.append(it);
+                }
+                rec.drops = m_dropEvents;
+                f[QStringLiteral("missionJson")] = MissionRecord::toJson(rec);
+            }
             DatabaseManager::instance().insertMotorTableFlight(f);
         }
         m_tableLog = TableFlightLog();
@@ -2763,6 +2797,7 @@ void VehicleProfileManager::_onOutputsForDrop()
         const QString detail = QStringLiteral("Payload %1 of %2 released (%3 kg), servo output %4 at %5 us")
                                    .arg(n).arg(c.payloads).arg(c.eachKg(), 0, 'f', 1).arg(c.output).arg(pwm, 0, 'f', 0);
         _recordDrop(QStringLiteral("PAYLOAD_RELEASED"), detail);
+        _noteDrop(n, c.eachKg(), QStringLiteral("output"));
         emit payloadReleased(n, c.eachKg(), QStringLiteral("output"));
         emit liveDataChanged();
         break;
@@ -2794,6 +2829,7 @@ bool VehicleProfileManager::payloadDroppedTap()
     _recordDrop(QStringLiteral("PAYLOAD_RELEASED"),
                 QStringLiteral("Payload %1 of %2 released (%3 kg), tapped by the pilot").arg(n).arg(c.payloads)
                     .arg(c.eachKg(), 0, 'f', 1));
+    _noteDrop(n, c.eachKg(), QStringLiteral("tap"));
     emit payloadReleased(n, c.eachKg(), QStringLiteral("tap"));
     emit liveDataChanged();
     return true;
@@ -3183,6 +3219,7 @@ void VehicleProfileManager::_updateMissionLive(int socPct)
                 p[QStringLiteral("seq")] = seq;
                 const double t = (QDateTime::currentMSecsSinceEpoch() - m_flightStartMs) / 1000.0;
                 p[QStringLiteral("timeText")] = clockText(t);
+                p[QStringLiteral("timeS")] = t;
                 p[QStringLiteral("socPct")] = socPct;
                 const auto pred = m_takeoffPrediction.value(seq, {-1.0, -1.0});
                 p[QStringLiteral("predictedTimeText")] = pred.first >= 0.0 ? clockText(pred.first) : QString();
@@ -3294,4 +3331,37 @@ bool VehicleProfileManager::_windFromLean(double *windN, double *windE)
     *windN = fit.windN;
     *windE = fit.windE;
     return true;
+}
+
+// A payload released this flight, for the flight's mission record.
+void VehicleProfileManager::_noteDrop(int index, double kg, const QString &how)
+{
+    QVariantMap d;
+    d[QStringLiteral("index")] = index;
+    d[QStringLiteral("kg")] = kg;
+    d[QStringLiteral("timeS")] = m_flightStartMs > 0 ? (QDateTime::currentMSecsSinceEpoch() - m_flightStartMs) / 1000.0 : -1.0;
+    d[QStringLiteral("how")] = how;
+    m_dropEvents.append(d);
+}
+
+QVariantMap VehicleProfileManager::missionAccuracy() const
+{
+    QVector<MissionRecord::Record> recs;
+    if (!m_motorTableId.isEmpty())
+        for (const QVariant &v : DatabaseManager::instance().motorTableFlights(m_currentDeviceUid, m_motorTableId))
+            recs.append(MissionRecord::fromJson(v.toMap().value(QStringLiteral("missionJson")).toString()));
+    const MissionRecord::Accuracy a = MissionRecord::accuracy(recs);
+    QVariantMap m;
+    m[QStringLiteral("flights")] = a.flights;
+    m[QStringLiteral("meanAbsSocPts")] = a.meanAbsSocPts;
+    m[QStringLiteral("meanAbsTimePct")] = a.meanAbsTimePct;
+    m[QStringLiteral("atOrAbovePessimistic")] = a.atOrAbovePessimistic;
+    m[QStringLiteral("text")] =
+        a.flights == 0 ? QStringLiteral("No flight with a mission estimate recorded yet.")
+                       : QStringLiteral("Mission estimate over %1 flight%2: landing charge off by %3 points and flight "
+                                        "time by %4 % on average; %5 of %1 landed with at least the pessimistic charge.")
+                             .arg(a.flights).arg(a.flights > 1 ? "s" : "")
+                             .arg(a.meanAbsSocPts, 0, 'f', 1).arg(a.meanAbsTimePct, 0, 'f', 0)
+                             .arg(a.atOrAbovePessimistic);
+    return m;
 }

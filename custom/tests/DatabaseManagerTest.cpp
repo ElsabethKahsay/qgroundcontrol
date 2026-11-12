@@ -2002,6 +2002,18 @@ void DatabaseManagerTest::testVehicleMotorTableLink()
     QCOMPARE(db.motorTableFlights(a, QStringLiteral("m6215-320kv-msc22x7.8-6s"))[1].toMap().value(QStringLiteral("state")).toString(),
              QStringLiteral("dismissed"));
     QVERIFY(db.motorTableFlights(b, QStringLiteral("m6215-320kv-msc22x7.8-6s")).isEmpty());
+
+    // v29: the mission estimate against the flight, kept with it (JSON);
+    // flights without one read back empty.
+    QCOMPARE(rows[0].toMap().value(QStringLiteral("missionJson")).toString(), QString());
+    f[QStringLiteral("tableId")] = QStringLiteral("m6215-320kv-msc22x7.8-6s");
+    f[QStringLiteral("missionJson")] = QStringLiteral("{\"predTotalS\":179,\"realTotalS\":181}");
+    const int id3 = db.insertMotorTableFlight(f);
+    QVERIFY(id3 > 0);
+    rows = db.motorTableFlights(a, QStringLiteral("m6215-320kv-msc22x7.8-6s"));
+    QCOMPARE(rows.last().toMap().value(QStringLiteral("id")).toInt(), id3);
+    QCOMPARE(rows.last().toMap().value(QStringLiteral("missionJson")).toString(),
+             QStringLiteral("{\"predTotalS\":179,\"realTotalS\":181}"));
 }
 
 UT_REGISTER_TEST(DatabaseManagerTest)

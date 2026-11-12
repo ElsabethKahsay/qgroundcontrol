@@ -340,7 +340,7 @@ bool DatabaseManager::initialize(const QString &dbPath)
 //       power-type model learns from (hover/cruise minutes with and without
 //       payload, FC mAh and current, throttle, cell volts at arm, telemetry
 //       coverage, time at target, the charger number and its learning state)
-static const int kLatestSchemaVersion = 28;
+static const int kLatestSchemaVersion = 29;
 
 bool DatabaseManager::createTables()
 {
@@ -1851,6 +1851,19 @@ bool DatabaseManager::migrateSchema()
                    "state TEXT NOT NULL DEFAULT 'pending')");
             q.exec("CREATE INDEX IF NOT EXISTS idx_motor_table_flights_vehicle ON motor_table_flights(device_uid, table_id)");
             break;
+        case 29: {
+            // v29: the mission estimate against the real flight (predicted at
+            // take-off, reached in flight), JSON, with the motor-table flight
+            // record (MissionRecord.h). Older rows keep it empty.
+            QSet<QString> have;
+            QSqlQuery pragma(m_db);
+            pragma.exec(QStringLiteral("PRAGMA table_info(motor_table_flights)"));
+            while (pragma.next())
+                have.insert(pragma.value(1).toString());
+            if (!have.contains(QStringLiteral("mission_json")))
+                q.exec("ALTER TABLE motor_table_flights ADD COLUMN mission_json TEXT");
+            break;
+        }
         default:
             qWarning() << "DatabaseManager: unknown migration version" << v;
             m_db.rollback();
@@ -5466,7 +5479,7 @@ int DatabaseManager::insertMotorTableFlight(const QVariantMap &f)
     QSqlQuery q(m_db);
     q.prepare("INSERT INTO motor_table_flights (device_uid, table_id, started_at, ended_at, gcs_ah, started_full, "
               "start_soc, hover_w, hover_s, cruise_ratio, cruise_s, avg_volts, min_volts, beyond_s, overall_throttle_s, "
-              "density, pack_ohm, charger_mah) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+              "density, pack_ohm, charger_mah, mission_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
     auto num = [&f](const char *k) {
         const QVariant v = f.value(QLatin1String(k));
         return v.isValid() && v.toDouble() >= 0.0 ? v : QVariant();
@@ -5480,6 +5493,8 @@ int DatabaseManager::insertMotorTableFlight(const QVariantMap &f)
     for (const char *k : {"startSoc", "hoverW", "hoverS", "cruiseRatio", "cruiseS", "avgVolts", "minVolts",
                           "beyondS", "overallThrottleS", "density", "packOhm", "chargerMah"})
         q.addBindValue(num(k));
+    const QString mission = f.value(QStringLiteral("missionJson")).toString();
+    q.addBindValue(mission.isEmpty() ? QVariant() : QVariant(mission));
     if (!execOrWarn(q, "insertMotorTableFlight")) return -1;
     return q.lastInsertId().toInt();
 }
@@ -5491,8 +5506,8 @@ QVariantList DatabaseManager::motorTableFlights(const QString &deviceUid, const 
     if (!m_initialized) return out;
     QSqlQuery q(m_db);
     q.prepare("SELECT id, started_at, ended_at, gcs_ah, started_full, start_soc, hover_w, hover_s, cruise_ratio, "
-              "cruise_s, avg_volts, min_volts, beyond_s, overall_throttle_s, density, pack_ohm, charger_mah, state "
-              "FROM motor_table_flights WHERE device_uid = ? AND table_id = ? ORDER BY id");
+              "cruise_s, avg_volts, min_volts, beyond_s, overall_throttle_s, density, pack_ohm, charger_mah, state, "
+              "mission_json FROM motor_table_flights WHERE device_uid = ? AND table_id = ? ORDER BY id");
     q.addBindValue(deviceUid);
     q.addBindValue(tableId);
     if (!execOrWarn(q, "motorTableFlights")) return out;
@@ -5504,6 +5519,7 @@ QVariantList DatabaseManager::motorTableFlights(const QString &deviceUid, const 
         for (int i = 0; i < int(sizeof(kKeys) / sizeof(kKeys[0])); ++i)
             m[QLatin1String(kKeys[i])] = q.value(i);
         m[QStringLiteral("startedFull")] = q.value(4).toInt() != 0;
+        m[QStringLiteral("missionJson")] = q.value(18).toString();
         out.append(m);
     }
     return out;

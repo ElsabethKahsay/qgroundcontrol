@@ -60,6 +60,7 @@
 #include "MissionManager/MissionManager.h"
 #include "MissionManager/MissionItem.h"
 #include "MissionAssess.h"
+#include "MissionRecord.h"
 #include "utils/PreflightSettingsManager.h"
 #include "TelemetryBridge.h"
 #include "VehicleProfileManager.h"
@@ -3314,8 +3315,11 @@ void LivePluginBenchTest::testMissionEstimateLive()
     QCOMPARE(lw.size(), 1);
     QCOMPARE(lw.at(0).toMap().value(QStringLiteral("what")).toString(), QStringLiteral("Land"));
     QVERIFY(qAbs(lv.value(QStringLiteral("totalS")).toDouble() - (20.0 / 1.5 + 10.0 / 0.5)) < 0.5);
-    // A wind measured from the lean (step 7c) replaces the forecast in flight:
-    // said so, and costed (an 8 m/s wind changes the charge on landing).
+    // A wind measured from the lean (step 7c) replaces the forecast in flight,
+    // and says so. (How a wind changes the cost is MissionCost's, tested in
+    // BatteryEstimatorTest::testMissionCostWind: here the forecast at the
+    // mock's site depends on the day's weather, and with no cruise power
+    // measured yet any wind over 3 m/s costs the same.)
     {
         VehicleProfileManager::LiveStart wl = ls;
         const QVariantMap calm = vpm->missionEstimateFrom(&wl);
@@ -3327,8 +3331,7 @@ void LivePluginBenchTest::testMissionEstimateLive()
                      && windy.value(QStringLiteral("weatherText")).toString().contains(QStringLiteral("estimated from the lean")),
                  qPrintable(windy.value(QStringLiteral("weatherText")).toString()));
         QVERIFY(calm.value(QStringLiteral("windSource")).toString() != QStringLiteral("lean"));
-        QVERIFY(qAbs(windy.value(QStringLiteral("landPessimisticPct")).toDouble()
-                     - calm.value(QStringLiteral("landPessimisticPct")).toDouble()) > 0.01);
+        QVERIFY(windy.value(QStringLiteral("ready")).toBool());
     }
 
     // Each waypoint ahead carries its position, for the map labels; the
@@ -3404,6 +3407,33 @@ void LivePluginBenchTest::testMissionEstimateLive()
     feed.stop();
     _vehicle->setArmed(false, false);
     QVERIFY(_waitArmed(false));
+
+    // Step 9: a flight recorded with its mission record shows the summary
+    // in the motor-table flights list, and the accuracy over flights.
+    {
+        QVariantMap rf{{QStringLiteral("deviceUid"), vpm->currentDeviceUid()}, {QStringLiteral("tableId"), table.id},
+                       {QStringLiteral("gcsAh"), 3.1}, {QStringLiteral("startedFull"), false}};
+        MissionRecord::Record rec;
+        rec.resultAtTakeoff = QStringLiteral("Fits");
+        rec.predTotalS = 120.0;
+        rec.predLandLikely = 80.0;
+        rec.predLandPess = 76.0;
+        rec.realTotalS = 126.0;
+        rec.realLandSoc = 78.0;
+        rf[QStringLiteral("missionJson")] = MissionRecord::toJson(rec);
+        const int rid = DatabaseManager::instance().insertMotorTableFlight(rf);
+        QVERIFY(rid > 0);
+        bool shown = false;
+        for (const QVariant &fv : vpm->motorTableFlights())
+            if (fv.toMap().value(QStringLiteral("id")).toInt() == rid)
+                shown = fv.toMap().value(QStringLiteral("missionSummary")).toString()
+                            .startsWith(QStringLiteral("Mission: landed after 2:06 (plan 2:00, +5 %) with 78 %"));
+        QVERIFY(shown);
+        const QVariantMap acc = vpm->missionAccuracy();
+        QVERIFY(acc.value(QStringLiteral("flights")).toInt() >= 1);
+        QVERIFY(acc.value(QStringLiteral("text")).toString().startsWith(QStringLiteral("Mission estimate over")));
+        QVERIFY(vpm->dismissMotorTableFlight(rid));
+    }
 
     // Put everything back.
     mm->removeAll();

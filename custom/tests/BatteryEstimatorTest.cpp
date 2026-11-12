@@ -21,6 +21,7 @@
 #include "MissionAssess.h"
 #include "MissionEstimateCheck.h"
 #include "WindFromLean.h"
+#include "MissionRecord.h"
 #include <QCoreApplication>
 #include <QFileInfo>
 
@@ -2078,6 +2079,50 @@ private slots:
         QVERIFY(isSteady(0.2, 0.1));
         QVERIFY(!isSteady(1.0, 0.1));
         QVERIFY(!isSteady(0.0, 0.8));
+    }
+
+    // The mission estimate against the flight: kept as JSON and read back,
+    // the summary line, and the accuracy over flights.
+    void testMissionRecord()
+    {
+        using namespace MissionRecord;
+        Record r;
+        r.resultAtTakeoff = QStringLiteral("Comfortable");
+        r.predTotalS = 179.0;
+        r.predLandLikely = 85.0;
+        r.predLandPess = 83.0;
+        r.realTotalS = 185.0;
+        r.realLandSoc = 82.0;
+        r.items = {{1, 42.5, 94.0, 94.0, 44.0, 93.0}, {3, 65.0, 92.0, 91.0, 68.0, 90.0}, {5, 179.0, 85.0, 83.0, -1.0, -1.0}};
+        r.drops = {QVariantMap{{QStringLiteral("index"), 1}, {QStringLiteral("kg"), 4.0}, {QStringLiteral("timeS"), 68.0},
+                               {QStringLiteral("how"), QStringLiteral("output")}}};
+        const Record back = fromJson(toJson(r));
+        QCOMPARE(back.items.size(), 3);
+        QCOMPARE(back.items[1].realTimeS, 68.0);
+        QCOMPARE(back.items[2].realTimeS, -1.0);
+        QCOMPARE(back.drops.size(), 1);
+        QCOMPARE(back.resultAtTakeoff, QStringLiteral("Comfortable"));
+        QVERIFY(near(landSocErrorPts(back), -3.0, 1e-9));
+        QVERIFY(near(timeErrorPct(back), 6.0 / 179.0 * 100.0, 1e-9));
+        QCOMPARE(summary(back), QStringLiteral("Mission: landed after 3:05 (plan 2:59, +3 %) with 82 % (plan 85 %, -3 pt; "
+                                               "pessimistic 83 %). Comfortable at take-off. 2 of 3 items reached."));
+        QVERIFY(summary(Record()).isEmpty());
+        QVERIFY(!fromJson(QStringLiteral("not json")).valid());
+
+        // Three flights: off by 3, 1 and 1 points, 6, 2 and 2 s in time; one
+        // landed below the pessimistic charge (82 < 83), two at or above it.
+        Record r2 = r;
+        r2.realTotalS = 177.0;
+        r2.realLandSoc = 86.0;
+        Record r3 = r2;
+        r3.realLandSoc = 84.0;
+        r3.realTotalS = 181.0;
+        const Accuracy a = accuracy({back, r2, r3, Record()});
+        QCOMPARE(a.flights, 3);
+        QVERIFY(near(a.meanAbsSocPts, (3.0 + 1.0 + 1.0) / 3.0, 1e-9));
+        QVERIFY(near(a.meanAbsTimePct, (6.0 + 2.0 + 2.0) / 179.0 * 100.0 / 3.0, 1e-9));
+        QCOMPARE(a.atOrAbovePessimistic, 2);
+        QCOMPARE(accuracy({}).flights, 0);
     }
 
     void testMissionWalkTemplate()
