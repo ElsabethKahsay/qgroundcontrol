@@ -211,6 +211,15 @@ inline Fit wind(const QVector<Sample> &s, double k)
     return f;
 }
 
+/// Airspeed (m/s) from the ground velocity and a wind (toward, m/s); with no
+/// wind known, @p fallbackMs (the ground speed: the same in still air).
+inline double airspeedMs(double velN, double velE, double windN, double windE, double fallbackMs)
+{
+    if (!std::isfinite(velN) || !std::isfinite(velE) || !std::isfinite(windN) || !std::isfinite(windE))
+        return fallbackMs;
+    return std::hypot(velN - windN, velE - windE);
+}
+
 /// Steady enough to use: level (climb under kMaxSteadyClimbMs) and not
 /// speeding up or slowing down (change of ground velocity under
 /// kMaxSteadyAccelMss since the last sample).

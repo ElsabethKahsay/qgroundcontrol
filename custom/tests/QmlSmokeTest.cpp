@@ -2145,8 +2145,12 @@ void LivePluginBenchTest::testPowerLiveInFlyView()
     const QGeoCoordinate here = _vehicle->coordinate();
     QVERIFY(FlightSession::instance()->saveTargetLocation(here.latitude() + 60.0 / 111.195, here.longitude(),
                                                           QStringLiteral("typed")));
+    // The estimate updates every 2 s: wait for an update that includes the
+    // target just saved (an earlier one may already say "trip known" without
+    // it, and then the trip is only the way home).
     for (int i = 0; i < 120 && !(live().value(QStringLiteral("active")).toBool()
-                                 && live().value(QStringLiteral("tripKnown")).toBool()); ++i)
+                                 && live().value(QStringLiteral("tripKnown")).toBool()
+                                 && live().value(QStringLiteral("tripShortAh")).toDouble() > 0.0); ++i)
         QTest::qWait(50);
     QVERIFY2(live().value(QStringLiteral("active")).toBool(), "the power-type estimate did not come on");
     QVERIFY(live().value(QStringLiteral("cruiseMin")).toDouble() > 0.0);
@@ -3370,6 +3374,17 @@ void LivePluginBenchTest::testMissionEstimateLive()
         vpm->checkMissionAlerts(est(MissionAssess::Tight, false, old));
         QCOMPARE(alerts.count(), 3);                                   // once a flight
         QVERIFY(!alerts.at(2).at(1).toBool());                         // shown, not spoken
+    }
+
+    // An empty pack in flight is empty, not unknown (it used to start the
+    // estimate from 100 %).
+    {
+        VehicleProfileManager::LiveStart e0 = ls;
+        e0.socPct = 0.0;
+        e0.mode = QStringLiteral("auto");
+        const QVariantMap ev = vpm->missionEstimateFrom(&e0);
+        QVERIFY(ev.value(QStringLiteral("landLikelyPct")).toDouble() < 1.0);
+        QVERIFY(ev.value(QStringLiteral("colour")).toString() == QStringLiteral("red"));
     }
 
     // Payload already released: nothing more comes off.

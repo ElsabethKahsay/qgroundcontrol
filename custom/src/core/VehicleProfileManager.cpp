@@ -1345,6 +1345,7 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         m_lastAlertResult = -1;
         m_alertedOldWeather = false;
         m_windSamples.clear();
+        m_windEstN = m_windEstE = std::numeric_limits<double>::quiet_NaN();
         m_windKLearnedThisFlight = false;
         m_windLastMs = 0;
         m_windK = QSettings().value(QStringLiteral("WindFromLean/k/%1").arg(m_currentDeviceUid), 0.0).toDouble();
@@ -1587,7 +1588,13 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
                     const double ratio = (now.amps - MotorTable::kElectronicsA) * packV / hoverW;
                     m_cruiseRatioSum += ratio;
                     ++m_cruiseSamples;
-                    QPair<double, int> &band = m_cruiseBands[MotorTable::cruiseBand(gsNow)];
+                    // Kept by airspeed (the costing looks the ratio up by the
+                    // leg's airspeed): the ground velocity against the wind
+                    // from the lean when it is known, the ground speed
+                    // otherwise (the same in still air).
+                    const double air = WindFromLean::airspeedMs(m_telemetry->velocityNorthMs(), m_telemetry->velocityEastMs(),
+                                                                m_windEstN, m_windEstE, gsNow);
+                    QPair<double, int> &band = m_cruiseBands[MotorTable::cruiseBand(air)];
                     band.first += ratio;
                     ++band.second;
                     m_tableLog.cruiseS += 2.0;
@@ -3008,11 +3015,23 @@ QVariantMap VehicleProfileManager::missionEstimateFrom(const LiveStart *live)
     in.calibration = setup.value(QStringLiteral("calibrationFactor"), 1.0).toDouble();
     in.emptyKg = emptyKg > 0.0 ? emptyKg : qQNaN();
     in.payloadKg = live ? live->payloadKg : payloadKg;
-    const double socNow = live ? live->socPct : packRestingSocPct(m_telemetry->batteryVoltage());
-    in.startSocPct = socNow > 0.0 ? socNow : 100.0;
+    // The charge to start from. In flight: the charge left now, 0 % included
+    // (an empty pack is empty, not unknown). Before take-off: the pack's
+    // charge from its resting voltage; once armed (the take-off prediction
+    // is made at the arm) the resting voltage read just before the arm, as
+    // the idling motors already pull the voltage down a little.
+    const double socNow = live ? live->socPct
+                          : (m_telemetry->armed() && m_armVoltsKnown) ? m_armStartSocPct
+                                                                      : packRestingSocPct(m_telemetry->batteryVoltage());
+    in.startSocPct = std::clamp(socNow, 0.0, 100.0);
     in.reserveSocPct = m_batteryReserve * 100.0;
     const QString uid = m_currentDeviceUid;
     in.measuredRatio = [uid](double air) { return storedCruiseRatio(uid, air); };
+    // The drag constant learned from the lean: until the cruise power of a
+    // speed band is measured, it gives that band's extra power for the
+    // leg's airspeed (head and tail winds then count).
+    in.dragK = m_windK > 0.0 ? m_windK
+                             : QSettings().value(QStringLiteral("WindFromLean/k/%1").arg(m_currentDeviceUid), 0.0).toDouble();
     in.currentLimitA = table->packCRating * capacityAh();
     auto param = [this](const char *name) {
         return m_telemetry->hasParameter(QLatin1String(name)) ? double(m_telemetry->parameterValue(QLatin1String(name)))
@@ -3063,6 +3082,7 @@ QVariantMap VehicleProfileManager::missionEstimateFrom(const LiveStart *live)
     for (const MissionWalk::Arrival &a : w.arrivals)
         topM = std::max(topM, a.altM);
     MissionAssess::Context ctx;
+    ctx.inFlight = live != nullptr;
     ctx.flightHeightM = topM;
     ctx.hasDrops = !in.drops.isEmpty();
     ctx.cruiseMeasured = false;
@@ -3215,6 +3235,14 @@ void VehicleProfileManager::_updateMissionLive(int socPct)
         const int idx = mm ? mm->currentIndex() : -1;
         if (m_lastMissionIndex >= 1 && idx > m_lastMissionIndex) {
             for (int seq = m_lastMissionIndex; seq < idx; ++seq) {
+                // Only navigation items are "reached": a servo, speed or other
+                // DO command between them is passed over, not arrived at.
+                int command = -1;
+                for (const MissionItem *mi : mm->missionItems())
+                    if (mi->sequenceNumber() == seq)
+                        command = int(mi->command());
+                if (!MissionWalk::isNavCommand(command))
+                    continue;
                 QVariantMap p;
                 p[QStringLiteral("seq")] = seq;
                 const double t = (QDateTime::currentMSecsSinceEpoch() - m_flightStartMs) / 1000.0;
@@ -3326,10 +3354,12 @@ bool VehicleProfileManager::_windFromLean(double *windN, double *windE)
                                      .arg(fit.k, 0, 'f', 3).arg(fit.rmsTan, 0, 'f', 3);
         }
     }
-    if (!fit.ok)
+    if (!fit.ok) {
+        m_windEstN = m_windEstE = std::numeric_limits<double>::quiet_NaN();
         return false;
-    *windN = fit.windN;
-    *windE = fit.windE;
+    }
+    *windN = m_windEstN = fit.windN;
+    *windE = m_windEstE = fit.windE;
     return true;
 }
 

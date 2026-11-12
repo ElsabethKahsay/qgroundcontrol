@@ -607,6 +607,10 @@ private:
     QVector<WindFromLean::Sample> m_windSamples;
     double m_windK = 0.0;
     bool m_windKLearnedThisFlight = false;
+    /// The last wind from the lean (toward, m/s), NaN when none: the cruise
+    /// power is kept by airspeed with it.
+    double m_windEstN = std::numeric_limits<double>::quiet_NaN();
+    double m_windEstE = std::numeric_limits<double>::quiet_NaN();
     double m_windLastN = std::numeric_limits<double>::quiet_NaN();
     double m_windLastE = std::numeric_limits<double>::quiet_NaN();
     qint64 m_windLastMs = 0;

@@ -5,7 +5,8 @@
 // Whole mission, the worst that applies (custom/MISSION_ESTIMATE_OPEN_ITEMS.md):
 //
 //   Can't assess       the walk or the costing could not be done (says why)
-//   Too heavy          spare thrust below the minimum (2.0) already at take-off
+//   Too heavy          spare thrust below the minimum (2.0) already at the
+//                      start (take-off; in flight, now)
 //   Can't be done      the likely case runs out before the mission's last point
 //   One way only       reaches the last point but the likely case lands below
 //                      the lowest acceptable charge (lowestPct, proposed 10 %)
@@ -133,6 +134,7 @@ struct Context {
     double gustMs = std::nan("");      ///< at the mission's flight height
     double flightHeightM = std::nan("");
     bool hasDrops = false;             ///< a payload comes off during the flight
+    bool inFlight = false;             ///< worked out from where the copter is now
 };
 
 struct Waypoint {
@@ -217,8 +219,8 @@ inline Assessment assess(const MissionWalk::Result &w, const MissionCost::Result
     }
 
     // The whole mission: the worst that applies.
-    const double spareAtTakeOff = cost.spareAtTakeOff;
-    if (spareAtTakeOff >= 0.0 && spareAtTakeOff < lim.minThrustToWeight)
+    const double spare = cost.spareAtStart;
+    if (spare >= 0.0 && spare < lim.minThrustToWeight)
         a.result = TooHeavy;
     else if (runsOutBeforeEnd || cost.landLikelyPct <= 0.5)
         a.result = runsOutBeforeEnd ? CantBeDone : OneWayOnly;
@@ -235,8 +237,10 @@ inline Assessment assess(const MissionWalk::Result &w, const MissionCost::Result
 
     // Reasons: the result's own line first, then the costing's, then the rest.
     if (a.result == TooHeavy)
-        a.reasons << QStringLiteral("Spare thrust %1 at take-off, below %2")
-                         .arg(spareAtTakeOff, 0, 'f', 2).arg(lim.minThrustToWeight, 0, 'f', 1);
+        a.reasons << QStringLiteral("Spare thrust %1 %2, below %3")
+                         .arg(spare, 0, 'f', 2)
+                         .arg(ctx.inFlight ? QStringLiteral("now") : QStringLiteral("at take-off"))
+                         .arg(lim.minThrustToWeight, 0, 'f', 1);
     a.reasons << cost.reasons;
     if (std::isfinite(failsafeS))
         a.reasons << QStringLiteral("The autopilot's battery failsafe (%1) would act at %2 into the flight")

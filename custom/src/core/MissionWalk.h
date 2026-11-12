@@ -278,6 +278,13 @@ struct Result {
     double missionEndS = 0.0;   ///< When the mission's own items are done
 };
 
+/// A navigation command (flown to, arrived at): MAVLink numbers below 100.
+/// DO and condition commands (100 and up) are done on the way.
+inline bool isNavCommand(int command)
+{
+    return command >= 0 && command < 100;
+}
+
 /// Seconds for a height change of @p dz metres (+ up), starting and ending
 /// stopped.
 inline double heightTimeS(double dz, const Settings &s)
@@ -327,7 +334,7 @@ inline Result walk(const QVector<Item> &items, const Settings &s, double homeLat
                 return i;
         return -1;
     };
-    auto isNav = [](int c) { return c < 100; };   // MAVLink: navigation commands are below 100
+    auto isNav = [](int c) { return isNavCommand(c); };
     auto add = [&](StepKind kind, int seq, double dt, double horiz, double climb, bool hover) {
         Step st;
         st.kind = kind;

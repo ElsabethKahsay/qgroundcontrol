@@ -48,6 +48,8 @@ Rectangle {
     // endurance with the payload; in flight the time left; "RETURN NOW" when
     // the rest of the trip (target, time there, home, land) no longer fits.
     readonly property var  _pl: _profile ? _profile.powerLive : ({})
+    // The mission estimate in flight (empty on the ground or with no mission).
+    readonly property var  _ml: _profile ? _profile.missionLive : ({})
     readonly property bool _plActive: !!_pl && _pl.active === true && !_packWaived
     readonly property bool _returnNow: _plActive && _pl.returnNow === true
     readonly property bool  _armed:     _tel ? _tel.armed : false
@@ -398,9 +400,16 @@ Rectangle {
                                ? "~" + Math.round(root._pl.timeLeftMin) + " min / " + root._km(root._pl.distLeftKm)
                                : "—"
                         valueColor: Colors.textPrimary }
-            DetailRow { label: qsTr("Rest of the trip");
+            // The rest of the flight: from the mission estimate while it runs
+            // (the same source as RETURN NOW), else the trip to a target.
+            DetailRow { label: root._ml.ready === true ? qsTr("Mission") : qsTr("Rest of the trip");
+                        objectName: "chipRestOfTrip"
                         visible: root._plActive
-                        value: !root._plActive || !root._pl.tripKnown ? "—"
+                        value: root._ml.ready === true
+                               ? (root._ml.returnNow ? qsTr("return now")
+                                  : qsTr("lands %1 % (pess. %2 %)").arg(Math.round(root._ml.landLikelyPct))
+                                                                  .arg(Math.round(root._ml.landPessimisticPct)))
+                               : !root._plActive || !root._pl.tripKnown ? "—"
                                : root._returnNow ? "short by " + Number(root._pl.tripShortAh).toFixed(1) + " Ah"
                                : Number(root._pl.tripNeedAh).toFixed(1) + " of " + Number(root._pl.usableAh).toFixed(1) + " Ah"
                         valueColor: root._returnNow ? Colors.error : Colors.success }

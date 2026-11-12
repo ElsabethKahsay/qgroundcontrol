@@ -1623,6 +1623,28 @@ private slots:
         const MissionCost::Result rg = MissionCost::cost(w, s, 9.0, 38.8, in);
         QVERIFY(near(rg.pessimistic[1].airspeedMs, g1 + 9.0, 1e-3));
         QVERIFY(near(rg.likely[1].airspeedMs, g1 + 5.0, 1e-3));
+
+        // No cruise power measured: without the drag constant every airspeed
+        // over 3 m/s costs the same (the wind hardly counts) ...
+        MissionCost::Inputs un = inputs22();
+        un.wind.speedMs = 5.0;
+        un.wind.fromDeg = 0.0;
+        const MissionCost::Result ru = MissionCost::cost(w, s, 9.0, 38.8, un);
+        QVERIFY(near(ru.likely[1].motorW, ru.likely[2].motorW, 1e-6));
+        QVERIFY(ru.reasons.join(QString()).contains(QStringLiteral("wind is hardly costed")));
+        // ... with it (learned from the lean), the hover plus the drag power:
+        // into the wind costs more than with it, and the pessimistic case is
+        // never below 1.4× hover.
+        un.dragK = 0.6;
+        const MissionCost::Result rk = MissionCost::cost(w, s, 9.0, 38.8, un);
+        const double hover = hoverW(un, 12.09);
+        QVERIFY(near(rk.likely[1].ratio, 1.0 + 0.6 * std::pow(rk.likely[1].airspeedMs, 3) / hover, 1e-9));
+        QVERIFY(rk.likely[1].motorW > rk.likely[2].motorW);
+        QVERIFY(rk.pessimistic[2].ratio >= MissionCost::kUnmeasuredPessimisticRatio);
+        QVERIFY(near(rk.pessimistic[1].ratio,
+                     std::max(1.4, 1.0 + 0.6 * std::pow(rk.pessimistic[1].airspeedMs, 3) / hover), 1e-9));
+        QVERIFY(rk.reasons.join(QString()).contains(QStringLiteral("drag from its lean")));
+        QVERIFY(!rk.ratioMeasured);
     }
 
     // Turn-back point, current limit, spare thrust and the autopilot's
@@ -1833,12 +1855,17 @@ private slots:
         const MissionAssess::Assessment ah = MissionAssess::assess(w, ch, nullptr, MissionAssess::Limits(), ctx);
         QCOMPARE(ah.result, int(MissionAssess::TooHeavy));
         QVERIFY(ah.reasons.first().startsWith(QStringLiteral("Spare thrust")));
+        QVERIFY(ah.reasons.first().contains(QStringLiteral("at take-off")));
+        MissionAssess::Context flying = ctx;
+        flying.inFlight = true;                                   // worked out from now: says so
+        QVERIFY(MissionAssess::assess(w, ch, nullptr, MissionAssess::Limits(), flying).reasons.first()
+                    .contains(QStringLiteral(" now, below")));
         // A pack that cannot even give the hover power (its voltage would
         // collapse): no spare thrust at all, too heavy.
         MissionCost::Inputs weak = inputs22();
         weak.pack.resistanceOhm = 2.0;
         const MissionCost::Result cw = MissionCost::cost(w, s, hLat, hLon, weak);
-        QCOMPARE(cw.spareAtTakeOff, 0.0);
+        QCOMPARE(cw.spareAtStart, 0.0);
         QCOMPARE(MissionAssess::assess(w, cw, nullptr, MissionAssess::Limits(), ctx).result, int(MissionAssess::TooHeavy));
 
         // Can't assess: says why.
@@ -1883,6 +1910,17 @@ private slots:
                         || wp.state == MissionAssess::OnReserve);
         }
         QVERIFY(a.result <= MissionAssess::Tight);
+
+        // The airspeed cruise power is filed under: against the wind from the
+        // lean, else the ground speed.
+        QVERIFY(near(WindFromLean::airspeedMs(10.0, 0.0, -5.0, 0.0, 10.0), 15.0, 1e-9));
+        QVERIFY(near(WindFromLean::airspeedMs(10.0, 0.0, qQNaN(), qQNaN(), 10.0), 10.0, 1e-9));
+        // Navigation items are arrived at; DO and condition commands are not.
+        QVERIFY(MissionWalk::isNavCommand(MissionWalk::NavWaypoint));
+        QVERIFY(MissionWalk::isNavCommand(MissionWalk::NavLoiterToAlt));
+        QVERIFY(!MissionWalk::isNavCommand(MissionWalk::DoSetServo));
+        QVERIFY(!MissionWalk::isNavCommand(MissionWalk::DoChangeSpeed));
+        QVERIFY(!MissionWalk::isNavCommand(-1));
 
         // A 1 Ah pack runs out on the way out: Can't be done, Not reachable.
         MissionCost::Inputs tiny = inputs22();

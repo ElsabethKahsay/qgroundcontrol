@@ -12,9 +12,14 @@
 // - Moving: hover power × the cruise ratio for the leg's airspeed. The
 //   airspeed is the ground velocity against the wind (ArduPilot holds the
 //   ground speed, so a headwind leg needs more power). The ratio is the one
-//   measured on this copter in that 2 m/s speed band; until measured, 1.0 in
-//   the likely case and kUnmeasuredPessimisticRatio in the pessimistic case.
-//   Holding in wind is costed the same way at the wind's speed.
+//   measured on this copter in that 2 m/s speed band. Until it is measured:
+//   with the copter's drag constant k known (learned from its lean,
+//   WindFromLean.h), 1 + k·airspeed³ ÷ hover power (the hover plus the power
+//   to push through the air: head and tail winds count), and in the
+//   pessimistic case at least kUnmeasuredPessimisticRatio; with neither
+//   known, 1.0 likely and kUnmeasuredPessimisticRatio pessimistic, whatever
+//   the airspeed (the wind then changes little). Holding in wind is costed
+//   the same way at the wind's speed.
 // - Climbing: on top, the power to lift the weight (m × g × climb rate)
 //   divided by kClimbEfficiency: half of the extra power is taken as lost.
 // - Descending and landing: hover power (the safe side; a descent needs less).
@@ -89,6 +94,8 @@ struct Inputs {
     /// This copter's measured cruise ratio for an airspeed (its 2 m/s band),
     /// or <= 0 when not measured. May be empty (nothing measured).
     std::function<double(double airspeedMs)> measuredRatio;
+    /// The copter's drag constant from its lean (N per (m/s)²); 0 = not known.
+    double dragK = 0.0;
     double currentLimitA = nan();   ///< the pack's continuous current
     double battLowV = nan();        ///< BATT_LOW_VOLT (0 or NaN = not set)
     double battCrtV = nan();        ///< BATT_CRT_VOLT
@@ -134,10 +141,11 @@ struct Result {
     /// The pessimistic case goes over the pack's current limit somewhere (a
     /// warning, item 32: the flight is not judged on it).
     bool overCurrent = false;
-    /// Spare thrust at take-off: full-throttle thrust at the pack's voltage
-    /// while hovering at the take-off weight on a full (start) charge, ÷ that
-    /// weight. 0 when the pack cannot even give the hover power.
-    double spareAtTakeOff = -1.0;
+    /// Spare thrust at the start of the walk (take-off; in flight, now):
+    /// full-throttle thrust at the pack's voltage while hovering at the
+    /// weight aboard on the starting charge, ÷ that weight. 0 when the pack
+    /// cannot even give the hover power.
+    double spareAtStart = -1.0;
     QStringList reasons;
 };
 
@@ -217,16 +225,20 @@ inline double costSteps(const QVector<MissionWalk::Step> &steps, const Inputs &i
     const MotorTable::Table &t = *in.table;
     const double wind = pessimistic && std::isfinite(in.wind.gustMs) ? std::max(in.wind.gustMs, in.wind.speedMs)
                                                                      : in.wind.speedMs;
-    auto ratioFor = [&](double air, bool moving) {
+    auto ratioFor = [&](double air, bool moving, double hoverW) {
         const double m = in.measuredRatio ? in.measuredRatio(air) : -1.0;
         if (m > 0.0)
             return m;
         if (moving && allMeasured)
             *allMeasured = false;
-        // Not measured: hover power while holding in calm air; the default
-        // ratios otherwise.
+        // Not measured: hover power while holding in calm air; with the drag
+        // constant known, the hover plus the drag power; else the defaults.
         if (air < MotorTable::kMinCruiseSpeedMs)
             return 1.0;
+        if (in.dragK > 0.0 && hoverW > 0.0) {
+            const double drag = 1.0 + in.dragK * air * air * air / hoverW;
+            return pessimistic ? std::max(kUnmeasuredPessimisticRatio, drag) : drag;
+        }
         return pessimistic ? kUnmeasuredPessimisticRatio : 1.0;
     };
     for (const MissionWalk::Step &st : steps) {
@@ -241,10 +253,10 @@ inline double costSteps(const QVector<MissionWalk::Step> &steps, const Inputs &i
             const double ground = st.horizM / st.timeS;
             const double b = bearingDeg(lat, lon, st.lat, st.lon);
             c.airspeedMs = airspeedMs(ground, b, wind, in.wind.fromDeg);
-            c.ratio = ratioFor(c.airspeedMs, true);
+            c.ratio = ratioFor(c.airspeedMs, true, hoverW);
         } else {
             c.airspeedMs = std::isfinite(wind) ? wind : 0.0;
-            c.ratio = ratioFor(c.airspeedMs, false);
+            c.ratio = ratioFor(c.airspeedMs, false, hoverW);
         }
         w *= c.ratio;
         if (st.climbM > 0.0 && st.timeS > 0.0)
@@ -296,12 +308,12 @@ inline Result cost(const MissionWalk::Result &w, const MissionWalk::Settings &s,
         return r;
     }
 
-    // Spare thrust at take-off, at the hover.
+    // Spare thrust at the start (take-off, or now in flight), at the hover.
     {
         const double kg = in.emptyKg + in.payloadKg;
         const double hoverW = in.motors * MotorTable::powerForThrustAt(*in.table, kg * 1000.0 / in.motors, in.sigma).watts;
         const double v = MotorTable::loadedVolts(in.pack, in.startSocPct, hoverW);
-        r.spareAtTakeOff = v > 0.0 ? in.motors * MotorTable::maxThrustAt(*in.table, v, in.sigma).grams / (kg * 1000.0) : 0.0;
+        r.spareAtStart = v > 0.0 ? in.motors * MotorTable::maxThrustAt(*in.table, v, in.sigma).grams / (kg * 1000.0) : 0.0;
     }
 
     // Both cases through the whole flight.
@@ -415,8 +427,12 @@ inline Result cost(const MissionWalk::Result &w, const MissionWalk::Settings &s,
         r.reasons << QStringLiteral("Lands with %1 % (pessimistic), below the %2 % reserve")
                          .arg(r.landPessimisticPct, 0, 'f', 0).arg(in.reserveSocPct, 0, 'f', 0);
     if (!r.ratioMeasured)
-        r.reasons << QStringLiteral("Cruise power not measured yet on this copter: %1× hover assumed (pessimistic)")
-                         .arg(kUnmeasuredPessimisticRatio, 0, 'f', 1);
+        r.reasons << (in.dragK > 0.0
+                          ? QStringLiteral("Cruise power not measured yet on this copter: hover plus the drag from its "
+                                           "lean (at least %1× hover pessimistic)").arg(kUnmeasuredPessimisticRatio, 0, 'f', 1)
+                          : QStringLiteral("Cruise power not measured yet on this copter: %1× hover assumed (pessimistic); "
+                                           "the wind is hardly costed until it or the drag is measured")
+                                .arg(kUnmeasuredPessimisticRatio, 0, 'f', 1));
     if (w.returnAssumed)
         r.reasons << QStringLiteral("The mission has no return: the RTL from its last point is assumed");
     r.ok = true;
