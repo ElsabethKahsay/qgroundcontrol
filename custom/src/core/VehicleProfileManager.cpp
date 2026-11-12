@@ -1334,6 +1334,20 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         m_armVoltsKnown = m_telemetry->batteryVoltage() > 1.0;
     }
     if (armed && !m_liveWasArmed) {
+        // A new flight: the take-off prediction to compare against, nothing
+        // reached or alerted yet.
+        m_flightStartMs = nowMs;
+        m_passed.clear();
+        m_lastMissionIndex = -1;
+        m_lastAlertResult = -1;
+        m_alertedOldWeather = false;
+        m_takeoffPrediction.clear();
+        for (const QVariant &wv : missionEstimate().value(QStringLiteral("waypoints")).toList()) {
+            const QVariantMap wp = wv.toMap();
+            m_takeoffPrediction.insert(wp.value(QStringLiteral("seq")).toInt(),
+                                       {wp.value(QStringLiteral("timeS")).toDouble(),
+                                        wp.value(QStringLiteral("socPessimisticPct")).toDouble()});
+        }
         m_fcMahAtArm = fcMahUsed;
         m_livePayloadAboard = m_payloadEntered && m_payloadWeightKg > 0.0;
         m_gcsUsedAh = 0.0;
@@ -3076,6 +3090,7 @@ QVariantMap VehicleProfileManager::missionEstimateFrom(const LiveStart *live)
     if (live) {
         const bool returning = live->mode == QLatin1String("rtl") || live->mode == QLatin1String("land");
         out[QStringLiteral("timeToNextS")] = w.arrivals.isEmpty() ? -1.0 : w.arrivals.first().timeS;
+        out[QStringLiteral("turnBackSeq")] = cost.ok ? cost.turnBackSeq : -2;
         const bool now = cost.ok && !returning && cost.turnBackSeq == -1;
         out[QStringLiteral("returnNow")] = now;
         out[QStringLiteral("returnNowWhy")] =
@@ -3094,6 +3109,12 @@ QVariantMap VehicleProfileManager::missionEstimateFrom(const LiveStart *live)
         m[QStringLiteral("seq")] = p.seq;
         m[QStringLiteral("what")] = commandText(command, p.seq);
         m[QStringLiteral("timeText")] = live ? QStringLiteral("in ") + clockText(p.timeS) : clockText(p.timeS);
+        m[QStringLiteral("timeS")] = p.timeS;
+        for (const MissionWalk::Arrival &ar : w.arrivals)
+            if (ar.seq == p.seq && qAbs(ar.timeS - p.timeS) < 1e-6) {
+                m[QStringLiteral("lat")] = ar.lat;
+                m[QStringLiteral("lon")] = ar.lon;
+            }
         m[QStringLiteral("socLikelyPct")] = p.socLikelyPct;
         m[QStringLiteral("socPessimisticPct")] = p.socPessimisticPct;
         m[QStringLiteral("state")] = p.state;
@@ -3125,8 +3146,31 @@ void VehicleProfileManager::_updateMissionLive(int socPct)
         MissionManager *mm = v->missionManager();
         s.nextSeq = mm ? std::max(1, mm->currentIndex()) : 1;
         s.mode = liveModeOf(m_telemetry->flightMode());
+        // An item is reached when the autopilot moves on to the next one:
+        // its real time since take-off and the charge then, next to the
+        // take-off prediction.
+        const int idx = mm ? mm->currentIndex() : -1;
+        if (m_lastMissionIndex >= 1 && idx > m_lastMissionIndex) {
+            for (int seq = m_lastMissionIndex; seq < idx; ++seq) {
+                QVariantMap p;
+                p[QStringLiteral("seq")] = seq;
+                const double t = (QDateTime::currentMSecsSinceEpoch() - m_flightStartMs) / 1000.0;
+                p[QStringLiteral("timeText")] = clockText(t);
+                p[QStringLiteral("socPct")] = socPct;
+                const auto pred = m_takeoffPrediction.value(seq, {-1.0, -1.0});
+                p[QStringLiteral("predictedTimeText")] = pred.first >= 0.0 ? clockText(pred.first) : QString();
+                p[QStringLiteral("predictedSocPct")] = pred.second;
+                m_passed.append(p);
+            }
+        }
+        if (idx >= 1)
+            m_lastMissionIndex = idx;
         if (pos.isValid())
             next = missionEstimateFrom(&s);
+        next[QStringLiteral("passed")] = m_passed;
+        checkMissionAlerts(next);
+    } else if (m_telemetry && !m_telemetry->armed()) {
+        m_lastMissionIndex = -1;
     }
     if (next != m_missionLive) {
         const bool was = m_missionLive.value(QStringLiteral("returnNow")).toBool();
@@ -3150,4 +3194,27 @@ QString VehicleProfileManager::liveModeOf(const QString &flightMode)
     if (mode == QLatin1String("land"))
         return QStringLiteral("land");
     return QStringLiteral("paused");
+}
+
+// Alerts in flight, once each: the result getting worse (e.g. Fits -> Tight),
+// RETURN NOW coming on (the next waypoint is past the turn-back point), and
+// the weather in use being old (once per flight).
+void VehicleProfileManager::checkMissionAlerts(const QVariantMap &next)
+{
+    if (!next.value(QStringLiteral("ready")).toBool())
+        return;
+    const int result = next.value(QStringLiteral("result")).toInt();
+    if (m_lastAlertResult >= 0 && result < m_lastAlertResult && result != int(MissionAssess::CantAssess))
+        emit missionAlert(QStringLiteral("Mission now %1").arg(next.value(QStringLiteral("resultName")).toString()), true);
+    m_lastAlertResult = result;
+    if (next.value(QStringLiteral("returnNow")).toBool() && !m_missionLive.value(QStringLiteral("returnNow")).toBool())
+        emit missionAlert(QStringLiteral("Return now: %1").arg(next.value(QStringLiteral("returnNowWhy")).toString()), true);
+    if (!m_alertedOldWeather) {
+        for (const QVariant &r : next.value(QStringLiteral("reasons")).toList())
+            if (r.toString().startsWith(QLatin1String("Old weather"))) {
+                m_alertedOldWeather = true;
+                emit missionAlert(r.toString(), false);
+                break;
+            }
+    }
 }

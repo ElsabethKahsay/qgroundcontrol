@@ -114,7 +114,10 @@ class VehicleProfileManager : public QObject {
     /// The mission estimate in flight (missionEstimate() from where the copter
     /// is now), worked out again every 2 s while armed and airborne; empty
     /// otherwise. Extra keys: live, mode ("auto", "rtl", "land", "paused"),
-    /// nextSeq, timeToNextS, returnNow, returnNowWhy.
+    /// nextSeq, timeToNextS, returnNow, returnNowWhy, turnBackSeq, and passed
+    /// (the items reached this flight: {seq, timeText, socPct, predictedTimeText,
+    /// predictedSocPct} with the take-off prediction beside the real figures).
+    /// Each waypoint also carries lat and lon (for the map labels).
     Q_PROPERTY(QVariantMap missionLive READ missionLive NOTIFY liveDataChanged)
 
 public:
@@ -416,6 +419,10 @@ public:
     /// The autopilot's flight mode as the in-flight estimate reads it:
     /// "auto" (flying the mission), "rtl" (any RTL), "land", else "paused".
     static QString liveModeOf(const QString &flightMode);
+    /// Raises missionAlert() for what changed from the last in-flight
+    /// estimate to @p next (the live update calls it every 2 s before keeping
+    /// @p next): the result worse, RETURN NOW on, old weather once a flight.
+    void checkMissionAlerts(const QVariantMap &next);
     /// The copter's weight without payload (kg) for the mission estimate,
     /// typed in by the operator and kept per copter; -1 when not entered.
     Q_INVOKABLE double emptyWeightKg() const;
@@ -453,6 +460,10 @@ signals:
     void payloadSwitchWarning(const QString &what);
     /// The empty weight was entered or changed.
     void emptyWeightChanged();
+    /// Something the pilot should hear about in flight: the result got
+    /// worse, RETURN NOW came on, the weather in use is old. @p speak: also
+    /// say it (not only a message on screen).
+    void missionAlert(const QString &text, bool speak);
 
 private slots:
     void onConnectionChanged();
@@ -568,6 +579,15 @@ private:
     PayloadRelease::Detector m_drop;
     QVariantMap m_missionLive;          ///< missionLive()
     void _updateMissionLive(int socPct);
+    // This flight, from the arm: the take-off prediction by item (seq ->
+    // {timeS, socPessimisticPct}), the items reached ({seq, timeS, socPct}),
+    // the mission item flown last, and what has been alerted already.
+    qint64 m_flightStartMs = 0;
+    QHash<int, QPair<double, double>> m_takeoffPrediction;
+    QVariantList m_passed;
+    int m_lastMissionIndex = -1;
+    int m_lastAlertResult = -1;
+    bool m_alertedOldWeather = false;
     PayloadRelease::Config dropConfig() const;
     double copterParam(const QString &name) const;
     void _onOutputsForDrop();

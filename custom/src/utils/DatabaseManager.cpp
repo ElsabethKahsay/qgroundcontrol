@@ -4569,19 +4569,24 @@ QVariantMap DatabaseManager::vehicleTarget(const QString &deviceUid)
     return out;
 }
 
-bool DatabaseManager::clearVehicleTarget(const QString &deviceUid)
+bool DatabaseManager::clearVehicleTarget(const QString &deviceUid, const QDateTime &setBefore)
 {
     assertMainThread();
     if (!m_initialized) return false;
     QSqlQuery q(m_db);
+    // target_set_at is UTC ISO text (saveVehicleTarget), so it compares as text.
+    const QString when = setBefore.isValid()
+                             ? QStringLiteral(" AND (target_set_at IS NULL OR target_set_at <= ?)") : QString();
     if (deviceUid.isEmpty()) {
-        q.prepare("UPDATE vehicles SET target_lat = NULL, target_lon = NULL, target_source = NULL, "
-                  "target_set_at = NULL WHERE target_lat IS NOT NULL OR target_lon IS NOT NULL");
+        q.prepare(QStringLiteral("UPDATE vehicles SET target_lat = NULL, target_lon = NULL, target_source = NULL, "
+                                 "target_set_at = NULL WHERE (target_lat IS NOT NULL OR target_lon IS NOT NULL)") + when);
     } else {
-        q.prepare("UPDATE vehicles SET target_lat = NULL, target_lon = NULL, target_source = NULL, "
-                  "target_set_at = NULL WHERE device_uid = ?");
+        q.prepare(QStringLiteral("UPDATE vehicles SET target_lat = NULL, target_lon = NULL, target_source = NULL, "
+                                 "target_set_at = NULL WHERE device_uid = ?") + when);
         q.addBindValue(deviceUid);
     }
+    if (setBefore.isValid())
+        q.addBindValue(setBefore.toUTC().toString(Qt::ISODate));
     return execOrWarn(q, "clearVehicleTarget");
 }
 

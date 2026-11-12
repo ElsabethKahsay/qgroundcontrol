@@ -3314,6 +3314,44 @@ void LivePluginBenchTest::testMissionEstimateLive()
     QCOMPARE(lw.size(), 1);
     QCOMPARE(lw.at(0).toMap().value(QStringLiteral("what")).toString(), QStringLiteral("Land"));
     QVERIFY(qAbs(lv.value(QStringLiteral("totalS")).toDouble() - (20.0 / 1.5 + 10.0 / 0.5)) < 0.5);
+    // Each waypoint ahead carries its position, for the map labels; the
+    // turn-back point is given.
+    QVERIFY(lw.at(0).toMap().contains(QStringLiteral("lat")));
+    QVERIFY(lv.contains(QStringLiteral("turnBackSeq")));
+
+    // Alerts in flight, once each: worse result, RETURN NOW, old weather once.
+    {
+        QSignalSpy alerts(vpm, &VehicleProfileManager::missionAlert);
+        auto est = [](int result, bool returnNow, const QStringList &reasons) {
+            QVariantMap m;
+            m[QStringLiteral("ready")] = true;
+            m[QStringLiteral("result")] = result;
+            m[QStringLiteral("resultName")] = MissionAssess::resultName(result);
+            m[QStringLiteral("returnNow")] = returnNow;
+            m[QStringLiteral("returnNowWhy")] = QStringLiteral("Going on to item 3 leaves too little for the return: return now");
+            m[QStringLiteral("reasons")] = reasons;
+            return m;
+        };
+        vpm->checkMissionAlerts(est(MissionAssess::Fits, false, {}));
+        QCOMPARE(alerts.count(), 0);                                   // the first: nothing to compare
+        vpm->checkMissionAlerts(est(MissionAssess::Comfortable, false, {}));
+        QCOMPARE(alerts.count(), 0);                                   // better: no alert
+        vpm->checkMissionAlerts(est(MissionAssess::Tight, false, {}));
+        QCOMPARE(alerts.count(), 1);
+        QCOMPARE(alerts.at(0).at(0).toString(), QStringLiteral("Mission now Tight"));
+        QVERIFY(alerts.at(0).at(1).toBool());                          // spoken
+        vpm->checkMissionAlerts(est(MissionAssess::Tight, false, {}));
+        QCOMPARE(alerts.count(), 1);                                   // same: no repeat
+        vpm->checkMissionAlerts(est(MissionAssess::Tight, true, {}));
+        QCOMPARE(alerts.count(), 2);
+        QVERIFY(alerts.at(1).at(0).toString().startsWith(QStringLiteral("Return now")));
+        const QStringList old{QStringLiteral("Old weather: forecast 3.5 h old")};
+        vpm->checkMissionAlerts(est(MissionAssess::Tight, false, old));
+        vpm->checkMissionAlerts(est(MissionAssess::Tight, false, old));
+        QCOMPARE(alerts.count(), 3);                                   // once a flight
+        QVERIFY(!alerts.at(2).at(1).toBool());                         // shown, not spoken
+    }
+
     // Payload already released: nothing more comes off.
     ls.mode = QStringLiteral("auto");
     ls.payloadKg = 0.0;

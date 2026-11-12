@@ -225,6 +225,44 @@ Item {
 
             parent: _videoIsMain ? rightPanel : leftPanel
             anchors.fill: parent
+
+            // Mission estimate in flight: beside each waypoint ahead, the time
+            // to it and the charge on arrival (pessimistic), updated every 2 s;
+            // the last safe turn-back point marked. From
+            // VehicleProfileManager.missionLive (empty on the ground).
+            MapItemView {
+                objectName: "missionEstimateLabels"
+                readonly property var _live: typeof VehicleProfileManager !== "undefined" ? VehicleProfileManager.missionLive : ({})
+                model: _live.ready === true ? (_live.waypoints || []) : []
+                delegate: MapQuickItem {
+                    readonly property bool _turnBack: modelData.seq === mapControl._missionTurnBackSeq
+                    visible:        modelData.lat !== undefined && (modelData.lat !== 0 || modelData.lon !== 0)
+                    coordinate:     QtPositioning.coordinate(modelData.lat || 0, modelData.lon || 0)
+                    anchorPoint.x:  -ScreenTools.defaultFontPixelWidth
+                    anchorPoint.y:  labelBox.height / 2
+                    z:              QGroundControl.zOrderMapItems + 1
+                    sourceItem: Rectangle {
+                        id:         labelBox
+                        width:      labelText.implicitWidth + ScreenTools.defaultFontPixelWidth
+                        height:     labelText.implicitHeight + 2
+                        radius:     3
+                        color:      Qt.rgba(0, 0, 0, 0.65)
+                        border.color: _turnBack ? Colors.warning : "transparent"
+                        Text {
+                            id:                 labelText
+                            anchors.centerIn:   parent
+                            text:               modelData.timeText + " · " + Math.round(modelData.socPessimisticPct) + " %"
+                                                + (_turnBack ? qsTr(" · last turn-back") : "")
+                            font.pixelSize:     ScreenTools.smallFontPointSize * 1.3
+                            color:              modelData.state === 0 || modelData.state === 1 ? Colors.textPrimary : Colors.error
+                        }
+                    }
+                }
+            }
+            readonly property int _missionTurnBackSeq: {
+                var m = typeof VehicleProfileManager !== "undefined" ? VehicleProfileManager.missionLive : ({})
+                return m.turnBackSeq !== undefined ? m.turnBackSeq : -2
+            }
         }
 
         // ── Double-click overlay on MAP panel to swap ────────────────

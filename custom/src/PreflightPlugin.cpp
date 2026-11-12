@@ -14,6 +14,7 @@
 
 #include "MultiVehicleManager.h"
 #include "QGCApplication.h"
+#include "Utilities/Audio/AudioOutput.h"
 #include "QmlObjectListModel.h"
 #include "QmlComponentInfo.h"
 #include "Vehicle/Vehicle.h"
@@ -394,6 +395,18 @@ void PreflightPlugin::init()
         missionEstimateCheck->evaluate();
     };
     connect(_vehicleProfileManager, &VehicleProfileManager::emptyWeightChanged, this, reevaluatePower);
+    // In-flight mission alerts (the result getting worse, RETURN NOW, old
+    // weather) and payload releases: a message on screen, and spoken through
+    // QGroundControl's voice for the ones that need the pilot's attention.
+    connect(_vehicleProfileManager, &VehicleProfileManager::missionAlert, this, [](const QString &text, bool speak) {
+        qgcApp()->showAppMessage(text);
+        if (speak && AudioOutput::instance())
+            AudioOutput::instance()->say(text);
+    });
+    connect(_vehicleProfileManager, &VehicleProfileManager::payloadReleased, this,
+            [](int index, double kg, const QString &how) {
+                qgcApp()->showAppMessage(tr("Payload %1 released (%2 kg, %3)").arg(index).arg(kg, 0, 'f', 1).arg(how));
+            });
     connect(_telemetryBridge, &TelemetryBridge::missionCountChanged, this, reevaluatePower);
     connect(_telemetryBridge, &TelemetryBridge::homePositionChanged, this, reevaluatePower);
     if (_weatherProvider)
@@ -477,11 +490,13 @@ void PreflightPlugin::init()
     _sessionRecorder->setFlightClosedHandler([this](const SessionRecorder::FlightEnd &end) {
         // The target was for this flight (it stays on the flight's own
         // records); the next flight starts without one. A bench or test arm
-        // keeps it.
+        // keeps it, and so does one saved after this flight started (for the
+        // next flight, while this one was still closing).
         if (!end.bench) {
-            DatabaseManager::instance().clearVehicleTarget(end.deviceUid);
+            const QDateTime started = QDateTime::currentDateTimeUtc().addMSecs(qint64(-end.durationSec * 1000.0));
+            DatabaseManager::instance().clearVehicleTarget(end.deviceUid, started);
             if (FlightSession::instance())
-                FlightSession::instance()->clearTargetLocation();
+                FlightSession::instance()->clearTargetLocation(started);
         }
         // Battery cycle: non-bench flights only, >= 20 % of the pack.
         if (!end.bench && end.mahUsed >= 0

@@ -265,6 +265,14 @@ void DatabaseManagerTest::testVehicleTargetSavedBeforeAnyFlight()
     QCOMPARE(q.value(0).toDouble(), 9.03);
     QVERIFY(db.clearVehicleTarget());                                   // all vehicles
     QVERIFY(db.vehicleTarget(QStringLiteral("UID-U")).isEmpty());
+
+    // At a flight's end only a target saved before the flight started goes:
+    // one saved for the next flight while it was closing stays.
+    QVERIFY(db.saveVehicleTarget(QStringLiteral("UID-U"), 9.05, 38.81, QStringLiteral("typed")));
+    QVERIFY(db.clearVehicleTarget(QStringLiteral("UID-U"), QDateTime::currentDateTimeUtc().addSecs(-60)));
+    QVERIFY(!db.vehicleTarget(QStringLiteral("UID-U")).isEmpty());     // saved after the start: kept
+    QVERIFY(db.clearVehicleTarget(QStringLiteral("UID-U"), QDateTime::currentDateTimeUtc().addSecs(60)));
+    QVERIFY(db.vehicleTarget(QStringLiteral("UID-U")).isEmpty());      // saved before: gone
 }
 
 // ── SessionRecorder — no vehicle, no MockLink ──────────────

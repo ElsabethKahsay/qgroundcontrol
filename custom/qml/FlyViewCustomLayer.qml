@@ -414,7 +414,13 @@ Item {
                                       .arg(Math.round(missionChip._m.landLikelyPct || 0))
                                       .arg(Math.round(missionChip._m.landPessimisticPct || 0))
                                       .arg(missionChip._m.totalText || "--")
-            MouseArea { id: chipMouse; anchors.fill: parent; hoverEnabled: true }
+            MouseArea {
+                id:             chipMouse
+                anchors.fill:   parent
+                hoverEnabled:   true
+                cursorShape:    Qt.PointingHandCursor
+                onClicked:      _root.togglePanel("mission")
+            }
         }
 
         FlyQuickActions {
@@ -435,8 +441,8 @@ Item {
             }        }
     }
 
-    // ── Single-overlay state for the FC status / Events panels ──
-    property string _openPanel: ""          // "", "fcStatus", "events"
+    // ── Single-overlay state for the FC status / Events / Mission panels ──
+    property string _openPanel: ""          // "", "fcStatus", "events", "mission"
 
     function togglePanel(which) {
         if (_openPanel === which) {
@@ -463,6 +469,131 @@ Item {
         visible:                _root._openPanel === "events"
         z:                      QGroundControl.zOrderWidgets + 1
         onCloseRequested:       _root._openPanel = ""
+    }
+
+    // ── Mission panel (opened from the mission chip) ──
+    // The live list: the items reached this flight in grey (real time and
+    // charge, the take-off prediction small beside them), the next one
+    // highlighted with its countdown, the ones ahead predicted, a line under
+    // the last safe turn-back point; the reasons, the wind in use and where it
+    // comes from, and "Payload dropped" (asks to confirm) for an RC drop the
+    // release output does not show. One rich-text table, like the checklist
+    // dialogs.
+    Rectangle {
+        id:                     missionPanel
+        objectName:             "missionPanel"
+        readonly property var _vpm: typeof VehicleProfileManager !== "undefined" ? VehicleProfileManager : null
+        readonly property var _m: _vpm ? _vpm.missionLive : ({})
+        readonly property var _pl: _vpm ? _vpm.powerLive : ({})
+        property bool _confirmDrop: false
+        visible:                _root._openPanel === "mission" && _m.live === true
+        x:                      _qaLeftX
+        y:                      leftActionsColumn.y + leftActionsColumn.height + ScreenTools.defaultFontPixelHeight * 0.6
+        z:                      QGroundControl.zOrderWidgets + 1
+        width:                  ScreenTools.defaultFontPixelWidth * 46
+        height:                 panelCol.implicitHeight + ScreenTools.defaultFontPixelHeight
+        radius:                 Config.radiusLarge
+        color:                  Qt.rgba(Colors.background.r, Colors.background.g, Colors.background.b, 0.92)
+        border.color:           Colors.accentCyan
+        onVisibleChanged:       _confirmDrop = false
+
+        function _pct(v) { return (v === undefined || v === null || isNaN(v) || v < 0) ? "--" : Math.round(v) + " %" }
+
+        ColumnLayout {
+            id:                 panelCol
+            anchors { left: parent.left; right: parent.right; top: parent.top; margins: ScreenTools.defaultFontPixelWidth }
+            spacing:            ScreenTools.defaultFontPixelHeight * 0.3
+
+            RowLayout {
+                Layout.fillWidth: true
+                Text {
+                    text:           qsTr("MISSION · %1").arg(missionPanel._m.resultName || "")
+                    font.bold:      true
+                    color:          missionChip._colour
+                    Layout.fillWidth: true
+                }
+                Text {
+                    text:           "\u2715"
+                    color:          Colors.textSecondary
+                    MouseArea { anchors.fill: parent; onClicked: _root._openPanel = "" }
+                }
+            }
+            Text {
+                Layout.fillWidth: true
+                wrapMode:       Text.WordWrap
+                color:          Colors.textPrimary
+                font.pixelSize: ScreenTools.defaultFontPixelHeight * 0.8
+                text: missionPanel._m.mode === "paused"
+                      ? qsTr("Paused: the pilot is flying. Charge as if the mission went on.")
+                      : qsTr("Lands with %1 (pessimistic %2), %3 left")
+                            .arg(missionPanel._pct(missionPanel._m.landLikelyPct))
+                            .arg(missionPanel._pct(missionPanel._m.landPessimisticPct))
+                            .arg(missionPanel._m.totalText || "--")
+            }
+            Text {
+                objectName:     "missionPanelTable"
+                Layout.fillWidth: true
+                textFormat:     Text.RichText
+                font.pixelSize: ScreenTools.defaultFontPixelHeight * 0.8
+                color:          Colors.textPrimary
+                text: {
+                    var m = missionPanel._m
+                    var html = "<table width='100%' cellspacing='1'>"
+                    var passed = m.passed || []
+                    for (var i = 0; i < passed.length; ++i) {
+                        var p = passed[i]
+                        html += "<tr><td><font color='" + Colors.textSecondary + "'>" + p.seq + "</font></td><td><font color='"
+                              + Colors.textSecondary + "'>" + qsTr("reached") + " " + p.timeText + "</font> <small>(" + qsTr("plan")
+                              + " " + (p.predictedTimeText || "--") + ")</small></td><td align='right'><font color='"
+                              + Colors.textSecondary + "'>" + missionPanel._pct(p.socPct) + "</font> <small>("
+                              + missionPanel._pct(p.predictedSocPct) + ")</small></td></tr>"
+                    }
+                    var w = m.waypoints || []
+                    for (var j = 0; j < w.length; ++j) {
+                        var a = w[j]
+                        var c = a.state === 0 || a.state === 1 ? Colors.textPrimary : Colors.error
+                        var label = a.seq >= 0 ? a.seq + " " + a.what : a.what
+                        html += "<tr><td colspan='1'>" + (j === 0 ? "<b>&#9654;</b>" : "") + "</td><td><font color='" + c + "'>"
+                              + (j === 0 ? "<b>" + label + " · " + a.timeText + "</b>" : label + " · " + a.timeText)
+                              + "</font></td><td align='right'><font color='" + c + "'>" + missionPanel._pct(a.socPessimisticPct)
+                              + "</font></td></tr>"
+                        if (a.seq === m.turnBackSeq)
+                            html += "<tr><td colspan='3'><font color='" + Colors.warning + "'><small>&#8212;&#8212; "
+                                  + qsTr("last safe turn-back point") + " &#8212;&#8212;</small></font></td></tr>"
+                    }
+                    return html + "</table>"
+                }
+            }
+            Text {
+                Layout.fillWidth: true
+                visible:        (missionPanel._m.reasons || []).length > 0
+                wrapMode:       Text.WordWrap
+                font.pixelSize: ScreenTools.defaultFontPixelHeight * 0.7
+                color:          missionPanel._m.returnNow || missionPanel._m.weatherRed ? Colors.error : Colors.textSecondary
+                text:           (missionPanel._m.returnNow ? missionPanel._m.returnNowWhy + "\n" : "")
+                                + (missionPanel._m.reasons || []).join("\n")
+            }
+            Text {
+                Layout.fillWidth: true
+                wrapMode:       Text.WordWrap
+                font.pixelSize: ScreenTools.defaultFontPixelHeight * 0.7
+                color:          Colors.textSecondary
+                text:           qsTr("Wind in use: %1").arg(missionPanel._m.weatherText || "--")
+            }
+            Button {
+                objectName:     "missionPanelDropButton"
+                Layout.fillWidth: true
+                visible:        (missionPanel._pl.payloadAboardKg || 0) > 0
+                text:           missionPanel._confirmDrop
+                                ? qsTr("Confirm: payload %1 dropped").arg((missionPanel._pl.payloadsReleased || 0) + 1)
+                                : qsTr("Payload %1 dropped").arg((missionPanel._pl.payloadsReleased || 0) + 1)
+                onClicked: {
+                    if (!missionPanel._confirmDrop) { missionPanel._confirmDrop = true; return }
+                    missionPanel._confirmDrop = false
+                    if (missionPanel._vpm) missionPanel._vpm.payloadDroppedTap()
+                }
+            }
+        }
     }
 
     // ── Battery time estimator overlay ──

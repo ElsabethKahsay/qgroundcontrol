@@ -323,11 +323,15 @@ void FlightSession::reloadTargetLocation()
     emit targetLocationChanged();
 }
 
-void FlightSession::clearTargetLocation()
+void FlightSession::clearTargetLocation(const QDateTime &setBefore)
 {
     const QString key = currentVehicleKey();
-    if (!key.isEmpty())
-        DatabaseManager::instance().clearVehicleTarget(key);
+    if (!key.isEmpty()) {
+        DatabaseManager::instance().clearVehicleTarget(key, setBefore);
+        // A target saved after @p setBefore (for the next flight) stays shown.
+        if (!DatabaseManager::instance().vehicleTarget(key).isEmpty())
+            return;
+    }
     if (std::isnan(m_targetLat) && std::isnan(m_targetLon) && m_targetSource.isEmpty())
         return;
     m_targetLat = std::numeric_limits<double>::quiet_NaN();
