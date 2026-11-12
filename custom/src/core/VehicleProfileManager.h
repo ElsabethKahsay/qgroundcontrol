@@ -19,7 +19,9 @@
 
 #include "MotorTable.h"
 #include "PayloadRelease.h"
+#include "WindFromLean.h"
 #include <QVector>
+#include <limits>
 
 class TelemetryBridge;
 
@@ -413,6 +415,9 @@ public:
         QString mode;                              ///< "auto", "rtl", "land", "paused"
         double socPct = -1.0;                      ///< charge left now
         double payloadKg = 0.0;                    ///< still aboard
+        /// The wind measured from the lean (toward, m/s); NaN: use the forecast.
+        double windN = std::numeric_limits<double>::quiet_NaN();
+        double windE = std::numeric_limits<double>::quiet_NaN();
     };
     /// missionEstimate() from @p live (nullptr: before take-off, from home).
     QVariantMap missionEstimateFrom(const LiveStart *live);
@@ -588,6 +593,20 @@ private:
     int m_lastMissionIndex = -1;
     int m_lastAlertResult = -1;
     bool m_alertedOldWeather = false;
+    // The wind from the lean (WindFromLean.h): this flight's steady samples,
+    // the copter's drag constant (saved per copter, learned on flights that
+    // turned; 0 = not known) and the last ground velocity, for the speed-up
+    // check.
+    QVector<WindFromLean::Sample> m_windSamples;
+    double m_windK = 0.0;
+    bool m_windKLearnedThisFlight = false;
+    double m_windLastN = std::numeric_limits<double>::quiet_NaN();
+    double m_windLastE = std::numeric_limits<double>::quiet_NaN();
+    qint64 m_windLastMs = 0;
+    /// Adds a steady sample now and works out the wind: with the drag
+    /// constant known, from the last minute; else learning it from the flight
+    /// so far. False when no wind can be given yet.
+    bool _windFromLean(double *windN, double *windE);
     PayloadRelease::Config dropConfig() const;
     double copterParam(const QString &name) const;
     void _onOutputsForDrop();

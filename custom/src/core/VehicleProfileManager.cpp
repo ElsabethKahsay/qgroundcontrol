@@ -1341,6 +1341,10 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         m_lastMissionIndex = -1;
         m_lastAlertResult = -1;
         m_alertedOldWeather = false;
+        m_windSamples.clear();
+        m_windKLearnedThisFlight = false;
+        m_windLastMs = 0;
+        m_windK = QSettings().value(QStringLiteral("WindFromLean/k/%1").arg(m_currentDeviceUid), 0.0).toDouble();
         m_takeoffPrediction.clear();
         for (const QVariant &wv : missionEstimate().value(QStringLiteral("waypoints")).toList()) {
             const QVariantMap wp = wv.toMap();
@@ -1417,6 +1421,11 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         m_cruiseRatioSum = 0.0;
         m_cruiseSamples = 0;
         m_cruiseBands.clear();
+        // A drag constant learned on this flight (it turned enough) is kept
+        // for the next ones: then the wind needs no turns.
+        if (m_windKLearnedThisFlight && m_windK > 0.0)
+            QSettings().setValue(QStringLiteral("WindFromLean/k/%1").arg(m_currentDeviceUid), m_windK);
+        m_windKLearnedThisFlight = false;
         if (table && m_packOhmSamples >= MotorTable::kMinHoverSamples && m_packOhmLive > 0.0) {
             m_packOhm = m_packOhmLive;
             QSettings().setValue(QStringLiteral("MotorTable/packOhm/%1").arg(m_currentDeviceUid), m_packOhm);
@@ -3041,6 +3050,23 @@ QVariantMap VehicleProfileManager::missionEstimateFrom(const LiveStart *live)
         ctx.weatherConfidence = wc.confidence;
         ctx.weatherReasons = wc.reasons;
     }
+    // In flight, a wind measured from the copter's lean replaces the forecast
+    // wind (the gust stays the forecast's).
+    out[QStringLiteral("windSource")] = ctx.weatherKnown ? QStringLiteral("forecast") : QString();
+    if (live && std::isfinite(live->windN) && std::isfinite(live->windE)) {
+        WindFromLean::Fit wf;
+        wf.windN = live->windN;
+        wf.windE = live->windE;
+        in.wind.speedMs = wf.speedMs();
+        in.wind.fromDeg = wf.fromDeg();
+        if (std::isfinite(in.wind.gustMs))
+            in.wind.gustMs = std::max(in.wind.gustMs, in.wind.speedMs);
+        ctx.weatherKnown = true;
+        ctx.weatherConfidence = std::max(ctx.weatherConfidence, int(SiteWeather::Medium));
+        weatherText = QStringLiteral("Wind %1 m/s from %2\u00B0 at %3 m (estimated from the lean)")
+                          .arg(wf.speedMs(), 0, 'f', 1).arg(qRound(wf.fromDeg())).arg(qRound(live->altM));
+        out[QStringLiteral("windSource")] = QStringLiteral("lean");
+    }
     out[QStringLiteral("weatherText")] = weatherText;
 
     const MissionCost::Result cost = MissionCost::cost(w, ws, homeLat, homeLon, in);
@@ -3146,6 +3172,7 @@ void VehicleProfileManager::_updateMissionLive(int socPct)
         MissionManager *mm = v->missionManager();
         s.nextSeq = mm ? std::max(1, mm->currentIndex()) : 1;
         s.mode = liveModeOf(m_telemetry->flightMode());
+        _windFromLean(&s.windN, &s.windE);
         // An item is reached when the autopilot moves on to the next one:
         // its real time since take-off and the charge then, next to the
         // take-off prediction.
@@ -3217,4 +3244,54 @@ void VehicleProfileManager::checkMissionAlerts(const QVariantMap &next)
                 break;
             }
     }
+}
+
+// Every 2 s in flight (see WindFromLean.h): a steady moment (level, not
+// speeding up) adds a sample with the weight aboard; the wind then comes from
+// the last minute with this copter's drag constant, or, with none saved yet,
+// from learning the constant on this flight once it has turned enough.
+bool VehicleProfileManager::_windFromLean(double *windN, double *windE)
+{
+    if (!m_telemetry)
+        return false;
+    const double vN = m_telemetry->velocityNorthMs();
+    const double vE = m_telemetry->velocityEastMs();
+    const double emptyKg = emptyWeightKg();
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (!std::isfinite(vN) || !std::isfinite(vE) || !(emptyKg > 0.0))
+        return false;
+    const double dt = m_windLastMs > 0 ? (now - m_windLastMs) / 1000.0 : 0.0;
+    const double accel = dt > 0.1 && std::isfinite(m_windLastN)
+                             ? std::hypot(vN - m_windLastN, vE - m_windLastE) / dt : 1e9;
+    m_windLastN = vN;
+    m_windLastE = vE;
+    m_windLastMs = now;
+    if (WindFromLean::isSteady(m_telemetry->verticalSpeed(), accel)) {
+        WindFromLean::Sample smp;
+        smp.rollRad = m_telemetry->roll();
+        smp.pitchRad = m_telemetry->pitch();
+        smp.yawRad = m_telemetry->yaw();
+        smp.velN = vN;
+        smp.velE = vE;
+        smp.massKg = emptyKg + livePayloadAboardKg();
+        m_windSamples.append(smp);
+    }
+    WindFromLean::Fit fit;
+    if (m_windK > 0.0) {
+        constexpr int kLastMinute = 30;   // samples every 2 s
+        fit = WindFromLean::wind(m_windSamples.mid(std::max(0, int(m_windSamples.size()) - kLastMinute)), m_windK);
+    } else if (m_windSamples.size() >= WindFromLean::kMinSamples && m_windSamples.size() % 5 == 0) {
+        fit = WindFromLean::learn(m_windSamples);
+        if (fit.ok) {
+            m_windK = fit.k;
+            m_windKLearnedThisFlight = true;
+            qInfo().noquote() << QStringLiteral("VehicleProfileManager: drag constant learned from the lean: %1 (rms %2)")
+                                     .arg(fit.k, 0, 'f', 3).arg(fit.rmsTan, 0, 'f', 3);
+        }
+    }
+    if (!fit.ok)
+        return false;
+    *windN = fit.windN;
+    *windE = fit.windE;
+    return true;
 }

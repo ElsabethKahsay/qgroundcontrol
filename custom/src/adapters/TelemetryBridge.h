@@ -36,6 +36,7 @@
 #include "utils/TelemetryStream.h"
 
 #include <array>
+#include <limits>
 
 class Vehicle;
 
@@ -611,6 +612,10 @@ public:
     double airspeed() const { return _airspeed; }
     virtual double groundSpeed() const { return _groundSpeed; }
     double verticalSpeed() const { return _verticalSpeed; }
+    /// Ground velocity north / east (m/s) from GLOBAL_POSITION_INT, for the
+    /// wind from the lean; NaN until the first one.
+    double velocityNorthMs() const { return _velocityN; }
+    double velocityEastMs() const { return _velocityE; }
     double heading() const { return _heading; }
     virtual double altitudeRelative() const { return _altitudeRelative; }
 
@@ -1018,6 +1023,8 @@ private:
     double _airspeed = 0.0;
     double _groundSpeed = 0.0;
     double _verticalSpeed = 0.0;
+    double _velocityN = std::numeric_limits<double>::quiet_NaN();
+    double _velocityE = std::numeric_limits<double>::quiet_NaN();
     double _heading = 0.0;
     double _altitudeRelative = 0.0;
 

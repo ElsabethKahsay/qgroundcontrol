@@ -20,6 +20,7 @@
 #include "MissionCost.h"
 #include "MissionAssess.h"
 #include "MissionEstimateCheck.h"
+#include "WindFromLean.h"
 #include <QCoreApplication>
 #include <QFileInfo>
 
@@ -2015,6 +2016,68 @@ private slots:
         item.evaluate();
         item.confirm(QStringLiteral("by hand"));
         QCOMPARE(item.status(), CheckStatus::Warning);
+    }
+
+    // The wind from the lean: samples made for a known drag constant and wind
+    // (an out-and-back leg and a hover, a little noise) give them back; one
+    // direction only is not enough to learn the constant; with the constant
+    // known, one straight leg gives the wind.
+    void testWindFromLean()
+    {
+        using namespace WindFromLean;
+        const double k = 0.6, mass = 12.09, wN = 3.0, wE = -4.0;
+        auto sample = [&](double vN, double vE, double yaw, double noise) {
+            const double aN = vN - wN, aE = vE - wE, sp = std::hypot(aN, aE);
+            double r, p;
+            attitudeFor(k * sp * aN / (mass * kG) + noise, k * sp * aE / (mass * kG) - noise, yaw, &r, &p);
+            Sample s;
+            s.rollRad = r; s.pitchRad = p; s.yawRad = yaw; s.velN = vN; s.velE = vE; s.massKg = mass;
+            return s;
+        };
+        // The lean vector is read back exactly from its attitude, at any heading.
+        for (double yaw : {0.0, 0.7, 2.5, -1.9}) {
+            double r, p, hN, hE;
+            attitudeFor(0.21, -0.13, yaw, &r, &p);
+            leanVector(r, p, yaw, &hN, &hE);
+            QVERIFY(near(hN, 0.21, 1e-12) && near(hE, -0.13, 1e-12));
+        }
+        QVector<Sample> out, all;
+        for (int i = 0; i < 30; ++i) {
+            const double n = 0.002 * std::sin(i * 1.7);
+            out << sample(10.0, 0.0, 0.0, n);                    // north at 10 m/s
+            all << sample(10.0, 0.0, 0.0, n) << sample(-10.0, 0.0, kPi, -n) << sample(0.0, 0.0, 1.0, n);
+        }
+        const Fit f = learn(all);
+        QVERIFY2(f.ok, qPrintable(QStringLiteral("rms %1 spread %2").arg(f.rmsTan).arg(f.spreadDeg)));
+        QVERIFY2(near(f.k, k, 0.02), qPrintable(QString::number(f.k)));
+        QVERIFY2(near(f.windN, wN, 0.15) && near(f.windE, wE, 0.15),
+                 qPrintable(QStringLiteral("%1, %2").arg(f.windN).arg(f.windE)));
+        QVERIFY(near(f.speedMs(), 5.0, 0.15));
+        QVERIFY2(near(f.fromDeg(), 126.87, 2.0), qPrintable(QString::number(f.fromDeg())));   // from the south-east
+        QVERIFY(f.spreadDeg > 170.0);
+
+        // One direction only: k cannot be told from a wind along the track.
+        const Fit one = learn(out);
+        QVERIFY(!one.ok);
+        QVERIFY(one.spreadDeg < kMinSpreadDeg);
+        QVERIFY(!learn(all.mid(0, kMinSamples - 1)).ok);         // too few
+
+        // k known: one straight leg is enough for the wind.
+        const Fit w = wind(out, k);
+        QVERIFY2(w.ok, qPrintable(QString::number(w.rmsTan)));
+        QVERIFY2(near(w.windN, wN, 0.2) && near(w.windE, wE, 0.2),
+                 qPrintable(QStringLiteral("%1, %2").arg(w.windN).arg(w.windE)));
+        QVERIFY(!wind(out, 0.0).ok);
+
+        // A wrong k: on the out-and-back legs the lean cannot be explained and
+        // the fit is refused (on one straight leg it could not be told: a
+        // wind along the track fits any k, which is why k is learned first).
+        QVERIFY(!wind(all, 6.0).ok);
+        QVERIFY(wind(all, k).ok);
+
+        QVERIFY(isSteady(0.2, 0.1));
+        QVERIFY(!isSteady(1.0, 0.1));
+        QVERIFY(!isSteady(0.0, 0.8));
     }
 
     void testMissionWalkTemplate()

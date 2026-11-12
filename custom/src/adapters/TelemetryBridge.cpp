@@ -790,6 +790,11 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message) {
                 emit altitudeChanged();
             }
 
+            // Ground velocity north / east (cm/s -> m/s), no signal: read
+            // every 2 s by the wind from the lean.
+            _velocityN = gp.vx / 100.0;
+            _velocityE = gp.vy / 100.0;
+
             // Vertical speed (cm/s → m/s) from the same EKF solution.
             double vs = gp.vz / 100.0;
             if (gp.vz != INT32_MAX && qAbs(vs - _verticalSpeed) > 0.01) {

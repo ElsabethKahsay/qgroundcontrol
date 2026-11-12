@@ -3314,6 +3314,23 @@ void LivePluginBenchTest::testMissionEstimateLive()
     QCOMPARE(lw.size(), 1);
     QCOMPARE(lw.at(0).toMap().value(QStringLiteral("what")).toString(), QStringLiteral("Land"));
     QVERIFY(qAbs(lv.value(QStringLiteral("totalS")).toDouble() - (20.0 / 1.5 + 10.0 / 0.5)) < 0.5);
+    // A wind measured from the lean (step 7c) replaces the forecast in flight:
+    // said so, and costed (an 8 m/s wind changes the charge on landing).
+    {
+        VehicleProfileManager::LiveStart wl = ls;
+        const QVariantMap calm = vpm->missionEstimateFrom(&wl);
+        wl.windN = -8.0;            // blowing toward the south: a headwind on the way out north
+        wl.windE = 0.0;
+        const QVariantMap windy = vpm->missionEstimateFrom(&wl);
+        QCOMPARE(windy.value(QStringLiteral("windSource")).toString(), QStringLiteral("lean"));
+        QVERIFY2(windy.value(QStringLiteral("weatherText")).toString().contains(QStringLiteral("from 0\u00B0"))
+                     && windy.value(QStringLiteral("weatherText")).toString().contains(QStringLiteral("estimated from the lean")),
+                 qPrintable(windy.value(QStringLiteral("weatherText")).toString()));
+        QVERIFY(calm.value(QStringLiteral("windSource")).toString() != QStringLiteral("lean"));
+        QVERIFY(qAbs(windy.value(QStringLiteral("landPessimisticPct")).toDouble()
+                     - calm.value(QStringLiteral("landPessimisticPct")).toDouble()) > 0.01);
+    }
+
     // Each waypoint ahead carries its position, for the map labels; the
     // turn-back point is given.
     QVERIFY(lw.at(0).toMap().contains(QStringLiteral("lat")));
