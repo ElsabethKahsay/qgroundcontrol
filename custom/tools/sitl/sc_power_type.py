@@ -174,7 +174,7 @@ def run(vehicle="ArduCopter", instance=5):
         with open(r.gcs_log.name) as fh:
             log = fh.read()
         for line in log.splitlines():
-            if "power-type estimate" in line or "RETURN NOW" in line:
+            if ("battery estimate" in line or "power-type estimate" in line) or "RETURN NOW" in line:
                 r.note("GCS log: " + line.strip()[:220])
         r.check("RETURN NOW announced while airborne", "RETURN NOW on" in log)
         # BATT_MONITOR = 25 on a copter: the GCS counts the charge itself.

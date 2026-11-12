@@ -2127,15 +2127,15 @@ void LivePluginBenchTest::testPowerLiveInFlyView()
     // While the estimate is off, the log says why, again each time the
     // reason changes: unlinked, then linked but waived, then on.
     QVERIFY(vpm->linkCurrentVehiclePowerType(0));
-    for (int i = 0; i < 100 && offReason() != QStringLiteral("no power type linked"); ++i)
+    for (int i = 0; i < 100 && offReason() != QStringLiteral("no motor table linked"); ++i)
         QTest::qWait(50);
-    QCOMPARE(offReason(), QStringLiteral("no power type linked"));
+    QCOMPARE(offReason(), QStringLiteral("no motor table linked"));
     QVERIFY(vpm->waivePowerType(QStringLiteral("Test Pilot")));
-    QTest::ignoreMessage(QtInfoMsg, "VehicleProfileManager: power-type estimate off: power type waived");
+    QTest::ignoreMessage(QtInfoMsg, "VehicleProfileManager: battery estimate off: motor table waived");
     QVERIFY(vpm->linkCurrentVehiclePowerType(type));
-    for (int i = 0; i < 100 && offReason() != QStringLiteral("power type waived"); ++i)
+    for (int i = 0; i < 100 && offReason() != QStringLiteral("motor table waived"); ++i)
         QTest::qWait(50);
-    QCOMPARE(offReason(), QStringLiteral("power type waived"));
+    QCOMPARE(offReason(), QStringLiteral("motor table waived"));
     vpm->clearPowerTypeFlightState();
 
     QVERIFY(vpm->enterPayloadWeightKg(0.8));

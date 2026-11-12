@@ -430,6 +430,19 @@ public:
     /// The autopilot's flight mode as the in-flight estimate reads it:
     /// "auto" (flying the mission), "rtl" (any RTL), "land", else "paused".
     static QString liveModeOf(const QString &flightMode);
+    /// Already on the way home or down: RTL (any), LAND, or AUTO flying a
+    /// return or land item (@p currentCommand, the MAVLink command of the
+    /// mission item flown now; -1 when not known).
+    static bool isReturning(const QString &flightMode, int currentCommand);
+    /// What the trip to a target (no mission estimated) advises when the rest
+    /// of it no longer fits above the reserve (@p tripShort): RETURN NOW
+    /// while still going out, but not when already returning or landing; then
+    /// a warning that the landing will use the reserve.
+    struct TripAdvice {
+        bool returnNow = false;
+        bool landingOnReserve = false;
+    };
+    static TripAdvice tripAdvice(bool tripShort, bool returning);
     /// Raises missionAlert() for what changed from the last in-flight
     /// estimate to @p next (the live update calls it every 2 s before keeping
     /// @p next): the result worse, RETURN NOW on, old weather once a flight.

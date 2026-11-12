@@ -1777,7 +1777,18 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         // With a mission estimated in flight, RETURN NOW comes from it (the
         // turn-back point); the out-and-back to a target only without one.
         const bool fromMission = m_missionLive.value(QStringLiteral("ready")).toBool();
-        out[QStringLiteral("returnNow")] = fromMission ? m_missionLive.value(QStringLiteral("returnNow")).toBool() : r.returnNow;
+        // The trip to a target: no RETURN NOW once already returning or
+        // landing (there is nothing to return from); the landing using the
+        // reserve is said instead.
+        int currentCommand = -1;
+        if (v && v->missionManager())
+            for (const MissionItem *mi : v->missionManager()->missionItems())
+                if (mi->sequenceNumber() == v->missionManager()->currentIndex())
+                    currentCommand = int(mi->command());
+        const TripAdvice advice = tripAdvice(r.returnNow, isReturning(m_telemetry->flightMode(), currentCommand));
+        out[QStringLiteral("returnNow")] = fromMission ? m_missionLive.value(QStringLiteral("returnNow")).toBool()
+                                                       : advice.returnNow;
+        out[QStringLiteral("landingOnReserve")] = !fromMission && advice.landingOnReserve;
         out[QStringLiteral("returnNowFrom")] = fromMission ? QStringLiteral("mission") : QStringLiteral("trip");
         out[QStringLiteral("returnNowWhy")] = fromMission ? m_missionLive.value(QStringLiteral("returnNowWhy")) : QVariant(QString());
         out[QStringLiteral("payloadAboard")] = in.payloadAboard;
@@ -1812,8 +1823,8 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
                        : capacityAh() <= 0.0 ? QStringLiteral("no pack capacity")
                        : !armed ? QStringLiteral("motor table: hover not known yet, fly once")
                        : QStringLiteral("motor table: no motor throttle or charge reading"))
-            : m_powerTypeId <= 0 ? QStringLiteral("no power type linked")
-            : !m_powerTypeWaivedBy.isEmpty() ? QStringLiteral("power type waived")
+            : m_powerTypeId <= 0 ? QStringLiteral("no motor table linked")
+            : !m_powerTypeWaivedBy.isEmpty() ? QStringLiteral("motor table waived")
             : batteryPackWaived() ? QStringLiteral("pack waived")
             : m_powerSummary.value(QStringLiteral("source")).toString() == QLatin1String("none")
                   ? QStringLiteral("no learned model") : QStringLiteral("no pack capacity or charge reading");
@@ -1821,7 +1832,7 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
     const QString why = out.value(QStringLiteral("offReason")).toString();
     if (wasActive != isActive || m_powerLive.isEmpty()
         || (!isActive && why != m_powerLive.value(QStringLiteral("offReason")).toString())) {
-        qInfo().noquote() << QStringLiteral("VehicleProfileManager: power-type estimate %1")
+        qInfo().noquote() << QStringLiteral("VehicleProfileManager: battery estimate %1")
                                  .arg(isActive ? QStringLiteral("on (%1, charge used from %2)")
                                                      .arg(out.value(QStringLiteral("typeName")).toString(),
                                                           out.value(QStringLiteral("chargeSource")).toString())
@@ -2427,7 +2438,7 @@ bool VehicleProfileManager::confirmPowerTypeProps()
 bool VehicleProfileManager::waivePowerType(const QString &pilot)
 {
     if (!recordWaiver(QStringLiteral("power_type_waived"), pilot,
-                      QStringLiteral("No power type; rough flight-time estimate, no mission estimate"),
+                      QStringLiteral("No motor table; rough flight-time estimate, no mission estimate"),
                       QStringLiteral("power.power_type")))
         return false;
     m_powerTypeWaivedBy = pilot.trimmed();
@@ -3394,4 +3405,21 @@ QVariantMap VehicleProfileManager::missionAccuracy() const
                              .arg(a.meanAbsSocPts, 0, 'f', 1).arg(a.meanAbsTimePct, 0, 'f', 0)
                              .arg(a.atOrAbovePessimistic);
     return m;
+}
+
+bool VehicleProfileManager::isReturning(const QString &flightMode, int currentCommand)
+{
+    const QString mode = liveModeOf(flightMode);
+    if (mode == QLatin1String("rtl") || mode == QLatin1String("land"))
+        return true;
+    return mode == QLatin1String("auto")
+           && (currentCommand == MissionWalk::NavReturnToLaunch || currentCommand == MissionWalk::NavLand);
+}
+
+VehicleProfileManager::TripAdvice VehicleProfileManager::tripAdvice(bool tripShort, bool returning)
+{
+    TripAdvice a;
+    a.returnNow = tripShort && !returning;
+    a.landingOnReserve = tripShort && returning;
+    return a;
 }

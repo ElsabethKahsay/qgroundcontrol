@@ -52,6 +52,9 @@ Rectangle {
     readonly property var  _ml: _profile ? _profile.missionLive : ({})
     readonly property bool _plActive: !!_pl && _pl.active === true && !_packWaived
     readonly property bool _returnNow: _plActive && _pl.returnNow === true
+    // Already returning or landing and the way down uses the reserve (the
+    // trip to a target; not a reason to "return": it already is).
+    readonly property bool _landingOnReserve: _plActive && _pl.landingOnReserve === true
     readonly property bool  _armed:     _tel ? _tel.armed : false
     readonly property double _iSmooth:  _tel ? _tel.batteryCurrentSmoothAmps : 0
     readonly property double _voltage:  _tel ? _tel.batteryVoltage : 0
@@ -151,6 +154,7 @@ Rectangle {
         if (_soc < 0)               return "? · —"   // FC not configured
         if (_packWaived)            return _soc + "% · no est."
         if (_returnNow)             return "RETURN NOW"
+        if (_landingOnReserve)      return _soc + "% · ON RESERVE"
         if (_plActive && !_armed && _pl.cruiseMin >= 0)  return _soc + "% · ~" + Math.round(_pl.cruiseMin) + " min"
         if (_plActive && _armed && _pl.timeLeftMin >= 0) return _soc + "% · ~" + Math.round(_pl.timeLeftMin) + " min"
         if (_preEstShown)           return _soc + "% · est ~" + Math.round(_preEst.flightTimeMin) + " min"
@@ -169,6 +173,9 @@ Rectangle {
         if (!_fresh)                return "No battery telemetry (stale)"
         if (_soc < 0)               return "Battery SOC not reported by flight controller"
         if (_packWaived)            return "Battery pack waived by " + _profile.batteryPackWaivedBy + " \u2014 no flight-time estimate for this flight"
+        if (_landingOnReserve)      return "Returning: the way home and the landing need " + Number(_pl.tripNeedAh).toFixed(1)
+                                           + " Ah, " + Number(_pl.usableAh).toFixed(1) + " Ah left above the reserve: "
+                                           + "the landing will use the reserve"
         if (_returnNow)             return _pl.returnNowFrom === "mission" ? _pl.returnNowWhy
                                          : "The rest of the trip needs " + Number(_pl.tripNeedAh).toFixed(1) + " Ah, "
                                            + Number(_pl.usableAh).toFixed(1) + " Ah left above the reserve: return now"
@@ -190,6 +197,7 @@ Rectangle {
         if (_connected && !_fresh) return Colors.statusStale
         if (!_socKnown) return Colors.textDisabled
         if (_atReserve || _returnNow) return Colors.error
+        if (_landingOnReserve)      return Colors.warning
         if (_soc > 30)  return Colors.success
         if (_soc >= 15) return Colors.warning
         return Colors.error
@@ -384,7 +392,7 @@ Rectangle {
                                ? "~" + Math.round(root._preEst.flightTimeMin) + " min / " + root._preEst.rangeKm.toFixed(1) + " km"
                                : "—"
                         valueColor: root._preEstShown && root._preEst.isCalibrated ? Colors.success : Colors.textSecondary }
-            DetailRow { label: root._pl.source === "motor table" ? qsTr("Motor table") : qsTr("Power type");
+            DetailRow { label: qsTr("Motor table");
                         objectName: "chipEstimateSource"
                         visible: root._plActive
                         value: !root._plActive ? ""

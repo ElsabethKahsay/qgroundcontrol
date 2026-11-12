@@ -2163,6 +2163,31 @@ private slots:
         QCOMPARE(accuracy({}).flights, 0);
     }
 
+    // The trip to a target: RETURN NOW only while still going out; already
+    // returning (RTL, LAND, AUTO on its return or land item) the landing is
+    // said to use the reserve instead.
+    void testTripAdviceWhenReturning()
+    {
+        using VPM = VehicleProfileManager;
+        QVERIFY(VPM::isReturning(QStringLiteral("RTL"), -1));
+        QVERIFY(VPM::isReturning(QStringLiteral("Smart RTL"), -1));
+        QVERIFY(VPM::isReturning(QStringLiteral("Land"), -1));
+        QVERIFY(VPM::isReturning(QStringLiteral("Auto"), MissionWalk::NavReturnToLaunch));
+        QVERIFY(VPM::isReturning(QStringLiteral("Auto"), MissionWalk::NavLand));
+        QVERIFY(!VPM::isReturning(QStringLiteral("Auto"), MissionWalk::NavWaypoint));
+        QVERIFY(!VPM::isReturning(QStringLiteral("Auto"), -1));
+        QVERIFY(!VPM::isReturning(QStringLiteral("Loiter"), MissionWalk::NavReturnToLaunch));
+        QVERIFY(!VPM::isReturning(QStringLiteral("Guided"), -1));
+
+        const VPM::TripAdvice out = VPM::tripAdvice(true, false);
+        QVERIFY(out.returnNow && !out.landingOnReserve);
+        const VPM::TripAdvice back = VPM::tripAdvice(true, true);
+        QVERIFY(!back.returnNow && back.landingOnReserve);
+        const VPM::TripAdvice fine = VPM::tripAdvice(false, true);
+        QVERIFY(!fine.returnNow && !fine.landingOnReserve);
+        QVERIFY(!VPM::tripAdvice(false, false).returnNow);
+    }
+
     void testMissionWalkTemplate()
     {
         using namespace MissionWalk;

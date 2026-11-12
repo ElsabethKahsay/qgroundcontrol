@@ -425,21 +425,33 @@ void PreflightPlugin::init()
     connect(powerTimer, &QTimer::timeout, this, reevaluatePower);
     powerTimer->start();
 
-    // RETURN NOW (the power-type live estimate: the rest of the trip no longer
-    // fits above the reserve) is announced once when it comes on; it is
-    // announced again only after it has cleared.
+    // The trip to a target (no mission estimated): RETURN NOW when the rest
+    // of the trip no longer fits above the reserve, or, already returning or
+    // landing, that the landing will use the reserve. Each is announced once
+    // when it comes on, again only after it has cleared. A mission's RETURN
+    // NOW is announced by its own alert (missionAlert), not here.
     connect(_vehicleProfileManager, &VehicleProfileManager::liveDataChanged, this, [this]() {
-        static bool shown = false;
+        static bool shownReturn = false;
+        static bool shownReserve = false;
         const QVariantMap live = _vehicleProfileManager->powerLive();
-        const bool returnNow = live.value(QStringLiteral("returnNow")).toBool();
-        if (returnNow && !shown) {
-            const QString text = tr("RETURN NOW: the rest of the trip needs %1 Ah, %2 Ah are left above the reserve.")
-                                     .arg(live.value(QStringLiteral("tripNeedAh")).toDouble(), 0, 'f', 1)
-                                     .arg(live.value(QStringLiteral("usableAh")).toDouble(), 0, 'f', 1);
+        const bool fromTrip = live.value(QStringLiteral("returnNowFrom")).toString() == QLatin1String("trip");
+        const bool returnNow = fromTrip && live.value(QStringLiteral("returnNow")).toBool();
+        const bool onReserve = live.value(QStringLiteral("landingOnReserve")).toBool();
+        const double needAh = live.value(QStringLiteral("tripNeedAh")).toDouble();
+        const double leftAh = live.value(QStringLiteral("usableAh")).toDouble();
+        QString text;
+        if (returnNow && !shownReturn)
+            text = tr("RETURN NOW: the rest of the trip needs %1 Ah, %2 Ah are left above the reserve.")
+                       .arg(needAh, 0, 'f', 1).arg(leftAh, 0, 'f', 1);
+        else if (onReserve && !shownReserve)
+            text = tr("Returning: the way home and the landing need %1 Ah, %2 Ah are left above the reserve. "
+                      "The landing will use the reserve.").arg(needAh, 0, 'f', 1).arg(leftAh, 0, 'f', 1);
+        if (!text.isEmpty()) {
             qCWarning(preflightPluginLog).noquote() << text;   // in the log too, for after-flight review
             qgcApp()->showAppMessage(text);
         }
-        shown = returnNow;
+        shownReturn = returnNow;
+        shownReserve = onReserve;
     });
 
     // --- Vehicle registry signals ---

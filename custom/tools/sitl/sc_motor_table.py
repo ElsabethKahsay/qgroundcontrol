@@ -250,10 +250,10 @@ def run(vehicle="ArduCopter", instance=6):
         with open(r.gcs_log.name) as fh:
             log = fh.read()
         for line in log.splitlines():
-            if "power-type estimate" in line or "RETURN NOW" in line:
+            if ("battery estimate" in line or "power-type estimate" in line) or "RETURN NOW" in line:
                 r.note("GCS log: " + line.strip()[:220])
         r.check("estimate on from the motor table, counted by the GCS",
-                "power-type estimate on (M6215" in log and "charge used from gcs" in log)
+                "battery estimate on (M6215" in log and "charge used from gcs" in log)
         qml_errors = [line for line in log.splitlines()
                       if any(q in line for q in QML_FILES)
                       and any(w in line for w in ("Error", "error", "Unable to assign", "undefined", "Cannot"))]
