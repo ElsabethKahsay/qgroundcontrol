@@ -3258,6 +3258,68 @@ void LivePluginBenchTest::testMissionEstimateLive()
     pumpQml(100);
     view->setParentItem(nullptr);
 
+    // In flight (step 7): the estimate from where the copter is. Half-way to
+    // item 3 at 30 m, flying, 60 % left, payload still aboard.
+    QCOMPARE(VehicleProfileManager::liveModeOf(QStringLiteral("Auto")), QStringLiteral("auto"));
+    QCOMPARE(VehicleProfileManager::liveModeOf(QStringLiteral("RTL")), QStringLiteral("rtl"));
+    QCOMPARE(VehicleProfileManager::liveModeOf(QStringLiteral("Smart RTL")), QStringLiteral("rtl"));
+    QCOMPARE(VehicleProfileManager::liveModeOf(QStringLiteral("Land")), QStringLiteral("land"));
+    QCOMPARE(VehicleProfileManager::liveModeOf(QStringLiteral("Loiter")), QStringLiteral("paused"));
+    VehicleProfileManager::LiveStart ls;
+    ls.lat = hLat + 1.5 * dLat;
+    ls.lon = hLon;
+    ls.altM = 30.0;
+    ls.nextSeq = 3;
+    ls.moving = true;
+    ls.mode = QStringLiteral("auto");
+    ls.socPct = 60.0;
+    ls.payloadKg = 4.0;
+    QVariantMap lv = vpm->missionEstimateFrom(&ls);
+    QVERIFY2(lv.value(QStringLiteral("ready")).toBool(), qPrintable(lv.value(QStringLiteral("problem")).toString()));
+    QVERIFY(lv.value(QStringLiteral("live")).toBool());
+    QVariantList lw = lv.value(QStringLiteral("waypoints")).toList();
+    QCOMPARE(lw.size(), 2);                                          // item 3, then the return
+    QCOMPARE(lw.at(0).toMap().value(QStringLiteral("seq")).toInt(), 3);
+    QVERIFY(lw.at(0).toMap().value(QStringLiteral("timeText")).toString().startsWith(QStringLiteral("in ")));
+    const double toNext = lv.value(QStringLiteral("timeToNextS")).toDouble();
+    // 40 m at the mock's 5 m/s, already moving, stopping at item 3 (half the
+    // 5 / 1 + 1 / 1 s speed-up at WPNAV_ACCEL 1 m/s²): about 11 s.
+    QVERIFY2(toNext > 9.0 && toNext < 13.0, qPrintable(QString::number(toNext)));
+    QVERIFY(lw.at(0).toMap().value(QStringLiteral("socLikelyPct")).toDouble() < 60.0);
+    QVERIFY(!lv.value(QStringLiteral("returnNow")).toBool());
+    // Item 3 still ahead: the drop there is still costed.
+    QCOMPARE(lv.value(QStringLiteral("dropText")).toString(), QStringLiteral("Dropped by the pilot at item 3"));
+
+    // Barely above the reserve: going on to item 3 leaves too little to get
+    // home, so RETURN NOW, with why.
+    ls.socPct = 21.0;
+    lv = vpm->missionEstimateFrom(&ls);
+    QVERIFY(lv.value(QStringLiteral("returnNow")).toBool());
+    QVERIFY2(lv.value(QStringLiteral("returnNowWhy")).toString().contains(QStringLiteral("item 3")),
+             qPrintable(lv.value(QStringLiteral("returnNowWhy")).toString()));
+
+    // In RTL only the return is left (and RETURN NOW is not asked for: it is
+    // already returning).
+    ls.mode = QStringLiteral("rtl");
+    lv = vpm->missionEstimateFrom(&ls);
+    lw = lv.value(QStringLiteral("waypoints")).toList();
+    QCOMPARE(lw.size(), 1);
+    QCOMPARE(lw.at(0).toMap().value(QStringLiteral("what")).toString(), QStringLiteral("Return and land"));
+    QVERIFY(!lv.value(QStringLiteral("returnNow")).toBool());
+    // Landing here: only the descent from 30 m.
+    ls.mode = QStringLiteral("land");
+    ls.socPct = 60.0;
+    lv = vpm->missionEstimateFrom(&ls);
+    lw = lv.value(QStringLiteral("waypoints")).toList();
+    QCOMPARE(lw.size(), 1);
+    QCOMPARE(lw.at(0).toMap().value(QStringLiteral("what")).toString(), QStringLiteral("Land"));
+    QVERIFY(qAbs(lv.value(QStringLiteral("totalS")).toDouble() - (20.0 / 1.5 + 10.0 / 0.5)) < 0.5);
+    // Payload already released: nothing more comes off.
+    ls.mode = QStringLiteral("auto");
+    ls.payloadKg = 0.0;
+    lv = vpm->missionEstimateFrom(&ls);
+    QCOMPARE(lv.value(QStringLiteral("dropText")).toString(), QStringLiteral("Payload released"));
+
     // The release output on the ground: servo 10 to "released" while armed
     // on the ground is reported, not counted.
     settings->setPayloadDropOutput(10);

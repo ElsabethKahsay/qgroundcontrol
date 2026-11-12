@@ -368,6 +368,55 @@ Item {
             id:                 batteryChip
         }
 
+        // Mission chip: the next waypoint, the time to it, the charge on
+        // arrival (pessimistic) and the result, coloured by the result; "paused"
+        // while the pilot flies, "RTL"/"LAND" while coming home; RETURN NOW in
+        // red when the next waypoint is past the turn-back point. Shown in
+        // flight while the mission estimate runs (VehicleProfileManager.missionLive).
+        Rectangle {
+            id:                 missionChip
+            objectName:         "missionChip"
+            readonly property var _vpm: typeof VehicleProfileManager !== "undefined" ? VehicleProfileManager : null
+            readonly property var _m: _vpm ? _vpm.missionLive : ({})
+            readonly property bool _shown: _m.live === true && _m.ready === true
+            readonly property var _next: (_m.waypoints || []).length > 0 ? _m.waypoints[0] : null
+            readonly property color _colour: _m.returnNow ? Colors.error
+                                             : _m.colour === "green" ? Colors.success
+                                             : _m.colour === "amber" ? Colors.warning
+                                             : _m.colour === "red" ? Colors.error : Colors.textSecondary
+            readonly property string text: {
+                if (!_shown || !_next) return ""
+                if (_m.returnNow) return qsTr("RETURN NOW · item %1").arg(_next.seq)
+                var where = _m.mode === "rtl" ? qsTr("RTL") : _m.mode === "land" ? qsTr("LAND")
+                          : _next.seq >= 0 ? qsTr("WP %1").arg(_next.seq) : qsTr("Home")
+                var when = _m.mode === "paused" ? qsTr("paused") : _next.timeText
+                return where + " · " + when + " · " + Math.round(_next.socPessimisticPct) + " % · " + _m.resultName
+            }
+            visible:            _shown
+            width:              chipText.implicitWidth + ScreenTools.defaultFontPixelWidth * 2
+            height:             ScreenTools.defaultFontPixelHeight * 1.6
+            radius:             height / 2
+            color:              Colors.surface
+            border.color:       Qt.rgba(_colour.r, _colour.g, _colour.b, 0.6)
+            border.width:       1
+
+            Text {
+                id:                 chipText
+                anchors.centerIn:   parent
+                text:               missionChip.text
+                font.pixelSize:     ScreenTools.defaultFontPixelHeight * 0.85
+                font.bold:          true
+                color:              missionChip._colour
+            }
+            ToolTip.visible:    chipMouse.containsMouse
+            ToolTip.text:       missionChip._m.returnNow ? missionChip._m.returnNowWhy
+                                : qsTr("Lands with %1 % (pessimistic %2 %), %3 left")
+                                      .arg(Math.round(missionChip._m.landLikelyPct || 0))
+                                      .arg(Math.round(missionChip._m.landPessimisticPct || 0))
+                                      .arg(missionChip._m.totalText || "--")
+            MouseArea { id: chipMouse; anchors.fill: parent; hoverEnabled: true }
+        }
+
         FlyQuickActions {
             id:                 quickActions
             hasVehicle:         _activeVehicle != null

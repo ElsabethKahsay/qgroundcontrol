@@ -167,7 +167,8 @@ Rectangle {
         if (!_fresh)                return "No battery telemetry (stale)"
         if (_soc < 0)               return "Battery SOC not reported by flight controller"
         if (_packWaived)            return "Battery pack waived by " + _profile.batteryPackWaivedBy + " \u2014 no flight-time estimate for this flight"
-        if (_returnNow)             return "The rest of the trip needs " + Number(_pl.tripNeedAh).toFixed(1) + " Ah, "
+        if (_returnNow)             return _pl.returnNowFrom === "mission" ? _pl.returnNowWhy
+                                         : "The rest of the trip needs " + Number(_pl.tripNeedAh).toFixed(1) + " Ah, "
                                            + Number(_pl.usableAh).toFixed(1) + " Ah left above the reserve: return now"
         if (_plActive && !_armed)   return _pl.typeName + ": cruise ~" + Math.round(_pl.cruiseMin) + " min / "
                                            + root._km(_pl.cruiseKm) + ", hover ~" + Math.round(_pl.hoverMin)

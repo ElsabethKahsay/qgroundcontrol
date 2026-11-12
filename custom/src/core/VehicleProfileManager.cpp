@@ -294,11 +294,12 @@ void VehicleProfileManager::onConnectionChanged()
 {
     if (!m_telemetry || !m_telemetry->isConnected()) {
         m_liveTimer.stop();
-        if (m_liveSOC != -1 || m_liveTimeMins != -1.0 || !m_powerLive.isEmpty()) {
+        if (m_liveSOC != -1 || m_liveTimeMins != -1.0 || !m_powerLive.isEmpty() || !m_missionLive.isEmpty()) {
             m_liveSOC = -1;
             m_liveTimeMins = -1.0;
             m_liveSmoothAmps = 0.0;
             m_powerLive.clear();
+            m_missionLive.clear();
             emit liveDataChanged();
         }
         m_liveWasArmed = false;
@@ -927,6 +928,7 @@ void VehicleProfileManager::_updateLiveEstimate()
         m_liveTimeMins = timeMin;
         emit liveDataChanged();
     }
+    _updateMissionLive(soc);
     _updatePowerLive(mahUsed, m_telemetry->batterySocPct());
 }
 
@@ -1708,7 +1710,12 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         out[QStringLiteral("tripKnown")] = r.tripKnown;
         out[QStringLiteral("tripNeedAh")] = r.tripNeedAh;
         out[QStringLiteral("tripShortAh")] = r.tripShortAh;
-        out[QStringLiteral("returnNow")] = r.returnNow;
+        // With a mission estimated in flight, RETURN NOW comes from it (the
+        // turn-back point); the out-and-back to a target only without one.
+        const bool fromMission = m_missionLive.value(QStringLiteral("ready")).toBool();
+        out[QStringLiteral("returnNow")] = fromMission ? m_missionLive.value(QStringLiteral("returnNow")).toBool() : r.returnNow;
+        out[QStringLiteral("returnNowFrom")] = fromMission ? QStringLiteral("mission") : QStringLiteral("trip");
+        out[QStringLiteral("returnNowWhy")] = fromMission ? m_missionLive.value(QStringLiteral("returnNowWhy")) : QVariant(QString());
         out[QStringLiteral("payloadAboard")] = in.payloadAboard;
         out[QStringLiteral("payloadAboardKg")] = in.payloadAboard ? in.payloadKg : 0.0;
         out[QStringLiteral("payloadsReleased")] = m_drop.released();
@@ -2837,7 +2844,22 @@ static QString commandText(int command, int seq)
 
 QVariantMap VehicleProfileManager::missionEstimate()
 {
+    return missionEstimateFrom(nullptr);
+}
+
+// Before take-off (live = nullptr) the mission is walked from home on the
+// ground, on the charge the pack has from its resting voltage. In flight it is
+// walked from where the copter is now: its position and height, the item it is
+// flying to, already at speed when moving, on the charge left now and with the
+// payload still aboard (only drops still ahead come off). In RTL only the
+// return is left, in LAND only the descent; with the pilot flying (any other
+// mode) the rest of the mission is shown as it would continue, marked
+// "paused". RETURN NOW: the next waypoint is past the turn-back point, so
+// going on to it means the pessimistic return lands below the reserve.
+QVariantMap VehicleProfileManager::missionEstimateFrom(const LiveStart *live)
+{
     QVariantMap out;
+    out[QStringLiteral("live")] = live != nullptr;
     out[QStringLiteral("applicable")] = m_kind == VehicleKind::Multirotor;
     out[QStringLiteral("ready")] = false;
     out[QStringLiteral("result")] = int(MissionAssess::CantAssess);
@@ -2886,8 +2908,32 @@ QVariantMap VehicleProfileManager::missionEstimate()
         it.autocontinue = mi->autoContinue();
         items.append(it);
     }
+    MissionWalk::Start start;
+    if (live) {
+        start.lat = live->lat;
+        start.lon = live->lon;
+        start.altM = live->altM;
+        start.moving = live->moving;
+        start.nextSeq = live->nextSeq;
+        // In RTL or LAND what is left is the return or the descent, from here.
+        if (live->mode == QLatin1String("rtl") || live->mode == QLatin1String("land")) {
+            MissionWalk::Item home = items.first();
+            MissionWalk::Item last;
+            last.seq = 1;
+            last.command = live->mode == QLatin1String("rtl") ? MissionWalk::NavReturnToLaunch : MissionWalk::NavLand;
+            items = {home, last};
+            start.nextSeq = 1;
+        }
+        bool found = false;
+        for (const MissionWalk::Item &it : items)
+            found = found || it.seq == start.nextSeq;
+        if (!found || start.nextSeq < 1)
+            start.nextSeq = 1;
+        out[QStringLiteral("mode")] = live->mode;
+        out[QStringLiteral("nextSeq")] = start.nextSeq;
+    }
     const MissionWalk::Settings ws = MissionWalk::Settings::read(copterParams(m_telemetry));
-    const MissionWalk::Result w = MissionWalk::walk(items, ws, homeLat, homeLon, MissionWalk::Start(), homeAmsl);
+    const MissionWalk::Result w = MissionWalk::walk(items, ws, homeLat, homeLon, start, homeAmsl);
 
     // The motor table, the pack and the air, as the battery estimate has them.
     const QVariantMap setup = motorTableSetup();
@@ -2902,8 +2948,8 @@ QVariantMap VehicleProfileManager::missionEstimate()
     in.sigma = setup.value(QStringLiteral("densityRatio"), MotorTable::kTableDensityRatio).toDouble();
     in.calibration = setup.value(QStringLiteral("calibrationFactor"), 1.0).toDouble();
     in.emptyKg = emptyKg > 0.0 ? emptyKg : qQNaN();
-    in.payloadKg = payloadKg;
-    const double socNow = packRestingSocPct(m_telemetry->batteryVoltage());
+    in.payloadKg = live ? live->payloadKg : payloadKg;
+    const double socNow = live ? live->socPct : packRestingSocPct(m_telemetry->batteryVoltage());
     in.startSocPct = socNow > 0.0 ? socNow : 100.0;
     in.reserveSocPct = m_batteryReserve * 100.0;
     const QString uid = m_currentDeviceUid;
@@ -2921,14 +2967,16 @@ QVariantMap VehicleProfileManager::missionEstimate()
     // otherwise the item the operator picked for an RC drop (all of it there);
     // otherwise it is carried home (the safe case).
     QString dropText;
-    if (payloadKg > 0.0 && w.ok) {
+    if (in.payloadKg > 0.0 && w.ok) {
         int found = 0;
+        // In flight, the payloads already released are not dropped again.
+        const int left = drop.payloads - (live ? m_drop.released() : 0);
         for (const MissionWalk::Event &e : w.events) {
             const bool servo = (e.command == MissionWalk::DoSetServo || e.command == MissionWalk::DoRepeatServo)
                                && drop.output > 0 && qRound(e.p1) == drop.output
                                && (drop.onWhenLow ? e.p2 < drop.thresholdUs : e.p2 > drop.thresholdUs);
             const bool gripper = e.command == MissionWalk::DoGripper && qRound(e.p2) == 0;
-            if ((servo || gripper) && found < drop.payloads) {
+            if ((servo || gripper) && found < left) {
                 in.drops.append({e.timeS, drop.eachKg()});
                 ++found;
             }
@@ -2939,19 +2987,20 @@ QVariantMap VehicleProfileManager::missionEstimate()
             const int item = PreflightSettingsManager::instance() ? PreflightSettingsManager::instance()->payloadDropItem() : 0;
             for (const MissionWalk::Arrival &a : w.arrivals)
                 if (item > 0 && a.seq == item && in.drops.isEmpty())
-                    in.drops.append({a.timeS, payloadKg});
+                    in.drops.append({a.timeS, in.payloadKg});
             dropText = in.drops.isEmpty()
                            ? (item > 0 ? QStringLiteral("Drop item %1 is not a waypoint of this mission: payload costed as carried home").arg(item)
                                        : QStringLiteral("No drop point given: payload costed as carried home"))
                            : QStringLiteral("Dropped by the pilot at item %1").arg(item);
         }
-    } else if (payloadKg <= 0.0) {
-        dropText = m_payloadEntered ? QStringLiteral("No payload") : QStringLiteral("Payload not entered");
+    } else if (in.payloadKg <= 0.0) {
+        dropText = live && payloadKg > 0.0 ? QStringLiteral("Payload released")
+                   : m_payloadEntered ? QStringLiteral("No payload") : QStringLiteral("Payload not entered");
     }
     out[QStringLiteral("dropText")] = dropText;
 
     // The weather at the highest point of the mission.
-    double topM = 0.0;
+    double topM = live ? live->altM : 0.0;
     for (const MissionWalk::Arrival &a : w.arrivals)
         topM = std::max(topM, a.altM);
     MissionAssess::Context ctx;
@@ -3016,9 +3065,24 @@ QVariantMap VehicleProfileManager::missionEstimate()
     assumed << QStringLiteral("climb: half of the extra power lost");
     if (w.returnAssumed)
         assumed << QStringLiteral("RTL from the mission's last point");
-    if (in.drops.isEmpty() && payloadKg > 0.0)
+    if (in.drops.isEmpty() && in.payloadKg > 0.0)
         assumed << QStringLiteral("payload carried home");
     out[QStringLiteral("assumed")] = assumed;
+
+    // In flight: the time to the next waypoint, and RETURN NOW when the next
+    // waypoint is already past the turn-back point (cost.turnBackSeq -1: not
+    // even the first one ahead leaves a safe return). Not in RTL or LAND:
+    // the copter is already on its way down.
+    if (live) {
+        const bool returning = live->mode == QLatin1String("rtl") || live->mode == QLatin1String("land");
+        out[QStringLiteral("timeToNextS")] = w.arrivals.isEmpty() ? -1.0 : w.arrivals.first().timeS;
+        const bool now = cost.ok && !returning && cost.turnBackSeq == -1;
+        out[QStringLiteral("returnNow")] = now;
+        out[QStringLiteral("returnNowWhy")] =
+            now ? QStringLiteral("Going on to item %1 leaves too little for the return: return now")
+                      .arg(cost.firstPastSeq)
+                : QString();
+    }
 
     QVariantList wps;
     for (const MissionAssess::Waypoint &p : a.waypoints) {
@@ -3029,7 +3093,7 @@ QVariantMap VehicleProfileManager::missionEstimate()
         QVariantMap m;
         m[QStringLiteral("seq")] = p.seq;
         m[QStringLiteral("what")] = commandText(command, p.seq);
-        m[QStringLiteral("timeText")] = clockText(p.timeS);
+        m[QStringLiteral("timeText")] = live ? QStringLiteral("in ") + clockText(p.timeS) : clockText(p.timeS);
         m[QStringLiteral("socLikelyPct")] = p.socLikelyPct;
         m[QStringLiteral("socPessimisticPct")] = p.socPessimisticPct;
         m[QStringLiteral("state")] = p.state;
@@ -3038,4 +3102,52 @@ QVariantMap VehicleProfileManager::missionEstimate()
     }
     out[QStringLiteral("waypoints")] = wps;
     return out;
+}
+
+// The in-flight estimate, every 2 s while armed and airborne (see
+// missionEstimateFrom()). The charge now is the pack's own count (the FC's mAh
+// against the selected pack, as the battery chip shows it).
+void VehicleProfileManager::_updateMissionLive(int socPct)
+{
+    QVariantMap next;
+    Vehicle *v = m_telemetry ? m_telemetry->vehicle() : nullptr;
+    const double alt = m_telemetry ? m_telemetry->altitudeRelative() : qQNaN();
+    const bool airborne = m_telemetry && m_telemetry->armed() && std::isfinite(alt) && alt > PowerTypeModel::kAirborneAltM;
+    if (v && airborne && MotorTable::byId(m_motorTableId) && socPct >= 0) {
+        LiveStart s;
+        const QGeoCoordinate pos = v->coordinate();
+        s.lat = pos.latitude();
+        s.lon = pos.longitude();
+        s.altM = alt;
+        s.moving = m_telemetry->groundSpeed() > 1.0;
+        s.socPct = socPct;
+        s.payloadKg = livePayloadAboardKg();
+        MissionManager *mm = v->missionManager();
+        s.nextSeq = mm ? std::max(1, mm->currentIndex()) : 1;
+        s.mode = liveModeOf(m_telemetry->flightMode());
+        if (pos.isValid())
+            next = missionEstimateFrom(&s);
+    }
+    if (next != m_missionLive) {
+        const bool was = m_missionLive.value(QStringLiteral("returnNow")).toBool();
+        m_missionLive = next;
+        if (was != next.value(QStringLiteral("returnNow")).toBool())
+            qInfo().noquote() << QStringLiteral("VehicleProfileManager: mission RETURN NOW %1%2")
+                                     .arg(next.value(QStringLiteral("returnNow")).toBool() ? QStringLiteral("on") : QStringLiteral("off"))
+                                     .arg(next.value(QStringLiteral("returnNowWhy")).toString().isEmpty()
+                                              ? QString() : QStringLiteral(": ") + next.value(QStringLiteral("returnNowWhy")).toString());
+        emit liveDataChanged();
+    }
+}
+
+QString VehicleProfileManager::liveModeOf(const QString &flightMode)
+{
+    const QString mode = flightMode.trimmed().toLower();
+    if (mode == QLatin1String("auto"))
+        return QStringLiteral("auto");
+    if (mode.contains(QLatin1String("rtl")))
+        return QStringLiteral("rtl");
+    if (mode == QLatin1String("land"))
+        return QStringLiteral("land");
+    return QStringLiteral("paused");
 }

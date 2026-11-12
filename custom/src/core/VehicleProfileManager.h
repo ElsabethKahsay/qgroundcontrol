@@ -111,6 +111,11 @@ class VehicleProfileManager : public QObject {
     /// still fits above the reserve. Values are -1 when unknown.
     Q_PROPERTY(bool powerLiveActive READ powerLiveActive NOTIFY liveDataChanged)
     Q_PROPERTY(QVariantMap powerLive READ powerLive NOTIFY liveDataChanged)
+    /// The mission estimate in flight (missionEstimate() from where the copter
+    /// is now), worked out again every 2 s while armed and airborne; empty
+    /// otherwise. Extra keys: live, mode ("auto", "rtl", "land", "paused"),
+    /// nextSeq, timeToNextS, returnNow, returnNowWhy.
+    Q_PROPERTY(QVariantMap missionLive READ missionLive NOTIFY liveDataChanged)
 
 public:
     static VehicleProfileManager *instance();
@@ -395,6 +400,22 @@ public:
     /// stateName}), emptyKg, payloadKg, payloadCount, dropText, weatherText,
     /// assumed, weatherRed, overCurrent. Advice only.
     Q_INVOKABLE QVariantMap missionEstimate();
+    QVariantMap missionLive() const { return m_missionLive; }
+
+    /// Where the in-flight estimate starts: the copter now.
+    struct LiveStart {
+        double lat = 0.0, lon = 0.0, altM = 0.0;   ///< altitude above home
+        int nextSeq = 1;                           ///< the mission item it is flying to
+        bool moving = false;
+        QString mode;                              ///< "auto", "rtl", "land", "paused"
+        double socPct = -1.0;                      ///< charge left now
+        double payloadKg = 0.0;                    ///< still aboard
+    };
+    /// missionEstimate() from @p live (nullptr: before take-off, from home).
+    QVariantMap missionEstimateFrom(const LiveStart *live);
+    /// The autopilot's flight mode as the in-flight estimate reads it:
+    /// "auto" (flying the mission), "rtl" (any RTL), "land", else "paused".
+    static QString liveModeOf(const QString &flightMode);
     /// The copter's weight without payload (kg) for the mission estimate,
     /// typed in by the operator and kept per copter; -1 when not entered.
     Q_INVOKABLE double emptyWeightKg() const;
@@ -545,6 +566,8 @@ private:
     /// The release servo output (Preflight Settings); counts the payloads
     /// released this flight.
     PayloadRelease::Detector m_drop;
+    QVariantMap m_missionLive;          ///< missionLive()
+    void _updateMissionLive(int socPct);
     PayloadRelease::Config dropConfig() const;
     double copterParam(const QString &name) const;
     void _onOutputsForDrop();
