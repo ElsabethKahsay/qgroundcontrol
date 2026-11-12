@@ -82,9 +82,7 @@ AnalyzePage {
             // copter's link to its maker's motor table, the take-off and landing
             // minutes for the time left without a mission, and the copter's
             // flights, where the charger number is entered and the mission
-            // estimate is compared with what was flown (MOTOR_TABLE_PLAN.md). The
-            // user-defined power types (POWER_TYPES_PLAN.md) are not shown:
-            // their list and editor stay in this pane, hidden.
+            // estimate is compared with what was flown (MOTOR_TABLE_PLAN.md).
             TabBar {
                 id: _tabs
                 objectName: "vehiclesTabs"
@@ -329,11 +327,11 @@ AnalyzePage {
                 }
             }
 
-            // ── Motor table tab (was Power types) ─────────────────────────
-            // Left: the types (and the fleet's take-off/landing minutes).
-            // Right: the selected type, what it has learned, the connected
-            // copter's BATT_AMP_PERVLT suggestion, and its flights, where the
-            // charger number is entered and each flight is used or dismissed.
+            // ── Motor table tab ───────────────────────────────────────────
+            // Left: the connected copter's link to a motor table, and the
+            // fleet's take-off/landing minutes.
+            // Right: the copter's motor-table flights, where the charger
+            // number is entered after each flight.
             RowLayout {
                 id: _ptPane
                 visible: _tabs.currentIndex === 1
@@ -342,15 +340,6 @@ AnalyzePage {
                 spacing: 10
 
                 readonly property var _vpm: (typeof VehicleProfileManager !== "undefined") ? VehicleProfileManager : null
-                // The user-defined power types: their list, New and editor
-                // are hidden; set true to show them again.
-                readonly property bool showPowerTypes: false
-                property var types: []
-                property int selId: -1          // -1 = none, 0 = new type
-                property var sel: ({})
-                property var summary: ({})
-                property var flights: []
-                property var ampSuggestion: ({})
                 property string message: ""
                 // The motor tables the GCS carries, and the connected copter's
                 // link to one (MOTOR_TABLE_PLAN.md).
@@ -362,15 +351,6 @@ AnalyzePage {
 
                 function reload() {
                     if (!_vpm) return
-                    types = _vpm.listPowerTypes()
-                    sel = ({})
-                    for (var i = 0; i < types.length; ++i)
-                        if (types[i].id === selId) sel = types[i]
-                    if (selId > 0 && sel.id === undefined) selId = -1
-                    summary = selId > 0 ? _vpm.powerTypeSummary(selId) : ({})
-                    var rows = selId > 0 ? _vpm.powerTypeFlights(selId) : []
-                    flights = rows.slice().reverse()      // newest first
-                    ampSuggestion = (selId > 0 && selId === _vpm.currentPowerTypeId) ? _vpm.ampPerVoltSuggestion() : ({})
                     takeoffField.text = _vpm.takeoffMin
                     landField.text = _vpm.landMin
                     motorTables = _vpm.motorTables()
@@ -405,47 +385,15 @@ AnalyzePage {
                         parts.push((issues[i].level === "off" ? qsTr("Estimate off: ") : "") + issues[i].text)
                     return parts.join(" · ")
                 }
-                function select(id) {
-                    selId = id
-                    message = ""
-                    reload()
-                    var t = sel
-                    ptFrameField.text    = id > 0 ? t.frame : (_vpm ? _vpm.currentFrameName() : "")
-                    ptDiameterField.text = id > 0 ? t.propDiameterIn : ""
-                    ptPitchField.text    = id > 0 ? t.propPitchIn : ""
-                    ptCellsField.text    = id > 0 ? t.cells : ""
-                    ptNoteField.text     = id > 0 ? t.motorNote : ""
-                }
-                function save() {
-                    var d = Number(ptDiameterField.text.replace(",", "."))
-                    var pt = Number(ptPitchField.text.replace(",", "."))
-                    var c = parseInt(ptCellsField.text)
-                    var id = _vpm ? _vpm.savePowerType(selId > 0 ? selId : 0, ptFrameField.text, d, pt, c, ptNoteField.text) : -1
-                    if (id > 0) {
-                        message = qsTr("Saved.")
-                        select(id)
-                    } else {
-                        message = qsTr("Not saved: frame, prop diameter and pitch (inches) and cells (1–24) are needed, "
-                                       + "and no other type may have the same frame, props and cells.")
-                    }
-                }
-                function statusText(s) {
-                    if (!s || s.status === undefined) return ""
-                    var names = { "none": qsTr("No model yet"), "tooAlike": qsTr("Flights too alike"),
-                                  "payloadNotModelled": qsTr("Payload not modelled"),
-                                  "payloadProportional": qsTr("Payload assumed proportional"),
-                                  "full": qsTr("Fully learned") }
-                    return names[s.status] || s.status
-                }
                 function num(v, d) { return (v === undefined || v === null || v < 0) ? "--" : Number(v).toFixed(d) }
 
                 Component.onCompleted: reload()
                 Connections {
                     target: _ptPane._vpm
-                    function onPowerTypeChanged() { _ptPane.reload() }
+                    function onMotorTableChanged() { _ptPane.reload() }
                 }
 
-                // ── Left: the list ────────────────────────────────────────
+                // ── Left: the link and the minutes ────────────────────────
                 Rectangle {
                     Layout.preferredWidth: root.availableWidth * 0.34
                     Layout.fillHeight: true
@@ -459,38 +407,9 @@ AnalyzePage {
                         anchors.margins: 8
                         spacing: 6
 
-                        RowLayout {
-                            visible: _ptPane.showPowerTypes
-                            Layout.fillWidth: true
-                            Text {
-                                Layout.fillWidth: true
-                                text: qsTr("Power types")
-                                font.pixelSize: fs(14)
-                                font.bold: true
-                                color: Colors.textPrimary
-                            }
-                            Button {
-                                objectName: "ptNewButton"
-                                text: qsTr("New")
-                                flat: true
-                                onClicked: _ptPane.select(0)
-                            }
-                        }
-
-                        Text {
-                            visible: _ptPane.showPowerTypes
-                            Layout.fillWidth: true
-                            wrapMode: Text.Wrap
-                            font.pixelSize: fs(11)
-                            color: Colors.textSecondary
-                            text: _ptPane._vpm && _ptPane._vpm.currentDeviceUid !== ""
-                                  ? qsTr("Connected copter's type: %1").arg(_ptPane._vpm.currentPowerTypeName || qsTr("not linked"))
-                                  : qsTr("No copter connected")
-                        }
-
                         // A copter of a drone type whose maker's motor table
-                        // the GCS carries: link it once, and the estimate
-                        // comes from the table instead of a power type.
+                        // the GCS carries: link it once, and the battery
+                        // estimate comes from the table.
                         Text {
                             Layout.fillWidth: true
                             text: qsTr("Motor table")
@@ -538,44 +457,18 @@ AnalyzePage {
                             color: Colors.textSecondary
                             text: qsTr("No copter connected: connect the copter to link it.")
                         }
-                        Item { visible: !_ptPane.showPowerTypes; Layout.fillHeight: true }
 
-                        ListView {
-                            id: _ptList
-                            visible: _ptPane.showPowerTypes
+                        // The answer to the last Link, Save or charger entry.
+                        Text {
+                            objectName: "motorTableMessage"
+                            visible: _ptPane.message !== ""
                             Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            clip: true
-                            spacing: 4
-                            model: _ptPane.types
-                            delegate: Rectangle {
-                                width: _ptList.width
-                                height: 52
-                                radius: 6
-                                color: modelData.id === _ptPane.selId ? Colors.surfaceLight : Colors.bgPrimary
-                                border.color: modelData.id === _ptPane.selId ? Colors.skywinAccent : Colors.divider
-                                border.width: 1
-                                MouseArea { anchors.fill: parent; onClicked: _ptPane.select(modelData.id) }
-                                ColumnLayout {
-                                    anchors.fill: parent
-                                    anchors.margins: 6
-                                    spacing: 2
-                                    Text {
-                                        text: modelData.name
-                                        font.pixelSize: fs(13)
-                                        font.bold: true
-                                        color: Colors.textPrimary
-                                        elide: Text.ElideRight
-                                        Layout.fillWidth: true
-                                    }
-                                    Text {
-                                        text: qsTr("%1 aircraft · %2 flights").arg(modelData.vehicles).arg(modelData.flights)
-                                        font.pixelSize: fs(11)
-                                        color: Colors.textMuted
-                                    }
-                                }
-                            }
+                            wrapMode: Text.Wrap
+                            text: _ptPane.message
+                            font.pixelSize: fs(11)
+                            color: Colors.textSecondary
                         }
+                        Item { Layout.fillHeight: true }
 
                         Rectangle { Layout.fillWidth: true; height: 1; color: Colors.divider }
 
@@ -610,7 +503,7 @@ AnalyzePage {
                     }
                 }
 
-                // ── Right: the selected type ──────────────────────────────
+                // ── Right: the motor-table flights ────────────────────────
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
@@ -620,26 +513,22 @@ AnalyzePage {
                     border.width: 1
 
                     Text {
-                        visible: _ptPane.selId < 0 && !(_ptPane._vpm && _ptPane._vpm.motorTableId !== "")
+                        visible: !(_ptPane._vpm && _ptPane._vpm.motorTableId !== "")
                         anchors.centerIn: parent
                         width: parent.width - 32
                         horizontalAlignment: Text.AlignHCenter
                         wrapMode: Text.Wrap
-                        text: _ptPane.showPowerTypes
-                              ? qsTr("Select a power type, or press New. A power type is one way of building a copter's "
-                                     + "power system: frame, props (diameter × pitch, inches) and battery cells.")
-                              : qsTr("Link the connected copter to its motor table on the left. Its flights then show "
-                                     + "here, where the charger number is entered after each flight.")
+                        text: qsTr("Link the connected copter to its motor table on the left. Its flights then show "
+                                   + "here, where the charger number is entered after each flight.")
                         font.pixelSize: fs(12)
                         color: Colors.textSecondary
                     }
 
-                    // The copter is on a motor table and no power type is
-                    // selected: its flights, where the charger number is
-                    // entered. Charger ÷ the GCS's count fine-tunes the table
-                    // and, over three flights, proves it.
+                    // The copter is on a motor table: its flights, where the
+                    // charger number is entered. Charger ÷ the GCS's count
+                    // fine-tunes the table and, over three flights, proves it.
                     Flickable {
-                        visible: _ptPane.selId < 0 && _ptPane._vpm && _ptPane._vpm.motorTableId !== ""
+                        visible: !!(_ptPane._vpm && _ptPane._vpm.motorTableId !== "")
                         anchors.fill: parent
                         anchors.margins: 12
                         contentHeight: _mtFlightsCol.implicitHeight
@@ -771,226 +660,6 @@ AnalyzePage {
                                                 text: qsTr("Dismiss")
                                                 enabled: f.state !== "dismissed"
                                                 onClicked: _ptPane._vpm.dismissMotorTableFlight(f.id)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Flickable {
-                        visible: _ptPane.selId >= 0
-                        anchors.fill: parent
-                        anchors.margins: 12
-                        contentHeight: _ptDetail.implicitHeight
-                        clip: true
-
-                        ColumnLayout {
-                            id: _ptDetail
-                            width: parent.width
-                            spacing: 8
-
-                            Text {
-                                text: _ptPane.selId > 0 ? (_ptPane.sel.name || "") : qsTr("New power type")
-                                font.pixelSize: fs(15)
-                                font.bold: true
-                                color: Colors.textPrimary
-                            }
-
-                            GridLayout {
-                                columns: 4
-                                columnSpacing: 8
-                                rowSpacing: 4
-                                Layout.fillWidth: true
-                                Text { text: qsTr("Frame"); font.pixelSize: fs(11); color: Colors.textMuted }
-                                TextField { id: ptFrameField; objectName: "ptFrameField"; Layout.fillWidth: true; placeholderText: qsTr("e.g. Quad X"); color: Colors.textPrimary }
-                                Text { text: qsTr("Cells (S)"); font.pixelSize: fs(11); color: Colors.textMuted }
-                                TextField { id: ptCellsField; objectName: "ptCellsField"; Layout.preferredWidth: 60; placeholderText: "6"; color: Colors.textPrimary; inputMethodHints: Qt.ImhDigitsOnly }
-                                Text { text: qsTr("Prop diameter (in)"); font.pixelSize: fs(11); color: Colors.textMuted }
-                                TextField { id: ptDiameterField; objectName: "ptDiameterField"; Layout.fillWidth: true; placeholderText: "15"; color: Colors.textPrimary; inputMethodHints: Qt.ImhFormattedNumbersOnly }
-                                Text { text: qsTr("Prop pitch (in)"); font.pixelSize: fs(11); color: Colors.textMuted }
-                                TextField { id: ptPitchField; objectName: "ptPitchField"; Layout.preferredWidth: 60; placeholderText: "5.5"; color: Colors.textPrimary; inputMethodHints: Qt.ImhFormattedNumbersOnly }
-                                Text { text: qsTr("Motor (note)"); font.pixelSize: fs(11); color: Colors.textMuted }
-                                TextField { id: ptNoteField; objectName: "ptNoteField"; Layout.fillWidth: true; Layout.columnSpan: 3; placeholderText: qsTr("optional"); color: Colors.textPrimary }
-                            }
-
-                            RowLayout {
-                                spacing: 6
-                                Button { objectName: "ptSaveButton"; text: qsTr("Save"); highlighted: true; onClicked: _ptPane.save() }
-                                Button {
-                                    objectName: "ptLinkButton"
-                                    text: qsTr("Link connected copter")
-                                    visible: _ptPane.selId > 0
-                                    enabled: _ptPane._vpm && _ptPane._vpm.currentDeviceUid !== "" && _ptPane._vpm.currentPowerTypeId !== _ptPane.selId
-                                    onClicked: _ptPane.message = _ptPane._vpm.linkCurrentVehiclePowerType(_ptPane.selId)
-                                                                 ? qsTr("Connected copter linked.") : qsTr("Could not link the connected copter.")
-                                }
-                                Button {
-                                    objectName: "ptDeleteButton"
-                                    text: qsTr("Delete")
-                                    visible: _ptPane.selId > 0
-                                    enabled: _ptPane.sel.vehicles === 0 && _ptPane.sel.flights === 0
-                                    onClicked: if (_ptPane._vpm.deletePowerType(_ptPane.selId)) _ptPane.select(-1)
-                                }
-                            }
-
-                            Text {
-                                visible: _ptPane.message !== ""
-                                Layout.fillWidth: true
-                                wrapMode: Text.Wrap
-                                text: _ptPane.message
-                                font.pixelSize: fs(11)
-                                color: Colors.textSecondary
-                            }
-
-                            // What the type has learned.
-                            Rectangle { visible: _ptPane.selId > 0; Layout.fillWidth: true; height: 1; color: Colors.divider }
-                            Text {
-                                visible: _ptPane.selId > 0
-                                Layout.fillWidth: true
-                                wrapMode: Text.Wrap
-                                font.pixelSize: fs(12)
-                                color: _ptPane.summary.validated ? Colors.statusPass : Colors.textPrimary
-                                text: {
-                                    var s = _ptPane.summary
-                                    if (!s || s.status === undefined) return ""
-                                    var head = _ptPane.statusText(s) + (s.validated ? qsTr(" · Validated") : "")
-                                                + (s.source === "synthetic" ? qsTr(" · from the FC's synthetic current, not yet learned") : "")
-                                    if (s.source === "none")
-                                        return head
-                                    return head + "\n" + qsTr("Hover %1 A + %2 A/kg · Cruise %3 A + %4 A/kg")
-                                            .arg(Number(s.hover0).toFixed(1)).arg(Number(s.hoverK).toFixed(1))
-                                            .arg(Number(s.cruise0).toFixed(1)).arg(Number(s.cruiseK).toFixed(1))
-                                }
-                            }
-                            Text {
-                                visible: _ptPane.selId > 0 && _ptPane.summary.status !== undefined
-                                Layout.fillWidth: true
-                                wrapMode: Text.Wrap
-                                font.pixelSize: fs(11)
-                                color: Colors.textSecondary
-                                // The charger ÷ FC factor only means something when the
-                                // FC current follows throttle (a current sensor); on a
-                                // copter's synthetic current the GCS counts the charge.
-                                text: qsTr("%1 flights used, %2 waiting.").arg(_ptPane.summary.usedFlights).arg(_ptPane.summary.pendingFlights)
-                                      + (_ptPane.summary.fcCurrentFollowsThrottle === false
-                                         ? qsTr(" The flight controller's current does not follow throttle: the GCS counts the charge in flight.")
-                                         : qsTr(" Charger ÷ FC mAh: %1.").arg(Number(_ptPane.summary.chargerFactor).toFixed(2)))
-                                      + (_ptPane.summary.advice ? " " + _ptPane.summary.advice + "." : "")
-                            }
-
-                            // BATT_AMP_PERVLT (connected copter on this type).
-                            Text {
-                                objectName: "ampPerVoltText"
-                                visible: _ptPane.ampSuggestion.available === true
-                                Layout.fillWidth: true
-                                wrapMode: Text.Wrap
-                                font.pixelSize: fs(11)
-                                color: Colors.warning
-                                text: qsTr("BATT_AMP_PERVLT on the connected copter: %1 → suggested %2 (flight #%3: charger %4 mAh, FC %5 mAh). "
-                                           + "Set it yourself in the parameter editor; the GCS never writes it. "
-                                           + "If you already changed it after that flight, ignore this.")
-                                        .arg(Number(_ptPane.ampSuggestion.ampPerVolt).toFixed(1))
-                                        .arg(Number(_ptPane.ampSuggestion.suggested).toFixed(1))
-                                        .arg(_ptPane.ampSuggestion.sessionId)
-                                        .arg(Number(_ptPane.ampSuggestion.chargerMah).toFixed(0))
-                                        .arg(Number(_ptPane.ampSuggestion.fcMah).toFixed(0))
-                            }
-
-                            // The type's flights, newest first.
-                            Rectangle { visible: _ptPane.selId > 0; Layout.fillWidth: true; height: 1; color: Colors.divider }
-                            Text {
-                                visible: _ptPane.selId > 0
-                                text: _ptPane.flights.length > 0
-                                      ? qsTr("Flights (charge the pack straight after landing, enter the mAh the charger put back)")
-                                      : qsTr("No flights recorded with this type yet.")
-                                font.pixelSize: fs(12)
-                                font.bold: true
-                                color: Colors.textPrimary
-                                Layout.fillWidth: true
-                                wrapMode: Text.Wrap
-                            }
-
-                            Repeater {
-                                model: _ptPane.selId > 0 ? _ptPane.flights : []
-                                delegate: Rectangle {
-                                    id: _flightRow
-                                    readonly property var f: modelData
-                                    readonly property string st: f.learningState
-                                    Layout.fillWidth: true
-                                    implicitHeight: _flightCol.implicitHeight + 12
-                                    radius: 6
-                                    color: Colors.bgPrimary
-                                    border.color: f.outlier === true ? Colors.warning : Colors.divider
-                                    border.width: 1
-
-                                    ColumnLayout {
-                                        id: _flightCol
-                                        anchors.left: parent.left
-                                        anchors.right: parent.right
-                                        anchors.top: parent.top
-                                        anchors.margins: 6
-                                        spacing: 3
-
-                                        Text {
-                                            Layout.fillWidth: true
-                                            elide: Text.ElideRight
-                                            font.pixelSize: fs(12)
-                                            color: Colors.textPrimary
-                                            text: qsTr("#%1 · %2 · %3 kg · hover %4 min · cruise %5 min · FC %6 mAh")
-                                                    .arg(f.sessionId).arg(root.fmtLastSeen(f.startedAt))
-                                                    .arg(Number(f.payloadKg).toFixed(1))
-                                                    .arg(_ptPane.num(f.hoverMinEmpty + f.hoverMinLoaded, 1))
-                                                    .arg(_ptPane.num(f.cruiseMinEmpty + f.cruiseMinLoaded, 1))
-                                                    .arg(_ptPane.num(f.fcMah, 0))
-                                        }
-                                        Text {
-                                            Layout.fillWidth: true
-                                            wrapMode: Text.Wrap
-                                            font.pixelSize: fs(11)
-                                            color: st === "excluded" ? Colors.textMuted : (f.outlier === true ? Colors.warning : Colors.textSecondary)
-                                            text: (st === "excluded" ? qsTr("Not used for learning: the pack was not full at arming, or telemetry was missing.")
-                                                   : st === "used" ? qsTr("Used")
-                                                   : st === "dismissed" ? qsTr("Dismissed")
-                                                   : qsTr("Waiting: enter the charger number, then Use or Dismiss."))
-                                                  + (f.predictedMah !== undefined ? qsTr(" · model predicts %1 mAh").arg(Number(f.predictedMah).toFixed(0)) : "")
-                                                  + (f.outlier === true ? qsTr(" · more than 20 % off the model: wrong pack charged, or a heavier payload?") : "")
-                                        }
-                                        RowLayout {
-                                            Layout.fillWidth: true
-                                            spacing: 6
-                                            Text { text: qsTr("Charger (mAh)"); font.pixelSize: fs(11); color: Colors.textMuted }
-                                            TextField {
-                                                id: _chargerField
-                                                objectName: "chargerField_" + f.sessionId
-                                                Layout.preferredWidth: 90
-                                                text: f.chargerMah > 0 ? Number(f.chargerMah).toFixed(0) : ""
-                                                placeholderText: qsTr("e.g. 5100")
-                                                color: Colors.textPrimary
-                                                inputMethodHints: Qt.ImhDigitsOnly
-                                            }
-                                            Button {
-                                                objectName: "chargerSave_" + f.sessionId
-                                                text: qsTr("Save")
-                                                flat: true
-                                                onClicked: if (!_ptPane._vpm.setFlightChargerMah(f.sessionId, Number(_chargerField.text)))
-                                                               _ptPane.message = qsTr("Charger number not saved: 1–200000 mAh.")
-                                            }
-                                            Item { Layout.fillWidth: true }
-                                            Button {
-                                                objectName: "useButton_" + f.sessionId
-                                                text: qsTr("Use")
-                                                visible: st !== "excluded"
-                                                enabled: st !== "used" && f.chargerMah > 0
-                                                onClicked: _ptPane._vpm.setFlightLearningState(f.sessionId, "used")
-                                            }
-                                            Button {
-                                                objectName: "dismissButton_" + f.sessionId
-                                                text: qsTr("Dismiss")
-                                                visible: st !== "excluded"
-                                                enabled: st !== "dismissed"
-                                                onClicked: _ptPane._vpm.setFlightLearningState(f.sessionId, "dismissed")
                                             }
                                         }
                                     }

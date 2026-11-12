@@ -8,7 +8,7 @@
 #include "AbstractCheck.h"
 #include "core/BatteryPackCheck.h"
 #include "core/PayloadCheck.h"
-#include "core/PowerTypeCheck.h"
+#include "core/MotorTableCheck.h"
 #include "PreflightManager.h"
 #include "VehicleProfileManager.h"
 #include "utils/DatabaseManager.h"
@@ -40,9 +40,9 @@ private slots:
     void testBatteryPackWaiverAllowsArmWithoutEstimate();
     void testPayloadItemNeedsAnEnteredWeight();
     void testBatteryPackWarnsOnFcCapacityMismatch();
-    void testPowerTypeItemNeedsConfirmedProps();
-    void testPowerTypeItemWithMotorTable();
-    void testPowerTypeWaiversAndTimeAtTarget();
+    void testMotorTableItemNeedsLinkOrWaiver();
+    void testMotorTableItemWithMotorTable();
+    void testMotorTableWaiverAndTimeAtTarget();
 
 private:
     static ArmingGate::ArmRequest freshFailing(const QStringList &failing);
@@ -429,48 +429,33 @@ struct OneCheckGate {
 };
 } // namespace
 
-// "Power type" (copters): Pending blocks until the copter is linked and the
-// props are confirmed for the flight, or the type is waived; flight-controller
-// mismatches only warn; a plane skips it; a generic confirm() cannot pass it.
-void ArmingGateTest::testPowerTypeItemNeedsConfirmedProps()
+// "Motor table" (copters): Pending blocks until the copter is linked to a
+// motor table or the pilot waives it for the flight; a plane skips it; a
+// generic confirm() cannot pass it.
+void ArmingGateTest::testMotorTableItemNeedsLinkOrWaiver()
 {
-    QVariantMap st{{QStringLiteral("applicable"), true}, {QStringLiteral("typeId"), -1}};
-    auto *item = new PowerTypeCheck([&st]() { return st; });
+    QVariantMap st{{QStringLiteral("applicable"), true}};
+    auto *item = new MotorTableCheck([&st]() { return st; });
     OneCheckGate g(item);
     const QString id = QStringLiteral("power.power_type");
 
     item->evaluate();
     QCOMPARE(item->status(), CheckStatus::Pending);
-    // Shown as "Motor table": not linked points to where the link is made.
+    // Not linked points to where the link is made.
     QCOMPARE(item->label(), QStringLiteral("Motor table"));
     QVERIFY2(item->message().contains(QStringLiteral("motor table (Analyze → Vehicles → Motor table)")),
              qPrintable(item->message()));
+    QVERIFY(!item->satisfied());
     QVERIFY(g.failing(id));
     item->confirm(QStringLiteral("Action completed"));          // a checklist button's generic confirm
     QCOMPARE(item->status(), CheckStatus::Pending);
-
-    st[QStringLiteral("typeId")] = 3;
-    st[QStringLiteral("typeName")] = QStringLiteral("Quad X · 15×5.5 · 6S");
-    item->evaluate();
-    QCOMPARE(item->status(), CheckStatus::Pending);
-    QVERIFY2(item->message().contains(QStringLiteral("confirm these props")), qPrintable(item->message()));
     QVERIFY(g.failing(id));
 
-    st[QStringLiteral("propsConfirmed")] = true;
-    item->evaluate();
-    QCOMPARE(item->status(), CheckStatus::Passed);
-    QVERIFY(!g.failing(id));
-
-    st[QStringLiteral("warnings")] = QStringList{QStringLiteral("the battery reads 16.4 V, not a 6S pack")};
-    item->evaluate();
-    QCOMPARE(item->status(), CheckStatus::Warning);
-    QVERIFY(!g.failing(id));
-
-    st = {{QStringLiteral("applicable"), true}, {QStringLiteral("typeId"), -1},
-          {QStringLiteral("waivedBy"), QStringLiteral("Waiver Pilot")}};
+    st[QStringLiteral("waivedBy")] = QStringLiteral("Waiver Pilot");
     item->evaluate();
     QCOMPARE(item->status(), CheckStatus::Warning);
     QVERIFY(item->message().contains(QStringLiteral("Waiver Pilot")));
+    QVERIFY(item->satisfied());
     QVERIFY(!g.failing(id));
 
     st = {{QStringLiteral("applicable"), false}};
@@ -479,10 +464,10 @@ void ArmingGateTest::testPowerTypeItemNeedsConfirmedProps()
     QVERIFY(!g.failing(id));
 }
 
-// The per-flight state behind the Power type item: a waiver needs a name
-// and is logged; confirming props needs a linked type; time at target is 0–600 min
-// and goes with the payload entry; the end of a flight clears it all.
-void ArmingGateTest::testPowerTypeWaiversAndTimeAtTarget()
+// The per-flight state behind the Motor table item: a waiver needs a name
+// and is logged; time at target is 0–600 min and goes with the payload
+// entry; the end of a flight clears the waiver.
+void ArmingGateTest::testMotorTableWaiverAndTimeAtTarget()
 {
     DatabaseManager &db = DatabaseManager::instance();
     db.reset();
@@ -490,10 +475,13 @@ void ArmingGateTest::testPowerTypeWaiversAndTimeAtTarget()
     const QStringList before = db.listComplianceLogs(QStringLiteral("unknown"), 100000);
 
     VehicleProfileManager vpm;
-    QVERIFY(!vpm.confirmPowerTypeProps());              // no type linked
-    QVERIFY(!vpm.waivePowerType(QStringLiteral("  ")));
-    QVERIFY(vpm.waivePowerType(QStringLiteral("Type Pilot")));
-    QCOMPARE(vpm.powerTypeWaivedBy(), QStringLiteral("Type Pilot"));
+    QSignalSpy changed(&vpm, &VehicleProfileManager::motorTableChanged);
+    QVERIFY(!vpm.waiveMotorTable(QStringLiteral("  ")));
+    QVERIFY(vpm.motorTableWaivedBy().isEmpty());
+    QCOMPARE(changed.count(), 0);
+    QVERIFY(vpm.waiveMotorTable(QStringLiteral("Table Pilot")));
+    QCOMPARE(vpm.motorTableWaivedBy(), QStringLiteral("Table Pilot"));
+    QCOMPARE(changed.count(), 1);
 
     QStringList events;
     for (const QString &id : db.listComplianceLogs(QStringLiteral("unknown"), 100000)) {
@@ -502,7 +490,7 @@ void ArmingGateTest::testPowerTypeWaiversAndTimeAtTarget()
         const QJsonObject e = QJsonDocument::fromJson(db.loadComplianceLog(id).toUtf8()).object();
         events << e.value(QStringLiteral("event")).toString() + QLatin1Char(':') + e.value(QStringLiteral("pilot")).toString();
     }
-    QVERIFY2(events.contains(QStringLiteral("power_type_waived:Type Pilot")),
+    QVERIFY2(events.contains(QStringLiteral("power_type_waived:Table Pilot")),
              qPrintable(events.join(QStringLiteral(", "))));
 
     QCOMPARE(vpm.timeAtTargetMin(), -1.0);
@@ -511,8 +499,11 @@ void ArmingGateTest::testPowerTypeWaiversAndTimeAtTarget()
     QVERIFY(vpm.enterTimeAtTargetMin(2.5));
     QCOMPARE(vpm.timeAtTargetMin(), 2.5);
 
-    vpm.clearPowerTypeFlightState();
-    QVERIFY(vpm.powerTypeWaivedBy().isEmpty());
+    vpm.clearMotorTableFlightState();
+    QVERIFY(vpm.motorTableWaivedBy().isEmpty());
+    QCOMPARE(changed.count(), 2);
+    vpm.clearMotorTableFlightState();                    // nothing to clear: no signal
+    QCOMPARE(changed.count(), 2);
     vpm.clearPayloadEntry();
     QCOMPARE(vpm.timeAtTargetMin(), -1.0);
 
@@ -527,29 +518,30 @@ void ArmingGateTest::testPowerTypeWaiversAndTimeAtTarget()
     vpm.setBatteryType(QStringLiteral("LiHV"));
     QCOMPARE(vpm.packRestingSocPct(24.9), 77.5);        // 4.15 V on LiHV is 4.00 V on the LiPo curve
     vpm.setBatteryType(QStringLiteral("LiPo"));
-
-    QCOMPARE(VehicleProfileManager::frameName(1, 1), QStringLiteral("Quad X"));
-    QCOMPARE(VehicleProfileManager::frameName(2, 0), QStringLiteral("Hexa Plus"));
-    QCOMPARE(VehicleProfileManager::frameName(99, 1), QString());
 }
 
-// "Power type" for a copter linked to a motor table: no power type or props
-// confirmation is needed (the table is the maker's test of its motor and
-// prop), so it passes; when the table's setup checks turn the estimate off it
-// warns and says why; neither blocks.
-void ArmingGateTest::testPowerTypeItemWithMotorTable()
+// "Motor table" for a copter linked to one: it passes; when the table's
+// setup checks turn the estimate off it warns and says why; neither blocks.
+// A link wins over a waiver left from earlier.
+void ArmingGateTest::testMotorTableItemWithMotorTable()
 {
-    QVariantMap st{{QStringLiteral("applicable"), true}, {QStringLiteral("typeId"), -1},
+    QVariantMap st{{QStringLiteral("applicable"), true},
                    {QStringLiteral("tableName"), QStringLiteral("M6215 HighProt 320KV · MSC 22×7.8 · 6S quad")}};
-    auto *item = new PowerTypeCheck([&st]() { return st; });
+    auto *item = new MotorTableCheck([&st]() { return st; });
     OneCheckGate g(item);
     const QString id = QStringLiteral("power.power_type");
 
     item->evaluate();
     QCOMPARE(item->status(), CheckStatus::Passed);
     QVERIFY2(item->message().contains(QStringLiteral("(motor table)")), qPrintable(item->message()));
+    QCOMPARE(item->currentValue().toString(), QStringLiteral("M6215 HighProt 320KV · MSC 22×7.8 · 6S quad"));
     QVERIFY(item->satisfied());
     QVERIFY(!g.failing(id));
+
+    st[QStringLiteral("waivedBy")] = QStringLiteral("Earlier Pilot");
+    item->evaluate();
+    QCOMPARE(item->status(), CheckStatus::Passed);
+    st.remove(QStringLiteral("waivedBy"));
 
     st[QStringLiteral("tableOffText")] = QStringLiteral("The motor table is for 6S; this pack is 8S");
     item->evaluate();
@@ -558,7 +550,7 @@ void ArmingGateTest::testPowerTypeItemWithMotorTable()
              qPrintable(item->message()));
     QVERIFY(!g.failing(id));
 
-    // Unlinked again: back to needing a power type.
+    // Unlinked again: back to needing a link or a waiver.
     st.remove(QStringLiteral("tableName"));
     st.remove(QStringLiteral("tableOffText"));
     item->evaluate();

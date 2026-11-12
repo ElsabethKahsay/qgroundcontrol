@@ -43,8 +43,8 @@ Rectangle {
         return -1
     }
     readonly property double _timeMin:  _profile ? _profile.liveTimeMins : -1
-    // Power-type estimate (copter linked to a type with a learned model):
-    // replaces the generic estimate. Before the arm it shows the cruise
+    // Motor-table estimate (copter linked to its motor table): replaces the
+    // generic estimate. Before the arm it shows the cruise
     // endurance with the payload; in flight the time left; "RETURN NOW" when
     // the rest of the trip (target, time there, home, land) no longer fits.
     readonly property var  _pl: _profile ? _profile.powerLive : ({})
@@ -396,11 +396,9 @@ Rectangle {
                         objectName: "chipEstimateSource"
                         visible: root._plActive
                         value: !root._plActive ? ""
-                               : root._pl.source === "motor table"
-                                 ? root._pl.typeName
-                                   + (root._pl.motorsBeyond > 0 ? qsTr(" (beyond table)") : "")
-                                   + (root._pl.throttleSource === "overall throttle" ? qsTr(" (from the overall throttle)") : "")
-                                 : root._pl.typeName + (root._pl.source === "synthetic" ? " (not yet learned)" : "")
+                               : root._pl.typeName
+                                 + (root._pl.motorsBeyond > 0 ? qsTr(" (beyond table)") : "")
+                                 + (root._pl.throttleSource === "overall throttle" ? qsTr(" (from the overall throttle)") : "")
                         valueColor: Colors.textPrimary }
             DetailRow { label: qsTr("Left");
                         visible: root._plActive

@@ -101,28 +101,6 @@ struct VehicleRecord {
     QString notes;
 };
 
-/// What the flight recorder learned about one flight for its power type's
-/// model (see core/PowerTypeModel.h). Minutes are split by phase (hover below
-/// 3 m/s) and by whether the payload was still aboard (it is dropped at the
-/// target). Negative values mean "not known".
-struct FlightPowerRecord {
-    int    powerTypeId       = -1;
-    double hoverMinEmpty     = 0.0;
-    double hoverMinLoaded    = 0.0;
-    double cruiseMinEmpty    = 0.0;
-    double cruiseMinLoaded   = 0.0;
-    double cruiseSpeedMs     = -1.0;  ///< Average cruise ground speed
-    double fcMah             = -1.0;  ///< The FC's mAh used (synthetic or measured)
-    double synthHoverA       = -1.0;  ///< Average FC current while hovering
-    double synthCruiseA      = -1.0;
-    double refThrottleHover  = -1.0;  ///< Average throttle (0–1) while hovering
-    double refThrottleCruise = -1.0;
-    double armCellV          = -1.0;  ///< Resting voltage per cell at arming
-    bool   startedFull       = false; ///< ≥ 4.15 V per cell at arming
-    double telemetryCoverage = 0.0;   ///< Share of the flight with telemetry (0–1)
-    double timeAtTargetMin   = -1.0;  ///< Planned minutes at the target
-};
-
 class DatabaseManager : public QObject {
     Q_OBJECT
     /// Non-empty when the database could not be opened or migrated at startup,
@@ -295,26 +273,7 @@ public:
     Q_INVOKABLE QString getFlightSessions(const QString &deviceUid, int limit = 10);
     Q_INVOKABLE QString getVehicleHistory(const QString &deviceUid);
 
-    // ── Power types ───────────────────────────────────────────────────
-    /// "Quad X · 15×5.5 · 6S": the name shown everywhere for a power type.
-    static QString powerTypeName(const QString &frame, double propDiameterIn,
-                                 double propPitchIn, int cells);
-    /// Creates (@p id ≤ 0) or updates a power type. Returns its id, or -1 when
-    /// a field is out of range or another type already has the same frame,
-    /// props and cells.
-    Q_INVOKABLE int savePowerType(int id, const QString &frame, double propDiameterIn,
-                                  double propPitchIn, int cells, const QString &motorNote);
-    /// All types: {id, name, frame, propDiameterIn, propPitchIn, cells,
-    /// motorNote, vehicles (linked aircraft), flights (recorded flights)}.
-    Q_INVOKABLE QVariantList listPowerTypes();
-    Q_INVOKABLE QVariantMap powerType(int id);
-    /// Refused while an aircraft is linked to it or a flight was recorded
-    /// with it (that flight's learning would lose its type).
-    Q_INVOKABLE bool deletePowerType(int id);
-    /// Links an aircraft to a type; @p powerTypeId ≤ 0 unlinks it.
-    Q_INVOKABLE bool linkVehiclePowerType(const QString &deviceUid, int powerTypeId);
-    /// The aircraft's type id, or -1 when it is not linked.
-    Q_INVOKABLE int vehiclePowerTypeId(const QString &deviceUid);
+    // ── Motor table links and flights ─────────────────────────────────
     /// Links an aircraft to a motor table (MotorTable.h id); an empty id unlinks it.
     Q_INVOKABLE bool linkVehicleMotorTable(const QString &deviceUid, const QString &tableId);
     /// The aircraft's motor table id, or empty when it is not linked.
@@ -336,23 +295,6 @@ public:
     bool setMotorTableFlightCharger(int flightId, double chargerMah);
     /// "pending", "used" or "dismissed".
     bool setMotorTableFlightState(int flightId, const QString &state);
-    /// Writes the recorder's numbers onto a flight. A flight that did not start
-    /// on a full pack or lacks telemetry is marked "excluded" from learning;
-    /// otherwise it waits as "pending" until the pilot picks Use or Dismiss
-    /// (a recorder update never undoes that choice).
-    bool saveFlightPowerRecord(int sessionId, const FlightPowerRecord &record);
-    /// The mAh the charger put back after this flight (1–200 000).
-    Q_INVOKABLE bool setFlightChargerMah(int sessionId, double chargerMah);
-    /// "pending", "used" or "dismissed". "used" needs a charger number and a
-    /// flight that is not excluded.
-    Q_INVOKABLE bool setFlightLearningState(int sessionId, const QString &state);
-    /// Flights recorded with a type, oldest first: {sessionId, deviceUid,
-    /// startedAt, payloadKg, hoverMinEmpty, hoverMinLoaded, cruiseMinEmpty,
-    /// cruiseMinLoaded, cruiseSpeedMs, fcMah, synthHoverA, synthCruiseA,
-    /// refThrottleHover, refThrottleCruise, armCellV, startedFull,
-    /// telemetryCoverage, timeAtTargetMin, chargerMah, learningState}.
-    /// Unknown numbers are -1.
-    Q_INVOKABLE QVariantList powerTypeFlights(int powerTypeId);
 
     /// Calibrated power model derived from completed flight sessions.
     /// Aggregates energy consumption data to estimate Wh/km for range

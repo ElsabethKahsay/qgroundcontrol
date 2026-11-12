@@ -54,10 +54,9 @@ int qInitResources_qmlcache_VehicleSetupModule();
 #include "core/ArmingGate.h"
 #include "core/BatteryPackCheck.h"
 #include "core/PayloadCheck.h"
-#include "core/PowerTypeCheck.h"
+#include "core/MotorTableCheck.h"
 #include "core/MotorTable.h"
 #include "core/MissionEstimateCheck.h"
-#include "core/PowerTypeModel.h"
 #include "core/SessionRecorder.h"
 #include "Vehicle/VehicleLinkManager.h"
 #include "core/ChecklistEngine.h"
@@ -327,22 +326,19 @@ void PreflightPlugin::init()
     connect(_vehicleProfileManager, &VehicleProfileManager::payloadWeightChanged,
             payloadCheck, [payloadCheck]() { payloadCheck->evaluate(); });
 
-    // Copters: "Power type" (a motor table linked, or a power type linked
-    // and its props confirmed for this flight, or waived). It is a mandatory
-    // Action item: the gate refuses while it is Pending. The mission estimate
-    // (below) is advice only and never holds arming.
-    auto *powerTypeCheck = new PowerTypeCheck([this]() -> QVariantMap {
+    // Copters: "Motor table" (a motor table linked, or waived for the
+    // flight). It is a mandatory Action item: the gate refuses while it is
+    // Pending. The mission estimate (below) is advice only and never holds
+    // arming.
+    auto *motorTableCheck = new MotorTableCheck([this]() -> QVariantMap {
         QVariantMap st;
         if (!_vehicleProfileManager)
             return st;
         VehicleProfileManager *vpm = _vehicleProfileManager;
         st[QStringLiteral("applicable")] = vpm->kind() == VehicleKind::Multirotor;
-        st[QStringLiteral("typeId")] = vpm->currentPowerTypeId();
-        st[QStringLiteral("typeName")] = vpm->currentPowerTypeName();
-        st[QStringLiteral("propsConfirmed")] = vpm->powerTypePropsConfirmed();
-        st[QStringLiteral("waivedBy")] = vpm->powerTypeWaivedBy();
-        // A motor table instead of a power type: its name, and the first
-        // setup check that turns its estimate off.
+        st[QStringLiteral("waivedBy")] = vpm->motorTableWaivedBy();
+        // The linked table's name, and the first setup check that turns its
+        // estimate off.
         if (const MotorTable::Table *table = MotorTable::byId(vpm->motorTableId())) {
             st[QStringLiteral("tableName")] = table->name;
             const QVariantMap setup = vpm->motorTableSetup();
@@ -353,33 +349,9 @@ void PreflightPlugin::init()
                 }
             }
         }
-        // What the flight controller can tell: its frame, the pack's cell
-        // count from its voltage, and whether it reports a current at all.
-        QStringList warnings;
-        if (vpm->currentPowerTypeId() > 0) {
-            const QVariantMap type = DatabaseManager::instance().powerType(vpm->currentPowerTypeId());
-            const QString fcFrame = vpm->currentFrameName();
-            const QString typeFrame = type.value(QStringLiteral("frame")).toString();
-            if (!fcFrame.isEmpty() && !typeFrame.isEmpty()
-                && fcFrame.section(QLatin1Char(' '), 0, 0).compare(typeFrame.section(QLatin1Char(' '), 0, 0),
-                                                                    Qt::CaseInsensitive) != 0)
-                warnings << tr("the flight controller's frame is %1, the type's is %2").arg(fcFrame, typeFrame);
-            const int cells = type.value(QStringLiteral("cells")).toInt();
-            const double volts = _telemetryBridge ? _telemetryBridge->batteryVoltage() : 0.0;
-            if (cells > 0 && volts > 1.0 && !PowerTypeModel::cellsPlausible(volts, cells))
-                warnings << tr("the battery reads %1 V, not a %2S pack").arg(volts, 0, 'f', 1).arg(cells);
-        }
-        if (_telemetryBridge && _telemetryBridge->hasParameter(QStringLiteral("BATT_MONITOR"))) {
-            const int monitor = qRound(_telemetryBridge->parameterValue(QStringLiteral("BATT_MONITOR"), -1.0f));
-            // Without a current reading (3, or 25 on a copter) the GCS counts
-            // the charge itself; it still needs the voltage, which 0 turns off.
-            if (monitor == 0)
-                warnings << tr("BATT_MONITOR = 0: no battery voltage (the full-pack test and the cell check need it)");
-        }
-        st[QStringLiteral("warnings")] = warnings;
         return st;
     }, _preflightManager);
-    _preflightManager->addCheck(powerTypeCheck);
+    _preflightManager->addCheck(motorTableCheck);
 
     // The mission estimate: advice only (not mandatory), never holds arming.
     auto *missionEstimateCheck = new MissionEstimateCheck([this]() -> QVariantMap {
@@ -390,8 +362,8 @@ void PreflightPlugin::init()
     // Action items are not re-run on the evaluation timer: re-check on every
     // input they read, and every 5 s for the live ones (battery voltage and
     // charge, the copter's position).
-    auto reevaluatePower = [powerTypeCheck, missionEstimateCheck]() {
-        powerTypeCheck->evaluate();
+    auto reevaluatePower = [motorTableCheck, missionEstimateCheck]() {
+        motorTableCheck->evaluate();
         missionEstimateCheck->evaluate();
     };
     connect(_vehicleProfileManager, &VehicleProfileManager::emptyWeightChanged, this, reevaluatePower);
@@ -413,7 +385,7 @@ void PreflightPlugin::init()
         connect(_weatherProvider, &WeatherProvider::siteWeatherChanged, this, reevaluatePower);
     if (auto *settings = PreflightSettingsManager::instance())
         connect(settings, &PreflightSettingsManager::payloadDropChanged, this, reevaluatePower);
-    connect(_vehicleProfileManager, &VehicleProfileManager::powerTypeChanged, this, reevaluatePower);
+    connect(_vehicleProfileManager, &VehicleProfileManager::motorTableChanged, this, reevaluatePower);
     connect(_vehicleProfileManager, &VehicleProfileManager::vehicleTypeResolved, this, reevaluatePower);
     connect(_vehicleProfileManager, &VehicleProfileManager::payloadWeightChanged, this, reevaluatePower);
     connect(_vehicleProfileManager, &VehicleProfileManager::currentBatteryChanged, this, reevaluatePower);
@@ -489,13 +461,6 @@ void PreflightPlugin::init()
             s.altitudeM = _telemetryBridge->altitudeRelative();
             s.gpsSats = _telemetryBridge->gpsSatellites();
             s.flightMode = _telemetryBridge->flightMode();
-            // For the power-type tracker (hover/cruise split, FC current).
-            s.groundSpeedMs = _telemetryBridge->groundSpeed();
-            s.currentA = _telemetryBridge->batteryCurrentAmps();
-            const QVariant thr = v->throttlePct()->rawValue();
-            s.throttle = thr.isValid() ? thr.toDouble() / 100.0 : -1.0;
-            s.lat = _telemetryBridge->gpsLatitude();
-            s.lon = _telemetryBridge->gpsLongitude();
         }
         return s;
     });
@@ -810,7 +775,7 @@ void PreflightPlugin::_onActiveVehicleChanged(Vehicle *vehicle)
     if (_vehicleProfileManager) {
         _vehicleProfileManager->clearBatteryPackWaiver();
         _vehicleProfileManager->clearPayloadEntry();   // the next aircraft carries its own
-        _vehicleProfileManager->clearPowerTypeFlightState();
+        _vehicleProfileManager->clearMotorTableFlightState();
     }
     _trainer.reset();   // the first value on the new link is the instructor position
     emit trainerChanged();
@@ -1014,18 +979,6 @@ void PreflightPlugin::_onGateOpened()
                     : QStringLiteral("external");
     start.gateAllowed = _armingGate && _armingGate->isArmingAllowed();
     start.mode = sessionModeName();
-    // Power type: what the flight's minutes and current are learned for, its
-    // cell count (full-pack test) and the target the payload is dropped at.
-    if (_vehicleProfileManager && _vehicleProfileManager->currentPowerTypeId() > 0) {
-        start.powerTypeId = _vehicleProfileManager->currentPowerTypeId();
-        start.cells = DatabaseManager::instance().powerType(start.powerTypeId).value(QStringLiteral("cells")).toInt();
-        start.timeAtTargetMin = _vehicleProfileManager->timeAtTargetMin();
-        const QVariantMap target = DatabaseManager::instance().vehicleTarget(_vehicleProfileManager->currentDeviceUid());
-        if (!target.isEmpty()) {
-            start.targetLat = target.value(QStringLiteral("lat")).toDouble();
-            start.targetLon = target.value(QStringLiteral("lon")).toDouble();
-        }
-    }
     // Bench: Testing mode, a bench force-arm, or a motor test in progress.
     start.bench = start.mode == QLatin1String("Testing") || source == ArmStateTracker::ArmSource::ForceToken
                || (_hardwareTestController && _hardwareTestController->isRunning());
@@ -1223,7 +1176,7 @@ void PreflightPlugin::_onGateClosed(const QString &reason)
     // disarm on their own) keep it.
     if (_vehicleProfileManager && !s_benchArm) {
         _vehicleProfileManager->clearBatteryPackWaiver();
-        _vehicleProfileManager->clearPowerTypeFlightState();   // confirm props again next flight
+        _vehicleProfileManager->clearMotorTableFlightState();   // the waiver covers one flight
     }
     s_benchArm = false;
 }

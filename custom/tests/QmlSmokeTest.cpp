@@ -182,7 +182,7 @@ static QQuickItem *createComponent(const QSharedPointer<QQmlApplicationEngine> &
 }
 
 // Set SKYWIN_SCREEN_GRAB=<folder> to save pictures of the screens the live
-// tests drive (Power types page, preflight dialogs), to check them by eye.
+// tests drive (Vehicles page, preflight dialogs), to check them by eye.
 static void grabScreen(QQuickWindow *window, const QString &name)
 {
     const QString dir = qEnvironmentVariable("SKYWIN_SCREEN_GRAB");
@@ -1332,10 +1332,10 @@ private slots:
     void testFlyViewTargetDistanceFromVehicle();
     void testPayloadEnteredIsOnTheFlightRecord();
     void testToolbarShowsOneSharpLogo();
-    void testPowerTypeFlightRecordedLive();
-    void testPowerTypeAndMissionItemsLive();
+    void testMotorTableLinkFollowsTheVehicle();
+    void testMotorTableAndMissionItemsLive();
     void testPowerDialogsDriveTheItems();
-    void testPowerTypesPageDrivesStorage();
+    void testVehiclesPageDrivesStorage();
     void testPowerLiveInFlyView();
     void testEstimatorPanelKeepsTheStoredPack();
     void testFlightHistoryDetailsRecorded();
@@ -1350,10 +1350,6 @@ private slots:
 private:
     bool _connectPlane();
     bool _waitArmed(bool armed, int ms = 10000);
-    /// The "Quad X · 15×5.5 · 6S" type with six learning flights (the worked
-    /// example's four and two more) recorded on the connected copter and
-    /// used, so it is validated.
-    int _validatedPowerType();
     template <typename T> static T *_pluginChild()
     {
         const auto all = PreflightPlugin::instance()->findChildren<T *>();
@@ -1370,39 +1366,6 @@ bool LivePluginBenchTest::_connectPlane()
     for (int i = 0; i < 100 && VehicleProfileManager::instance()->currentDeviceUid().isEmpty(); ++i)
         QTest::qWait(50);
     return !VehicleProfileManager::instance()->currentDeviceUid().isEmpty();
-}
-
-int LivePluginBenchTest::_validatedPowerType()
-{
-    VehicleProfileManager *vpm = VehicleProfileManager::instance();
-    DatabaseManager &db = DatabaseManager::instance();
-    const QString uid = vpm->currentDeviceUid();
-    int type = -1;
-    for (const QVariant &t : vpm->listPowerTypes())
-        if (t.toMap().value(QStringLiteral("name")).toString() == QStringLiteral("Quad X · 15×5.5 · 6S"))
-            type = t.toMap().value(QStringLiteral("id")).toInt();
-    if (type <= 0)
-        type = vpm->savePowerType(0, QStringLiteral("Quad X"), 15.0, 5.5, 6, {});
-    if (type <= 0 || uid.isEmpty())
-        return -1;
-    // Hover 32 + 6 A/kg, cruise 21 + 4 A/kg at 15 m/s.
-    struct F { double hover, cruise, kg, mah; };
-    // Six flights: a type needs at least 5, checked leave-one-out.
-    for (const F &f : { F{3, 10, 0.0, 5100.0}, F{8, 4, 0.0, 5666.7}, F{3, 10, 1.5, 6550.0}, F{8, 4, 1.5, 7266.7},
-                        F{5, 6, 0.0, 4766.7}, F{5, 6, 1.5, 6116.7} }) {
-        const int id = db.startFlightSession(uid, QString(), f.kg);
-        FlightPowerRecord r;
-        r.powerTypeId = type;
-        (f.kg > 0 ? r.hoverMinLoaded : r.hoverMinEmpty) = f.hover;
-        (f.kg > 0 ? r.cruiseMinLoaded : r.cruiseMinEmpty) = f.cruise;
-        r.cruiseSpeedMs = 15.0;
-        r.startedFull = true;
-        r.telemetryCoverage = 1.0;
-        if (!db.saveFlightPowerRecord(id, r) || !db.setFlightChargerMah(id, f.mah)
-            || !db.setFlightLearningState(id, QStringLiteral("used")))
-            return -1;
-    }
-    return vpm->powerTypeSummary(type).value(QStringLiteral("validated")).toBool() ? type : -1;
 }
 
 bool LivePluginBenchTest::_waitArmed(bool armed, int ms)
@@ -1742,111 +1705,74 @@ UT_REGISTER_TEST(MotorCheckPanelSmokeTest)
 UT_REGISTER_TEST(MainStatusIndicatorSmokeTest)
 UT_REGISTER_TEST(FlyQuickActionsSmokeTest)
 UT_REGISTER_TEST(ChecklistPagesSmokeTest)
-// The real plugin against the mock vehicle: the aircraft's power type is
-// cleared on disconnect and not carried over to another aircraft, and an armed flight of
-// a linked aircraft gets the power type and the 1 s tracker's data on its
-// flight record (the mock sits on the ground, so only the coverage moves).
-void LivePluginBenchTest::testPowerTypeFlightRecordedLive()
+// The real plugin against the mock vehicle: the connected copter's motor
+// table link is cleared on disconnect and not carried over to another
+// aircraft; the next one gets whatever the database holds for its own UID.
+void LivePluginBenchTest::testMotorTableLinkFollowsTheVehicle()
 {
     QVERIFY2(_connectPlane(), "mock vehicle did not connect / resolve its UID");
     VehicleProfileManager *vpm = VehicleProfileManager::instance();
-    // The unit-test database persists between runs: reuse the type if an
-    // earlier run created it (a second save of the same build is refused).
-    int type = -1;
-    for (const QVariant &t : vpm->listPowerTypes())
-        if (t.toMap().value(QStringLiteral("name")).toString() == QStringLiteral("Live Quad · 13×4.5 · 4S"))
-            type = t.toMap().value(QStringLiteral("id")).toInt();
-    if (type <= 0)
-        type = vpm->savePowerType(0, QStringLiteral("Live Quad"), 13.0, 4.5, 4, {});
-    QVERIFY(type > 0);
-    QVERIFY(vpm->linkCurrentVehiclePowerType(type));
-    QCOMPARE(vpm->currentPowerTypeId(), type);
+    const MotorTable::Table &table = MotorTable::m6215_320kv_22x78_6s();
+    QVERIFY(vpm->linkCurrentVehicleMotorTable(table.id));
+    QCOMPARE(vpm->motorTableId(), table.id);
 
+    QSignalSpy changed(vpm, &VehicleProfileManager::motorTableChanged);
     _disconnectMockLink();
-    for (int i = 0; i < 100 && vpm->currentPowerTypeId() != -1; ++i)
+    for (int i = 0; i < 100 && !vpm->motorTableId().isEmpty(); ++i)
         QTest::qWait(50);
-    QCOMPARE(vpm->currentPowerTypeId(), -1);
+    QVERIFY(vpm->motorTableId().isEmpty());
+    QVERIFY2(changed.count() >= 1, "the disconnect cleared the link without saying so");
     // The mock comes back with a new system id, i.e. another aircraft: its
-    // type is whatever the database holds for its own UID (an earlier run may
+    // link is whatever the database holds for its own UID (an earlier run may
     // have linked it), never the previous aircraft's.
     QVERIFY2(_connectPlane(), "mock vehicle did not reconnect");
     QTest::qWait(500);
-    QCOMPARE(vpm->currentPowerTypeId(), DatabaseManager::instance().vehiclePowerTypeId(vpm->currentDeviceUid()));
-    QVERIFY(vpm->linkCurrentVehiclePowerType(0));
-    QCOMPARE(vpm->currentPowerTypeId(), -1);
-    QVERIFY(vpm->linkCurrentVehiclePowerType(type));
-    QCOMPARE(vpm->currentPowerTypeId(), type);
-    QCOMPARE(vpm->currentPowerTypeName(), QStringLiteral("Live Quad · 13×4.5 · 4S"));
-
-    // Only the flight this test creates counts (the database persists).
-    QSqlQuery maxId(QSqlDatabase::database());
-    QVERIFY(maxId.exec(QStringLiteral("SELECT COALESCE(MAX(id), 0) FROM flight_sessions")) && maxId.next());
-    const int before = maxId.value(0).toInt();
-
-    // A flight armed from the RC in Flight mode.
-    FlightSession::instance()->setMode(QStringLiteral("FLIGHT"));
-    _vehicle->setArmed(true, false);
-    QVERIFY(_waitArmed(true));
-    QTest::qWait(3500);
-    _vehicle->setArmed(false, false);
-    QVERIFY(_waitArmed(false));
-    QTest::qWait(300);
-
-    QSqlQuery q(QSqlDatabase::database());
-    QVERIFY(q.exec(QStringLiteral("SELECT telemetry_coverage, learning_state FROM flight_sessions "
-                                  "WHERE power_type_id = %1 AND id > %2 ORDER BY id DESC LIMIT 1").arg(type).arg(before)));
-    QVERIFY2(q.next(), "the flight was not recorded with the aircraft's power type");
-    QVERIFY2(q.value(0).toDouble() > 0.5, qPrintable(QStringLiteral("coverage %1: the 1 s tracker did not run")
-                                                         .arg(q.value(0).toDouble())));
-    QVERIFY(!q.value(1).toString().isEmpty());
-
-    QVERIFY(vpm->linkCurrentVehiclePowerType(0));
+    QCOMPARE(vpm->motorTableId(), DatabaseManager::instance().vehicleMotorTableId(vpm->currentDeviceUid()));
+    QVERIFY(vpm->linkCurrentVehicleMotorTable(QString()));
+    QVERIFY(vpm->motorTableId().isEmpty());
+    QVERIFY(vpm->linkCurrentVehicleMotorTable(table.id));
+    QCOMPARE(vpm->motorTableId(), table.id);
+    QVERIFY(vpm->linkCurrentVehicleMotorTable(QString()));
 }
 
-// The real plugin's "Power type" item on the mock copter: Pending until linked
-// and the props are confirmed; linking another type drops the confirmation;
-// an RC flight's disarm clears it. The old "Mission check" item is gone: the
-// mission estimate (never mandatory) replaced it.
-void LivePluginBenchTest::testPowerTypeAndMissionItemsLive()
+// The real plugin's "Motor table" item on the mock copter: Pending until
+// linked or waived; a waiver lasts one flight (an RC flight's disarm clears
+// it). The old "Mission check" item is gone: the mission estimate (never
+// mandatory) replaced it.
+void LivePluginBenchTest::testMotorTableAndMissionItemsLive()
 {
     QVERIFY2(_connectPlane(), "mock copter did not connect / resolve its UID");
     auto *mgr = _pluginChild<PreflightManager>();
     auto *gate = _pluginChild<ArmingGate>();
     QVERIFY(mgr && gate);
-    AbstractCheck *typeItem = mgr->checkById(QStringLiteral("power.power_type"));
-    QVERIFY2(typeItem, "the Power type item is not registered");
+    AbstractCheck *item = mgr->checkById(QStringLiteral("power.power_type"));
+    QVERIFY2(item, "the Motor table item is not registered");
     QVERIFY2(!mgr->checkById(QStringLiteral("power.mission")), "the old Mission check item is still registered");
     VehicleProfileManager *vpm = VehicleProfileManager::instance();
     for (int i = 0; i < 100 && vpm->kind() != VehicleKind::Multirotor; ++i)
         QTest::qWait(50);
     QCOMPARE(vpm->kind(), VehicleKind::Multirotor);
-    for (int i = 0; i < 200 && !_vehicle->coordinate().isValid(); ++i)
-        QTest::qWait(50);
-    QVERIFY(_vehicle->coordinate().isValid());
 
     // Start unlinked (the test database persists between runs).
-    QVERIFY(vpm->linkCurrentVehiclePowerType(0));
-    QCOMPARE(typeItem->status(), CheckStatus::Pending);
+    QVERIFY(vpm->linkCurrentVehicleMotorTable(QString()));
+    vpm->clearMotorTableFlightState();
+    QCOMPARE(item->status(), CheckStatus::Pending);
     QVERIFY(gate->currentRequest(0).failingMandatoryIds.contains(QStringLiteral("power.power_type")));
 
-    // A type validated by the worked example's four flights.
-    const int type = _validatedPowerType();
-    QVERIFY(type > 0);
-
-    QVERIFY(vpm->linkCurrentVehiclePowerType(type));
-    QCOMPARE(typeItem->status(), CheckStatus::Pending);
-    QVERIFY(vpm->confirmPowerTypeProps());
-    QVERIFY2(typeItem->status() == CheckStatus::Passed || typeItem->status() == CheckStatus::Warning,
-             qPrintable(typeItem->message()));
+    // Linked: the item follows at once (the link's signal re-evaluates it).
+    QVERIFY(vpm->linkCurrentVehicleMotorTable(MotorTable::m6215_320kv_22x78_6s().id));
+    QVERIFY2(item->status() == CheckStatus::Passed || item->status() == CheckStatus::Warning,
+             qPrintable(item->message()));
     QVERIFY(!gate->currentRequest(0).failingMandatoryIds.contains(QStringLiteral("power.power_type")));
-    // Linking another type drops the confirmation: it was for these props.
-    QVERIFY(vpm->linkCurrentVehiclePowerType(0));
-    QVERIFY(vpm->linkCurrentVehiclePowerType(type));
-    QVERIFY(!vpm->powerTypePropsConfirmed());
-    QCOMPARE(typeItem->status(), CheckStatus::Pending);
-    QVERIFY(vpm->confirmPowerTypeProps());
+    QVERIFY(vpm->linkCurrentVehicleMotorTable(QString()));
+    QCOMPARE(item->status(), CheckStatus::Pending);
 
-    // An RC flight in Flight mode: its disarm ends the confirmation.
+    // Waived for the flight.
+    QVERIFY(vpm->waiveMotorTable(QStringLiteral("Live Pilot")));
+    QCOMPARE(item->status(), CheckStatus::Warning);
+    QVERIFY(!gate->currentRequest(0).failingMandatoryIds.contains(QStringLiteral("power.power_type")));
+
+    // An RC flight in Flight mode: its disarm ends the waiver.
     FlightSession::instance()->setMode(QStringLiteral("FLIGHT"));
     _vehicle->setArmed(true, false);
     QVERIFY(_waitArmed(true));
@@ -1854,32 +1780,24 @@ void LivePluginBenchTest::testPowerTypeAndMissionItemsLive()
     _vehicle->setArmed(false, false);
     QVERIFY(_waitArmed(false));
     QTest::qWait(300);
-    QVERIFY2(!vpm->powerTypePropsConfirmed(), "the disarm after a flight kept the props confirmation");
-    QCOMPARE(typeItem->status(), CheckStatus::Pending);
-
-    QVERIFY(vpm->linkCurrentVehiclePowerType(0));
+    QVERIFY2(vpm->motorTableWaivedBy().isEmpty(), "the disarm after a flight kept the waiver");
+    QCOMPARE(item->status(), CheckStatus::Pending);
 }
 
 // The three dialogs the checklist pages open (ChecklistEngine inline
 // components, through the same "cpts" import the pages use), driven like a
 // pilot would: the payload dialog saves the weight and the time at target;
-// "Props fitted match" confirms the type; the mission estimate dialog shows
-// what VehicleProfileManager works out.
+// the motor table dialog, with no table linked, takes the waiver with the
+// pilot's name; the mission estimate dialog shows what VehicleProfileManager
+// works out.
 void LivePluginBenchTest::testPowerDialogsDriveTheItems()
 {
     QVERIFY2(_connectPlane(), "mock copter did not connect / resolve its UID");
     VehicleProfileManager *vpm = VehicleProfileManager::instance();
     for (int i = 0; i < 100 && vpm->kind() != VehicleKind::Multirotor; ++i)
         QTest::qWait(50);
-    int type = -1;
-    for (const QVariant &t : vpm->listPowerTypes())
-        if (t.toMap().value(QStringLiteral("name")).toString() == QStringLiteral("Quad X · 15×5.5 · 6S"))
-            type = t.toMap().value(QStringLiteral("id")).toInt();
-    if (type <= 0)
-        type = vpm->savePowerType(0, QStringLiteral("Quad X"), 15.0, 5.5, 6, {});
-    QVERIFY(type > 0);
-    QVERIFY(vpm->linkCurrentVehiclePowerType(type));
-    QVERIFY(!vpm->powerTypePropsConfirmed());
+    QVERIFY(vpm->linkCurrentVehicleMotorTable(QString()));
+    vpm->clearMotorTableFlightState();
 
     QSharedPointer<QQmlApplicationEngine> engine(QGCCorePlugin::instance()->createQmlApplicationEngine(nullptr));
     QVERIFY(engine);
@@ -1893,12 +1811,12 @@ void LivePluginBenchTest::testPowerDialogsDriveTheItems()
         "Item {\n"
         "    width: 1000; height: 760\n"
         "    property alias payload: payload\n"
-        "    property alias powerType: powerType\n"
+        "    property alias motorTable: motorTable\n"
         "    property alias mission: mission\n"
         "    property alias pack: pack\n"
         "    CE.ChecklistEngine.PayloadDialog { id: payload }\n"
         "    CE.ChecklistEngine.BatteryPackDialog { id: pack }\n"
-        "    CE.ChecklistEngine.PowerTypeDialog { id: powerType }\n"
+        "    CE.ChecklistEngine.MotorTableDialog { id: motorTable }\n"
         "    CE.ChecklistEngine.MissionEstimateDialog { id: mission }\n"
         "}\n"), QUrl(QStringLiteral("qrc:/qml/cpts/PowerDialogsTest.qml")));
     QVERIFY2(component.status() == QQmlComponent::Ready, qPrintable(component.errorString()));
@@ -1932,19 +1850,36 @@ void LivePluginBenchTest::testPowerDialogsDriveTheItems()
     QCOMPARE(vpm->timeAtTargetMin(), 2.0);
     QVERIFY(!payload->property("visible").toBool());
 
-    // Power type: "Props fitted match".
-    QObject *pt = dialog("powerType");
-    QVERIFY(pt);
-    QMetaObject::invokeMethod(pt, "open");
+    // Motor table, none linked: says so, and takes the waiver once the box
+    // is ticked and a pilot named.
+    QObject *mt = dialog("motorTable");
+    QVERIFY(mt);
+    QMetaObject::invokeMethod(mt, "open");
     pumpQml(200);
-    grabScreen(window.data(), QStringLiteral("dialog-power-type"));
-    QObject *confirm = contentChild(pt, QStringLiteral("ptConfirmButton"));
-    QVERIFY2(confirm, "Props fitted match button not found");
-    QVERIFY(confirm->property("enabled").toBool());
-    QVERIFY(QMetaObject::invokeMethod(confirm, "clicked"));
+    grabScreen(window.data(), QStringLiteral("dialog-motor-table"));
+    QObject *mtText = contentChild(mt, QStringLiteral("ptDialogText"));
+    QVERIFY(mtText);
+    QVERIFY2(mtText->property("text").toString().startsWith(QStringLiteral("Not linked")),
+             qPrintable(mtText->property("text").toString()));
+    QVERIFY2(!contentChild(mt, QStringLiteral("ptConfirmButton")), "the old props confirm button is still there");
+    QObject *waiveBox = contentChild(mt, QStringLiteral("ptWaiveBox"));
+    QObject *pilot = contentChild(mt, QStringLiteral("ptPilotField"));
+    QObject *waive = contentChild(mt, QStringLiteral("ptWaiveButton"));
+    QVERIFY2(waiveBox && pilot && waive, "waiver controls not found");
+    QVERIFY(waiveBox->property("visible").toBool());
+    QVERIFY(!waive->property("visible").toBool());
+    waiveBox->setProperty("checked", true);
+    pilot->setProperty("text", QString());
+    pumpQml(50);
+    QVERIFY(waive->property("visible").toBool());
+    QVERIFY2(!waive->property("enabled").toBool(), "the waiver is offered without a pilot's name");
+    pilot->setProperty("text", QStringLiteral("Dialog Pilot"));
+    pumpQml(50);
+    QVERIFY(waive->property("enabled").toBool());
+    QVERIFY(QMetaObject::invokeMethod(waive, "clicked"));
     pumpQml(100);
-    QVERIFY(vpm->powerTypePropsConfirmed());
-    QVERIFY(!pt->property("visible").toBool());
+    QCOMPARE(vpm->motorTableWaivedBy(), QStringLiteral("Dialog Pilot"));
+    QVERIFY(!mt->property("visible").toBool());
 
     // Mission estimate: shows what VehicleProfileManager works out (no
     // motor table here, so it says why it cannot assess).
@@ -1968,20 +1903,18 @@ void LivePluginBenchTest::testPowerDialogsDriveTheItems()
     grabScreen(window.data(), QStringLiteral("dialog-battery-pack"));
     QMetaObject::invokeMethod(pack, "close");
 
-    vpm->clearPowerTypeFlightState();
+    vpm->clearMotorTableFlightState();
     vpm->clearPayloadEntry();
-    QVERIFY(vpm->linkCurrentVehiclePowerType(0));
 }
 
-// Analyze → Vehicles → "Power types" (the real page from the resources),
-// driven like an operator: create a type, link the connected copter, enter
-// a recorded flight's charger number and use it, set the fleet's take-off
-// and landing minutes. Each step is checked in the database.
-void LivePluginBenchTest::testPowerTypesPageDrivesStorage()
+// Analyze → Vehicles → "Motor table" (the real page from the resources),
+// driven like an operator: the tab shows the link and the fleet's take-off
+// and landing minutes, with no power-type list or editor; the minutes are
+// saved and the page says so.
+void LivePluginBenchTest::testVehiclesPageDrivesStorage()
 {
     QVERIFY2(_connectPlane(), "mock copter did not connect / resolve its UID");
     VehicleProfileManager *vpm = VehicleProfileManager::instance();
-    DatabaseManager &db = DatabaseManager::instance();
     const double takeoffBefore = vpm->takeoffMin(), landBefore = vpm->landMin();
 
     QSharedPointer<QQmlApplicationEngine> engine(QGCCorePlugin::instance()->createQmlApplicationEngine(nullptr));
@@ -2025,9 +1958,7 @@ void LivePluginBenchTest::testPowerTypesPageDrivesStorage()
     pumpQml(200);
 
     // The second tab is the motor table: its link and the take-off and
-    // landing minutes show; the user-defined power types (list, New, editor) are
-    // hidden. The rest of this test drives the hidden parts, which the
-    // stored types still use.
+    // landing minutes show; nothing of the old power types is left.
     QObject *mtTab = find(QStringLiteral("motorTableTab"));
     QVERIFY2(mtTab, "motor table tab not found");
     QCOMPARE(mtTab->property("text").toString(), QStringLiteral("Motor table"));
@@ -2035,108 +1966,99 @@ void LivePluginBenchTest::testPowerTypesPageDrivesStorage()
         QObject *o = find(QLatin1String(shown));
         QVERIFY2(o && o->property("visible").toBool(), shown);
     }
-    for (const char *hidden : {"ptNewButton", "ptSaveButton", "ptFrameField"}) {
-        QObject *o = find(QLatin1String(hidden));
-        QVERIFY2(o && !o->property("visible").toBool(), hidden);
-    }
+    for (const char *gone : {"ptNewButton", "ptSaveButton", "ptFrameField", "ptLinkButton", "ampPerVoltText"})
+        QVERIFY2(!find(QLatin1String(gone)), gone);
+    grabScreen(window.data(), QStringLiteral("page-motor-table"));
 
-    // A new type, unique per run (the test database persists).
-    const QString frame = QStringLiteral("Page Quad %1").arg(QDateTime::currentMSecsSinceEpoch());
-    QVERIFY(click(QStringLiteral("ptNewButton")));
-    find(QStringLiteral("ptFrameField"))->setProperty("text", frame);
-    find(QStringLiteral("ptDiameterField"))->setProperty("text", QStringLiteral("15"));
-    find(QStringLiteral("ptPitchField"))->setProperty("text", QStringLiteral("5.5"));
-    find(QStringLiteral("ptCellsField"))->setProperty("text", QStringLiteral("6"));
-    QVERIFY(click(QStringLiteral("ptSaveButton")));
-    int type = -1;
-    for (const QVariant &t : vpm->listPowerTypes())
-        if (t.toMap().value(QStringLiteral("frame")).toString() == frame)
-            type = t.toMap().value(QStringLiteral("id")).toInt();
-    QVERIFY2(type > 0, "Save on the page created no power type");
-    QCOMPARE(db.powerType(type).value(QStringLiteral("name")).toString(), frame + QStringLiteral(" · 15×5.5 · 6S"));
-
-    grabScreen(window.data(), QStringLiteral("page-power-types"));
-    QVERIFY2(click(QStringLiteral("ptLinkButton")), "Link button missing or disabled");
-    QCOMPARE(vpm->currentPowerTypeId(), type);
-
-    // A recorded flight of this type appears with a charger field and Use.
-    const int sid = db.startFlightSession(vpm->currentDeviceUid(), QString(), 0.0);
-    FlightPowerRecord r;
-    r.powerTypeId = type;
-    r.hoverMinEmpty = 3.0;
-    r.cruiseMinEmpty = 10.0;
-    r.fcMah = 4250.0;
-    r.startedFull = true;
-    r.telemetryCoverage = 1.0;
-    QVERIFY(db.saveFlightPowerRecord(sid, r));
     // Values that differ from whatever an earlier run left stored (the
     // settings file persists), so an unsaved field cannot pass by luck.
     const double takeoffNew = takeoffBefore <= 9.0 ? takeoffBefore + 0.5 : 1.0;
     const double landNew = landBefore <= 8.0 ? landBefore + 1.5 : 1.0;
     find(QStringLiteral("takeoffField"))->setProperty("text", QString::number(takeoffNew));
     find(QStringLiteral("landField"))->setProperty("text", QString::number(landNew));
-    QVERIFY(click(QStringLiteral("fleetSaveButton")));       // also reloads the flights
+    QVERIFY(click(QStringLiteral("fleetSaveButton")));
     QCOMPARE(vpm->takeoffMin(), takeoffNew);
     QCOMPARE(vpm->landMin(), landNew);
-
-    const QString charger = QStringLiteral("chargerField_%1").arg(sid);
-    QVERIFY2(find(charger), "the recorded flight has no charger field");
-    QVERIFY2(!find(QStringLiteral("useButton_%1").arg(sid))->property("enabled").toBool(),
-             "Use is enabled before a charger number");
-    find(charger)->setProperty("text", QStringLiteral("5100"));
-    QVERIFY(click(QStringLiteral("chargerSave_%1").arg(sid)));
-    QVERIFY2(click(QStringLiteral("useButton_%1").arg(sid)), "Use stayed disabled after the charger number");
-    QVariantMap row;
-    for (const QVariant &v : db.powerTypeFlights(type))
-        if (v.toMap().value(QStringLiteral("sessionId")).toInt() == sid)
-            row = v.toMap();
-    QCOMPARE(row.value(QStringLiteral("chargerMah")).toDouble(), 5100.0);
-    QCOMPARE(row.value(QStringLiteral("learningState")).toString(), QStringLiteral("used"));
-
-    // The suggestion needs the copter's BATT_AMP_PERVLT; when the mock reports
-    // it, the page shows the corrected value.
-    const QVariantMap amp = vpm->ampPerVoltSuggestion();
-    if (amp.value(QStringLiteral("available")).toBool()) {
-        QObject *text = find(QStringLiteral("ampPerVoltText"));
-        QVERIFY(text && text->property("visible").toBool());
-        QVERIFY(text->property("text").toString().contains(QStringLiteral("suggested")));
-        QVERIFY(qAbs(amp.value(QStringLiteral("ratio")).toDouble() - 1.2) < 1e-6);
-    }
+    // The answer shows on the tab (it used to go to the hidden editor).
+    QObject *message = find(QStringLiteral("motorTableMessage"));
+    QVERIFY(message && message->property("visible").toBool());
+    QCOMPARE(message->property("text").toString(), QStringLiteral("Take-off and landing minutes saved."));
+    // Out of range: refused, and said so.
+    find(QStringLiteral("takeoffField"))->setProperty("text", QStringLiteral("11"));
+    QVERIFY(click(QStringLiteral("fleetSaveButton")));
+    QCOMPARE(vpm->takeoffMin(), takeoffNew);
+    QVERIFY(message->property("text").toString().startsWith(QStringLiteral("Take-off and landing must be")));
 
     QVERIFY(vpm->setTakeoffMin(takeoffBefore));
     QVERIFY(vpm->setLandMin(landBefore));
-    QVERIFY(vpm->linkCurrentVehiclePowerType(0));
 }
 
-// The power-type live estimate on the mock copter, through the real Fly-view
-// info box and battery chip loaded from the source tree: active once the
-// copter is linked to a validated type; before the arm the cruise endurance;
-// a target 60 km away makes the trip short, but the chip does not say RETURN
-// NOW, on the ground and armed alike, since the copter is not airborne.
+// Sets parameters on the mock copter (never a real aircraft) and waits until
+// the plugin reads them back; returns the old values for restoreMockParams().
+static QVector<QPair<Fact *, QVariant>> setMockParams(Vehicle *v, TelemetryBridge *bridge,
+                                                      const QVector<QPair<QString, double>> &values)
+{
+    QVector<QPair<Fact *, QVariant>> old;
+    for (const auto &nv : values) {
+        Fact *f = v->parameterManager()->getParameter(v->defaultComponentId(), nv.first);
+        if (!f)
+            continue;
+        old.append({f, f->rawValue()});
+        f->setRawValue(nv.second);
+    }
+    for (const auto &nv : values)
+        for (int i = 0; i < 100 && qAbs(bridge->parameterValue(nv.first, -999.0f) - nv.second) > 1e-4; ++i)
+            QTest::qWait(50);
+    return old;
+}
+
+static void restoreMockParams(const QVector<QPair<Fact *, QVariant>> &old)
+{
+    for (const auto &fv : old)
+        fv.first->setRawValue(fv.second);
+    QTest::qWait(300);
+}
+
+// The motor-table live estimate on the mock copter, through the real Fly-view
+// info box and battery chip loaded from the source tree: off (and why) while
+// unlinked or waived; active once linked with a hover remembered; before the
+// arm the cruise endurance; a target 60 km away makes the trip short, but
+// the chip does not say RETURN NOW, on the ground and armed alike, since the
+// copter is not airborne.
 void LivePluginBenchTest::testPowerLiveInFlyView()
 {
     QVERIFY2(_connectPlane(), "mock copter did not connect / resolve its UID");
     VehicleProfileManager *vpm = VehicleProfileManager::instance();
-    for (int i = 0; i < 100 && vpm->kind() != VehicleKind::Multirotor; ++i)
+    auto *bridge = _pluginChild<TelemetryBridge>();
+    QVERIFY(bridge);
+    for (int i = 0; i < 100 && (!bridge->parametersReady() || vpm->kind() != VehicleKind::Multirotor); ++i)
         QTest::qWait(50);
-    const int type = _validatedPowerType();
-    QVERIFY2(type > 0, "could not set up a validated power type");
+    const MotorTable::Table &table = MotorTable::m6215_320kv_22x78_6s();
+    const int seriesBefore = vpm->batterySeriesCells(), parallelBefore = vpm->batteryParallelCells(),
+              mahBefore = vpm->batteryCellMah();
+    vpm->setBatterySeriesCells(6);
+    vpm->setBatteryParallelCells(1);
+    vpm->setBatteryCellMah(20000);
+    const auto paramsBefore = setMockParams(_vehicle, bridge, {{QStringLiteral("SERVO5_FUNCTION"), 0.0},
+                                                               {QStringLiteral("SERVO6_FUNCTION"), 0.0}});
     auto live = [vpm]() { return vpm->powerLive(); };
     auto offReason = [vpm]() { return vpm->powerLive().value(QStringLiteral("offReason")).toString(); };
 
     // While the estimate is off, the log says why, again each time the
-    // reason changes: unlinked, then linked but waived, then on.
-    QVERIFY(vpm->linkCurrentVehiclePowerType(0));
+    // reason changes: unlinked, then waived, then on.
+    QVERIFY(vpm->linkCurrentVehicleMotorTable(QString()));
+    vpm->clearMotorTableFlightState();
     for (int i = 0; i < 100 && offReason() != QStringLiteral("no motor table linked"); ++i)
         QTest::qWait(50);
     QCOMPARE(offReason(), QStringLiteral("no motor table linked"));
-    QVERIFY(vpm->waivePowerType(QStringLiteral("Test Pilot")));
     QTest::ignoreMessage(QtInfoMsg, "VehicleProfileManager: battery estimate off: motor table waived");
-    QVERIFY(vpm->linkCurrentVehiclePowerType(type));
+    QVERIFY(vpm->waiveMotorTable(QStringLiteral("Test Pilot")));
     for (int i = 0; i < 100 && offReason() != QStringLiteral("motor table waived"); ++i)
         QTest::qWait(50);
     QCOMPARE(offReason(), QStringLiteral("motor table waived"));
-    vpm->clearPowerTypeFlightState();
+    vpm->clearMotorTableFlightState();
+    QVERIFY(vpm->linkCurrentVehicleMotorTable(table.id));
+    QVERIFY(DatabaseManager::instance().saveVehicleMotorHover(vpm->currentDeviceUid(), 3000.0, 20));
 
     QVERIFY(vpm->enterPayloadWeightKg(0.8));
     QVERIFY(vpm->enterTimeAtTargetMin(2.0));
@@ -2152,7 +2074,9 @@ void LivePluginBenchTest::testPowerLiveInFlyView()
                                  && live().value(QStringLiteral("tripKnown")).toBool()
                                  && live().value(QStringLiteral("tripShortAh")).toDouble() > 0.0); ++i)
         QTest::qWait(50);
-    QVERIFY2(live().value(QStringLiteral("active")).toBool(), "the power-type estimate did not come on");
+    QVERIFY2(live().value(QStringLiteral("active")).toBool(), qPrintable(offReason()));
+    QCOMPARE(live().value(QStringLiteral("source")).toString(), QStringLiteral("motor table"));
+    QCOMPARE(live().value(QStringLiteral("typeName")).toString(), table.name);
     QVERIFY(live().value(QStringLiteral("cruiseMin")).toDouble() > 0.0);
     QVERIFY2(live().value(QStringLiteral("tripKnown")).toBool(), "no home or position on the mock copter");
     QVERIFY(live().value(QStringLiteral("tripShortAh")).toDouble() > 0.0);
@@ -2198,7 +2122,11 @@ void LivePluginBenchTest::testPowerLiveInFlyView()
     strip->setParentItem(nullptr);
     chip->setParentItem(nullptr);
     vpm->clearPayloadEntry();
-    QVERIFY(vpm->linkCurrentVehiclePowerType(0));
+    QVERIFY(vpm->linkCurrentVehicleMotorTable(QString()));
+    restoreMockParams(paramsBefore);
+    vpm->setBatterySeriesCells(seriesBefore);
+    vpm->setBatteryParallelCells(parallelBefore);
+    vpm->setBatteryCellMah(mahBefore);
 }
 
 // The Fly view's battery estimator panel fills its fields from the stored
@@ -2291,32 +2219,6 @@ void LivePluginBenchTest::testFlightHistoryDetailsRecorded()
              qPrintable(QStringLiteral("mode %1 -> %2, events %3").arg(before, other, events.join(QStringLiteral(", ")))));
 }
 
-// Sets parameters on the mock copter (never a real aircraft) and waits until
-// the plugin reads them back; returns the old values for restoreMockParams().
-static QVector<QPair<Fact *, QVariant>> setMockParams(Vehicle *v, TelemetryBridge *bridge,
-                                                      const QVector<QPair<QString, double>> &values)
-{
-    QVector<QPair<Fact *, QVariant>> old;
-    for (const auto &nv : values) {
-        Fact *f = v->parameterManager()->getParameter(v->defaultComponentId(), nv.first);
-        if (!f)
-            continue;
-        old.append({f, f->rawValue()});
-        f->setRawValue(nv.second);
-    }
-    for (const auto &nv : values)
-        for (int i = 0; i < 100 && qAbs(bridge->parameterValue(nv.first, -999.0f) - nv.second) > 1e-4; ++i)
-            QTest::qWait(50);
-    return old;
-}
-
-static void restoreMockParams(const QVector<QPair<Fact *, QVariant>> &old)
-{
-    for (const auto &fv : old)
-        fv.first->setRawValue(fv.second);
-    QTest::qWait(300);
-}
-
 // The motor-table estimate's inputs on the mock copter (the real plugin): the
 // motor parameters are watched, and each motor's output signal
 // (SERVO_OUTPUT_RAW) becomes its throttle on the ESC range, in motor order;
@@ -2391,7 +2293,6 @@ void LivePluginBenchTest::testMotorTableLiveEstimate()
     QVERIFY(!vpm->linkCurrentVehicleMotorTable(QStringLiteral("no-such-table")));
     QVERIFY(vpm->linkCurrentVehicleMotorTable(table.id));
     QCOMPARE(vpm->motorTableId(), table.id);
-    QVERIFY(vpm->linkCurrentVehiclePowerType(0));
     const int seriesBefore = vpm->batterySeriesCells(), parallelBefore = vpm->batteryParallelCells(),
               mahBefore = vpm->batteryCellMah();
     vpm->setBatterySeriesCells(6);
@@ -2539,7 +2440,6 @@ void LivePluginBenchTest::testMotorTableBeforeTakeoff()
     for (int i = 0; i < 100 && (!bridge->parametersReady() || vpm->kind() != VehicleKind::Multirotor); ++i)
         QTest::qWait(50);
     const MotorTable::Table &table = MotorTable::m6215_320kv_22x78_6s();
-    QVERIFY(vpm->linkCurrentVehiclePowerType(0));
     QVERIFY(vpm->linkCurrentVehicleMotorTable(QString()));   // a fresh link: no hover remembered
     QVERIFY(vpm->linkCurrentVehicleMotorTable(table.id));
     vpm->clearPayloadEntry();
@@ -2831,7 +2731,6 @@ void LivePluginBenchTest::testMotorTableCountsEveryReading()
     for (int i = 0; i < 100 && (!bridge->parametersReady() || vpm->kind() != VehicleKind::Multirotor); ++i)
         QTest::qWait(50);
     const MotorTable::Table &table = MotorTable::m6215_320kv_22x78_6s();
-    QVERIFY(vpm->linkCurrentVehiclePowerType(0));
     QVERIFY(vpm->linkCurrentVehicleMotorTable(table.id));
     vpm->clearPayloadEntry();
     const int seriesBefore = vpm->batterySeriesCells(), parallelBefore = vpm->batteryParallelCells(),
@@ -2924,11 +2823,6 @@ void LivePluginBenchTest::testMotorTableCountsEveryReading()
     vpm->setBatteryCellMah(mahBefore);
 }
 
-// The motor table in the app, on the mock copter (the real plugin): linked
-// from the Vehicles page's "Motor table" choice, the preflight "Power type"
-// item passes without a power type, and the battery chip names the motor
-// table as the estimate's source; unlinked from the page, the item needs a
-// power type again.
 // The app shows speed and height in the units picked in its settings (km/h and
 // feet here, mph and feet by default on a computer set to British or US
 // units); the estimates and checks read the vehicle in metres and m/s whatever
@@ -2983,6 +2877,10 @@ void LivePluginBenchTest::testTelemetryReadInMetricUnits()
     QVERIFY2(qAbs(bridge->altitudeRelative() - 20.0) < 1e-3, qPrintable(QString::number(bridge->altitudeRelative())));
 }
 
+// The motor table in the app, on the mock copter (the real plugin): linked
+// from the Vehicles page's "Motor table" choice, the preflight "Motor table"
+// item passes, and the battery chip names the motor table as the estimate's
+// source; unlinked from the page, the item needs a link or a waiver again.
 void LivePluginBenchTest::testMotorTableInTheApp()
 {
     QVERIFY2(_connectPlane(), "mock copter did not connect / resolve its UID");
@@ -2993,7 +2891,6 @@ void LivePluginBenchTest::testMotorTableInTheApp()
     for (int i = 0; i < 100 && (!bridge->parametersReady() || vpm->kind() != VehicleKind::Multirotor); ++i)
         QTest::qWait(50);
     const MotorTable::Table &table = MotorTable::m6215_320kv_22x78_6s();
-    QVERIFY(vpm->linkCurrentVehiclePowerType(0));
     QVERIFY(vpm->linkCurrentVehicleMotorTable(QString()));
     const int seriesBefore = vpm->batterySeriesCells(), parallelBefore = vpm->batteryParallelCells(),
               mahBefore = vpm->batteryCellMah();
@@ -3079,7 +2976,7 @@ void LivePluginBenchTest::testMotorTableInTheApp()
     QVERIFY2(item->message().contains(QStringLiteral("(motor table)")), qPrintable(item->message()));
 
     // Its dialog names the linked table and where to change the link; the
-    // power-type props confirm and the waiver are not offered.
+    // waiver is not offered.
     {
         QQmlComponent dc(engine.data());
         dc.setData(QByteArrayLiteral("import QtQuick\n"
@@ -3087,7 +2984,7 @@ void LivePluginBenchTest::testMotorTableInTheApp()
                                      "Item {\n"
                                      "    width: 1000; height: 760\n"
                                      "    property alias dlg: dlg\n"
-                                     "    CE.ChecklistEngine.PowerTypeDialog { id: dlg }\n"
+                                     "    CE.ChecklistEngine.MotorTableDialog { id: dlg }\n"
                                      "}\n"),
                    QUrl(QStringLiteral("qrc:/qml/cpts/MotorTableDialogTest.qml")));
         QVERIFY2(dc.status() == QQmlComponent::Ready, qPrintable(dc.errorString()));
@@ -3105,10 +3002,8 @@ void LivePluginBenchTest::testMotorTableInTheApp()
         const QString shown = text->property("text").toString();
         QVERIFY2(shown.contains(QStringLiteral("M6215")) && shown.contains(QStringLiteral("Vehicles → Motor table")),
                  qPrintable(shown));
-        for (const char *hidden : {"ptConfirmButton", "ptWaiveBox"}) {
-            QObject *o = dlg->findChild<QObject *>(QLatin1String(hidden));
-            QVERIFY2(o && !o->property("visible").toBool(), hidden);
-        }
+        QObject *waiveBox = dlg->findChild<QObject *>(QStringLiteral("ptWaiveBox"));
+        QVERIFY(waiveBox && !waiveBox->property("visible").toBool());
         QMetaObject::invokeMethod(dlg, "close");
         pumpQml(100);
     }
@@ -3132,7 +3027,7 @@ void LivePluginBenchTest::testMotorTableInTheApp()
     QCOMPARE(row->property("label").toString(), QStringLiteral("Motor table"));
     QVERIFY2(row->property("value").toString().startsWith(table.name), qPrintable(row->property("value").toString()));
 
-    // Unlink from the page: the item needs a power type again.
+    // Unlink from the page: the item needs a link or a waiver again.
     combo->setProperty("currentIndex", 0);
     QMetaObject::invokeMethod(link, "clicked");
     pumpQml(200);
@@ -3171,7 +3066,6 @@ void LivePluginBenchTest::testMissionEstimateLive()
     QVERIFY(!item->mandatory());
 
     const MotorTable::Table &table = MotorTable::m6215_320kv_22x78_6s();
-    QVERIFY(vpm->linkCurrentVehiclePowerType(0));
     QVERIFY(vpm->linkCurrentVehicleMotorTable(table.id));
     const int seriesBefore = vpm->batterySeriesCells(), parallelBefore = vpm->batteryParallelCells(),
               mahBefore = vpm->batteryCellMah();

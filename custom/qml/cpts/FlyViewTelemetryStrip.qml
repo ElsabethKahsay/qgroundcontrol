@@ -104,8 +104,8 @@ Item {
                                         : (_tgtDist < 1000 ? _tgtDist.toFixed(0) : (_tgtDist / 1000).toFixed(2))
     readonly property string _tgtUnit:  _tgtDist < 0 ? "" : _tgtDist < 1000 ? "m" : "km"
 
-    // Power-type estimate (VehicleProfileManager.powerLive; copters linked to
-    // a type with a learned model). "Left": time and distance left (before the
+    // Motor-table estimate (VehicleProfileManager.powerLive; copters linked
+    // to a motor table). "Left": time and distance left (before the
     // arm: cruise endurance with the payload entered). Whether the rest of the
     // trip still fits (RETURN NOW) is on the battery chip and in a message.
     readonly property var    _pl: typeof VehicleProfileManager !== "undefined" && VehicleProfileManager

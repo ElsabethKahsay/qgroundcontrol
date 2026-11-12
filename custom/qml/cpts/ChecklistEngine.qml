@@ -380,10 +380,11 @@ QtObject {
         }
     }
 
-    // The "Power type" item (copters): link the copter to its power type,
-    // confirm the props fitted are the type's (every flight), or waive it for
-    // the flight (logged). New types are created in Vehicle Management.
-    component PowerTypeDialog: SkyDialog {
+    // The "Motor table" item (copters): shows the maker's motor table the
+    // copter is linked to (the link itself is made on Analyze → Vehicles →
+    // Motor table), or lets the pilot fly this flight without one (logged
+    // with the pilot's name).
+    component MotorTableDialog: SkyDialog {
         id: ptDialog
         title:            qsTr("Motor Table")
         modal:            true
@@ -392,25 +393,14 @@ QtObject {
         width:            Math.min(440, (parent ? parent.width : 440) - 32)
 
         readonly property var _vpm: (typeof VehicleProfileManager !== "undefined") ? VehicleProfileManager : null
-        property var _types: []
         property string _tableName: ""
-        // The copter's estimate comes from the maker's motor table it is
-        // linked to on Analyze → Vehicles → Motor table. A copter still linked
-        // to a stored power type (the user-defined types, now hidden) keeps
-        // the old flow: pick the type and confirm its props on each flight.
         readonly property bool _onTable: _vpm !== null && _vpm.motorTableId !== ""
-        readonly property bool _onType: !_onTable && _vpm !== null && _vpm.currentPowerTypeId > 0
 
         function _reload() {
             _tableName = ""
             var tables = _vpm ? _vpm.motorTables() : []
             for (var t = 0; t < tables.length; ++t)
                 if (tables[t].id === _vpm.motorTableId) _tableName = tables[t].name
-            _types = _vpm ? _vpm.listPowerTypes() : []
-            var idx = -1
-            for (var i = 0; i < _types.length; ++i)
-                if (_vpm && _types[i].id === _vpm.currentPowerTypeId) idx = i
-            typeCombo.currentIndex = idx
         }
 
         onAboutToShow: {
@@ -431,48 +421,10 @@ QtObject {
                 text: ptDialog._onTable
                       ? qsTr("This copter's flight-time estimate and mission estimate come from the maker's motor "
                              + "table: %1. Change the link on Analyze → Vehicles → Motor table.").arg(ptDialog._tableName)
-                      : ptDialog._onType
-                        ? qsTr("The power type (frame + props + cells) is what the flight-time estimate learns from "
-                               + "(the mission estimate needs a motor table). Confirm on every flight that the props "
-                               + "fitted are the type's: the flight controller cannot see them.")
-                        : qsTr("Not linked: link this copter to its maker's motor table on Analyze → Vehicles → "
-                               + "Motor table, or fly without one below.")
+                      : qsTr("Not linked: link this copter to its maker's motor table on Analyze → Vehicles → "
+                             + "Motor table, or fly without one below.")
                 font.pixelSize: Config.fontSizeDialog
                 color: Colors.textPrimary
-            }
-
-            RowLayout {
-                visible: ptDialog._onType
-                Layout.fillWidth: true
-                Text { font.pixelSize: Config.fontSizeDialog; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Power type:") }
-                ComboBox {
-                    id: typeCombo
-                    Layout.fillWidth: true
-                    model: ptDialog._types
-                    textRole: "name"
-                    displayText: currentIndex >= 0 ? currentText : qsTr("Not linked")
-                    onActivated: function(index) {
-                        if (ptDialog._vpm && index >= 0)
-                            ptDialog._vpm.linkCurrentVehiclePowerType(ptDialog._types[index].id)
-                    }
-                }
-            }
-
-            Text {
-                visible: ptDialog._onType && ptDialog._types.length === 0
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-                text: qsTr("No power types yet: create one in Vehicle Management.")
-                font.pixelSize: Config.fontSizeDialog
-                color: Colors.textSecondary
-            }
-
-            Text {
-                visible: ptDialog._onType && ptDialog._vpm.powerTypePropsConfirmed
-                Layout.fillWidth: true
-                text: qsTr("Props confirmed for this flight.")
-                font.pixelSize: Config.fontSizeDialog
-                color: Colors.statusPass
             }
 
             RowLayout {
@@ -493,28 +445,20 @@ QtObject {
                 Layout.fillWidth: true
                 visible: ptWaiveBox.checked
                 Text { font.pixelSize: Config.fontSizeDialog; font.weight: Font.DemiBold; color: Colors.textSecondary; Layout.preferredWidth: 120; text: qsTr("Pilot:") }
-                TextField { id: ptPilotField; Layout.fillWidth: true; placeholderText: qsTr("pilot name") }
+                TextField { id: ptPilotField; objectName: "ptPilotField"; Layout.fillWidth: true; placeholderText: qsTr("pilot name") }
             }
 
             RowLayout {
                 Layout.fillWidth: true
                 spacing: Config.spacingSmall
-                Button { text: ptDialog._onType || ptWaiveBox.checked ? qsTr("Cancel") : qsTr("Close"); Layout.fillWidth: true; onClicked: ptDialog.close() }
+                Button { text: ptWaiveBox.checked ? qsTr("Cancel") : qsTr("Close"); Layout.fillWidth: true; onClicked: ptDialog.close() }
                 Button {
+                    objectName: "ptWaiveButton"
                     visible: ptWaiveBox.checked
                     text: qsTr("Fly without a table")
                     enabled: ptPilotField.text.trim().length > 0
                     Layout.fillWidth: true
-                    onClicked: if (ptDialog._vpm && ptDialog._vpm.waivePowerType(ptPilotField.text.trim())) ptDialog.close()
-                }
-                Button {
-                    visible: ptDialog._onType && !ptWaiveBox.checked
-                    objectName: "ptConfirmButton"
-                    text: qsTr("Props fitted match")
-                    highlighted: true
-                    enabled: ptDialog._vpm && ptDialog._vpm.currentPowerTypeId > 0
-                    Layout.fillWidth: true
-                    onClicked: if (ptDialog._vpm && ptDialog._vpm.confirmPowerTypeProps()) ptDialog.close()
+                    onClicked: if (ptDialog._vpm && ptDialog._vpm.waiveMotorTable(ptPilotField.text.trim())) ptDialog.close()
                 }
             }
         }

@@ -106,9 +106,6 @@ VehicleProfileManager::VehicleProfileManager(QObject *parent)
     m_liveTimer.setInterval(2000);
     m_liveTimer.setTimerType(Qt::CoarseTimer);
     connect(&m_liveTimer, &QTimer::timeout, this, &VehicleProfileManager::_updateLiveEstimate);
-    // A changed type, link, charger number or used/dismissed flight changes
-    // the model the live estimate uses: re-fit it on the next update.
-    connect(this, &VehicleProfileManager::powerTypeChanged, this, [this]() { m_powerModelDirty = true; });
 }
 
 VehicleProfileManager::~VehicleProfileManager()
@@ -305,7 +302,6 @@ void VehicleProfileManager::onConnectionChanged()
         }
         m_liveWasArmed = false;
         m_livePayloadAboard = false;
-        m_powerModelDirty = true;
         m_liveSeenDisarmed = false;
         m_gcsCounting = false;
         m_gcsCountKnown = false;
@@ -337,11 +333,10 @@ void VehicleProfileManager::onConnectionChanged()
         emit batteryConfigChanged();
         // No vehicle connected — fall back to the built-in table.
         _applyDefaultThrustTable();
-        if (m_powerTypeId != -1 || !m_motorTableId.isEmpty()) {
-            m_powerTypeId = -1;
+        if (!m_motorTableId.isEmpty()) {
             m_motorTableId.clear();
             m_packOhm = -1.0;
-            emit powerTypeChanged();
+            emit motorTableChanged();
         }
         emit currentVehicleChanged();
         return;
@@ -402,10 +397,9 @@ void VehicleProfileManager::onConnectionChanged()
     // Restore the persisted thrust→current datasheet (or the default table)
     _loadPersistedThrustTable(m_currentDeviceUid);
 
-    m_powerTypeId = DatabaseManager::instance().vehiclePowerTypeId(m_currentDeviceUid);
     m_motorTableId = DatabaseManager::instance().vehicleMotorTableId(m_currentDeviceUid);
     m_packOhm = QSettings().value(QStringLiteral("MotorTable/packOhm/%1").arg(m_currentDeviceUid), -1.0).toDouble();
-    emit powerTypeChanged();
+    emit motorTableChanged();
 
     // The flight session itself is opened by the arming-gate flow
     // (PreflightPlugin::_onGateOpened) — the single session owner — which
@@ -933,12 +927,6 @@ void VehicleProfileManager::_updateLiveEstimate()
     _updatePowerLive(mahUsed, m_telemetry->batterySocPct());
 }
 
-// The power-type estimate for the Fly view (PowerTypeModel::liveEstimate):
-// the linked type's model (re-fitted when its flights change), the selected
-// pack, the FC's mAh used × the charger factor, the smoothed FC current, the
-// copter's position, home, and the target saved on the gimbal page. The
-// payload counts as aboard from the arm until the copter first comes within
-// 20 m of the target.
 QVariantMap VehicleProfileManager::airDensity() const
 {
     QVariantMap out;
@@ -1024,7 +1012,7 @@ bool VehicleProfileManager::setMotorTableFlightCharger(int flightId, double char
 {
     if (!DatabaseManager::instance().setMotorTableFlightCharger(flightId, chargerMah))
         return false;
-    emit powerTypeChanged();
+    emit motorTableChanged();
     return true;
 }
 
@@ -1032,7 +1020,7 @@ bool VehicleProfileManager::dismissMotorTableFlight(int flightId)
 {
     if (!DatabaseManager::instance().setMotorTableFlightState(flightId, QStringLiteral("dismissed")))
         return false;
-    emit powerTypeChanged();
+    emit motorTableChanged();
     return true;
 }
 
@@ -1294,32 +1282,19 @@ QVariantMap VehicleProfileManager::motorThrottleStatus() const
     return out;
 }
 
+// The battery estimate for the Fly view (PowerTypeModel::liveEstimate): the
+// linked motor table (MotorTable.h) turning each motor's throttle into
+// battery current, the selected pack, the charge used (the GCS's count, or a
+// current sensor's), the copter's position, home, and the target saved on
+// the gimbal page. The payload counts as aboard from the arm until the
+// copter first comes within 20 m of the target.
 void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
 {
     QVariantMap out;
     const bool armed = m_telemetry && m_telemetry->armed();
     Vehicle *v = m_telemetry ? m_telemetry->vehicle() : nullptr;
-    // A copter linked to a motor table uses it (MotorTable.h); otherwise its
-    // power type's learned model.
     const MotorTable::Table *table = m_kind == VehicleKind::Multirotor ? MotorTable::byId(m_motorTableId) : nullptr;
-    const bool applicable = v && m_kind == VehicleKind::Multirotor && !batteryPackWaived()
-                            && (table || (m_powerTypeId > 0 && m_powerTypeWaivedBy.isEmpty()));
-
-    if (applicable && !table && m_powerModelDirty) {
-        m_powerSummary = powerTypeSummary(m_powerTypeId);
-        double speedSum = 0.0;
-        int speedN = 0;
-        for (const QVariant &row : DatabaseManager::instance().powerTypeFlights(m_powerTypeId)) {
-            const QVariantMap f = row.toMap();
-            const double spd = f.value(QStringLiteral("cruiseSpeedMs")).toDouble();
-            if (f.value(QStringLiteral("learningState")).toString() == QLatin1String("used") && spd > 0.0) {
-                speedSum += spd;
-                ++speedN;
-            }
-        }
-        m_powerCruiseSpeedMs = speedN > 0 ? speedSum / speedN : 10.0;
-        m_powerModelDirty = false;
-    }
+    const bool applicable = v && m_kind == VehicleKind::Multirotor && !batteryPackWaived() && table;
 
     const QVariantMap target = applicable ? DatabaseManager::instance().vehicleTarget(m_currentDeviceUid) : QVariantMap();
     const QGeoCoordinate pos = v ? v->coordinate() : QGeoCoordinate();
@@ -1475,18 +1450,9 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
     // The table's setup checks: a different frame or pack, or no pack size,
     // turns the estimate off.
     const QVariantMap setup = table ? motorTableSetup() : QVariantMap();
-    const bool tableReady = applicable && table && !setup.value(QStringLiteral("off")).toBool();
-    const bool typeReady = applicable && !table
-                           && m_powerSummary.value(QStringLiteral("source")).toString() != QLatin1String("none");
-    if (tableReady || typeReady) {
+    const bool tableReady = applicable && !setup.value(QStringLiteral("off")).toBool();
+    if (tableReady) {
         PowerTypeModel::LiveInput in;
-        if (typeReady) {
-            in.model.hover0 = m_powerSummary.value(QStringLiteral("hover0")).toDouble();
-            in.model.hoverK = m_powerSummary.value(QStringLiteral("hoverK")).toDouble();
-            in.model.cruise0 = m_powerSummary.value(QStringLiteral("cruise0")).toDouble();
-            in.model.cruiseK = m_powerSummary.value(QStringLiteral("cruiseK")).toDouble();
-            in.model.status = PowerTypeModel::FitStatus::PayloadNotModelled;   // usable; the numbers above are the model
-        }
         in.capacityAh = capacityAh();
         in.reserve = m_batteryReserve;
         in.socPct = socPct;
@@ -1495,247 +1461,197 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
 
         const int monitor = m_telemetry->hasParameter(QStringLiteral("BATT_MONITOR"))
             ? qRound(m_telemetry->parameterValue(QStringLiteral("BATT_MONITOR"), -1.0f)) : -1;
-        if (tableReady) {
-            // Battery current from the motor table: each motor's throttle from
-            // its output signal, or, when those stop arriving, the overall
-            // throttle the FC reports turned into motor output the way
-            // ArduPilot does (the same for every motor). Counted while armed:
-            // the table covers the motors idling on the ground too.
-            const double packV = m_telemetry->batteryVoltage();
-            const QVariantMap mt = motorThrottleStatus();
-            QVector<double> thr;
-            const bool fromOutputs = mt.value(QStringLiteral("fresh")).toBool();
-            if (fromOutputs) {
-                for (const QVariant &t : mt.value(QStringLiteral("throttles")).toList())
-                    thr.append(t.toDouble());
-            } else {
-                const QVariant overall = v->throttlePct()->rawValue();
-                if (overall.isValid()) {
-                    MotorTable::HoverParams p;
-                    auto param = [this](const QString &name, double fallback) {
-                        return m_telemetry->hasParameter(name) ? static_cast<double>(m_telemetry->parameterValue(name))
-                                                               : fallback;
-                    };
-                    p.thstHover = std::max(0.001, overall.toDouble() / 100.0);
-                    p.spinMin = param(QStringLiteral("MOT_SPIN_MIN"), p.spinMin);
-                    p.spinMax = param(QStringLiteral("MOT_SPIN_MAX"), p.spinMax);
-                    p.expo = param(QStringLiteral("MOT_THST_EXPO"), p.expo);
-                    p.battVoltMax = param(QStringLiteral("MOT_BAT_VOLT_MAX"), 0.0);
-                    p.battVoltMin = param(QStringLiteral("MOT_BAT_VOLT_MIN"), 0.0);
-                    const int n = mt.value(QStringLiteral("motorsExpected")).toInt() > 0
-                                      ? mt.value(QStringLiteral("motorsExpected")).toInt() : table->motors;
-                    thr = QVector<double>(n, MotorTable::hoverMotorThrottle(p, packV));
-                }
-            }
-            // The air where the copter is (thin air changes the prop's load).
-            const double sigma = setup.value(QStringLiteral("densityRatio"), MotorTable::kTableDensityRatio).toDouble();
-            const MotorTable::BatteryCurrent now = thr.isEmpty() ? MotorTable::BatteryCurrent{}
-                                                                 : MotorTable::batteryCurrent(*table, thr, packV, sigma);
-            const bool haveNow = armed && !thr.isEmpty();
-            // A current sensor (BATT_MONITOR other than 0, 3 or 25) is
-            // measured and wins; the table is the count otherwise.
-            const bool gcsCount = monitor == -1 || monitor == 0 || monitor == 3 || monitor == 25;
-            // Motor-output readings are counted as they arrive (_onMotorOutputs);
-            // only from the overall throttle does this update count the charge.
-            m_lastSigma = sigma;
-            const bool readingsCounted = fromOutputs && m_readings > 0;
-            if (gcsCount && m_gcsCounting && m_gcsLastMs > 0 && haveNow && !readingsCounted)
-                m_gcsUsedAh += now.amps * (nowMs - m_gcsLastMs) / 1000.0 / 3600.0;
-            m_gcsLastMs = nowMs;
-            // Steady hover without payload, from the motor outputs, airborne,
-            // neither climbing nor sinking: the thrust per motor the next
-            // take-off is planned with.
-            const double alt = m_telemetry->altitudeRelative();
-            const double gsNow = std::isfinite(in.groundSpeedMs) ? in.groundSpeedMs : 0.0;
-            const double climb = m_telemetry->verticalSpeed();
-            // This flight's record: airborne or not, the pack voltage, time
-            // beyond the table and on the overall throttle, the air.
-            const double logDtS = (armed && m_tableLog.lastMs > 0) ? (nowMs - m_tableLog.lastMs) / 1000.0 : 0.0;
-            m_tableLog.lastMs = armed ? nowMs : -1;
-            if (haveNow) {
-                if (std::isfinite(alt) && alt > PowerTypeModel::kAirborneAltM)
-                    m_tableLog.airborne = true;
-                if (packV > 0.0) {
-                    m_tableLog.voltSum += packV;
-                    ++m_tableLog.voltN;
-                    m_tableLog.minVolts = m_tableLog.minVolts < 0.0 ? packV : std::min(m_tableLog.minVolts, packV);
-                }
-                if (now.motorsBeyond > 0)
-                    m_tableLog.beyondS += logDtS;
-                if (!fromOutputs)
-                    m_tableLog.overallThrottleS += logDtS;
-                m_tableLog.densitySum += sigma;
-                ++m_tableLog.densityN;
-            }
-            if (haveNow && fromOutputs && !m_livePayloadAboard && packV > 0.0 && std::isfinite(alt)
-                && alt > PowerTypeModel::kAirborneAltM && PowerTypeModel::isHover(gsNow)
-                && std::isfinite(climb) && std::abs(climb) < MotorTable::kHoverMaxClimbMs) {
-                m_hoverThrustSum += MotorTable::averageThrust(*table, thr, packV, sigma);
-                ++m_hoverSamples;
-                m_tableLog.hoverWSum += (now.amps - MotorTable::kElectronicsA) * packV;
-                m_tableLog.hoverS += 2.0;
-            }
-            // Level cruise at any speed without payload: its power ÷ the power
-            // this copter (its remembered hover thrust) needs to hover in this
-            // air, kept in the band of the ground speed.
-            const double hoverThrust = setup.value(QStringLiteral("hoverThrustG")).toDouble();
-            if (haveNow && fromOutputs && !m_livePayloadAboard && packV > 0.0 && hoverThrust > 0.0
-                && std::isfinite(alt) && alt > PowerTypeModel::kAirborneAltM
-                && MotorTable::isCruiseSample(gsNow, climb)) {
-                const int n = static_cast<int>(thr.size());
-                const double hoverW = n * MotorTable::powerForThrustAt(*table, hoverThrust, sigma).watts;
-                if (hoverW > 0.0) {
-                    const double ratio = (now.amps - MotorTable::kElectronicsA) * packV / hoverW;
-                    m_cruiseRatioSum += ratio;
-                    ++m_cruiseSamples;
-                    // Kept by airspeed (the costing looks the ratio up by the
-                    // leg's airspeed): the ground velocity against the wind
-                    // from the lean when it is known, the ground speed
-                    // otherwise (the same in still air).
-                    const double air = WindFromLean::airspeedMs(m_telemetry->velocityNorthMs(), m_telemetry->velocityEastMs(),
-                                                                m_windEstN, m_windEstE, gsNow);
-                    QPair<double, int> &band = m_cruiseBands[MotorTable::cruiseBand(air)];
-                    band.first += ratio;
-                    ++band.second;
-                    m_tableLog.cruiseS += 2.0;
-                }
-            }
-            // The fine-tuning from the charger comparison: the table's count
-            // and current × the factor (a current sensor's count is not).
-            const double calFactor = setup.value(QStringLiteral("calibrationFactor"), 1.0).toDouble();
-            in.factor = gcsCount ? calFactor : 1.0;
-            in.currentA = -1.0;
-            in.throttleRatio = 1.0;
-            if (gcsCount)
-                in.fcMahUsed = !armed ? 0.0 : m_gcsCountKnown ? m_gcsUsedAh * 1000.0 : -1.0;
-            else
-                in.fcMahUsed = !armed ? 0.0
-                             : (m_gcsCountKnown && fcMahUsed >= 0.0 && m_fcMahAtArm >= 0.0)
-                                   ? std::max(0.0, fcMahUsed - m_fcMahAtArm) : -1.0;
-
-            // The motors' power now: from the table, or from a current sensor
-            // (its current less the electronics, at the pack voltage).
-            const double vNow = packV > 0.0 ? packV : table->volts;
-            // From the motor outputs: the average of the readings since the
-            // last update.
-            const double wNow = !haveNow ? -1.0
-                              : (!gcsCount && m_liveSmoothAmps > 0.0)
-                                    ? std::max(0.0, m_liveSmoothAmps - MotorTable::kElectronicsA) * vNow
-                              : readingsCounted ? m_readingWattsSum / m_readings
-                                                : (now.amps - MotorTable::kElectronicsA) * vNow;
-            m_readingWattsSum = 0.0;
-            m_readings = 0;
-            if (haveNow) {
-                // Smoothed like the FC current: α 0.095 per 2 s update, about 20 s.
-                m_tableSmoothA = m_tableSmoothA <= 0.0 ? now.amps : 0.095 * now.amps + 0.905 * m_tableSmoothA;
-                m_tableSmoothW = m_tableSmoothW <= 0.0 ? wNow : 0.095 * wNow + 0.905 * m_tableSmoothW;
-            }
-            // The pack's charge left now, and its resistance seen now
-            // (resting voltage at this charge − the voltage under load, over
-            // the current).
-            const MotorTable::Pack pack = motorTablePack(setup.value(QStringLiteral("cells")).toInt() > 0
-                                                             ? setup.value(QStringLiteral("cells")).toInt() : table->cells);
-            const double capAh = capacityAh();
-            const double socNow = (in.fcMahUsed >= 0.0 && capAh > 0.0)
-                ? (capAh * std::clamp(m_armStartSocPct, 0.0, 100.0) / 100.0 - in.fcMahUsed / 1000.0 * in.factor) / capAh * 100.0
-                : -1.0;
-            if (haveNow && packV > 0.0 && socNow > 0.0) {
-                const double r = MotorTable::observedResistance(pack, socNow, packV, now.amps);
-                if (r >= 0.0) {
-                    m_packOhmLive = m_packOhmLive < 0.0 ? r : 0.095 * r + 0.905 * m_packOhmLive;
-                    ++m_packOhmSamples;
-                }
-            }
-            // Time left and the trip: the motors' power now, drawn through the
-            // rest of the pack down to the reserve. The pack's voltage keeps
-            // falling, so the same power needs more current later; costing it
-            // at today's current would overstate the time left. Hover and
-            // cruise alike, the payload already in the throttle.
-            const double socReserve = m_batteryReserve * 100.0;
-            double currentNow = -1.0;
-            if (armed && m_tableSmoothW > 0.0 && socNow > socReserve)
-                currentNow = MotorTable::averageCurrent(pack, m_tableSmoothW, socNow, socReserve);
-            if (armed && currentNow <= 0.0)
-                currentNow = (!gcsCount && m_liveSmoothAmps > 0.0) ? m_liveSmoothAmps : m_tableSmoothA;
-            if (gcsCount && currentNow > 0.0)
-                currentNow *= calFactor;
-            if (currentNow > 0.0) {
-                in.model.hover0 = currentNow;
-                in.model.cruise0 = currentNow;
-                in.model.status = PowerTypeModel::FitStatus::PayloadNotModelled;
-            } else if (!armed && setup.value(QStringLiteral("hoverA")).toDouble() > 0.0) {
-                // On the ground: the remembered hover through the rest of the
-                // pack, the entered payload added; cruise taken at hover.
-                in.model.hover0 = setup.value(QStringLiteral("hoverA")).toDouble();
-                in.model.hoverK = setup.value(QStringLiteral("hoverAPerKg")).toDouble();
-                in.model.cruise0 = setup.value(QStringLiteral("cruiseA"), in.model.hover0).toDouble();
-                in.model.cruiseK = setup.value(QStringLiteral("cruiseAPerKg"), in.model.hoverK).toDouble();
-                in.model.status = PowerTypeModel::FitStatus::PayloadNotModelled;
-            }
-            out[QStringLiteral("motorPowerW")] = haveNow ? m_tableSmoothW : -1.0;
-            out[QStringLiteral("socNowPct")] = socNow;
-            out[QStringLiteral("packOhm")] = pack.resistanceOhm;
-            out[QStringLiteral("packOhmLive")] = m_packOhmLive;
-            if (haveNow && m_tableSmoothW > 0.0)
-                out[QStringLiteral("reserveVolts")] = MotorTable::loadedVolts(pack, socReserve, m_tableSmoothW);
-            out[QStringLiteral("chargeSource")] = !gcsCount ? QStringLiteral("fc")
-                                                : in.fcMahUsed >= 0.0 ? QStringLiteral("gcs") : QStringLiteral("fcPercent");
-            out[QStringLiteral("tableCurrentA")] = haveNow ? now.amps : -1.0;
-            out[QStringLiteral("motorsBeyond")] = haveNow ? now.motorsBeyond : 0;
-            out[QStringLiteral("hoverSource")] = setup.value(QStringLiteral("hoverSource"));
-            out[QStringLiteral("densityRatio")] = sigma;
-            out[QStringLiteral("densitySource")] = setup.value(QStringLiteral("densitySource"));
-            out[QStringLiteral("throttleSource")] = fromOutputs ? QStringLiteral("motor outputs")
-                                                  : thr.isEmpty() ? QStringLiteral("none") : QStringLiteral("overall throttle");
+        // Battery current from the motor table: each motor's throttle from
+        // its output signal, or, when those stop arriving, the overall
+        // throttle the FC reports turned into motor output the way
+        // ArduPilot does (the same for every motor). Counted while armed:
+        // the table covers the motors idling on the ground too.
+        const double packV = m_telemetry->batteryVoltage();
+        const QVariantMap mt = motorThrottleStatus();
+        QVector<double> thr;
+        const bool fromOutputs = mt.value(QStringLiteral("fresh")).toBool();
+        if (fromOutputs) {
+            for (const QVariant &t : mt.value(QStringLiteral("throttles")).toList())
+                thr.append(t.toDouble());
         } else {
-            // Where the charge used comes from. An FC current that follows
-            // throttle (a current sensor): its mAh × the charger factor, and its
-            // live current corrects the model. None (BATT_MONITOR 0 or 3), or
-            // ArduPilot's synthetic current, which on a copter stays at its idle
-            // offset (BATT_MONITOR 25, or a recorded current that is the same in
-            // hover and cruise): the GCS counts it itself, the model current ×
-            // (throttle now ÷ the phase's learned throttle)^1.5, from the arm.
-            const bool gcsCount = monitor == 0 || monitor == 3 || monitor == 25
-                                  || !m_powerSummary.value(QStringLiteral("fcCurrentFollowsThrottle"), true).toBool();
-            const double gs = std::isfinite(in.groundSpeedMs) ? in.groundSpeedMs : 0.0;
-            const bool hover = PowerTypeModel::isHover(gs);
-            const QVariant thr = v->throttlePct()->rawValue();
-            const double throttle = thr.isValid() ? thr.toDouble() / 100.0 : -1.0;
-            const double refThrottle = m_powerSummary.value(hover ? QStringLiteral("refThrottleHover")
-                                                                  : QStringLiteral("refThrottleCruise"), -1.0).toDouble();
-            const double throttleRatio = PowerTypeModel::throttleRatio(throttle, refThrottle);
-            if (gcsCount) {
-                if (m_gcsCounting && m_gcsLastMs > 0) {
-                    const double alt = m_telemetry->altitudeRelative();
-                    const bool airborne = !hover || (std::isfinite(alt) && alt > PowerTypeModel::kAirborneAltM);
-                    // On the ground armed the motors idle: count the hover current
-                    // only once airborne, the way the recorder does.
-                    if (airborne)
-                        m_gcsUsedAh += PowerTypeModel::chargeStepAh(in.model, hover,
-                                                                    livePayloadAboardKg(),
-                                                                    throttleRatio, (nowMs - m_gcsLastMs) / 1000.0);
-                }
-                m_gcsLastMs = nowMs;
-                in.factor = 1.0;
-                in.currentA = -1.0;
-                in.throttleRatio = throttleRatio;
-                // On the ground the resting voltage already gives the charge (the
-                // count of a finished flight is in it); in flight the count since
-                // the arm comes off the charge measured just before it. A flight
-                // the GCS joined armed falls back to the FC's charge %.
-                in.fcMahUsed = !armed ? 0.0 : m_gcsCountKnown ? m_gcsUsedAh * 1000.0 : -1.0;
-            } else {
-                in.factor = m_powerSummary.value(QStringLiteral("chargerFactor"), 1.0).toDouble();
-                // The FC counts from power-up: in flight, what it counted since
-                // the arm; on the ground, nothing (the voltage gives the charge).
-                in.fcMahUsed = !armed ? 0.0
-                             : (m_gcsCountKnown && fcMahUsed >= 0.0 && m_fcMahAtArm >= 0.0)
-                                   ? std::max(0.0, fcMahUsed - m_fcMahAtArm) : -1.0;
-                in.currentA = m_liveSmoothAmps > 0.0 ? m_liveSmoothAmps : -1.0;
+            const QVariant overall = v->throttlePct()->rawValue();
+            if (overall.isValid()) {
+                MotorTable::HoverParams p;
+                auto param = [this](const QString &name, double fallback) {
+                    return m_telemetry->hasParameter(name) ? static_cast<double>(m_telemetry->parameterValue(name))
+                                                           : fallback;
+                };
+                p.thstHover = std::max(0.001, overall.toDouble() / 100.0);
+                p.spinMin = param(QStringLiteral("MOT_SPIN_MIN"), p.spinMin);
+                p.spinMax = param(QStringLiteral("MOT_SPIN_MAX"), p.spinMax);
+                p.expo = param(QStringLiteral("MOT_THST_EXPO"), p.expo);
+                p.battVoltMax = param(QStringLiteral("MOT_BAT_VOLT_MAX"), 0.0);
+                p.battVoltMin = param(QStringLiteral("MOT_BAT_VOLT_MIN"), 0.0);
+                const int n = mt.value(QStringLiteral("motorsExpected")).toInt() > 0
+                                  ? mt.value(QStringLiteral("motorsExpected")).toInt() : table->motors;
+                thr = QVector<double>(n, MotorTable::hoverMotorThrottle(p, packV));
             }
-            out[QStringLiteral("chargeSource")] = !gcsCount ? QStringLiteral("fc")
-                                                : in.fcMahUsed >= 0.0 ? QStringLiteral("gcs") : QStringLiteral("fcPercent");
         }
+        // The air where the copter is (thin air changes the prop's load).
+        const double sigma = setup.value(QStringLiteral("densityRatio"), MotorTable::kTableDensityRatio).toDouble();
+        const MotorTable::BatteryCurrent now = thr.isEmpty() ? MotorTable::BatteryCurrent{}
+                                                             : MotorTable::batteryCurrent(*table, thr, packV, sigma);
+        const bool haveNow = armed && !thr.isEmpty();
+        // A current sensor (BATT_MONITOR other than 0, 3 or 25) is
+        // measured and wins; the table is the count otherwise.
+        const bool gcsCount = monitor == -1 || monitor == 0 || monitor == 3 || monitor == 25;
+        // Motor-output readings are counted as they arrive (_onMotorOutputs);
+        // only from the overall throttle does this update count the charge.
+        m_lastSigma = sigma;
+        const bool readingsCounted = fromOutputs && m_readings > 0;
+        if (gcsCount && m_gcsCounting && m_gcsLastMs > 0 && haveNow && !readingsCounted)
+            m_gcsUsedAh += now.amps * (nowMs - m_gcsLastMs) / 1000.0 / 3600.0;
+        m_gcsLastMs = nowMs;
+        // Steady hover without payload, from the motor outputs, airborne,
+        // neither climbing nor sinking: the thrust per motor the next
+        // take-off is planned with.
+        const double alt = m_telemetry->altitudeRelative();
+        const double gsNow = std::isfinite(in.groundSpeedMs) ? in.groundSpeedMs : 0.0;
+        const double climb = m_telemetry->verticalSpeed();
+        // This flight's record: airborne or not, the pack voltage, time
+        // beyond the table and on the overall throttle, the air.
+        const double logDtS = (armed && m_tableLog.lastMs > 0) ? (nowMs - m_tableLog.lastMs) / 1000.0 : 0.0;
+        m_tableLog.lastMs = armed ? nowMs : -1;
+        if (haveNow) {
+            if (std::isfinite(alt) && alt > PowerTypeModel::kAirborneAltM)
+                m_tableLog.airborne = true;
+            if (packV > 0.0) {
+                m_tableLog.voltSum += packV;
+                ++m_tableLog.voltN;
+                m_tableLog.minVolts = m_tableLog.minVolts < 0.0 ? packV : std::min(m_tableLog.minVolts, packV);
+            }
+            if (now.motorsBeyond > 0)
+                m_tableLog.beyondS += logDtS;
+            if (!fromOutputs)
+                m_tableLog.overallThrottleS += logDtS;
+            m_tableLog.densitySum += sigma;
+            ++m_tableLog.densityN;
+        }
+        if (haveNow && fromOutputs && !m_livePayloadAboard && packV > 0.0 && std::isfinite(alt)
+            && alt > PowerTypeModel::kAirborneAltM && PowerTypeModel::isHover(gsNow)
+            && std::isfinite(climb) && std::abs(climb) < MotorTable::kHoverMaxClimbMs) {
+            m_hoverThrustSum += MotorTable::averageThrust(*table, thr, packV, sigma);
+            ++m_hoverSamples;
+            m_tableLog.hoverWSum += (now.amps - MotorTable::kElectronicsA) * packV;
+            m_tableLog.hoverS += 2.0;
+        }
+        // Level cruise at any speed without payload: its power ÷ the power
+        // this copter (its remembered hover thrust) needs to hover in this
+        // air, kept in the band of the ground speed.
+        const double hoverThrust = setup.value(QStringLiteral("hoverThrustG")).toDouble();
+        if (haveNow && fromOutputs && !m_livePayloadAboard && packV > 0.0 && hoverThrust > 0.0
+            && std::isfinite(alt) && alt > PowerTypeModel::kAirborneAltM
+            && MotorTable::isCruiseSample(gsNow, climb)) {
+            const int n = static_cast<int>(thr.size());
+            const double hoverW = n * MotorTable::powerForThrustAt(*table, hoverThrust, sigma).watts;
+            if (hoverW > 0.0) {
+                const double ratio = (now.amps - MotorTable::kElectronicsA) * packV / hoverW;
+                m_cruiseRatioSum += ratio;
+                ++m_cruiseSamples;
+                // Kept by airspeed (the costing looks the ratio up by the
+                // leg's airspeed): the ground velocity against the wind
+                // from the lean when it is known, the ground speed
+                // otherwise (the same in still air).
+                const double air = WindFromLean::airspeedMs(m_telemetry->velocityNorthMs(), m_telemetry->velocityEastMs(),
+                                                            m_windEstN, m_windEstE, gsNow);
+                QPair<double, int> &band = m_cruiseBands[MotorTable::cruiseBand(air)];
+                band.first += ratio;
+                ++band.second;
+                m_tableLog.cruiseS += 2.0;
+            }
+        }
+        // The fine-tuning from the charger comparison: the table's count
+        // and current × the factor (a current sensor's count is not).
+        const double calFactor = setup.value(QStringLiteral("calibrationFactor"), 1.0).toDouble();
+        in.factor = gcsCount ? calFactor : 1.0;
+        in.currentA = -1.0;
+        in.throttleRatio = 1.0;
+        if (gcsCount)
+            in.fcMahUsed = !armed ? 0.0 : m_gcsCountKnown ? m_gcsUsedAh * 1000.0 : -1.0;
+        else
+            in.fcMahUsed = !armed ? 0.0
+                         : (m_gcsCountKnown && fcMahUsed >= 0.0 && m_fcMahAtArm >= 0.0)
+                               ? std::max(0.0, fcMahUsed - m_fcMahAtArm) : -1.0;
+
+        // The motors' power now: from the table, or from a current sensor
+        // (its current less the electronics, at the pack voltage).
+        const double vNow = packV > 0.0 ? packV : table->volts;
+        // From the motor outputs: the average of the readings since the
+        // last update.
+        const double wNow = !haveNow ? -1.0
+                          : (!gcsCount && m_liveSmoothAmps > 0.0)
+                                ? std::max(0.0, m_liveSmoothAmps - MotorTable::kElectronicsA) * vNow
+                          : readingsCounted ? m_readingWattsSum / m_readings
+                                            : (now.amps - MotorTable::kElectronicsA) * vNow;
+        m_readingWattsSum = 0.0;
+        m_readings = 0;
+        if (haveNow) {
+            // Smoothed like the FC current: α 0.095 per 2 s update, about 20 s.
+            m_tableSmoothA = m_tableSmoothA <= 0.0 ? now.amps : 0.095 * now.amps + 0.905 * m_tableSmoothA;
+            m_tableSmoothW = m_tableSmoothW <= 0.0 ? wNow : 0.095 * wNow + 0.905 * m_tableSmoothW;
+        }
+        // The pack's charge left now, and its resistance seen now
+        // (resting voltage at this charge − the voltage under load, over
+        // the current).
+        const MotorTable::Pack pack = motorTablePack(setup.value(QStringLiteral("cells")).toInt() > 0
+                                                         ? setup.value(QStringLiteral("cells")).toInt() : table->cells);
+        const double capAh = capacityAh();
+        const double socNow = (in.fcMahUsed >= 0.0 && capAh > 0.0)
+            ? (capAh * std::clamp(m_armStartSocPct, 0.0, 100.0) / 100.0 - in.fcMahUsed / 1000.0 * in.factor) / capAh * 100.0
+            : -1.0;
+        if (haveNow && packV > 0.0 && socNow > 0.0) {
+            const double r = MotorTable::observedResistance(pack, socNow, packV, now.amps);
+            if (r >= 0.0) {
+                m_packOhmLive = m_packOhmLive < 0.0 ? r : 0.095 * r + 0.905 * m_packOhmLive;
+                ++m_packOhmSamples;
+            }
+        }
+        // Time left and the trip: the motors' power now, drawn through the
+        // rest of the pack down to the reserve. The pack's voltage keeps
+        // falling, so the same power needs more current later; costing it
+        // at today's current would overstate the time left. Hover and
+        // cruise alike, the payload already in the throttle.
+        const double socReserve = m_batteryReserve * 100.0;
+        double currentNow = -1.0;
+        if (armed && m_tableSmoothW > 0.0 && socNow > socReserve)
+            currentNow = MotorTable::averageCurrent(pack, m_tableSmoothW, socNow, socReserve);
+        if (armed && currentNow <= 0.0)
+            currentNow = (!gcsCount && m_liveSmoothAmps > 0.0) ? m_liveSmoothAmps : m_tableSmoothA;
+        if (gcsCount && currentNow > 0.0)
+            currentNow *= calFactor;
+        if (currentNow > 0.0) {
+            in.model.hover0 = currentNow;
+            in.model.cruise0 = currentNow;
+            in.model.status = PowerTypeModel::FitStatus::PayloadNotModelled;
+        } else if (!armed && setup.value(QStringLiteral("hoverA")).toDouble() > 0.0) {
+            // On the ground: the remembered hover through the rest of the
+            // pack, the entered payload added; cruise taken at hover.
+            in.model.hover0 = setup.value(QStringLiteral("hoverA")).toDouble();
+            in.model.hoverK = setup.value(QStringLiteral("hoverAPerKg")).toDouble();
+            in.model.cruise0 = setup.value(QStringLiteral("cruiseA"), in.model.hover0).toDouble();
+            in.model.cruiseK = setup.value(QStringLiteral("cruiseAPerKg"), in.model.hoverK).toDouble();
+            in.model.status = PowerTypeModel::FitStatus::PayloadNotModelled;
+        }
+        out[QStringLiteral("motorPowerW")] = haveNow ? m_tableSmoothW : -1.0;
+        out[QStringLiteral("socNowPct")] = socNow;
+        out[QStringLiteral("packOhm")] = pack.resistanceOhm;
+        out[QStringLiteral("packOhmLive")] = m_packOhmLive;
+        if (haveNow && m_tableSmoothW > 0.0)
+            out[QStringLiteral("reserveVolts")] = MotorTable::loadedVolts(pack, socReserve, m_tableSmoothW);
+        out[QStringLiteral("chargeSource")] = !gcsCount ? QStringLiteral("fc")
+                                            : in.fcMahUsed >= 0.0 ? QStringLiteral("gcs") : QStringLiteral("fcPercent");
+        out[QStringLiteral("tableCurrentA")] = haveNow ? now.amps : -1.0;
+        out[QStringLiteral("motorsBeyond")] = haveNow ? now.motorsBeyond : 0;
+        out[QStringLiteral("hoverSource")] = setup.value(QStringLiteral("hoverSource"));
+        out[QStringLiteral("densityRatio")] = sigma;
+        out[QStringLiteral("densitySource")] = setup.value(QStringLiteral("densitySource"));
+        out[QStringLiteral("throttleSource")] = fromOutputs ? QStringLiteral("motor outputs")
+                                              : thr.isEmpty() ? QStringLiteral("none") : QStringLiteral("overall throttle");
         in.altitudeM = m_telemetry->altitudeRelative();
         if (pos.isValid()) {
             in.lat = pos.latitude();
@@ -1756,7 +1672,7 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         in.payloadKg = armed ? livePayloadAboardKg() : m_payloadWeightKg;
         in.payloadAboard = in.payloadAboard && in.payloadKg > 0.0;
         in.minAtTarget = m_timeAtTargetMin >= 0.0 ? m_timeAtTargetMin : 0.0;
-        in.cruiseSpeedMs = table ? setup.value(QStringLiteral("cruiseSpeedMs"), -1.0).toDouble() : m_powerCruiseSpeedMs;
+        in.cruiseSpeedMs = setup.value(QStringLiteral("cruiseSpeedMs"), -1.0).toDouble();
         in.landMin = landMin();
         in.armed = armed;
         const PowerTypeModel::LiveResult r = PowerTypeModel::liveEstimate(in);
@@ -1797,9 +1713,9 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         out[QStringLiteral("payloadCount")] = dropConfig().payloads;
         out[QStringLiteral("dropOutputSet")] = dropConfig().isSet();
         out[QStringLiteral("startSocPct")] = in.startSocPct;
-        out[QStringLiteral("source")] = table ? QStringLiteral("motor table") : m_powerSummary.value(QStringLiteral("source"));
-        out[QStringLiteral("typeName")] = table ? table->name : m_powerSummary.value(QStringLiteral("name"));
-        out[QStringLiteral("tableId")] = table ? table->id : QString();
+        out[QStringLiteral("source")] = QStringLiteral("motor table");
+        out[QStringLiteral("typeName")] = table->name;
+        out[QStringLiteral("tableId")] = table->id;
     } else {
         out[QStringLiteral("active")] = false;
     }
@@ -1823,11 +1739,8 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
                        : capacityAh() <= 0.0 ? QStringLiteral("no pack capacity")
                        : !armed ? QStringLiteral("motor table: hover not known yet, fly once")
                        : QStringLiteral("motor table: no motor throttle or charge reading"))
-            : m_powerTypeId <= 0 ? QStringLiteral("no motor table linked")
-            : !m_powerTypeWaivedBy.isEmpty() ? QStringLiteral("motor table waived")
-            : batteryPackWaived() ? QStringLiteral("pack waived")
-            : m_powerSummary.value(QStringLiteral("source")).toString() == QLatin1String("none")
-                  ? QStringLiteral("no learned model") : QStringLiteral("no pack capacity or charge reading");
+            : !m_motorTableWaivedBy.isEmpty() ? QStringLiteral("motor table waived")
+            : QStringLiteral("no motor table linked");
     const bool wasActive = m_powerLive.value(QStringLiteral("active")).toBool();
     const QString why = out.value(QStringLiteral("offReason")).toString();
     if (wasActive != isActive || m_powerLive.isEmpty()
@@ -2179,142 +2092,7 @@ void VehicleProfileManager::_onArmedChanged(bool armed)
 
 
 
-// ── Power types ──────────────────────────────────────────────────────────
-// Rows come from DatabaseManager; the model is fitted on demand from the
-// flights the pilot marked "used" (each has a charger number). Until there
-// are enough of them, the FC's synthetic current per phase × the charger
-// factor gives a starting model, labelled "synthetic".
-
-namespace {
-
-PowerTypeModel::Flight toModelFlight(const QVariantMap &row)
-{
-    PowerTypeModel::Flight f;
-    f.hoverMinEmpty   = std::max(0.0, row.value(QStringLiteral("hoverMinEmpty")).toDouble());
-    f.hoverMinLoaded  = std::max(0.0, row.value(QStringLiteral("hoverMinLoaded")).toDouble());
-    f.cruiseMinEmpty  = std::max(0.0, row.value(QStringLiteral("cruiseMinEmpty")).toDouble());
-    f.cruiseMinLoaded = std::max(0.0, row.value(QStringLiteral("cruiseMinLoaded")).toDouble());
-    f.payloadKg       = std::max(0.0, row.value(QStringLiteral("payloadKg")).toDouble());
-    const double charger = row.value(QStringLiteral("chargerMah")).toDouble();
-    const double fc      = row.value(QStringLiteral("fcMah")).toDouble();
-    f.chargerAh = charger > 0.0 ? charger / 1000.0 : -1.0;
-    f.fcAh      = fc > 0.0 ? fc / 1000.0 : -1.0;
-    return f;
-}
-
-bool isUsed(const QVariantMap &row)
-{
-    return row.value(QStringLiteral("learningState")).toString() == QLatin1String("used")
-        && row.value(QStringLiteral("chargerMah")).toDouble() > 0.0;
-}
-
-QString statusName(PowerTypeModel::FitStatus s)
-{
-    switch (s) {
-    case PowerTypeModel::FitStatus::TooAlike:            return QStringLiteral("tooAlike");
-    case PowerTypeModel::FitStatus::PayloadNotModelled:  return QStringLiteral("payloadNotModelled");
-    case PowerTypeModel::FitStatus::PayloadProportional: return QStringLiteral("payloadProportional");
-    case PowerTypeModel::FitStatus::Full:                return QStringLiteral("full");
-    case PowerTypeModel::FitStatus::NotEnoughFlights:    break;
-    }
-    return QStringLiteral("none");
-}
-
-struct FittedType {
-    PowerTypeModel::Model model;
-    QVector<PowerTypeModel::Flight> used;
-    bool fromCharger = false;
-    double factor = 1.0;
-    int pending = 0;
-    bool fcCurrentFollowsThrottle = true;   ///< false: the FC current is a constant (synthetic on a copter)
-    double refThrottleHover = -1.0;          ///< The used flights' average throttle per phase (0–1)
-    double refThrottleCruise = -1.0;
-};
-
-FittedType fitType(const QVariantList &rows)
-{
-    FittedType t;
-    double synthHover = 0.0, synthCruise = 0.0;
-    int synthN = 0;
-    double thrHover = 0.0, thrCruise = 0.0;
-    int thrHoverN = 0, thrCruiseN = 0;
-    for (const QVariant &v : rows) {
-        const QVariantMap row = v.toMap();
-        if (isUsed(row)) {
-            t.used << toModelFlight(row);
-            const double th = row.value(QStringLiteral("refThrottleHover")).toDouble();
-            const double tc = row.value(QStringLiteral("refThrottleCruise")).toDouble();
-            if (th > 0.0) { thrHover += th; ++thrHoverN; }
-            if (tc > 0.0) { thrCruise += tc; ++thrCruiseN; }
-        }
-        const QString state = row.value(QStringLiteral("learningState")).toString();
-        if (state == QLatin1String("pending"))
-            ++t.pending;
-        const double h = row.value(QStringLiteral("synthHoverA")).toDouble();
-        const double c = row.value(QStringLiteral("synthCruiseA")).toDouble();
-        if (state != QLatin1String("excluded") && h > 0.0 && c > 0.0) {
-            synthHover += h; synthCruise += c; ++synthN;
-        }
-    }
-    if (thrHoverN > 0) t.refThrottleHover = thrHover / thrHoverN;
-    if (thrCruiseN > 0) t.refThrottleCruise = thrCruise / thrCruiseN;
-    if (synthN > 0)
-        t.fcCurrentFollowsThrottle = PowerTypeModel::currentFollowsThrottle(synthHover / synthN, synthCruise / synthN);
-    t.factor = PowerTypeModel::chargerFactor(t.used);
-    t.model = PowerTypeModel::fit(t.used);
-    t.fromCharger = t.model.usable();
-    // A constant FC current says nothing about hover or cruise: no seed from it.
-    if (!t.fromCharger && synthN > 0 && t.fcCurrentFollowsThrottle) {
-        const QString advice = t.model.advice;
-        t.model = PowerTypeModel::seedFromSynthetic(synthHover / synthN, synthCruise / synthN, t.factor);
-        t.model.advice = advice.isEmpty() ? t.model.advice : advice;
-    }
-    return t;
-}
-
-} // namespace
-
-QString VehicleProfileManager::currentPowerTypeName() const
-{
-    if (m_powerTypeId <= 0) return {};
-    return DatabaseManager::instance().powerType(m_powerTypeId).value(QStringLiteral("name")).toString();
-}
-
-QVariantList VehicleProfileManager::listPowerTypes()
-{
-    return DatabaseManager::instance().listPowerTypes();
-}
-
-int VehicleProfileManager::savePowerType(int id, const QString &frame, double propDiameterIn,
-                                         double propPitchIn, int cells, const QString &motorNote)
-{
-    const int saved = DatabaseManager::instance().savePowerType(id, frame, propDiameterIn,
-                                                                propPitchIn, cells, motorNote);
-    if (saved > 0)
-        emit powerTypeChanged();
-    return saved;
-}
-
-bool VehicleProfileManager::deletePowerType(int id)
-{
-    if (!DatabaseManager::instance().deletePowerType(id))
-        return false;
-    emit powerTypeChanged();
-    return true;
-}
-
-bool VehicleProfileManager::linkCurrentVehiclePowerType(int powerTypeId)
-{
-    if (m_currentDeviceUid.isEmpty()
-        || !DatabaseManager::instance().linkVehiclePowerType(m_currentDeviceUid, powerTypeId))
-        return false;
-    const int linked = DatabaseManager::instance().vehiclePowerTypeId(m_currentDeviceUid);
-    if (linked != m_powerTypeId)
-        m_propsConfirmed = false;   // the confirmation was for the other type's props
-    m_powerTypeId = linked;
-    emit powerTypeChanged();
-    return true;
-}
+// ── Motor table link ─────────────────────────────────────────────────────
 
 bool VehicleProfileManager::linkCurrentVehicleMotorTable(const QString &tableId)
 {
@@ -2323,7 +2101,7 @@ bool VehicleProfileManager::linkCurrentVehicleMotorTable(const QString &tableId)
         return false;
     m_motorTableId = DatabaseManager::instance().vehicleMotorTableId(m_currentDeviceUid);
     m_tableSmoothA = 0.0;
-    emit powerTypeChanged();
+    emit motorTableChanged();
     return true;
 }
 
@@ -2342,69 +2120,10 @@ QVariantList VehicleProfileManager::motorTables() const
     return out;
 }
 
-QVariantMap VehicleProfileManager::powerTypeSummary(int powerTypeId)
-{
-    QVariantMap out;
-    const QVariantMap type = DatabaseManager::instance().powerType(powerTypeId);
-    if (type.isEmpty()) return out;
-    const FittedType t = fitType(DatabaseManager::instance().powerTypeFlights(powerTypeId));
-    out[QStringLiteral("id")]             = powerTypeId;
-    out[QStringLiteral("name")]           = type.value(QStringLiteral("name"));
-    out[QStringLiteral("status")]         = statusName(t.model.status);
-    out[QStringLiteral("source")]         = t.fromCharger ? QStringLiteral("charger")
-                                          : t.model.usable() ? QStringLiteral("synthetic")
-                                                             : QStringLiteral("none");
-    out[QStringLiteral("hover0")]         = t.model.hover0;
-    out[QStringLiteral("hoverK")]         = t.model.hoverK;
-    out[QStringLiteral("cruise0")]        = t.model.cruise0;
-    out[QStringLiteral("cruiseK")]        = t.model.cruiseK;
-    out[QStringLiteral("advice")]         = t.model.advice;
-    out[QStringLiteral("validated")]      = t.fromCharger && PowerTypeModel::isValidated(t.used);
-    out[QStringLiteral("chargerFactor")]  = t.factor;
-    out[QStringLiteral("usedFlights")]    = t.used.size();
-    out[QStringLiteral("pendingFlights")] = t.pending;
-    out[QStringLiteral("fcCurrentFollowsThrottle")] = t.fcCurrentFollowsThrottle;
-    out[QStringLiteral("refThrottleHover")]  = t.refThrottleHover;
-    out[QStringLiteral("refThrottleCruise")] = t.refThrottleCruise;
-    return out;
-}
-
-QVariantList VehicleProfileManager::powerTypeFlights(int powerTypeId)
-{
-    QVariantList rows = DatabaseManager::instance().powerTypeFlights(powerTypeId);
-    const FittedType t = fitType(rows);
-    if (!t.fromCharger)
-        return rows;
-    for (QVariant &v : rows) {
-        QVariantMap row = v.toMap();
-        const PowerTypeModel::Flight f = toModelFlight(row);
-        row[QStringLiteral("predictedMah")] = t.model.predictAh(f) * 1000.0;
-        row[QStringLiteral("outlier")]      = PowerTypeModel::isOutlier(t.model, f);
-        v = row;
-    }
-    return rows;
-}
-
-bool VehicleProfileManager::setFlightChargerMah(int sessionId, double chargerMah)
-{
-    if (!DatabaseManager::instance().setFlightChargerMah(sessionId, chargerMah))
-        return false;
-    emit powerTypeChanged();
-    return true;
-}
-
-bool VehicleProfileManager::setFlightLearningState(int sessionId, const QString &state)
-{
-    if (!DatabaseManager::instance().setFlightLearningState(sessionId, state))
-        return false;
-    emit powerTypeChanged();
-    return true;
-}
-
-// ── Per-flight power-type state ───────────────────────────────────────────
-// The "Power type" checklist item reads this state; it
-// lasts one flight (PreflightPlugin clears it after a non-bench flight and on
-// a vehicle change), like the battery-pack waiver.
+// ── Per-flight motor-table waiver ─────────────────────────────────────────
+// The "Motor table" checklist item reads it; it lasts one flight
+// (PreflightPlugin clears it after a non-bench flight and on a vehicle
+// change), like the battery-pack waiver.
 
 bool VehicleProfileManager::recordWaiver(const QString &event, const QString &pilot,
                                          const QString &reason, const QString &checkId)
@@ -2426,33 +2145,23 @@ bool VehicleProfileManager::recordWaiver(const QString &event, const QString &pi
         QString::fromUtf8(QJsonDocument(entry).toJson(QJsonDocument::Compact)), QString());
 }
 
-bool VehicleProfileManager::confirmPowerTypeProps()
-{
-    if (m_powerTypeId <= 0)
-        return false;
-    m_propsConfirmed = true;
-    emit powerTypeChanged();
-    return true;
-}
-
-bool VehicleProfileManager::waivePowerType(const QString &pilot)
+bool VehicleProfileManager::waiveMotorTable(const QString &pilot)
 {
     if (!recordWaiver(QStringLiteral("power_type_waived"), pilot,
                       QStringLiteral("No motor table; rough flight-time estimate, no mission estimate"),
                       QStringLiteral("power.power_type")))
         return false;
-    m_powerTypeWaivedBy = pilot.trimmed();
-    emit powerTypeChanged();
+    m_motorTableWaivedBy = pilot.trimmed();
+    emit motorTableChanged();
     return true;
 }
 
-void VehicleProfileManager::clearPowerTypeFlightState()
+void VehicleProfileManager::clearMotorTableFlightState()
 {
-    if (!m_propsConfirmed && m_powerTypeWaivedBy.isEmpty())
+    if (m_motorTableWaivedBy.isEmpty())
         return;
-    m_propsConfirmed = false;
-    m_powerTypeWaivedBy.clear();
-    emit powerTypeChanged();
+    m_motorTableWaivedBy.clear();
+    emit motorTableChanged();
 }
 
 double VehicleProfileManager::packRestingSocPct(double packVolts) const
@@ -2466,29 +2175,6 @@ double VehicleProfileManager::packRestingSocPct(double packVolts) const
     return soc >= 0.0 ? std::min(soc, 99.0) : 100.0;
 }
 
-QString VehicleProfileManager::frameName(int frameClass, int frameType)
-{
-    static const QHash<int, QString> classes = {
-        {1, QStringLiteral("Quad")}, {2, QStringLiteral("Hexa")}, {3, QStringLiteral("Octa")},
-        {4, QStringLiteral("OctaQuad")}, {5, QStringLiteral("Y6")}, {7, QStringLiteral("Tri")},
-        {12, QStringLiteral("DodecaHexa")}, {14, QStringLiteral("Deca")}};
-    static const QHash<int, QString> types = {
-        {0, QStringLiteral("Plus")}, {1, QStringLiteral("X")}, {2, QStringLiteral("V")},
-        {3, QStringLiteral("H")}};
-    if (!classes.contains(frameClass))
-        return {};
-    const QString t = types.value(frameType);
-    return t.isEmpty() ? classes.value(frameClass) : QStringLiteral("%1 %2").arg(classes.value(frameClass), t);
-}
-
-QString VehicleProfileManager::currentFrameName() const
-{
-    if (!m_telemetry || !m_telemetry->hasParameter(QStringLiteral("FRAME_CLASS")))
-        return {};
-    return frameName(qRound(m_telemetry->parameterValue(QStringLiteral("FRAME_CLASS"), -1.0f)),
-                     qRound(m_telemetry->parameterValue(QStringLiteral("FRAME_TYPE"), -1.0f)));
-}
-
 QVariantMap VehicleProfileManager::missionCheck()
 {
     QVariantMap out;
@@ -2496,106 +2182,72 @@ QVariantMap VehicleProfileManager::missionCheck()
     if (m_kind != VehicleKind::Multirotor)
         return out;
     const MotorTable::Table *table = MotorTable::byId(m_motorTableId);
-    out[QStringLiteral("linked")] = m_powerTypeId > 0 || table;
-    out[QStringLiteral("powerTypeWaivedBy")] = table ? QString() : m_powerTypeWaivedBy;
+    out[QStringLiteral("linked")] = table != nullptr;
     out[QStringLiteral("packWaived")] = batteryPackWaived();
+    if (!table)
+        return out;
 
     PowerTypeModel::Model model;
     double cruise = 10.0;
     bool speedAssumed = true;
-    if (table) {
-        // A copter on a motor table: the hover remembered from its last flight
-        // (or its learned MOT_THST_HOVER) at the planning voltage, the payload
-        // added from the table's thrust column, cruise taken at hover (safe
-        // side) until measured, at the copter's mission speed. The table is not proven on this copter until
-        // its flights agree with the charger, so a trip that does not fit is
-        // a warning, not a block.
-        out[QStringLiteral("source")] = QStringLiteral("motor table");
-        out[QStringLiteral("typeName")] = table->name;
-        out[QStringLiteral("validated")] = false;
-        if (batteryPackWaived())
-            return out;
-        const QVariantMap setup = motorTableSetup();
-        // Proven on this copter by its charger numbers (the trip's figures
-        // then count as validated; nothing here holds the arm).
-        out[QStringLiteral("validated")] = setup.value(QStringLiteral("proven")).toBool();
-        out[QStringLiteral("calibrationFactor")] = setup.value(QStringLiteral("calibrationFactor"));
-        out[QStringLiteral("calibrationFlights")] = setup.value(QStringLiteral("calibrationFlights"));
-        out[QStringLiteral("hoverSource")] = setup.value(QStringLiteral("hoverSource"));
-        out[QStringLiteral("hoverA")] = setup.value(QStringLiteral("hoverA"));
-        out[QStringLiteral("weightKg")] = setup.value(QStringLiteral("weightKg"));
-        QStringList warns;
-        QString offText;
-        for (const QVariant &i : setup.value(QStringLiteral("issues")).toList()) {
-            const QVariantMap m = i.toMap();
-            if (m.value(QStringLiteral("level")).toString() == QLatin1String("off")) {
-                if (offText.isEmpty())
-                    offText = m.value(QStringLiteral("text")).toString();
-            } else {
-                warns << m.value(QStringLiteral("text")).toString();
-            }
+    // A copter on a motor table: the hover remembered from its last flight
+    // (or its learned MOT_THST_HOVER) at the planning voltage, the payload
+    // added from the table's thrust column, cruise taken at hover (safe
+    // side) until measured, at the copter's mission speed. The table is not proven on this copter until
+    // its flights agree with the charger, so a trip that does not fit is
+    // a warning, not a block.
+    out[QStringLiteral("source")] = QStringLiteral("motor table");
+    out[QStringLiteral("typeName")] = table->name;
+    out[QStringLiteral("validated")] = false;
+    if (batteryPackWaived())
+        return out;
+    const QVariantMap setup = motorTableSetup();
+    // Proven on this copter by its charger numbers (the trip's figures
+    // then count as validated; nothing here holds the arm).
+    out[QStringLiteral("validated")] = setup.value(QStringLiteral("proven")).toBool();
+    out[QStringLiteral("calibrationFactor")] = setup.value(QStringLiteral("calibrationFactor"));
+    out[QStringLiteral("calibrationFlights")] = setup.value(QStringLiteral("calibrationFlights"));
+    out[QStringLiteral("hoverSource")] = setup.value(QStringLiteral("hoverSource"));
+    out[QStringLiteral("hoverA")] = setup.value(QStringLiteral("hoverA"));
+    out[QStringLiteral("weightKg")] = setup.value(QStringLiteral("weightKg"));
+    QStringList warns;
+    QString offText;
+    for (const QVariant &i : setup.value(QStringLiteral("issues")).toList()) {
+        const QVariantMap m = i.toMap();
+        if (m.value(QStringLiteral("level")).toString() == QLatin1String("off")) {
+            if (offText.isEmpty())
+                offText = m.value(QStringLiteral("text")).toString();
+        } else {
+            warns << m.value(QStringLiteral("text")).toString();
         }
-        out[QStringLiteral("setupWarning")] = warns.join(QStringLiteral("; "));
-        if (!offText.isEmpty()) {
-            out[QStringLiteral("modelUsable")] = false;
-            out[QStringLiteral("notReadyText")] = offText;
-            return out;
-        }
-        if (!(setup.value(QStringLiteral("hoverA")).toDouble() > 0.0)) {
-            out[QStringLiteral("modelUsable")] = false;
-            out[QStringLiteral("notReadyText")] =
-                QStringLiteral("Hover not known yet: fly once (30 s of steady hover), or let the copter learn MOT_THST_HOVER");
-            return out;
-        }
-        out[QStringLiteral("modelUsable")] = true;
-        model.hover0 = setup.value(QStringLiteral("hoverA")).toDouble();
-        model.hoverK = setup.value(QStringLiteral("hoverAPerKg")).toDouble();
-        model.cruise0 = setup.value(QStringLiteral("cruiseA"), model.hover0).toDouble();
-        model.cruiseK = setup.value(QStringLiteral("cruiseAPerKg"), model.hoverK).toDouble();
-        cruise = setup.value(QStringLiteral("cruiseSpeedMs"), -1.0).toDouble();
-        speedAssumed = false;
-        if (!(cruise > 0.0)) {
-            out[QStringLiteral("modelUsable")] = false;
-            out[QStringLiteral("notReadyText")] = QStringLiteral("Mission speed not known yet: WP_SPD not read from the copter");
-            return out;
-        }
-        out[QStringLiteral("cruiseMeasured")] = setup.value(QStringLiteral("cruiseMeasured"));
-        if (!setup.value(QStringLiteral("cruiseMeasured")).toBool())
-            out[QStringLiteral("cruiseNote")] = QStringLiteral("cruise power not measured yet: taken as hover");
-    } else {
-        if (m_powerTypeId <= 0 || !m_powerTypeWaivedBy.isEmpty() || batteryPackWaived())
-            return out;
-
-        const QVariantMap sum = powerTypeSummary(m_powerTypeId);
-        out[QStringLiteral("typeName")] = sum.value(QStringLiteral("name"));
-        out[QStringLiteral("source")] = sum.value(QStringLiteral("source"));
-        out[QStringLiteral("advice")] = sum.value(QStringLiteral("advice"));
-        out[QStringLiteral("validated")] = sum.value(QStringLiteral("validated"));
-        const bool usable = sum.value(QStringLiteral("source")).toString() != QLatin1String("none");
-        out[QStringLiteral("modelUsable")] = usable;
-        if (!usable)
-            return out;
-
-        model.hover0  = sum.value(QStringLiteral("hover0")).toDouble();
-        model.hoverK  = sum.value(QStringLiteral("hoverK")).toDouble();
-        model.cruise0 = sum.value(QStringLiteral("cruise0")).toDouble();
-        model.cruiseK = sum.value(QStringLiteral("cruiseK")).toDouble();
-
-        // Cruise speed: what the type's used flights flew at (the currents were
-        // learned at that speed); 10 m/s, said so, before any flight has one.
-        double speedSum = 0.0;
-        int speedN = 0;
-        for (const QVariant &v : DatabaseManager::instance().powerTypeFlights(m_powerTypeId)) {
-            const QVariantMap f = v.toMap();
-            const double spd = f.value(QStringLiteral("cruiseSpeedMs")).toDouble();
-            if (f.value(QStringLiteral("learningState")).toString() == QLatin1String("used") && spd > 0.0) {
-                speedSum += spd;
-                ++speedN;
-            }
-        }
-        cruise = speedN > 0 ? speedSum / speedN : 10.0;
-        speedAssumed = speedN == 0;
     }
+    out[QStringLiteral("setupWarning")] = warns.join(QStringLiteral("; "));
+    if (!offText.isEmpty()) {
+        out[QStringLiteral("modelUsable")] = false;
+        out[QStringLiteral("notReadyText")] = offText;
+        return out;
+    }
+    if (!(setup.value(QStringLiteral("hoverA")).toDouble() > 0.0)) {
+        out[QStringLiteral("modelUsable")] = false;
+        out[QStringLiteral("notReadyText")] =
+            QStringLiteral("Hover not known yet: fly once (30 s of steady hover), or let the copter learn MOT_THST_HOVER");
+        return out;
+    }
+    out[QStringLiteral("modelUsable")] = true;
+    model.hover0 = setup.value(QStringLiteral("hoverA")).toDouble();
+    model.hoverK = setup.value(QStringLiteral("hoverAPerKg")).toDouble();
+    model.cruise0 = setup.value(QStringLiteral("cruiseA"), model.hover0).toDouble();
+    model.cruiseK = setup.value(QStringLiteral("cruiseAPerKg"), model.hoverK).toDouble();
+    cruise = setup.value(QStringLiteral("cruiseSpeedMs"), -1.0).toDouble();
+    speedAssumed = false;
+    if (!(cruise > 0.0)) {
+        out[QStringLiteral("modelUsable")] = false;
+        out[QStringLiteral("notReadyText")] = QStringLiteral("Mission speed not known yet: WP_SPD not read from the copter");
+        return out;
+    }
+    out[QStringLiteral("cruiseMeasured")] = setup.value(QStringLiteral("cruiseMeasured"));
+    if (!setup.value(QStringLiteral("cruiseMeasured")).toBool())
+        out[QStringLiteral("cruiseNote")] = QStringLiteral("cruise power not measured yet: taken as hover");
     out[QStringLiteral("cruiseSpeedMs")] = cruise;
     out[QStringLiteral("speedAssumed")] = speedAssumed;
 
@@ -2649,7 +2301,9 @@ QVariantMap VehicleProfileManager::missionCheck()
     return out;
 }
 
-// ── Fleet settings and the BATT_AMP_PERVLT suggestion ────────────────────
+// ── Fleet settings ─────────────────────────────────────────────────────────
+// The QSettings keys keep their old "PowerTypes/" group so saved values carry
+// over.
 
 namespace {
 double settingMinutes(const char *key)
@@ -2675,7 +2329,7 @@ bool VehicleProfileManager::setTakeoffMin(double minutes)
 {
     if (!storeMinutes("takeoffMin", minutes))
         return false;
-    emit powerTypeChanged();
+    emit motorTableChanged();
     return true;
 }
 
@@ -2683,51 +2337,8 @@ bool VehicleProfileManager::setLandMin(double minutes)
 {
     if (!storeMinutes("landMin", minutes))
         return false;
-    emit powerTypeChanged();
+    emit motorTableChanged();
     return true;
-}
-
-QVariantMap VehicleProfileManager::ampPerVoltSuggestion()
-{
-    QVariantMap out;
-    out[QStringLiteral("available")] = false;
-    if (!m_telemetry || m_currentDeviceUid.isEmpty() || m_powerTypeId <= 0)
-        return out;
-    const int monitor = m_telemetry->hasParameter(QStringLiteral("BATT_MONITOR"))
-        ? qRound(m_telemetry->parameterValue(QStringLiteral("BATT_MONITOR"), -1.0f)) : -1;
-    out[QStringLiteral("monitor")] = monitor;
-    // On a copter ArduPilot's synthetic current does not use BATT_AMP_PERVLT
-    // in any way that follows throttle (it reads the k_throttle output, which
-    // a multicopter does not drive): changing it would change nothing.
-    if (m_kind == VehicleKind::Multirotor
-        && (monitor == 25
-            || !powerTypeSummary(m_powerTypeId).value(QStringLiteral("fcCurrentFollowsThrottle"), true).toBool())) {
-        out[QStringLiteral("reason")] = QStringLiteral("not used on a copter: the GCS counts the charge itself");
-        return out;
-    }
-    if (!m_telemetry->hasParameter(QStringLiteral("BATT_AMP_PERVLT")))
-        return out;
-    const double current = m_telemetry->parameterValue(QStringLiteral("BATT_AMP_PERVLT"), 0.0f);
-    out[QStringLiteral("ampPerVolt")] = current;
-
-    // This copter's latest flight with both numbers (flights come oldest first).
-    const QVariantList rows = DatabaseManager::instance().powerTypeFlights(m_powerTypeId);
-    for (int i = rows.size() - 1; i >= 0; --i) {
-        const QVariantMap f = rows[i].toMap();
-        const double charger = f.value(QStringLiteral("chargerMah")).toDouble();
-        const double fc = f.value(QStringLiteral("fcMah")).toDouble();
-        if (f.value(QStringLiteral("deviceUid")).toString() != m_currentDeviceUid || charger <= 0.0 || fc <= 0.0)
-            continue;
-        out[QStringLiteral("available")] = current > 0.0;
-        out[QStringLiteral("suggested")] = PowerTypeModel::suggestedAmpPerVolt(current, charger, fc);
-        out[QStringLiteral("ratio")] = charger / fc;
-        out[QStringLiteral("sessionId")] = f.value(QStringLiteral("sessionId"));
-        out[QStringLiteral("startedAt")] = f.value(QStringLiteral("startedAt"));
-        out[QStringLiteral("chargerMah")] = charger;
-        out[QStringLiteral("fcMah")] = fc;
-        break;
-    }
-    return out;
 }
 
 // ── Payload release ─────────────────────────────────────────────────

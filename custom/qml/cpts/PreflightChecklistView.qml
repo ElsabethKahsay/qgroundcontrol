@@ -49,9 +49,9 @@ Rectangle {
         id: payloadDialog
         parent: Overlay.overlay
     }
-    // Opened by the "Power type" item (Power section, copters).
-    CE.ChecklistEngine.PowerTypeDialog {
-        id: powerTypeDialog
+    // Opened by the "Motor table" item (Power section, copters).
+    CE.ChecklistEngine.MotorTableDialog {
+        id: motorTableDialog
         parent: Overlay.overlay
     }
     // Opened by the "Mission estimate" item (Power section, copters).
@@ -729,14 +729,14 @@ Rectangle {
                                                     check: checkObject
                                                     readonly property bool isPackCheck: checkId === "power.battery.pack"
                                                     readonly property bool isPayloadCheck: checkId === "airframe.payload"
-                                                    readonly property bool isPowerTypeCheck: checkId === "power.power_type"
+                                                    readonly property bool isMotorTableCheck: checkId === "power.power_type"
                                                     readonly property bool isMissionEstimate: checkId === "power.mission_estimate"
                                                     actionLabel: isPackCheck ? (status === 1 ? qsTr("Change battery pack") : qsTr("Select battery pack"))
                                                                  : isPayloadCheck ? (status === 1 ? qsTr("Change payload") : qsTr("Enter payload"))
-                                                                 : isPowerTypeCheck ? qsTr("Motor table")
+                                                                 : isMotorTableCheck ? qsTr("Motor table")
                                                                  : isMissionEstimate ? qsTr("Mission estimate details")
                                                                  : actionButtonText.length > 0 ? actionButtonText : "Run"
-                                                    repeatable: isPackCheck || isPayloadCheck || isPowerTypeCheck || isMissionEstimate
+                                                    repeatable: isPackCheck || isPayloadCheck || isMotorTableCheck || isMissionEstimate
                                                     running: root._runningChecks[checkId] === true
                                                     Layout.fillWidth: true
                                                     Layout.leftMargin: 8
@@ -751,8 +751,8 @@ Rectangle {
                                                             payloadDialog.open()
                                                             return
                                                         }
-                                                        if (isPowerTypeCheck) {
-                                                            powerTypeDialog.open()
+                                                        if (isMotorTableCheck) {
+                                                            motorTableDialog.open()
                                                             return
                                                         }
                                                         if (isMissionEstimate) {

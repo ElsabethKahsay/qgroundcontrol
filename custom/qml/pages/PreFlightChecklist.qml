@@ -40,9 +40,9 @@ Page {
         id: payloadDialog
         parent: Overlay.overlay
     }
-    // Opened by the "Power type" item (Power section, copters).
-    CE.ChecklistEngine.PowerTypeDialog {
-        id: powerTypeDialog
+    // Opened by the "Motor table" item (Power section, copters).
+    CE.ChecklistEngine.MotorTableDialog {
+        id: motorTableDialog
         parent: Overlay.overlay
     }
     CE.ChecklistEngine.MissionEstimateDialog {
@@ -614,14 +614,14 @@ Page {
                                                                                     Button {
                                                                                         readonly property bool isPackCheck: chk && chk.checkId === "power.battery.pack"
                                                                                         readonly property bool isPayloadCheck: chk && chk.checkId === "airframe.payload"
-                                                                                        readonly property bool isPowerTypeCheck: chk && chk.checkId === "power.power_type"
+                                                                                        readonly property bool isMotorTableCheck: chk && chk.checkId === "power.power_type"
                                                                                         readonly property bool isMissionEstimate: chk && chk.checkId === "power.mission_estimate"
-                                                                                        readonly property bool hasDialog: isPackCheck || isPayloadCheck || isPowerTypeCheck || isMissionEstimate
+                                                                                        readonly property bool hasDialog: isPackCheck || isPayloadCheck || isMotorTableCheck || isMissionEstimate
                                                                                         // Items with a dialog stay clickable once passed, to change or review them.
                                                                                         visible: ((isManual || isAction) && !isPassed) || hasDialog
                                                                                         text: isPackCheck ? (isPassed ? qsTr("Change") : qsTr("Select"))
                                                                                               : isPayloadCheck ? (isPassed ? qsTr("Change") : qsTr("Enter"))
-                                                                                              : isPowerTypeCheck ? (isPassed ? qsTr("Change") : qsTr("Confirm"))
+                                                                                              : isMotorTableCheck ? (isPassed ? qsTr("Change") : qsTr("Confirm"))
                                                                                               : isMissionEstimate ? qsTr("Details")
                                                                                               : isManual ? "Confirm" : "Run"
                                                                                         highlighted: true
@@ -635,9 +635,9 @@ Page {
                                                                                             } else if (isPayloadCheck) {
                                                                                                 // Only an entered weight passes it.
                                                                                                 payloadDialog.open();
-                                                                                            } else if (isPowerTypeCheck) {
-                                                                                                // Only a confirmed type (or a waiver) passes it.
-                                                                                                powerTypeDialog.open();
+                                                                                            } else if (isMotorTableCheck) {
+                                                                                                // Only a linked motor table (or a waiver) passes it.
+                                                                                                motorTableDialog.open();
                                                                                             } else if (isMissionEstimate) {
                                                                                                 // Advice only, computed.
                                                                                                 missionEstimateDialog.open();

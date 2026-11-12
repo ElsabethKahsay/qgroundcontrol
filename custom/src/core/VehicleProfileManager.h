@@ -58,26 +58,20 @@ class VehicleProfileManager : public QObject {
     Q_PROPERTY(QString vehicleKind READ vehicleKindString NOTIFY vehicleTypeResolved)
     Q_PROPERTY(int motorCount READ motorCount NOTIFY vehicleTypeResolved)
     Q_PROPERTY(bool typeResolved READ typeResolved NOTIFY vehicleTypeResolved)
-    /// The connected aircraft's power type (frame + props + cells), -1 when
-    /// it is not linked or no aircraft is connected.
-    Q_PROPERTY(int currentPowerTypeId READ currentPowerTypeId NOTIFY powerTypeChanged)
-    Q_PROPERTY(QString currentPowerTypeName READ currentPowerTypeName NOTIFY powerTypeChanged)
     /// Motor table the connected copter's estimate uses (MotorTable.h id); empty = none.
-    Q_PROPERTY(QString motorTableId READ motorTableId NOTIFY powerTypeChanged)
-    /// Per flight: the pilot confirmed the props fitted match the power type,
-    /// or waived the type.
-    /// Cleared by the disarm that ends a flight (bench arms keep them) and by
-    /// a vehicle change; a different type also clears the confirmation.
-    Q_PROPERTY(bool powerTypePropsConfirmed READ powerTypePropsConfirmed NOTIFY powerTypeChanged)
-    Q_PROPERTY(QString powerTypeWaivedBy READ powerTypeWaivedBy NOTIFY powerTypeChanged)
+    Q_PROPERTY(QString motorTableId READ motorTableId NOTIFY motorTableChanged)
+    /// Per flight: the pilot who chose to fly without a motor table; empty
+    /// when not waived. Cleared by the disarm that ends a flight (bench arms
+    /// keep it) and by a vehicle change.
+    Q_PROPERTY(QString motorTableWaivedBy READ motorTableWaivedBy NOTIFY motorTableChanged)
     /// Minutes the copter stays at the target this flight; -1 = not entered.
     Q_PROPERTY(double timeAtTargetMin READ timeAtTargetMin NOTIFY payloadWeightChanged)
     /// Take-off and landing minutes costed as hover by the time left and the
     /// trip to a target when no mission is loaded (fleet settings, default
     /// 1 min each, 0–10). The mission estimate times them from the copter's
     /// own parameters instead.
-    Q_PROPERTY(double takeoffMin READ takeoffMin NOTIFY powerTypeChanged)
-    Q_PROPERTY(double landMin READ landMin NOTIFY powerTypeChanged)
+    Q_PROPERTY(double takeoffMin READ takeoffMin NOTIFY motorTableChanged)
+    Q_PROPERTY(double landMin READ landMin NOTIFY motorTableChanged)
 
     /// Empty-airframe weight in kg (persisted per vehicle, used by the
     /// payload/battery flight-time estimate).
@@ -108,8 +102,8 @@ class VehicleProfileManager : public QObject {
     /// (armed && I_smooth >= 3 A) is not met or data is missing.
     Q_PROPERTY(int liveSOC READ liveSOC NOTIFY liveDataChanged)
     Q_PROPERTY(double liveTimeMins READ liveTimeMins NOTIFY liveDataChanged)
-    /// The power-type estimate (copters linked to a type with a usable
-    /// model; PowerTypeModel::liveEstimate), refreshed with the live
+    /// The battery estimate (copters linked to a motor table;
+    /// PowerTypeModel::liveEstimate), refreshed with the live
     /// estimate: time and distance left, and whether the rest of the trip
     /// (to the target with the payload, the time there, home empty, land)
     /// still fits above the reserve. Values are -1 when unknown.
@@ -339,16 +333,6 @@ public:
                                            const QString &notes);
     Q_INVOKABLE bool updateVehicleFirmware(const QString &fingerprint, const QString &firmwareVersion);
 
-    // ── Power types (storage in DatabaseManager, maths in PowerTypeModel.h) ──
-    int currentPowerTypeId() const { return m_powerTypeId; }
-    QString currentPowerTypeName() const;
-    Q_INVOKABLE QVariantList listPowerTypes();
-    /// Creates (@p id ≤ 0) or updates a type; returns its id or -1.
-    Q_INVOKABLE int savePowerType(int id, const QString &frame, double propDiameterIn,
-                                  double propPitchIn, int cells, const QString &motorNote);
-    Q_INVOKABLE bool deletePowerType(int id);
-    /// Links the connected aircraft to a type (≤ 0 unlinks). False with no aircraft.
-    Q_INVOKABLE bool linkCurrentVehiclePowerType(int powerTypeId);
     // ── Motor table (MotorTable.h): the estimate from each motor's throttle ──
     QString motorTableId() const { return m_motorTableId; }
     /// Links the connected copter to a motor table (empty unlinks). False with
@@ -356,44 +340,25 @@ public:
     Q_INVOKABLE bool linkCurrentVehicleMotorTable(const QString &tableId);
     /// The tables the GCS knows: [{id, name, volts, motors, cells}].
     Q_INVOKABLE QVariantList motorTables() const;
-    /// The type's learned model: {status, source, hover0, hoverK, cruise0,
-    /// cruiseK, advice, validated, chargerFactor, usedFlights, pendingFlights}.
-    /// status: "none", "tooAlike", "payloadNotModelled", "payloadProportional",
-    /// "full"; source: "charger" (fitted from charger numbers), "synthetic"
-    /// (seeded from the FC's current until enough flights) or "none".
-    Q_INVOKABLE QVariantMap powerTypeSummary(int powerTypeId);
-    /// The type's flights (DatabaseManager::powerTypeFlights) plus, once the
-    /// model is usable, predictedMah and outlier for each.
-    Q_INVOKABLE QVariantList powerTypeFlights(int powerTypeId);
-    Q_INVOKABLE bool setFlightChargerMah(int sessionId, double chargerMah);
-    /// "used" adds the flight to its type's model, "dismissed" leaves it out.
-    Q_INVOKABLE bool setFlightLearningState(int sessionId, const QString &state);
 
-    bool powerTypePropsConfirmed() const { return m_propsConfirmed; }
-    QString powerTypeWaivedBy() const { return m_powerTypeWaivedBy; }
+    QString motorTableWaivedBy() const { return m_motorTableWaivedBy; }
     /// The selected pack's charge (%) from its resting voltage: 100 when full
     /// (or the voltage is not known), else PowerTypeModel::restingSocPct.
     double packRestingSocPct(double packVolts) const;
     double timeAtTargetMin() const { return m_timeAtTargetMin; }
     /// 0–600 min; false (nothing changes) outside that.
     Q_INVOKABLE bool enterTimeAtTargetMin(double minutes);
-    /// The props fitted are the linked type's. False with no type linked.
-    Q_INVOKABLE bool confirmPowerTypeProps();
-    /// Fly this flight without a power type. Needs the pilot's name; written
+    /// Fly this flight without a motor table. Needs the pilot's name; written
     /// to compliance_logs.
-    Q_INVOKABLE bool waivePowerType(const QString &pilot);
-    /// End of a (non-bench) flight or a vehicle change.
-    void clearPowerTypeFlightState();
-    /// The connected copter's FRAME_CLASS/FRAME_TYPE as a name ("Quad X"),
-    /// empty when not reported; prefills a new power type's frame.
-    Q_INVOKABLE QString currentFrameName() const;
-    static QString frameName(int frameClass, int frameType);
+    Q_INVOKABLE bool waiveMotorTable(const QString &pilot);
+    /// End of a (non-bench) flight or a vehicle change: the waiver goes.
+    void clearMotorTableFlightState();
     /// The out-and-back trip to the saved target costed with the linked
-    /// type's model or motor table (the battery estimate's numbers; the old
-    /// "Mission check" item that showed it is replaced by the mission
-    /// estimate). {applicable, linked,
-    /// typeName, powerTypeWaivedBy, packWaived, modelUsable, validated,
-    /// source, advice, payloadEntered, payloadKg, timeAtTargetEntered,
+    /// motor table (the battery estimate's numbers; the old "Mission check"
+    /// item that showed it is replaced by the mission estimate).
+    /// {applicable, linked,
+    /// typeName, packWaived, modelUsable, validated,
+    /// source, payloadEntered, payloadKg, timeAtTargetEntered,
     /// minAtTarget, cruiseSpeedMs, speedAssumed, usableAh, hasTarget,
     /// positionKnown, targetKm, takeoffAh, outAh, targetAh, backAh, landAh,
     /// totalAh, totalMin, spareAh, maxTargetKm, fits}.
@@ -456,18 +421,14 @@ public:
     double landMin() const;
     Q_INVOKABLE bool setTakeoffMin(double minutes);
     Q_INVOKABLE bool setLandMin(double minutes);
-    /// BATT_AMP_PERVLT recalibration for the connected copter (synthetic
-    /// current, BATT_MONITOR = 25), ArduPilot's formula: new = current ×
-    /// charger mAh ÷ FC mAh, from this copter's latest flight that has both
-    /// numbers. {available, monitor, ampPerVolt, suggested, ratio,
-    /// sessionId, startedAt, chargerMah, fcMah}. The GCS never writes it.
-    Q_INVOKABLE QVariantMap ampPerVoltSuggestion();
 
 signals:
     void currentVehicleChanged();
     void uavWeightChanged();
     void batteryConfigChanged();
-    void powerTypeChanged();
+    /// The motor-table link, its waiver, its flights' charger numbers, or the
+    /// take-off and landing minutes changed.
+    void motorTableChanged();
     void liveDataChanged();
     void thrustTableChanged();
     void currentBatteryChanged();
@@ -518,7 +479,6 @@ private:
     QString m_batterySerial;
     QString m_packWaivedBy;             ///< Pilot who waived the pack; empty when not waived.
     int m_flightSessionId = -1;
-    int m_powerTypeId = -1;             ///< Connected aircraft's power type; -1 = none.
     QString m_motorTableId;             ///< Connected copter's motor table; empty = none.
     double m_tableSmoothA = 0.0;        ///< Motor-table battery current, smoothed like m_liveSmoothAmps.
     double m_tableSmoothW = 0.0;        ///< The motors' power from the table, smoothed the same way.
@@ -573,8 +533,7 @@ private:
     /// per 2 s update; stored at the disarm for the next take-off.
     double m_hoverThrustSum = 0.0;
     int m_hoverSamples = 0;
-    bool m_propsConfirmed = false;
-    QString m_powerTypeWaivedBy;
+    QString m_motorTableWaivedBy;
     double m_armStartSocPct = 100.0;    ///< Pack charge (%) just before this flight's arm.
     double m_fcMahAtArm = -1.0;         ///< The FC's mAh counter at this flight's arm (it counts from power-up).
     double m_timeAtTargetMin = -1.0;
@@ -593,9 +552,6 @@ private:
     double m_liveTimeMins = -1.0;       ///< -1 when the current gate is not met.
     double m_liveSmoothAmps = 0.0;      ///< EMA current (α=0.095 @ 0.5 Hz ≈ 10 s).
     QVariantMap m_powerLive;            ///< Last power-type live estimate.
-    bool m_powerModelDirty = true;      ///< Re-fit the type's model before the next update.
-    QVariantMap m_powerSummary;         ///< Cached powerTypeSummary() of the linked type.
-    double m_powerCruiseSpeedMs = 10.0; ///< Its used flights' average cruise speed.
     bool m_liveWasArmed = false;
     bool m_livePayloadAboard = false;   ///< This flight's payload, until the target is reached.
     /// The release servo output (Preflight Settings); counts the payloads
