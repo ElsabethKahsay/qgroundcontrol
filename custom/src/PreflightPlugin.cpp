@@ -327,10 +327,10 @@ void PreflightPlugin::init()
     connect(_vehicleProfileManager, &VehicleProfileManager::payloadWeightChanged,
             payloadCheck, [payloadCheck]() { payloadCheck->evaluate(); });
 
-    // Copters: "Power type" (linked, props confirmed for this flight, or
-    // waived) and "Mission check" (the trip to the saved target costed with
-    // the type's learned model). Both are mandatory Action items: the gate
-    // refuses while either is Pending, or the mission check Failed.
+    // Copters: "Power type" (a motor table linked, or a power type linked
+    // and its props confirmed for this flight, or waived). It is a mandatory
+    // Action item: the gate refuses while it is Pending. The mission estimate
+    // (below) is advice only and never holds arming.
     auto *powerTypeCheck = new PowerTypeCheck([this]() -> QVariantMap {
         QVariantMap st;
         if (!_vehicleProfileManager)

@@ -271,7 +271,8 @@ QtObject {
         readonly property var _vpm: (typeof VehicleProfileManager !== "undefined") ? VehicleProfileManager : null
         readonly property real _kg: Number(kgField.text.replace(",", "."))
         readonly property bool _valid: kgField.text.trim().length > 0 && isFinite(_kg) && _kg >= 0 && _kg <= 100 && _minValid
-        // Time at the target (copters' mission check): optional; empty = not entered.
+        // Time at the target (the trip to a target, when no mission is
+        // loaded): optional; empty = not entered.
         readonly property real _min: Number(minField.text.replace(",", "."))
         readonly property bool _minValid: minField.text.trim().length === 0 || (isFinite(_min) && _min >= 0 && _min <= 600)
 
@@ -331,7 +332,8 @@ QtObject {
             Text {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
-                text: qsTr("The payload is dropped at the target; the mission check costs the way back without it.")
+                text: qsTr("Without a mission, the payload is dropped at the target and the time left counts the way back "
+                           + "without it. With a mission, set where it is dropped in the Mission estimate.")
                 font.pixelSize: Config.fontSizeDialog
                 color: Colors.textSecondary
             }
@@ -427,12 +429,12 @@ QtObject {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 text: ptDialog._onTable
-                      ? qsTr("This copter's flight-time estimate and mission check come from the maker's motor "
+                      ? qsTr("This copter's flight-time estimate and mission estimate come from the maker's motor "
                              + "table: %1. Change the link on Analyze → Vehicles → Motor table.").arg(ptDialog._tableName)
                       : ptDialog._onType
-                        ? qsTr("The power type (frame + props + cells) is what the flight-time estimate and the "
-                               + "mission check learn from. Confirm on every flight that the props fitted are the "
-                               + "type's: the flight controller cannot see them.")
+                        ? qsTr("The power type (frame + props + cells) is what the flight-time estimate learns from "
+                               + "(the mission estimate needs a motor table). Confirm on every flight that the props "
+                               + "fitted are the type's: the flight controller cannot see them.")
                         : qsTr("Not linked: link this copter to its maker's motor table on Analyze → Vehicles → "
                                + "Motor table, or fly without one below.")
                 font.pixelSize: Config.fontSizeDialog
@@ -480,7 +482,7 @@ QtObject {
                 Text {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
-                    text: qsTr("Fly without a motor table. I accept a rough flight-time estimate and no mission check.")
+                    text: qsTr("Fly without a motor table. I accept a rough flight-time estimate and no mission estimate.")
                     font.pixelSize: Config.fontSizeDialog
                     color: Colors.textPrimary
                     MouseArea { anchors.fill: parent; onClicked: ptWaiveBox.toggle() }

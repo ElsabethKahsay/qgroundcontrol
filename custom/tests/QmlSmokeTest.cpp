@@ -2024,8 +2024,8 @@ void LivePluginBenchTest::testPowerTypesPageDrivesStorage()
     tabs->setProperty("currentIndex", 1);
     pumpQml(200);
 
-    // The second tab is the motor table: its link and the Mission check's
-    // minutes show; the user-defined power types (list, New, editor) are
+    // The second tab is the motor table: its link and the take-off and
+    // landing minutes show; the user-defined power types (list, New, editor) are
     // hidden. The rest of this test drives the hidden parts, which the
     // stored types still use.
     QObject *mtTab = find(QStringLiteral("motorTableTab"));
@@ -2688,7 +2688,8 @@ void LivePluginBenchTest::testMotorTableBeforeTakeoff()
     // Cruise at the copter's own mission speed: the mock copter's Copter 3.6
     // parameters give WPNAV_SPEED 500 cm/s (5 m/s); set to 1000 it is 10 m/s.
     // The hover until a flight has measured that speed band (said in the
-    // Mission check), then the hover power × the band's measured ratio.
+    // trip's figures, missionCheck()), then the hover power × the band's
+    // measured ratio.
     QVERIFY2(qAbs(setup.value(QStringLiteral("cruiseSpeedMs")).toDouble() - 5.0) < 1e-6,
              qPrintable(setup.value(QStringLiteral("cruiseSpeedMs")).toString()));
     const auto speedBefore = setMockParams(_vehicle, bridge, {{QStringLiteral("WPNAV_SPEED"), 1000.0}});
@@ -2787,7 +2788,7 @@ void LivePluginBenchTest::testMotorTableBeforeTakeoff()
     QVERIFY(!vpm->motorTableCalibration().value(QStringLiteral("proven")).toBool());
     // Three full flights where the charger put back 5 % more than the count:
     // fine-tuned × 1.05, and proven (each within 10 % of the count as shown
-    // then), so the Mission check may now hold the arm.
+    // then), so the trip's figures count as validated (nothing holds the arm).
     QVector<int> added;
     for (double ah : {12.0, 14.0, 16.0}) {
         QVariantMap f{{QStringLiteral("deviceUid"), vpm->currentDeviceUid()}, {QStringLiteral("tableId"), table.id},

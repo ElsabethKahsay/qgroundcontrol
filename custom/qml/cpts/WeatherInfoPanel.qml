@@ -1,7 +1,8 @@
 // Component: WeatherInfoPanel
 // Purpose: Sticky info panel for the right 30% of the Preflight Checklist page.
-//   Displays live conditions from WeatherProvider plus link-health and
-//   position/mission check statuses in a scrollable 2-column grid.
+//   Displays live conditions from WeatherProvider, the weather at the site
+//   the mission estimate uses, plus link-health and position statuses, in a
+//   scrollable 2-column grid.
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts

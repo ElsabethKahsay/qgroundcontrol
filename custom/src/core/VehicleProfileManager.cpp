@@ -2390,8 +2390,8 @@ bool VehicleProfileManager::setFlightLearningState(int sessionId, const QString 
     return true;
 }
 
-// ── Per-flight power-type state and the mission check ────────────────────
-// The "Power type" and "Mission check" checklist items read this state; it
+// ── Per-flight power-type state ───────────────────────────────────────────
+// The "Power type" checklist item reads this state; it
 // lasts one flight (PreflightPlugin clears it after a non-bench flight and on
 // a vehicle change), like the battery-pack waiver.
 
@@ -2427,7 +2427,7 @@ bool VehicleProfileManager::confirmPowerTypeProps()
 bool VehicleProfileManager::waivePowerType(const QString &pilot)
 {
     if (!recordWaiver(QStringLiteral("power_type_waived"), pilot,
-                      QStringLiteral("No power type; rough flight-time estimate, no mission check"),
+                      QStringLiteral("No power type; rough flight-time estimate, no mission estimate"),
                       QStringLiteral("power.power_type")))
         return false;
     m_powerTypeWaivedBy = pilot.trimmed();
@@ -2505,8 +2505,8 @@ QVariantMap VehicleProfileManager::missionCheck()
         if (batteryPackWaived())
             return out;
         const QVariantMap setup = motorTableSetup();
-        // Proven on this copter by its charger numbers: a trip that does not
-        // fit may then hold the arm (with a waiver), as for a validated type.
+        // Proven on this copter by its charger numbers (the trip's figures
+        // then count as validated; nothing here holds the arm).
         out[QStringLiteral("validated")] = setup.value(QStringLiteral("proven")).toBool();
         out[QStringLiteral("calibrationFactor")] = setup.value(QStringLiteral("calibrationFactor"));
         out[QStringLiteral("calibrationFlights")] = setup.value(QStringLiteral("calibrationFlights"));

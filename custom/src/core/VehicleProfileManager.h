@@ -65,15 +65,17 @@ class VehicleProfileManager : public QObject {
     /// Motor table the connected copter's estimate uses (MotorTable.h id); empty = none.
     Q_PROPERTY(QString motorTableId READ motorTableId NOTIFY powerTypeChanged)
     /// Per flight: the pilot confirmed the props fitted match the power type,
-    /// or waived the type, or waived a mission check that came out short.
+    /// or waived the type.
     /// Cleared by the disarm that ends a flight (bench arms keep them) and by
     /// a vehicle change; a different type also clears the confirmation.
     Q_PROPERTY(bool powerTypePropsConfirmed READ powerTypePropsConfirmed NOTIFY powerTypeChanged)
     Q_PROPERTY(QString powerTypeWaivedBy READ powerTypeWaivedBy NOTIFY powerTypeChanged)
     /// Minutes the copter stays at the target this flight; -1 = not entered.
     Q_PROPERTY(double timeAtTargetMin READ timeAtTargetMin NOTIFY payloadWeightChanged)
-    /// Take-off and landing minutes the mission check costs as hover
-    /// (fleet settings, default 1 min each, 0–10).
+    /// Take-off and landing minutes costed as hover by the time left and the
+    /// trip to a target when no mission is loaded (fleet settings, default
+    /// 1 min each, 0–10). The mission estimate times them from the copter's
+    /// own parameters instead.
     Q_PROPERTY(double takeoffMin READ takeoffMin NOTIFY powerTypeChanged)
     Q_PROPERTY(double landMin READ landMin NOTIFY powerTypeChanged)
 

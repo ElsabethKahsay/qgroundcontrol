@@ -79,9 +79,10 @@ AnalyzePage {
             spacing: 8
 
             // "Vehicles": the registry below. "Motor table": the connected
-            // copter's link to its maker's motor table, the Mission check's
-            // take-off and landing minutes, and the copter's flights, where
-            // the charger number is entered (MOTOR_TABLE_PLAN.md). The
+            // copter's link to its maker's motor table, the take-off and landing
+            // minutes for the time left without a mission, and the copter's
+            // flights, where the charger number is entered and the mission
+            // estimate is compared with what was flown (MOTOR_TABLE_PLAN.md). The
             // user-defined power types (POWER_TYPES_PLAN.md) are not shown:
             // their list and editor stay in this pane, hidden.
             TabBar {
@@ -579,7 +580,8 @@ AnalyzePage {
                         Rectangle { Layout.fillWidth: true; height: 1; color: Colors.divider }
 
                         Text {
-                            text: qsTr("Mission check: take-off and landing (min, as hover)")
+                            text: qsTr("Time left without a mission: take-off and landing (min, as hover). "
+                                       + "The mission estimate takes them from the copter's own settings.")
                             font.pixelSize: fs(11)
                             color: Colors.textSecondary
                             Layout.fillWidth: true

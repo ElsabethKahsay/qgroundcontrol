@@ -252,7 +252,9 @@ inline Model seedFromSynthetic(double hoverSynthA, double cruiseSynthA, double f
     return m;
 }
 
-// ── Mission check (before take-off) ──────────────────────────────────────
+// ── The out-and-back trip to a target (before take-off) ──────────────────
+// Used by VehicleProfileManager::missionCheck() (the trip's figures; its
+// checklist item was replaced by the mission estimate, MissionAssess.h).
 
 struct Mission {
     double payloadKg     = 0.0;

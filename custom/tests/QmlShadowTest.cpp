@@ -136,6 +136,7 @@ private slots:
     void testNoUndeclaredQmlShadow();
     void testArmControlsCannotOpenGateInOneTap();
     void testNoColourLiteralsOutsideSingletons();
+    void testNoOldMissionCheckWording();
 };
 
 // Core invariant: whatever custom.qrc declares at a resource path is what the
@@ -365,6 +366,44 @@ void QmlShadowTest::testNoColourLiteralsOutsideSingletons()
     QVERIFY2(files > 50, qPrintable(QStringLiteral("only %1 QML files found under %2").arg(files).arg(qmlDir)));
     QVERIFY2(offenders.isEmpty(),
              qPrintable(QStringLiteral("colour literals (use a Colors token):\n") + offenders.join(QLatin1Char('\n'))));
+}
+
+// The old "Mission check" item (out-and-back to a saved target, which could
+// hold the arm) was replaced by the mission estimate, which never does. No
+// text shown to the pilot or written to a log may still name it.
+void QmlShadowTest::testNoOldMissionCheckWording()
+{
+    if (_sourceDir().isEmpty()) {
+        QSKIP("no source tree next to the executable (packaged run); wording lint skipped");
+    }
+    // Any quoted string in code (a string continued on the next line too),
+    // comments left out.
+    static const QRegularExpression text(QStringLiteral("\"[^\"]*mission check"),
+                                         QRegularExpression::CaseInsensitiveOption);
+    QStringList offenders;
+    int files = 0;
+    for (const QString &sub : {QStringLiteral("/custom/qml"), QStringLiteral("/custom/src")}) {
+        QDirIterator it(_sourceDir() + sub, QStringList{QStringLiteral("*.qml"), QStringLiteral("*.cpp"), QStringLiteral("*.h")},
+                        QDir::Files, QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            const QString path = it.next();
+            QFile f(path);
+            if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+                continue;
+            ++files;
+            int lineNo = 0;
+            while (!f.atEnd()) {
+                const QString line = QString::fromUtf8(f.readLine());
+                ++lineNo;
+                if (text.match(line.section(QStringLiteral("//"), 0, 0)).hasMatch())
+                    offenders << QStringLiteral("%1:%2: %3").arg(QDir(_sourceDir()).relativeFilePath(path)).arg(lineNo)
+                                     .arg(line.trimmed());
+            }
+        }
+    }
+    QVERIFY2(files > 100, qPrintable(QStringLiteral("only %1 source files found").arg(files)));
+    QVERIFY2(offenders.isEmpty(), qPrintable(QStringLiteral("text still naming the old Mission check:\n")
+                                             + offenders.join(QLatin1Char('\n'))));
 }
 
 UT_REGISTER_TEST(QmlShadowTest)

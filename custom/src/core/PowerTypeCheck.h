@@ -4,7 +4,7 @@
 // fitted are the ones the type names: the flight controller can check the
 // frame and the cell count but not the props. Without a type the pilot can
 // waive it for the flight (logged); the flight-time estimate is then the
-// rough one and the mission check is off.
+// rough one, and there is no mission estimate (it needs a motor table).
 //
 // A copter linked to a motor table (MOTOR_TABLE_PLAN.md) needs no power type:
 // the table is the maker's test of its exact motor and prop, so it passes.
@@ -81,7 +81,7 @@ public:
             setCurrentValue(QVariant());
             setStatus(CheckStatus::Warning,
                       QStringLiteral("No motor table — waived by %1: rough flight-time estimate only, "
-                                     "no mission check").arg(waivedBy));
+                                     "no mission estimate").arg(waivedBy));
             return;
         }
         const QString name = s.value(QStringLiteral("typeName")).toString();
@@ -114,7 +114,7 @@ public:
 
     QString getRationale() const override
     {
-        return QStringLiteral("The flight-time estimate and the mission check come from the maker's motor "
+        return QStringLiteral("The flight-time estimate and the mission estimate come from the maker's motor "
                               "table linked to this copter (its motors, props and cells).");
     }
 

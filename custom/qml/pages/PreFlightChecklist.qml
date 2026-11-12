@@ -40,7 +40,7 @@ Page {
         id: payloadDialog
         parent: Overlay.overlay
     }
-    // Opened by the "Power type" and "Mission check" items (Power section, copters).
+    // Opened by the "Power type" item (Power section, copters).
     CE.ChecklistEngine.PowerTypeDialog {
         id: powerTypeDialog
         parent: Overlay.overlay
