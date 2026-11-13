@@ -60,9 +60,9 @@ class VehicleProfileManager : public QObject {
     Q_PROPERTY(bool typeResolved READ typeResolved NOTIFY vehicleTypeResolved)
     /// Motor table the connected copter's estimate uses (MotorTable.h id); empty = none.
     Q_PROPERTY(QString motorTableId READ motorTableId NOTIFY motorTableChanged)
-    /// Per flight: the pilot who chose to fly without a motor table; empty
-    /// when not waived. Cleared by the disarm that ends a flight (bench arms
-    /// keep it) and by a vehicle change.
+    /// Per copter: the pilot who chose to fly this copter without a motor
+    /// table; empty when not waived. Kept (QSettings, by device UID) across
+    /// flights and reconnections until a motor table is linked to the copter.
     Q_PROPERTY(QString motorTableWaivedBy READ motorTableWaivedBy NOTIFY motorTableChanged)
     /// Minutes the copter stays at the target this flight; -1 = not entered.
     Q_PROPERTY(double timeAtTargetMin READ timeAtTargetMin NOTIFY payloadWeightChanged)
@@ -348,11 +348,12 @@ public:
     double timeAtTargetMin() const { return m_timeAtTargetMin; }
     /// 0–600 min; false (nothing changes) outside that.
     Q_INVOKABLE bool enterTimeAtTargetMin(double minutes);
-    /// Fly this flight without a motor table. Needs the pilot's name; written
-    /// to compliance_logs.
+    /// Fly the connected copter without a motor table until one is linked.
+    /// Needs the pilot's name and a connected copter; written to
+    /// compliance_logs.
     Q_INVOKABLE bool waiveMotorTable(const QString &pilot);
-    /// End of a (non-bench) flight or a vehicle change: the waiver goes.
-    void clearMotorTableFlightState();
+    /// Withdraws the connected copter's waiver (linking a table does this).
+    Q_INVOKABLE void clearMotorTableWaiver();
     /// The out-and-back trip to the saved target costed with the linked
     /// motor table (the battery estimate's numbers; the old "Mission check"
     /// item that showed it is replaced by the mission estimate).

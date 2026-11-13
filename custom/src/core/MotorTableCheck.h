@@ -2,9 +2,9 @@
 // copter is linked to the maker's motor table for its exact motor and prop
 // (MOTOR_TABLE_PLAN.md; the link is made on Analyze → Vehicles → Motor
 // table), which the flight-time estimate and the mission estimate come from.
-// Without a table the pilot can waive it for the flight (logged with the
-// pilot's name); the flight-time estimate is then the rough one, and there is
-// no mission estimate.
+// Without a table the pilot can waive it for the copter (logged with the
+// pilot's name; kept until a table is linked); the flight-time estimate is
+// then the rough one, and there is no mission estimate.
 //
 // States: table linked → Passed, or Warning when the table's setup checks
 // turn the estimate off (another frame or pack, no pack size) and say why;
@@ -75,16 +75,16 @@ public:
         const QString waivedBy = s.value(QStringLiteral("waivedBy")).toString();
         if (!waivedBy.isEmpty()) {
             setStatus(CheckStatus::Warning,
-                      QStringLiteral("No motor table — waived by %1: rough flight-time estimate only, "
-                                     "no mission estimate").arg(waivedBy));
+                      QStringLiteral("No motor table — waived for this copter by %1: rough flight-time "
+                                     "estimate only, no mission estimate").arg(waivedBy));
             return;
         }
         setStatus(CheckStatus::Pending,
                   QStringLiteral("Link this copter to its motor table (Analyze → Vehicles → Motor table), or waive it"));
     }
 
-    /// Re-evaluating restores the state: the waiver lives in
-    /// VehicleProfileManager and ends with the flight, not with a reset.
+    /// Re-evaluating restores the state: the link and the waiver live in
+    /// VehicleProfileManager, not in the checklist, so a reset keeps them.
     void reset() override
     {
         AbstractCheck::reset();

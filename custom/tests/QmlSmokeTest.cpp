@@ -22,6 +22,8 @@
 #include <QTest>
 #include <functional>
 #include <QSignalSpy>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QDateTime>
 #include <QCoreApplication>
 #include <QDir>
@@ -1736,8 +1738,10 @@ void LivePluginBenchTest::testMotorTableLinkFollowsTheVehicle()
 }
 
 // The real plugin's "Motor table" item on the mock copter: Pending until
-// linked or waived; a waiver lasts one flight (an RC flight's disarm clears
-// it). The old "Mission check" item is gone: the mission estimate (never
+// linked or waived. The waiver belongs to the copter: it is logged, survives
+// a flight, is loaded again when the copter reconnects, is not carried over
+// to another copter, and ends when a table is linked or it is withdrawn.
+// The old "Mission check" item is gone: the mission estimate (never
 // mandatory) replaced it.
 void LivePluginBenchTest::testMotorTableAndMissionItemsLive()
 {
@@ -1752,27 +1756,44 @@ void LivePluginBenchTest::testMotorTableAndMissionItemsLive()
     for (int i = 0; i < 100 && vpm->kind() != VehicleKind::Multirotor; ++i)
         QTest::qWait(50);
     QCOMPARE(vpm->kind(), VehicleKind::Multirotor);
+    const QString uid = vpm->currentDeviceUid();
+    const QString key = QStringLiteral("MotorTable/waivedBy/%1").arg(uid);
+    auto failing = [gate]() { return gate->currentRequest(0).failingMandatoryIds.contains(QStringLiteral("power.power_type")); };
 
-    // Start unlinked (the test database persists between runs).
+    // Start unlinked and not waived (the test database and settings persist).
     QVERIFY(vpm->linkCurrentVehicleMotorTable(QString()));
-    vpm->clearMotorTableFlightState();
+    vpm->clearMotorTableWaiver();
+    QVERIFY(!QSettings().contains(key));
     QCOMPARE(item->status(), CheckStatus::Pending);
-    QVERIFY(gate->currentRequest(0).failingMandatoryIds.contains(QStringLiteral("power.power_type")));
+    QVERIFY(failing());
 
     // Linked: the item follows at once (the link's signal re-evaluates it).
     QVERIFY(vpm->linkCurrentVehicleMotorTable(MotorTable::m6215_320kv_22x78_6s().id));
     QVERIFY2(item->status() == CheckStatus::Passed || item->status() == CheckStatus::Warning,
              qPrintable(item->message()));
-    QVERIFY(!gate->currentRequest(0).failingMandatoryIds.contains(QStringLiteral("power.power_type")));
+    QVERIFY(!failing());
     QVERIFY(vpm->linkCurrentVehicleMotorTable(QString()));
     QCOMPARE(item->status(), CheckStatus::Pending);
 
-    // Waived for the flight.
+    // Waived for this copter: logged with the pilot's name, and stored.
+    DatabaseManager &db = DatabaseManager::instance();
+    const QStringList logsBefore = db.listComplianceLogs(QString::number(_vehicle->id()), 100000);
     QVERIFY(vpm->waiveMotorTable(QStringLiteral("Live Pilot")));
     QCOMPARE(item->status(), CheckStatus::Warning);
-    QVERIFY(!gate->currentRequest(0).failingMandatoryIds.contains(QStringLiteral("power.power_type")));
+    QVERIFY2(item->message().contains(QStringLiteral("for this copter")), qPrintable(item->message()));
+    QVERIFY(!failing());
+    QCOMPARE(QSettings().value(key).toString(), QStringLiteral("Live Pilot"));
+    bool logged = false;
+    for (const QString &id : db.listComplianceLogs(QString::number(_vehicle->id()), 100000)) {
+        if (logsBefore.contains(id))
+            continue;
+        const QJsonObject e = QJsonDocument::fromJson(db.loadComplianceLog(id).toUtf8()).object();
+        logged = logged || (e.value(QStringLiteral("event")).toString() == QStringLiteral("power_type_waived")
+                            && e.value(QStringLiteral("pilot")).toString() == QStringLiteral("Live Pilot"));
+    }
+    QVERIFY2(logged, "the waiver was not written to the compliance log");
 
-    // An RC flight in Flight mode: its disarm ends the waiver.
+    // An RC flight in Flight mode: the waiver outlives it.
     FlightSession::instance()->setMode(QStringLiteral("FLIGHT"));
     _vehicle->setArmed(true, false);
     QVERIFY(_waitArmed(true));
@@ -1780,8 +1801,49 @@ void LivePluginBenchTest::testMotorTableAndMissionItemsLive()
     _vehicle->setArmed(false, false);
     QVERIFY(_waitArmed(false));
     QTest::qWait(300);
-    QVERIFY2(vpm->motorTableWaivedBy().isEmpty(), "the disarm after a flight kept the waiver");
+    QCOMPARE(vpm->motorTableWaivedBy(), QStringLiteral("Live Pilot"));
+    QCOMPARE(item->status(), CheckStatus::Warning);
+
+    // The copter connecting again reads its waiver back from storage (the
+    // one in memory is cleared first, and the stored name differs, so only a
+    // read from storage can give it).
+    vpm->clearMotorTableWaiver();
+    QVERIFY(vpm->motorTableWaivedBy().isEmpty());
+    QSettings().setValue(key, QStringLiteral("Stored Pilot"));
+    QVERIFY(QMetaObject::invokeMethod(vpm, "onConnectionChanged"));
+    QCOMPARE(vpm->currentDeviceUid(), uid);
+    QCOMPARE(vpm->motorTableWaivedBy(), QStringLiteral("Stored Pilot"));
+    QCOMPARE(item->status(), CheckStatus::Warning);
+
+    // Linking a table ends it, here and in storage; unlinking again does not
+    // bring it back.
+    QVERIFY(vpm->linkCurrentVehicleMotorTable(MotorTable::m6215_320kv_22x78_6s().id));
+    QVERIFY(vpm->motorTableWaivedBy().isEmpty());
+    QVERIFY(!QSettings().contains(key));
+    QVERIFY(vpm->linkCurrentVehicleMotorTable(QString()));
     QCOMPARE(item->status(), CheckStatus::Pending);
+
+    // Withdrawn: the same.
+    QVERIFY(vpm->waiveMotorTable(QStringLiteral("Live Pilot")));
+    vpm->clearMotorTableWaiver();
+    QVERIFY(vpm->motorTableWaivedBy().isEmpty());
+    QVERIFY(!QSettings().contains(key));
+    QCOMPARE(item->status(), CheckStatus::Pending);
+
+    // Another copter does not get it: waived here, the mock then reconnects
+    // with a new system id (another aircraft).
+    QVERIFY(vpm->waiveMotorTable(QStringLiteral("Live Pilot")));
+    _disconnectMockLink();
+    for (int i = 0; i < 100 && !vpm->motorTableWaivedBy().isEmpty(); ++i)
+        QTest::qWait(50);
+    QVERIFY(vpm->motorTableWaivedBy().isEmpty());
+    QVERIFY2(_connectPlane(), "mock copter did not reconnect");
+    QTest::qWait(500);
+    QVERIFY(vpm->currentDeviceUid() != uid);
+    QCOMPARE(vpm->motorTableWaivedBy(),
+             QSettings().value(QStringLiteral("MotorTable/waivedBy/%1").arg(vpm->currentDeviceUid())).toString());
+    QCOMPARE(QSettings().value(key).toString(), QStringLiteral("Live Pilot"));   // still the first copter's
+    QSettings().remove(key);
 }
 
 // The three dialogs the checklist pages open (ChecklistEngine inline
@@ -1797,7 +1859,7 @@ void LivePluginBenchTest::testPowerDialogsDriveTheItems()
     for (int i = 0; i < 100 && vpm->kind() != VehicleKind::Multirotor; ++i)
         QTest::qWait(50);
     QVERIFY(vpm->linkCurrentVehicleMotorTable(QString()));
-    vpm->clearMotorTableFlightState();
+    vpm->clearMotorTableWaiver();
 
     QSharedPointer<QQmlApplicationEngine> engine(QGCCorePlugin::instance()->createQmlApplicationEngine(nullptr));
     QVERIFY(engine);
@@ -1881,6 +1943,23 @@ void LivePluginBenchTest::testPowerDialogsDriveTheItems()
     QCOMPARE(vpm->motorTableWaivedBy(), QStringLiteral("Dialog Pilot"));
     QVERIFY(!mt->property("visible").toBool());
 
+    // Opened again: it says who waived it and offers to withdraw it, not to
+    // waive again.
+    QMetaObject::invokeMethod(mt, "open");
+    pumpQml(200);
+    QVERIFY2(mtText->property("text").toString().contains(QStringLiteral("waived for this copter by Dialog Pilot")),
+             qPrintable(mtText->property("text").toString()));
+    QVERIFY(!waiveBox->property("visible").toBool());
+    QObject *withdraw = contentChild(mt, QStringLiteral("ptWithdrawButton"));
+    QVERIFY(withdraw && withdraw->property("visible").toBool());
+    QVERIFY(QMetaObject::invokeMethod(withdraw, "clicked"));
+    pumpQml(100);
+    QVERIFY(vpm->motorTableWaivedBy().isEmpty());
+    QVERIFY(waiveBox->property("visible").toBool());
+    QVERIFY(!withdraw->property("visible").toBool());
+    QMetaObject::invokeMethod(mt, "close");
+    pumpQml(100);
+
     // Mission estimate: shows what VehicleProfileManager works out (no
     // motor table here, so it says why it cannot assess).
     QObject *mc = dialog("mission");
@@ -1903,7 +1982,7 @@ void LivePluginBenchTest::testPowerDialogsDriveTheItems()
     grabScreen(window.data(), QStringLiteral("dialog-battery-pack"));
     QMetaObject::invokeMethod(pack, "close");
 
-    vpm->clearMotorTableFlightState();
+    vpm->clearMotorTableWaiver();
     vpm->clearPayloadEntry();
 }
 
@@ -2047,7 +2126,7 @@ void LivePluginBenchTest::testPowerLiveInFlyView()
     // While the estimate is off, the log says why, again each time the
     // reason changes: unlinked, then waived, then on.
     QVERIFY(vpm->linkCurrentVehicleMotorTable(QString()));
-    vpm->clearMotorTableFlightState();
+    vpm->clearMotorTableWaiver();
     for (int i = 0; i < 100 && offReason() != QStringLiteral("no motor table linked"); ++i)
         QTest::qWait(50);
     QCOMPARE(offReason(), QStringLiteral("no motor table linked"));
@@ -2056,8 +2135,7 @@ void LivePluginBenchTest::testPowerLiveInFlyView()
     for (int i = 0; i < 100 && offReason() != QStringLiteral("motor table waived"); ++i)
         QTest::qWait(50);
     QCOMPARE(offReason(), QStringLiteral("motor table waived"));
-    vpm->clearMotorTableFlightState();
-    QVERIFY(vpm->linkCurrentVehicleMotorTable(table.id));
+    QVERIFY(vpm->linkCurrentVehicleMotorTable(table.id));     // ends the waiver
     QVERIFY(DatabaseManager::instance().saveVehicleMotorHover(vpm->currentDeviceUid(), 3000.0, 20));
 
     QVERIFY(vpm->enterPayloadWeightKg(0.8));

@@ -333,8 +333,9 @@ void VehicleProfileManager::onConnectionChanged()
         emit batteryConfigChanged();
         // No vehicle connected — fall back to the built-in table.
         _applyDefaultThrustTable();
-        if (!m_motorTableId.isEmpty()) {
+        if (!m_motorTableId.isEmpty() || !m_motorTableWaivedBy.isEmpty()) {
             m_motorTableId.clear();
+            m_motorTableWaivedBy.clear();   // stays stored for that copter
             m_packOhm = -1.0;
             emit motorTableChanged();
         }
@@ -398,6 +399,7 @@ void VehicleProfileManager::onConnectionChanged()
     _loadPersistedThrustTable(m_currentDeviceUid);
 
     m_motorTableId = DatabaseManager::instance().vehicleMotorTableId(m_currentDeviceUid);
+    m_motorTableWaivedBy = QSettings().value(QStringLiteral("MotorTable/waivedBy/%1").arg(m_currentDeviceUid)).toString();
     m_packOhm = QSettings().value(QStringLiteral("MotorTable/packOhm/%1").arg(m_currentDeviceUid), -1.0).toDouble();
     emit motorTableChanged();
 
@@ -2101,6 +2103,8 @@ bool VehicleProfileManager::linkCurrentVehicleMotorTable(const QString &tableId)
         return false;
     m_motorTableId = DatabaseManager::instance().vehicleMotorTableId(m_currentDeviceUid);
     m_tableSmoothA = 0.0;
+    if (!m_motorTableId.isEmpty())
+        clearMotorTableWaiver();   // the table replaces the waiver
     emit motorTableChanged();
     return true;
 }
@@ -2120,10 +2124,10 @@ QVariantList VehicleProfileManager::motorTables() const
     return out;
 }
 
-// ── Per-flight motor-table waiver ─────────────────────────────────────────
-// The "Motor table" checklist item reads it; it lasts one flight
-// (PreflightPlugin clears it after a non-bench flight and on a vehicle
-// change), like the battery-pack waiver.
+// ── Per-copter motor-table waiver ─────────────────────────────────────────
+// The "Motor table" checklist item reads it. It belongs to the copter (kept
+// in QSettings by its device UID, loaded on each connection) and lasts until
+// a motor table is linked to it or it is withdrawn.
 
 bool VehicleProfileManager::recordWaiver(const QString &event, const QString &pilot,
                                          const QString &reason, const QString &checkId)
@@ -2147,17 +2151,23 @@ bool VehicleProfileManager::recordWaiver(const QString &event, const QString &pi
 
 bool VehicleProfileManager::waiveMotorTable(const QString &pilot)
 {
+    if (m_currentDeviceUid.isEmpty())
+        return false;   // the waiver is kept per copter
     if (!recordWaiver(QStringLiteral("power_type_waived"), pilot,
-                      QStringLiteral("No motor table; rough flight-time estimate, no mission estimate"),
+                      QStringLiteral("No motor table for this copter until one is linked; "
+                                     "rough flight-time estimate, no mission estimate"),
                       QStringLiteral("power.power_type")))
         return false;
     m_motorTableWaivedBy = pilot.trimmed();
+    QSettings().setValue(QStringLiteral("MotorTable/waivedBy/%1").arg(m_currentDeviceUid), m_motorTableWaivedBy);
     emit motorTableChanged();
     return true;
 }
 
-void VehicleProfileManager::clearMotorTableFlightState()
+void VehicleProfileManager::clearMotorTableWaiver()
 {
+    if (!m_currentDeviceUid.isEmpty())
+        QSettings().remove(QStringLiteral("MotorTable/waivedBy/%1").arg(m_currentDeviceUid));
     if (m_motorTableWaivedBy.isEmpty())
         return;
     m_motorTableWaivedBy.clear();

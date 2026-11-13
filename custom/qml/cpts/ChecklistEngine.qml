@@ -382,8 +382,8 @@ QtObject {
 
     // The "Motor table" item (copters): shows the maker's motor table the
     // copter is linked to (the link itself is made on Analyze → Vehicles →
-    // Motor table), or lets the pilot fly this flight without one (logged
-    // with the pilot's name).
+    // Motor table), or lets the pilot fly this copter without one until a
+    // table is linked (logged with the pilot's name).
     component MotorTableDialog: SkyDialog {
         id: ptDialog
         title:            qsTr("Motor Table")
@@ -421,20 +421,24 @@ QtObject {
                 text: ptDialog._onTable
                       ? qsTr("This copter's flight-time estimate and mission estimate come from the maker's motor "
                              + "table: %1. Change the link on Analyze → Vehicles → Motor table.").arg(ptDialog._tableName)
-                      : qsTr("Not linked: link this copter to its maker's motor table on Analyze → Vehicles → "
-                             + "Motor table, or fly without one below.")
+                      : ptDialog._vpm && ptDialog._vpm.motorTableWaivedBy !== ""
+                        ? qsTr("No motor table: waived for this copter by %1 until a motor table is linked on "
+                               + "Analyze → Vehicles → Motor table.").arg(ptDialog._vpm.motorTableWaivedBy)
+                        : qsTr("Not linked: link this copter to its maker's motor table on Analyze → Vehicles → "
+                               + "Motor table, or fly without one below.")
                 font.pixelSize: Config.fontSizeDialog
                 color: Colors.textPrimary
             }
 
             RowLayout {
-                visible: !ptDialog._onTable
+                visible: !ptDialog._onTable && !(ptDialog._vpm && ptDialog._vpm.motorTableWaivedBy !== "")
                 Layout.fillWidth: true
                 CheckBox { id: ptWaiveBox; objectName: "ptWaiveBox" }
                 Text {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
-                    text: qsTr("Fly without a motor table. I accept a rough flight-time estimate and no mission estimate.")
+                    text: qsTr("Fly this copter without a motor table until one is linked. I accept a rough "
+                               + "flight-time estimate and no mission estimate.")
                     font.pixelSize: Config.fontSizeDialog
                     color: Colors.textPrimary
                     MouseArea { anchors.fill: parent; onClicked: ptWaiveBox.toggle() }
@@ -452,6 +456,13 @@ QtObject {
                 Layout.fillWidth: true
                 spacing: Config.spacingSmall
                 Button { text: ptWaiveBox.checked ? qsTr("Cancel") : qsTr("Close"); Layout.fillWidth: true; onClicked: ptDialog.close() }
+                Button {
+                    objectName: "ptWithdrawButton"
+                    visible: !ptDialog._onTable && ptDialog._vpm !== null && ptDialog._vpm.motorTableWaivedBy !== ""
+                    text: qsTr("Withdraw waiver")
+                    Layout.fillWidth: true
+                    onClicked: ptDialog._vpm.clearMotorTableWaiver()
+                }
                 Button {
                     objectName: "ptWaiveButton"
                     visible: ptWaiveBox.checked

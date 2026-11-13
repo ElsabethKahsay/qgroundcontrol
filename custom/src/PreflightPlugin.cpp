@@ -326,9 +326,9 @@ void PreflightPlugin::init()
     connect(_vehicleProfileManager, &VehicleProfileManager::payloadWeightChanged,
             payloadCheck, [payloadCheck]() { payloadCheck->evaluate(); });
 
-    // Copters: "Motor table" (a motor table linked, or waived for the
-    // flight). It is a mandatory Action item: the gate refuses while it is
-    // Pending. The mission estimate (below) is advice only and never holds
+    // Copters: "Motor table" (a motor table linked, or waived for the copter
+    // until one is). It is a mandatory Action item: the gate refuses while it
+    // is Pending. The mission estimate (below) is advice only and never holds
     // arming.
     auto *motorTableCheck = new MotorTableCheck([this]() -> QVariantMap {
         QVariantMap st;
@@ -775,7 +775,6 @@ void PreflightPlugin::_onActiveVehicleChanged(Vehicle *vehicle)
     if (_vehicleProfileManager) {
         _vehicleProfileManager->clearBatteryPackWaiver();
         _vehicleProfileManager->clearPayloadEntry();   // the next aircraft carries its own
-        _vehicleProfileManager->clearMotorTableFlightState();
     }
     _trainer.reset();   // the first value on the new link is the instructor position
     emit trainerChanged();
@@ -1176,7 +1175,6 @@ void PreflightPlugin::_onGateClosed(const QString &reason)
     // disarm on their own) keep it.
     if (_vehicleProfileManager && !s_benchArm) {
         _vehicleProfileManager->clearBatteryPackWaiver();
-        _vehicleProfileManager->clearMotorTableFlightState();   // the waiver covers one flight
     }
     s_benchArm = false;
 }

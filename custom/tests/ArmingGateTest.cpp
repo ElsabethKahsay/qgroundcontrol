@@ -464,9 +464,9 @@ void ArmingGateTest::testMotorTableItemNeedsLinkOrWaiver()
     QVERIFY(!g.failing(id));
 }
 
-// The per-flight state behind the Motor table item: a waiver needs a name
-// and is logged; time at target is 0–600 min and goes with the payload
-// entry; the end of a flight clears the waiver.
+// The state behind the Motor table item without a copter: the waiver is
+// kept per copter, so with none connected it is refused (nothing logged, no
+// change); time at target is 0–600 min and goes with the payload entry.
 void ArmingGateTest::testMotorTableWaiverAndTimeAtTarget()
 {
     DatabaseManager &db = DatabaseManager::instance();
@@ -477,33 +477,17 @@ void ArmingGateTest::testMotorTableWaiverAndTimeAtTarget()
     VehicleProfileManager vpm;
     QSignalSpy changed(&vpm, &VehicleProfileManager::motorTableChanged);
     QVERIFY(!vpm.waiveMotorTable(QStringLiteral("  ")));
+    QVERIFY(!vpm.waiveMotorTable(QStringLiteral("Table Pilot")));
     QVERIFY(vpm.motorTableWaivedBy().isEmpty());
+    vpm.clearMotorTableWaiver();                         // nothing to withdraw: no change
     QCOMPARE(changed.count(), 0);
-    QVERIFY(vpm.waiveMotorTable(QStringLiteral("Table Pilot")));
-    QCOMPARE(vpm.motorTableWaivedBy(), QStringLiteral("Table Pilot"));
-    QCOMPARE(changed.count(), 1);
-
-    QStringList events;
-    for (const QString &id : db.listComplianceLogs(QStringLiteral("unknown"), 100000)) {
-        if (before.contains(id))
-            continue;
-        const QJsonObject e = QJsonDocument::fromJson(db.loadComplianceLog(id).toUtf8()).object();
-        events << e.value(QStringLiteral("event")).toString() + QLatin1Char(':') + e.value(QStringLiteral("pilot")).toString();
-    }
-    QVERIFY2(events.contains(QStringLiteral("power_type_waived:Table Pilot")),
-             qPrintable(events.join(QStringLiteral(", "))));
+    QCOMPARE(db.listComplianceLogs(QStringLiteral("unknown"), 100000), before);
 
     QCOMPARE(vpm.timeAtTargetMin(), -1.0);
     QVERIFY(!vpm.enterTimeAtTargetMin(-1.0));
     QVERIFY(!vpm.enterTimeAtTargetMin(601.0));
     QVERIFY(vpm.enterTimeAtTargetMin(2.5));
     QCOMPARE(vpm.timeAtTargetMin(), 2.5);
-
-    vpm.clearMotorTableFlightState();
-    QVERIFY(vpm.motorTableWaivedBy().isEmpty());
-    QCOMPARE(changed.count(), 2);
-    vpm.clearMotorTableFlightState();                    // nothing to clear: no signal
-    QCOMPARE(changed.count(), 2);
     vpm.clearPayloadEntry();
     QCOMPARE(vpm.timeAtTargetMin(), -1.0);
 
