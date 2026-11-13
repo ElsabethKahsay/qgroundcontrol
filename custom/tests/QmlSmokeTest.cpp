@@ -3397,6 +3397,22 @@ void LivePluginBenchTest::testMissionEstimateLive()
         vpm->checkMissionAlerts(est(MissionAssess::Tight, false, old));
         QCOMPARE(alerts.count(), 3);                                   // once a flight
         QVERIFY(!alerts.at(2).at(1).toBool());                         // shown, not spoken
+        // A result going back and forth between two levels is said once:
+        // only a result worse than any before it this flight is said again.
+        vpm->checkMissionAlerts(est(MissionAssess::Fits, false, {}));
+        vpm->checkMissionAlerts(est(MissionAssess::Tight, false, {}));
+        vpm->checkMissionAlerts(est(MissionAssess::Fits, false, {}));
+        vpm->checkMissionAlerts(est(MissionAssess::Tight, false, {}));
+        QCOMPARE(alerts.count(), 3);
+        vpm->checkMissionAlerts(est(MissionAssess::CantAssess, false, {}));   // passed over, not a new start
+        vpm->checkMissionAlerts(est(MissionAssess::Tight, false, {}));
+        QCOMPARE(alerts.count(), 3);
+        vpm->checkMissionAlerts(est(MissionAssess::UsesReserve, false, {}));
+        QCOMPARE(alerts.count(), 4);
+        QCOMPARE(alerts.at(3).at(0).toString(), QStringLiteral("Mission now Uses the reserve"));
+        vpm->checkMissionAlerts(est(MissionAssess::Tight, false, {}));
+        vpm->checkMissionAlerts(est(MissionAssess::UsesReserve, false, {}));
+        QCOMPARE(alerts.count(), 4);
     }
 
     // An empty pack in flight is empty, not unknown (it used to start the

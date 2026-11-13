@@ -1526,9 +1526,11 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
             m_tableLog.hoverS += 2.0;
         }
         // Level cruise at any speed without payload: its power ÷ the power
-        // this copter (its remembered hover thrust) needs to hover in this
-        // air, kept in the band of the ground speed.
-        const double hoverThrust = setup.value(QStringLiteral("hoverThrustG")).toDouble();
+        // this copter needs to hover in this air (its measured hover thrust:
+        // cruiseReferenceThrustG), kept in the band of the airspeed.
+        const double hoverThrust = cruiseReferenceThrustG(m_hoverThrustSum, m_hoverSamples,
+                                                          setup.value(QStringLiteral("hoverThrustG")).toDouble(),
+                                                          setup.value(QStringLiteral("hoverSource")).toString());
         if (haveNow && fromOutputs && !m_livePayloadAboard && packV > 0.0 && hoverThrust > 0.0
             && std::isfinite(alt) && alt > PowerTypeModel::kAirborneAltM
             && MotorTable::isCruiseSample(gsNow, climb)) {
@@ -1746,11 +1748,19 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
                                                           out.value(QStringLiteral("chargeSource")).toString())
                                                : QStringLiteral("off: ") + why);
     }
-    if (m_powerLive.value(QStringLiteral("returnNow")).toBool() != out.value(QStringLiteral("returnNow")).toBool())
-        qInfo().noquote() << QStringLiteral("VehicleProfileManager: RETURN NOW %1 (trip needs %2 Ah, %3 Ah left)")
-                                 .arg(out.value(QStringLiteral("returnNow")).toBool() ? QStringLiteral("on") : QStringLiteral("off"))
-                                 .arg(out.value(QStringLiteral("tripNeedAh")).toDouble(), 0, 'f', 2)
-                                 .arg(out.value(QStringLiteral("usableAh")).toDouble(), 0, 'f', 2);
+    // RETURN NOW from the mission is logged with its reason by
+    // _updateMissionLive; here only that it came from there. From the trip,
+    // its numbers.
+    if (m_powerLive.value(QStringLiteral("returnNow")).toBool() != out.value(QStringLiteral("returnNow")).toBool()) {
+        const QString onOff = out.value(QStringLiteral("returnNow")).toBool() ? QStringLiteral("on") : QStringLiteral("off");
+        if (out.value(QStringLiteral("returnNowFrom")).toString() == QLatin1String("mission"))
+            qInfo().noquote() << QStringLiteral("VehicleProfileManager: RETURN NOW %1 (from the mission estimate)").arg(onOff);
+        else
+            qInfo().noquote() << QStringLiteral("VehicleProfileManager: RETURN NOW %1 (trip needs %2 Ah, %3 Ah left)")
+                                     .arg(onOff)
+                                     .arg(out.value(QStringLiteral("tripNeedAh")).toDouble(), 0, 'f', 2)
+                                     .arg(out.value(QStringLiteral("usableAh")).toDouble(), 0, 'f', 2);
+    }
     if (out != m_powerLive) {
         m_powerLive = out;
         emit liveDataChanged();
@@ -2948,17 +2958,24 @@ QString VehicleProfileManager::liveModeOf(const QString &flightMode)
     return QStringLiteral("paused");
 }
 
-// Alerts in flight, once each: the result getting worse (e.g. Fits -> Tight),
-// RETURN NOW coming on (the next waypoint is past the turn-back point), and
-// the weather in use being old (once per flight).
+// Alerts in flight, once each: the result getting worse than it has been
+// this flight (e.g. Fits -> Tight), RETURN NOW coming on (the next waypoint
+// is past the turn-back point), and the weather in use being old (once per
+// flight).
 void VehicleProfileManager::checkMissionAlerts(const QVariantMap &next)
 {
     if (!next.value(QStringLiteral("ready")).toBool())
         return;
+    // The result: said only when it is worse than any result before it this
+    // flight (m_lastAlertResult keeps the worst), so one that goes back and
+    // forth between two levels is said once. Can't assess is passed over.
     const int result = next.value(QStringLiteral("result")).toInt();
-    if (m_lastAlertResult >= 0 && result < m_lastAlertResult && result != int(MissionAssess::CantAssess))
-        emit missionAlert(QStringLiteral("Mission now %1").arg(next.value(QStringLiteral("resultName")).toString()), true);
-    m_lastAlertResult = result;
+    if (result != int(MissionAssess::CantAssess)) {
+        if (m_lastAlertResult >= 0 && result < m_lastAlertResult)
+            emit missionAlert(QStringLiteral("Mission now %1").arg(next.value(QStringLiteral("resultName")).toString()), true);
+        if (m_lastAlertResult < 0 || result < m_lastAlertResult)
+            m_lastAlertResult = result;
+    }
     if (next.value(QStringLiteral("returnNow")).toBool() && !m_missionLive.value(QStringLiteral("returnNow")).toBool())
         emit missionAlert(QStringLiteral("Return now: %1").arg(next.value(QStringLiteral("returnNowWhy")).toString()), true);
     if (!m_alertedOldWeather) {
@@ -3063,6 +3080,16 @@ bool VehicleProfileManager::isReturning(const QString &flightMode, int currentCo
         return true;
     return mode == QLatin1String("auto")
            && (currentCommand == MissionWalk::NavReturnToLaunch || currentCommand == MissionWalk::NavLand);
+}
+
+double VehicleProfileManager::cruiseReferenceThrustG(double flightSum, int flightSamples, double setupThrustG,
+                                                     const QString &setupSource)
+{
+    if (flightSamples >= MotorTable::kMinHoverSamples && flightSum > 0.0)
+        return flightSum / flightSamples;
+    if (setupSource == QLatin1String("last flight") && setupThrustG > 0.0)
+        return setupThrustG;
+    return -1.0;
 }
 
 bool VehicleProfileManager::returnNowHeld(bool wasOn, double marginPct, bool returning)

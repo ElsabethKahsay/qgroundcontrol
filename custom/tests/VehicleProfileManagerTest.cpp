@@ -39,6 +39,7 @@ private slots:
     void testPackSocFromSelectedPackNotFcCapacity();
     void testTakeoffPredictionForAnItem();
     void testReturnNowHysteresis();
+    void testCruiseMeasuredAgainstAMeasuredHover();
 };
 
 // Default battery config: 6S 1P 5000mAh LiPo 20% reserve
@@ -264,6 +265,30 @@ void VehicleProfileManagerTest::testReturnNowHysteresis()
     }
     QCOMPARE(turnedOn, 1);
     QVERIFY(!on);                                       // off after 3.4, not back on at 1.0
+}
+
+// A cruise ratio (cruise power ÷ hover power) is measured only against a
+// hover that was measured: this flight's own steady hover once it has its
+// 15 samples (30 s), else the hover remembered from an earlier flight; never
+// one worked out from MOT_THST_HOVER (in a simulated flight that gave a
+// ratio of 1.94, which would have been saved for the next estimate).
+void VehicleProfileManagerTest::testCruiseMeasuredAgainstAMeasuredHover()
+{
+    auto ref = &VehicleProfileManager::cruiseReferenceThrustG;
+    const int enough = MotorTable::kMinHoverSamples;
+    const QString last = QStringLiteral("last flight");
+    const QString param = QStringLiteral("MOT_THST_HOVER");
+
+    // This flight's own hover, once it has enough samples: it wins.
+    QCOMPARE(ref(3000.0 * enough, enough, 2800.0, last), 3000.0);
+    QCOMPARE(ref(3000.0 * enough, enough, 2500.0, param), 3000.0);
+    // Not enough of its own yet: the remembered hover.
+    QCOMPARE(ref(3000.0 * (enough - 1), enough - 1, 2800.0, last), 2800.0);
+    // Only MOT_THST_HOVER, or nothing: no ratio.
+    QCOMPARE(ref(3000.0 * (enough - 1), enough - 1, 2500.0, param), -1.0);
+    QCOMPARE(ref(0.0, 0, 2500.0, param), -1.0);
+    QCOMPARE(ref(0.0, 0, -1.0, QString()), -1.0);
+    QCOMPARE(ref(0.0, 0, 0.0, last), -1.0);              // a remembered hover of nothing is no hover
 }
 
 UT_REGISTER_TEST(VehicleProfileManagerTest)

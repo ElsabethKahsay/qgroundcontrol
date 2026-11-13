@@ -422,6 +422,15 @@ public:
     /// returning or landing; an unknown margin keeps the last state.
     static constexpr double kReturnNowClearPts = 3.0;
     static bool returnNowHeld(bool wasOn, double marginPct, bool returning);
+    /// The hover thrust per motor (g) a cruise ratio is measured against: a
+    /// hover that was measured, never one worked out from MOT_THST_HOVER (a
+    /// ratio against a wrong hover would be saved and used by the next
+    /// flight's estimate). This flight's own steady hover once it has
+    /// MotorTable::kMinHoverSamples (@p flightSum over @p flightSamples),
+    /// else the hover remembered from an earlier flight (@p setupThrustG when
+    /// @p setupSource is "last flight"); -1 when neither: no ratio is kept.
+    static double cruiseReferenceThrustG(double flightSum, int flightSamples, double setupThrustG,
+                                         const QString &setupSource);
     /// The copter's parameters, three ways:
     /// - copterParam: QGroundControl's full parameter list; NaN when absent;
     /// - watchedParam: the bridge's watch list; @p fallback when not read;
@@ -589,7 +598,7 @@ private:
     void _noteDrop(int index, double kg, const QString &how);
     QVariantList m_passed;
     int m_lastMissionIndex = -1;
-    int m_lastAlertResult = -1;
+    int m_lastAlertResult = -1;         ///< the worst result said or seen this flight; -1 = none yet
     bool m_alertedOldWeather = false;
     // The wind from the lean (WindFromLean.h): this flight's steady samples,
     // the copter's drag constant (saved per copter, learned on flights that
