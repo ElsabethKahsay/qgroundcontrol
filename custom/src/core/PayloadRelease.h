@@ -128,7 +128,6 @@ public:
     {
         return std::min(m_released, std::clamp(c.payloads, 1, kMaxPayloads)) * c.eachKg();
     }
-    bool releasedNow() const { return m_known && m_on; }
 
 private:
     bool m_known = false;

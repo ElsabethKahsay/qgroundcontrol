@@ -37,6 +37,7 @@ private slots:
     void testBatteryReserveBounds();
     void testUsableAhStopsAtTheReserve();
     void testPackSocFromSelectedPackNotFcCapacity();
+    void testTakeoffPredictionForAnItem();
 };
 
 // Default battery config: 6S 1P 5000mAh LiPo 20% reserve
@@ -200,6 +201,32 @@ void VehicleProfileManagerTest::testPackSocFromSelectedPackNotFcCapacity()
     QCOMPARE(soc(73, -1.0, 5.0), 73);         // no mAh counter: FC % as fallback
     QCOMPARE(soc(73, 500.0, 0.0), 73);        // no pack configured: FC % as fallback
     QCOMPARE(soc(-1, -1.0, 5.0), -1);         // nothing known
+}
+
+// The in-flight list of reached items shows the take-off prediction beside
+// the real figures: the item's time from the arm and its pessimistic charge,
+// found by the item's number in the estimate kept at the arm (not by its
+// place in the list); an item the estimate does not have gives -1, -1.
+void VehicleProfileManagerTest::testTakeoffPredictionForAnItem()
+{
+    auto wp = [](int seq, double timeS, double likely, double pess) {
+        return QVariantMap{{QStringLiteral("seq"), seq}, {QStringLiteral("timeS"), timeS},
+                           {QStringLiteral("socLikelyPct"), likely}, {QStringLiteral("socPessimisticPct"), pess}};
+    };
+    const QVariantMap estimate{{QStringLiteral("waypoints"),
+                                QVariantList{wp(1, 12.0, 96.0, 95.0), wp(3, 75.5, 81.0, 78.0), wp(2, 40.0, 90.0, 88.0)}}};
+    const auto p3 = VehicleProfileManager::takeoffPredictionFor(estimate, 3);
+    QCOMPARE(p3.first, 75.5);
+    QCOMPARE(p3.second, 78.0);                          // the pessimistic charge, not the likely one
+    const auto p2 = VehicleProfileManager::takeoffPredictionFor(estimate, 2);
+    QCOMPARE(p2.first, 40.0);
+    QCOMPARE(p2.second, 88.0);
+    const auto none = VehicleProfileManager::takeoffPredictionFor(estimate, 7);
+    QCOMPARE(none.first, -1.0);
+    QCOMPARE(none.second, -1.0);
+    const auto empty = VehicleProfileManager::takeoffPredictionFor(QVariantMap(), 1);
+    QCOMPARE(empty.first, -1.0);
+    QCOMPARE(empty.second, -1.0);
 }
 
 UT_REGISTER_TEST(VehicleProfileManagerTest)

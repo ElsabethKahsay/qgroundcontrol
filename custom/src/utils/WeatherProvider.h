@@ -218,7 +218,6 @@ private:
     SiteWeather::Station m_siteStation;
     QByteArray m_siteForecastRaw;
     QByteArray m_siteMetarRaw;
-    qint64 m_siteSavedUtc = 0;
     QString m_siteFilePath;
     int m_siteRevision = 0;
 };

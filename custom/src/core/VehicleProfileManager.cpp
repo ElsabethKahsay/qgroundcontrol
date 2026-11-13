@@ -1326,15 +1326,8 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         m_windKLearnedThisFlight = false;
         m_windLastMs = 0;
         m_windK = QSettings().value(QStringLiteral("WindFromLean/k/%1").arg(m_currentDeviceUid), 0.0).toDouble();
-        m_takeoffPrediction.clear();
         m_dropEvents.clear();
         m_takeoffEstimate = missionEstimate();
-        for (const QVariant &wv : m_takeoffEstimate.value(QStringLiteral("waypoints")).toList()) {
-            const QVariantMap wp = wv.toMap();
-            m_takeoffPrediction.insert(wp.value(QStringLiteral("seq")).toInt(),
-                                       {wp.value(QStringLiteral("timeS")).toDouble(),
-                                        wp.value(QStringLiteral("socPessimisticPct")).toDouble()});
-        }
         m_fcMahAtArm = fcMahUsed;
         m_livePayloadAboard = m_payloadEntered && m_payloadWeightKg > 0.0;
         m_gcsUsedAh = 0.0;
@@ -2717,7 +2710,6 @@ QVariantMap VehicleProfileManager::missionEstimateFrom(const LiveStart *live)
     ctx.inFlight = live != nullptr;
     ctx.flightHeightM = topM;
     ctx.hasDrops = !in.drops.isEmpty();
-    ctx.cruiseMeasured = false;
     ctx.tableProven = setup.value(QStringLiteral("proven")).toBool();
     QString weatherText = QStringLiteral("No weather for the site");
     if (WeatherProvider *wp = WeatherProvider::instance()) {
@@ -2881,7 +2873,7 @@ void VehicleProfileManager::_updateMissionLive(int socPct)
                 p[QStringLiteral("timeText")] = clockText(t);
                 p[QStringLiteral("timeS")] = t;
                 p[QStringLiteral("socPct")] = socPct;
-                const auto pred = m_takeoffPrediction.value(seq, {-1.0, -1.0});
+                const auto pred = takeoffPredictionFor(m_takeoffEstimate, seq);
                 p[QStringLiteral("predictedTimeText")] = pred.first >= 0.0 ? clockText(pred.first) : QString();
                 p[QStringLiteral("predictedSocPct")] = pred.second;
                 m_passed.append(p);
@@ -2906,6 +2898,16 @@ void VehicleProfileManager::_updateMissionLive(int socPct)
                                               ? QString() : QStringLiteral(": ") + next.value(QStringLiteral("returnNowWhy")).toString());
         emit liveDataChanged();
     }
+}
+
+QPair<double, double> VehicleProfileManager::takeoffPredictionFor(const QVariantMap &takeoffEstimate, int seq)
+{
+    for (const QVariant &wv : takeoffEstimate.value(QStringLiteral("waypoints")).toList()) {
+        const QVariantMap wp = wv.toMap();
+        if (wp.value(QStringLiteral("seq")).toInt() == seq)
+            return {wp.value(QStringLiteral("timeS")).toDouble(), wp.value(QStringLiteral("socPessimisticPct")).toDouble()};
+    }
+    return {-1.0, -1.0};
 }
 
 QString VehicleProfileManager::liveModeOf(const QString &flightMode)

@@ -799,7 +799,6 @@ void WeatherProvider::keepSiteForecast(const QByteArray &data)
         return;   // keep what was there; a bad reply never wipes good data
     m_siteForecast = f;
     m_siteForecastRaw = data;
-    m_siteSavedUtc = QDateTime::currentSecsSinceEpoch();
     saveSite();
     ++m_siteRevision;
     emit siteWeatherChanged();
@@ -812,7 +811,6 @@ void WeatherProvider::keepSiteMetar(const QByteArray &data)
         return;
     m_siteStation = st;
     m_siteMetarRaw = data;
-    m_siteSavedUtc = QDateTime::currentSecsSinceEpoch();
     saveSite();
     ++m_siteRevision;
     emit siteWeatherChanged();
@@ -825,7 +823,6 @@ void WeatherProvider::saveSite() const
     if (m_siteFilePath.isEmpty())
         return;
     QJsonObject o;
-    o[QStringLiteral("savedUtc")] = double(m_siteSavedUtc);
     o[QStringLiteral("forecast")] = QString::fromUtf8(m_siteForecastRaw);
     o[QStringLiteral("metar")] = QString::fromUtf8(m_siteMetarRaw);
     QDir().mkpath(QFileInfo(m_siteFilePath).absolutePath());
@@ -840,11 +837,9 @@ void WeatherProvider::loadSite()
     m_siteStation = {};
     m_siteForecastRaw.clear();
     m_siteMetarRaw.clear();
-    m_siteSavedUtc = 0;
     QFile file(m_siteFilePath);
     if (!m_siteFilePath.isEmpty() && file.open(QIODevice::ReadOnly)) {
         const QJsonObject o = QJsonDocument::fromJson(file.readAll()).object();
-        m_siteSavedUtc = qint64(o.value(QStringLiteral("savedUtc")).toDouble());
         const QByteArray f = o.value(QStringLiteral("forecast")).toString().toUtf8();
         const QByteArray m = o.value(QStringLiteral("metar")).toString().toUtf8();
         m_siteForecast = SiteWeather::parseOpenMeteo(f);

@@ -400,6 +400,10 @@ public:
     /// return or land item (@p currentCommand, the MAVLink command of the
     /// mission item flown now; -1 when not known).
     static bool isReturning(const QString &flightMode, int currentCommand);
+    /// What the take-off estimate (missionEstimate() at the arm) predicted
+    /// for mission item @p seq: {time from the arm in s, pessimistic charge
+    /// on arrival in %}; {-1, -1} when it has no such item.
+    static QPair<double, double> takeoffPredictionFor(const QVariantMap &takeoffEstimate, int seq);
     /// What the trip to a target (no mission estimated) advises when the rest
     /// of it no longer fits above the reserve (@p tripShort): RETURN NOW
     /// while still going out, but not when already returning or landing; then
@@ -560,11 +564,10 @@ private:
     PayloadRelease::Detector m_drop;
     QVariantMap m_missionLive;          ///< missionLive()
     void _updateMissionLive(int socPct);
-    // This flight, from the arm: the take-off prediction by item (seq ->
-    // {timeS, socPessimisticPct}), the items reached ({seq, timeS, socPct}),
-    // the mission item flown last, and what has been alerted already.
+    // This flight, from the arm: the take-off estimate, the items reached
+    // ({seq, timeS, socPct}), the mission item flown last, and what has been
+    // alerted already.
     qint64 m_flightStartMs = 0;
-    QHash<int, QPair<double, double>> m_takeoffPrediction;
     QVariantMap m_takeoffEstimate;      ///< missionEstimate() at the arm, for the flight's record
     QVariantList m_dropEvents;          ///< payload releases this flight: {index, kg, timeS, how}
     void _noteDrop(int index, double kg, const QString &how);

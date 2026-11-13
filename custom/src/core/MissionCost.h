@@ -109,7 +109,6 @@ struct StepCost {
     double loadedV = 0.0;
     double airspeedMs = 0.0;
     double ratio = 1.0;
-    double weightKg = 0.0;       ///< aboard on this step
     double spareThrust = -1.0;   ///< full-throttle thrust at the loaded voltage ÷ weight; -1 unknown
 };
 
@@ -267,7 +266,6 @@ inline double costSteps(const QVector<MissionWalk::Step> &steps, const Inputs &i
         const double rest = in.pack.cells * PowerTypeModel::restingCellVolts(soc, in.pack.chemistry);
         c.currentA = MotorTable::packCurrent(w, rest, in.pack.resistanceOhm) * in.calibration;
         c.loadedV = c.currentA > 0.0 ? rest - c.currentA / in.calibration * in.pack.resistanceOhm : -1.0;
-        c.weightKg = kg;
         if (c.loadedV > 0.0)
             c.spareThrust = in.motors * MotorTable::maxThrustAt(t, c.loadedV, in.sigma).grams / (kg * 1000.0);
         if (out)
