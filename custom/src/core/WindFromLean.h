@@ -66,19 +66,6 @@ inline void leanVector(double roll, double pitch, double yaw, double *hN, double
     *hE = -zE / zD;
 }
 
-/// The attitude that gives a lean vector (for tests and simulation): the
-/// copter facing @p yaw, leaning toward (hN, hE).
-inline void attitudeFor(double hN, double hE, double yaw, double *roll, double *pitch)
-{
-    // Rotate the lean into the body frame (forward, right).
-    const double f = hN * std::cos(yaw) + hE * std::sin(yaw);
-    const double r = -hN * std::sin(yaw) + hE * std::cos(yaw);
-    // The exact inverse of leanVector for this Euler order:
-    // tan(pitch) = -f, tan(roll) = r·cos(pitch).
-    *pitch = std::atan(-f);
-    *roll = std::atan(r * std::cos(*pitch));
-}
-
 struct Fit {
     bool ok = false;
     double k = 0.0;             ///< drag constant, N per (m/s)²

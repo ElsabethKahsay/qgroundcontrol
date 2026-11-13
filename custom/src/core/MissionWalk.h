@@ -1,14 +1,13 @@
 // Times for each waypoint of an ArduPilot copter mission.
 //
-// The mission is read from the autopilot (or a Mission Planner .waypoints
-// file) and walked command by command the way ArduPilot flies it, with the
-// copter's own settings (WP_SPD, WP_SPD_UP, WP_SPD_DN, WP_ACC, the RTL and
-// landing settings). The result is a list of steps (climb, move, hold,
-// circle, return, land) with their times, the time each waypoint is reached,
-// and the servo and gripper commands met on the way (where a payload may be
-// released). Nothing here is fixed for one copter: every speed and height
-// comes from its parameters, and a setting the walk needs but cannot read
-// makes it say so instead of guessing.
+// The mission is read from the autopilot and walked command by command the way
+// ArduPilot flies it, with the copter's own settings (WP_SPD, WP_SPD_UP,
+// WP_SPD_DN, WP_ACC, the RTL and landing settings). The result is a list of
+// steps (climb, move, hold, circle, return, land) with their times, the time
+// each waypoint is reached, and the servo and gripper commands met on the way
+// (where a payload may be released). Nothing here is fixed for one copter:
+// every speed and height comes from its parameters, and a setting the walk
+// needs but cannot read makes it say so instead of guessing.
 //
 // How ArduPilot flies, as modelled here:
 // - Horizontal moves speed up and slow down along an S-curve: acceleration
@@ -38,7 +37,6 @@
 #include <limits>
 
 #include <QHash>
-#include <QRegularExpression>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -619,50 +617,6 @@ inline Result walk(const QVector<Item> &items, const Settings &s, double homeLat
     }
     r.totalS = t;
     return r;
-}
-
-/// Reads a Mission Planner / QGroundControl .waypoints file ("QGC WPL 110",
-/// then one tab-separated item per line). Empty with @p error set when it is
-/// not one.
-inline QVector<Item> parseWaypoints(const QString &text, QString *error = nullptr)
-{
-    QVector<Item> out;
-    const QStringList lines = text.split(QLatin1Char('\n'));
-    if (lines.isEmpty() || !lines.first().trimmed().startsWith(QStringLiteral("QGC WPL 110"))) {
-        if (error)
-            *error = QStringLiteral("Not a .waypoints file (no \"QGC WPL 110\" line)");
-        return out;
-    }
-    for (int n = 1; n < lines.size(); ++n) {
-        const QString line = lines[n].trimmed();
-        if (line.isEmpty())
-            continue;
-        const QStringList f = line.split(QRegularExpression(QStringLiteral("\\s+")));
-        bool ok = f.size() == 12;
-        QVector<double> v;
-        for (int k = 0; ok && k < 12; ++k) {
-            v.append(f[k].toDouble(&ok));
-        }
-        if (!ok) {
-            if (error)
-                *error = QStringLiteral("Line %1 is not a mission item").arg(n + 1);
-            return {};
-        }
-        Item it;
-        it.seq = static_cast<int>(v[0]);
-        it.frame = static_cast<int>(v[2]);
-        it.command = static_cast<int>(v[3]);
-        it.p1 = v[4];
-        it.p2 = v[5];
-        it.p3 = v[6];
-        it.p4 = v[7];
-        it.lat = v[8];
-        it.lon = v[9];
-        it.alt = v[10];
-        it.autocontinue = v[11] != 0.0;
-        out.append(it);
-    }
-    return out;
 }
 
 }   // namespace MissionWalk

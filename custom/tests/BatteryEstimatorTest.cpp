@@ -24,6 +24,73 @@
 #include "MissionRecord.h"
 #include <QCoreApplication>
 #include <QFileInfo>
+#include <QRegularExpression>
+
+// Test helpers kept out of the app's headers: they are used only here.
+namespace MissionWalk {
+
+/// Reads a Mission Planner / QGroundControl .waypoints file ("QGC WPL 110",
+/// then one tab-separated item per line). Empty with @p error set when it is
+/// not one.
+inline QVector<Item> parseWaypoints(const QString &text, QString *error = nullptr)
+{
+    QVector<Item> out;
+    const QStringList lines = text.split(QLatin1Char('\n'));
+    if (lines.isEmpty() || !lines.first().trimmed().startsWith(QStringLiteral("QGC WPL 110"))) {
+        if (error)
+            *error = QStringLiteral("Not a .waypoints file (no \"QGC WPL 110\" line)");
+        return out;
+    }
+    for (int n = 1; n < lines.size(); ++n) {
+        const QString line = lines[n].trimmed();
+        if (line.isEmpty())
+            continue;
+        const QStringList f = line.split(QRegularExpression(QStringLiteral("\\s+")));
+        bool ok = f.size() == 12;
+        QVector<double> v;
+        for (int k = 0; ok && k < 12; ++k) {
+            v.append(f[k].toDouble(&ok));
+        }
+        if (!ok) {
+            if (error)
+                *error = QStringLiteral("Line %1 is not a mission item").arg(n + 1);
+            return {};
+        }
+        Item it;
+        it.seq = static_cast<int>(v[0]);
+        it.frame = static_cast<int>(v[2]);
+        it.command = static_cast<int>(v[3]);
+        it.p1 = v[4];
+        it.p2 = v[5];
+        it.p3 = v[6];
+        it.p4 = v[7];
+        it.lat = v[8];
+        it.lon = v[9];
+        it.alt = v[10];
+        it.autocontinue = v[11] != 0.0;
+        out.append(it);
+    }
+    return out;
+}
+
+}   // namespace MissionWalk
+
+namespace WindFromLean {
+
+/// The attitude that gives a lean vector: the copter facing @p yaw,
+/// leaning toward (hN, hE). Used to make test samples.
+inline void attitudeFor(double hN, double hE, double yaw, double *roll, double *pitch)
+{
+    // Rotate the lean into the body frame (forward, right).
+    const double f = hN * std::cos(yaw) + hE * std::sin(yaw);
+    const double r = -hN * std::sin(yaw) + hE * std::cos(yaw);
+    // The exact inverse of leanVector for this Euler order:
+    // tan(pitch) = -f, tan(roll) = r·cos(pitch).
+    *pitch = std::atan(-f);
+    *roll = std::atan(r * std::cos(*pitch));
+}
+
+}   // namespace WindFromLean
 
 /**
  * Battery time estimator math: thrust→current interpolation, the known
