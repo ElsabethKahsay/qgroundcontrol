@@ -1686,7 +1686,16 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
             for (const MissionItem *mi : v->missionManager()->missionItems())
                 if (mi->sequenceNumber() == v->missionManager()->currentIndex())
                     currentCommand = int(mi->command());
-        const TripAdvice advice = tripAdvice(r.returnNow, isReturning(m_telemetry->flightMode(), currentCommand));
+        const bool returning = isReturning(m_telemetry->flightMode(), currentCommand);
+        TripAdvice advice = tripAdvice(r.returnNow, returning);
+        // Held with hysteresis (returnNowHeld): the margin is what is left
+        // above the reserve after the rest of the trip, in points of the pack.
+        const double tripMarginPct = (r.tripKnown && in.capacityAh > 0.0)
+                                         ? (r.usableAh - r.tripNeedAh) / in.capacityAh * 100.0
+                                         : qQNaN();
+        const bool tripWasOn = m_powerLive.value(QStringLiteral("returnNowFrom")).toString() == QLatin1String("trip")
+                               && m_powerLive.value(QStringLiteral("returnNow")).toBool();
+        advice.returnNow = armed && r.airborne && returnNowHeld(tripWasOn, tripMarginPct, returning);
         out[QStringLiteral("returnNow")] = fromMission ? m_missionLive.value(QStringLiteral("returnNow")).toBool()
                                                        : advice.returnNow;
         out[QStringLiteral("landingOnReserve")] = !fromMission && advice.landingOnReserve;
@@ -2801,12 +2810,25 @@ QVariantMap VehicleProfileManager::missionEstimateFrom(const LiveStart *live)
         const bool returning = live->mode == QLatin1String("rtl") || live->mode == QLatin1String("land");
         out[QStringLiteral("timeToNextS")] = w.arrivals.isEmpty() ? -1.0 : w.arrivals.first().timeS;
         out[QStringLiteral("turnBackSeq")] = cost.ok ? cost.turnBackSeq : -2;
-        const bool now = cost.ok && !returning && cost.turnBackSeq == -1;
+        // The margin: how far the pessimistic return from the next waypoint
+        // lands above the reserve (below 0 when it cannot return from there:
+        // that waypoint is past the turn-back point). Held with hysteresis
+        // (returnNowHeld) so that it does not flicker.
+        double marginPct = qQNaN();
+        int nextSeq = -1;
+        if (cost.ok && !cost.arrivals.isEmpty()) {
+            const MissionCost::ArrivalCost &first = cost.arrivals.first();
+            nextSeq = first.seq;
+            marginPct = !first.canReturn ? std::min(-1.0, first.returnLandPessimisticPct - in.reserveSocPct)
+                                         : first.returnLandPessimisticPct - in.reserveSocPct;
+        }
+        const bool now = returnNowHeld(m_missionLive.value(QStringLiteral("returnNow")).toBool(), marginPct, returning);
         out[QStringLiteral("returnNow")] = now;
+        const int pastSeq = cost.firstPastSeq >= 0 ? cost.firstPastSeq : nextSeq;
         out[QStringLiteral("returnNowWhy")] =
-            now ? QStringLiteral("Going on to item %1 leaves too little for the return: return now")
-                      .arg(cost.firstPastSeq)
-                : QString();
+            !now ? QString()
+            : pastSeq >= 0 ? QStringLiteral("Going on to item %1 leaves too little for the return: return now").arg(pastSeq)
+                           : QStringLiteral("Too little left for the return: return now");
     }
 
     QVariantList wps;
@@ -3041,6 +3063,17 @@ bool VehicleProfileManager::isReturning(const QString &flightMode, int currentCo
         return true;
     return mode == QLatin1String("auto")
            && (currentCommand == MissionWalk::NavReturnToLaunch || currentCommand == MissionWalk::NavLand);
+}
+
+bool VehicleProfileManager::returnNowHeld(bool wasOn, double marginPct, bool returning)
+{
+    if (returning)
+        return false;
+    if (!std::isfinite(marginPct))
+        return wasOn;
+    if (marginPct < 0.0)
+        return true;
+    return wasOn && marginPct < kReturnNowClearPts;
 }
 
 VehicleProfileManager::TripAdvice VehicleProfileManager::tripAdvice(bool tripShort, bool returning)

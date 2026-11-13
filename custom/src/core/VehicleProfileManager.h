@@ -413,6 +413,15 @@ public:
         bool landingOnReserve = false;
     };
     static TripAdvice tripAdvice(bool tripShort, bool returning);
+    /// RETURN NOW with hysteresis, so that it does not flicker (and is not
+    /// spoken again and again) while the margin hovers around the reserve.
+    /// @p marginPct: how far the return lands above the reserve, in points of
+    /// the pack's charge (below 0: it no longer fits); NaN when not known.
+    /// On as soon as the margin is below 0; once on (@p wasOn), off only when
+    /// the margin is back to kReturnNowClearPts or more; never while already
+    /// returning or landing; an unknown margin keeps the last state.
+    static constexpr double kReturnNowClearPts = 3.0;
+    static bool returnNowHeld(bool wasOn, double marginPct, bool returning);
     /// The copter's parameters, three ways:
     /// - copterParam: QGroundControl's full parameter list; NaN when absent;
     /// - watchedParam: the bridge's watch list; @p fallback when not read;

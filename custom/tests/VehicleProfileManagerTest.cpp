@@ -38,6 +38,7 @@ private slots:
     void testUsableAhStopsAtTheReserve();
     void testPackSocFromSelectedPackNotFcCapacity();
     void testTakeoffPredictionForAnItem();
+    void testReturnNowHysteresis();
 };
 
 // Default battery config: 6S 1P 5000mAh LiPo 20% reserve
@@ -227,6 +228,42 @@ void VehicleProfileManagerTest::testTakeoffPredictionForAnItem()
     const auto empty = VehicleProfileManager::takeoffPredictionFor(QVariantMap(), 1);
     QCOMPARE(empty.first, -1.0);
     QCOMPARE(empty.second, -1.0);
+}
+
+// RETURN NOW does not flicker: on as soon as the return no longer fits
+// (margin below 0); once on, it stays on until the margin is back to
+// kReturnNowClearPts (3 points of the pack) or more; never while already
+// returning or landing; an update that cannot work out the margin keeps the
+// last state. A margin wobbling around 0, as in a simulated flight where it
+// came on five times, now turns it on once.
+void VehicleProfileManagerTest::testReturnNowHysteresis()
+{
+    auto held = &VehicleProfileManager::returnNowHeld;
+    const double clear = VehicleProfileManager::kReturnNowClearPts;
+    QCOMPARE(clear, 3.0);
+
+    QVERIFY(!held(false, 0.5, false));                  // fits: off
+    QVERIFY(!held(false, 0.0, false));                  // exactly at the reserve: still fits
+    QVERIFY(held(false, -0.1, false));                  // no longer fits: on
+    QVERIFY(held(true, 0.5, false));                    // back above, but not clearly: stays on
+    QVERIFY(held(true, clear - 0.01, false));
+    QVERIFY(!held(true, clear, false));                 // clearly back: off
+    QVERIFY(!held(true, -5.0, true));                   // already returning: off
+    QVERIFY(!held(false, -5.0, true));
+    QVERIFY(held(true, qQNaN(), false));                // margin not known: keeps the last state
+    QVERIFY(!held(false, qQNaN(), false));
+
+    // A wobbling margin, one value per 2 s update.
+    const double wobble[] = {0.8, -0.2, 0.4, -0.1, 1.2, 0.3, -0.3, 2.0, 2.9, 3.4, 1.0};
+    bool on = false;
+    int turnedOn = 0;
+    for (double m : wobble) {
+        const bool next = held(on, m, false);
+        turnedOn += (next && !on) ? 1 : 0;
+        on = next;
+    }
+    QCOMPARE(turnedOn, 1);
+    QVERIFY(!on);                                       // off after 3.4, not back on at 1.0
 }
 
 UT_REGISTER_TEST(VehicleProfileManagerTest)
