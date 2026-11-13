@@ -1348,6 +1348,7 @@ private slots:
     void testMotorTableCountsEveryReading();
     void testMotorTableInTheApp();
     void testTelemetryReadInMetricUnits();
+    void testParameterReaders();
 
 private:
     bool _connectPlane();
@@ -2899,6 +2900,55 @@ void LivePluginBenchTest::testMotorTableCountsEveryReading()
     vpm->setBatterySeriesCells(seriesBefore);
     vpm->setBatteryParallelCells(parallelBefore);
     vpm->setBatteryCellMah(mahBefore);
+}
+
+// The three ways the estimates read the copter's parameters, on the mock
+// copter: a parameter the bridge does not watch comes from QGroundControl's
+// full list (anyParam falls back to it; watchedParam gives the fallback); a
+// watched one comes from the bridge; one the copter does not have is NaN (or
+// the fallback).
+void LivePluginBenchTest::testParameterReaders()
+{
+    QVERIFY2(_connectPlane(), "mock copter did not connect / resolve its UID");
+    VehicleProfileManager *vpm = VehicleProfileManager::instance();
+    auto *bridge = _pluginChild<TelemetryBridge>();
+    QVERIFY(bridge);
+    ParameterManager *pm = _vehicle->parameterManager();
+    for (int i = 0; i < 100 && !(pm->parametersReady() && bridge->parametersReady()); ++i)
+        QTest::qWait(50);
+    QVERIFY(pm->parametersReady() && bridge->parametersReady());
+    const int comp = _vehicle->defaultComponentId();
+
+    // One parameter of each kind, picked from what the mock reports.
+    QString watched, unwatched;
+    for (const QString &name : pm->parameterNames(comp)) {
+        Fact *f = pm->getParameter(comp, name);
+        if (!f || !f->rawValue().canConvert<double>())
+            continue;
+        if (bridge->hasParameter(name)) {
+            if (watched.isEmpty())
+                watched = name;
+        } else if (unwatched.isEmpty() && f->rawValue().toDouble() != -7.0) {
+            unwatched = name;
+        }
+        if (!watched.isEmpty() && !unwatched.isEmpty())
+            break;
+    }
+    QVERIFY2(!watched.isEmpty() && !unwatched.isEmpty(), "the mock has no watched or no unwatched parameter");
+
+    const double full = pm->getParameter(comp, unwatched)->rawValue().toDouble();
+    QCOMPARE(vpm->copterParam(unwatched), full);
+    QCOMPARE(vpm->anyParam(unwatched), full);                       // falls back to the full list
+    QCOMPARE(vpm->watchedParam(unwatched, -7.0), -7.0);             // the bridge has not read it
+
+    const double fromBridge = static_cast<double>(bridge->parameterValue(watched));
+    QCOMPARE(vpm->watchedParam(watched, -7.0), fromBridge);
+    QCOMPARE(vpm->anyParam(watched), fromBridge);
+
+    const QString none = QStringLiteral("NO_SUCH_PARAM_X");
+    QVERIFY(std::isnan(vpm->copterParam(none)));
+    QVERIFY(std::isnan(vpm->anyParam(none)));
+    QCOMPARE(vpm->watchedParam(none, -7.0), -7.0);
 }
 
 // The app shows speed and height in the units picked in its settings (km/h and

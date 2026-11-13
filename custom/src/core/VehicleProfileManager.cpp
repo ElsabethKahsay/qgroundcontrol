@@ -1043,9 +1043,6 @@ QVariantMap VehicleProfileManager::motorTableSetup() const
     out[QStringLiteral("linked")] = table != nullptr;
     if (!table || !m_telemetry)
         return out;
-    auto param = [this](const QString &name, double fallback) {
-        return m_telemetry->hasParameter(name) ? static_cast<double>(m_telemetry->parameterValue(name)) : fallback;
-    };
     out[QStringLiteral("tableName")] = table->name;
 
     // Motors from FRAME_CLASS, else the outputs set to motor functions.
@@ -1058,7 +1055,7 @@ QVariantMap VehicleProfileManager::motorTableSetup() const
 
     // Cells from ArduPilot's voltage compensation (MOT_BAT_VOLT_MAX is set to
     // the full pack, 4.2 V per cell), else the pack entered at preflight.
-    int cells = MotorTable::cellsFromVoltMax(param(QStringLiteral("MOT_BAT_VOLT_MAX"), 0.0));
+    int cells = MotorTable::cellsFromVoltMax(watchedParam(QStringLiteral("MOT_BAT_VOLT_MAX"), 0.0));
     QString cellsSource = cells > 0 ? QStringLiteral("MOT_BAT_VOLT_MAX") : QString();
     if (cells <= 0 && m_batterySeriesCells > 0) {
         cells = m_batterySeriesCells;
@@ -1087,16 +1084,16 @@ QVariantMap VehicleProfileManager::motorTableSetup() const
         thrust = stored.value(QStringLiteral("thrustG")).toDouble();
         source = QStringLiteral("last flight");
     } else {
-        const double learn = param(QStringLiteral("MOT_HOVER_LEARN"), 0.0);
-        const double h = param(QStringLiteral("MOT_THST_HOVER"), -1.0);
+        const double learn = watchedParam(QStringLiteral("MOT_HOVER_LEARN"), 0.0);
+        const double h = watchedParam(QStringLiteral("MOT_THST_HOVER"), -1.0);
         if (learn >= 1.0 && h > 0.0 && std::abs(h - MotorTable::kDefaultThstHover) > 1e-4) {
             MotorTable::HoverParams p;
             p.thstHover = h;
-            p.spinMin = param(QStringLiteral("MOT_SPIN_MIN"), p.spinMin);
-            p.spinMax = param(QStringLiteral("MOT_SPIN_MAX"), p.spinMax);
-            p.expo = param(QStringLiteral("MOT_THST_EXPO"), p.expo);
-            p.battVoltMax = param(QStringLiteral("MOT_BAT_VOLT_MAX"), 0.0);
-            p.battVoltMin = param(QStringLiteral("MOT_BAT_VOLT_MIN"), 0.0);
+            p.spinMin = watchedParam(QStringLiteral("MOT_SPIN_MIN"), p.spinMin);
+            p.spinMax = watchedParam(QStringLiteral("MOT_SPIN_MAX"), p.spinMax);
+            p.expo = watchedParam(QStringLiteral("MOT_THST_EXPO"), p.expo);
+            p.battVoltMax = watchedParam(QStringLiteral("MOT_BAT_VOLT_MAX"), 0.0);
+            p.battVoltMin = watchedParam(QStringLiteral("MOT_BAT_VOLT_MIN"), 0.0);
             const double act = MotorTable::hoverMotorThrottle(p, planV);
             if (act > 0.0) {
                 thrust = MotorTable::thrustAt(*table, act * planV / table->volts).grams
@@ -1250,19 +1247,16 @@ QVariantMap VehicleProfileManager::motorThrottleStatus() const
     QVariantMap out;
     if (!m_telemetry || !m_telemetry->vehicle())
         return out;
-    auto param = [this](const QString &name, double fallback) {
-        return m_telemetry->hasParameter(name) ? static_cast<double>(m_telemetry->parameterValue(name)) : fallback;
-    };
     // Which outputs drive motors (SERVOn_FUNCTION 33–40), and how many motors
     // the frame has (FRAME_CLASS).
     QVector<int> functions;
     for (int n = 1; n <= 16; ++n)
-        functions.append(qRound(param(QStringLiteral("SERVO%1_FUNCTION").arg(n), 0.0)));
+        functions.append(qRound(watchedParam(QStringLiteral("SERVO%1_FUNCTION").arg(n), 0.0)));
     const QVector<int> channels = MotorTable::motorChannels(functions);
-    const int frameClass = qRound(param(QStringLiteral("FRAME_CLASS"), -1.0));
+    const int frameClass = qRound(watchedParam(QStringLiteral("FRAME_CLASS"), -1.0));
     const int expected = frameClass > 0 ? std::max(0, HardwareTestController::motorCountFromFrameClass(frameClass)) : 0;
-    const MotorTable::EscRange range = MotorTable::escRange(param(QStringLiteral("MOT_PWM_MIN"), 0.0),
-                                                            param(QStringLiteral("MOT_PWM_MAX"), 0.0));
+    const MotorTable::EscRange range = MotorTable::escRange(watchedParam(QStringLiteral("MOT_PWM_MIN"), 0.0),
+                                                            watchedParam(QStringLiteral("MOT_PWM_MAX"), 0.0));
     QVector<int> outputs;
     for (const QVariant &o : m_telemetry->motorOutputs())
         outputs.append(o.toInt());
@@ -1472,16 +1466,12 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
             const QVariant overall = v->throttlePct()->rawValue();
             if (overall.isValid()) {
                 MotorTable::HoverParams p;
-                auto param = [this](const QString &name, double fallback) {
-                    return m_telemetry->hasParameter(name) ? static_cast<double>(m_telemetry->parameterValue(name))
-                                                           : fallback;
-                };
                 p.thstHover = std::max(0.001, overall.toDouble() / 100.0);
-                p.spinMin = param(QStringLiteral("MOT_SPIN_MIN"), p.spinMin);
-                p.spinMax = param(QStringLiteral("MOT_SPIN_MAX"), p.spinMax);
-                p.expo = param(QStringLiteral("MOT_THST_EXPO"), p.expo);
-                p.battVoltMax = param(QStringLiteral("MOT_BAT_VOLT_MAX"), 0.0);
-                p.battVoltMin = param(QStringLiteral("MOT_BAT_VOLT_MIN"), 0.0);
+                p.spinMin = watchedParam(QStringLiteral("MOT_SPIN_MIN"), p.spinMin);
+                p.spinMax = watchedParam(QStringLiteral("MOT_SPIN_MAX"), p.spinMax);
+                p.expo = watchedParam(QStringLiteral("MOT_THST_EXPO"), p.expo);
+                p.battVoltMax = watchedParam(QStringLiteral("MOT_BAT_VOLT_MAX"), 0.0);
+                p.battVoltMin = watchedParam(QStringLiteral("MOT_BAT_VOLT_MIN"), 0.0);
                 const int n = mt.value(QStringLiteral("motorsExpected")).toInt() > 0
                                   ? mt.value(QStringLiteral("motorsExpected")).toInt() : table->motors;
                 thr = QVector<double>(n, MotorTable::hoverMotorThrottle(p, packV));
@@ -1705,8 +1695,9 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         out[QStringLiteral("payloadAboard")] = in.payloadAboard;
         out[QStringLiteral("payloadAboardKg")] = in.payloadAboard ? in.payloadKg : 0.0;
         out[QStringLiteral("payloadsReleased")] = m_drop.released();
-        out[QStringLiteral("payloadCount")] = dropConfig().payloads;
-        out[QStringLiteral("dropOutputSet")] = dropConfig().isSet();
+        const PayloadRelease::Config drop = dropConfig();
+        out[QStringLiteral("payloadCount")] = drop.payloads;
+        out[QStringLiteral("dropOutputSet")] = drop.isSet();
         out[QStringLiteral("startSocPct")] = in.startSocPct;
         out[QStringLiteral("source")] = QStringLiteral("motor table");
         out[QStringLiteral("typeName")] = table->name;
@@ -2361,6 +2352,18 @@ double VehicleProfileManager::copterParam(const QString &name) const
     return f ? f->rawValue().toDouble() : qQNaN();
 }
 
+double VehicleProfileManager::watchedParam(const QString &name, double fallback) const
+{
+    return m_telemetry && m_telemetry->hasParameter(name) ? static_cast<double>(m_telemetry->parameterValue(name))
+                                                          : fallback;
+}
+
+double VehicleProfileManager::anyParam(const QString &name) const
+{
+    return m_telemetry && m_telemetry->hasParameter(name) ? static_cast<double>(m_telemetry->parameterValue(name))
+                                                          : copterParam(name);
+}
+
 PayloadRelease::Config VehicleProfileManager::dropConfig() const
 {
     PayloadRelease::Config c;
@@ -2374,9 +2377,14 @@ PayloadRelease::Config VehicleProfileManager::dropConfig() const
     // "Released" is past the middle of the output's range on the copter, the
     // same value the settings page shows.
     if (c.output > 0)
-        c.thresholdUs = servoOutputInfo(c.output).value(QStringLiteral("thresholdUs"),
-                                                        PayloadRelease::kDefaultMidUs).toDouble();
+        c.thresholdUs = releaseThresholdUs(c.output);
     return c;
+}
+
+double VehicleProfileManager::releaseThresholdUs(int output) const
+{
+    return PayloadRelease::threshold(copterParam(QStringLiteral("SERVO%1_MIN").arg(output)),
+                                     copterParam(QStringLiteral("SERVO%1_MAX").arg(output)));
 }
 
 QVariantMap VehicleProfileManager::servoOutputInfo(int output) const
@@ -2389,7 +2397,7 @@ QVariantMap VehicleProfileManager::servoOutputInfo(int output) const
     }
     const double lo = copterParam(QStringLiteral("SERVO%1_MIN").arg(output));
     const double hi = copterParam(QStringLiteral("SERVO%1_MAX").arg(output));
-    const double mid = PayloadRelease::threshold(lo, hi);
+    const double mid = releaseThresholdUs(output);
     m[QStringLiteral("thresholdUs")] = mid;
     const bool onWhenLow = PreflightSettingsManager::instance() && PreflightSettingsManager::instance()->payloadDropOnWhenLow();
     const QString side = onWhenLow ? QStringLiteral("below") : QStringLiteral("above");
@@ -2658,12 +2666,8 @@ QVariantMap VehicleProfileManager::missionEstimateFrom(const LiveStart *live)
     in.dragK = m_windK > 0.0 ? m_windK
                              : QSettings().value(QStringLiteral("WindFromLean/k/%1").arg(m_currentDeviceUid), 0.0).toDouble();
     in.currentLimitA = table->packCRating * capacityAh();
-    auto param = [this](const char *name) {
-        return m_telemetry->hasParameter(QLatin1String(name)) ? double(m_telemetry->parameterValue(QLatin1String(name)))
-                                                              : copterParam(QLatin1String(name));
-    };
-    in.battLowV = param("BATT_LOW_VOLT");
-    in.battCrtV = param("BATT_CRT_VOLT");
+    in.battLowV = anyParam(QStringLiteral("BATT_LOW_VOLT"));
+    in.battCrtV = anyParam(QStringLiteral("BATT_CRT_VOLT"));
 
     // Where the payload comes off: the mission's own release commands on the
     // release output (or a gripper release), in order, one payload each;
@@ -2758,8 +2762,8 @@ QVariantMap VehicleProfileManager::missionEstimateFrom(const LiveStart *live)
     lim.reservePct = in.reserveSocPct;
     lim.battLowV = in.battLowV;
     lim.battCrtV = in.battCrtV;
-    lim.battLowAction = int(param("BATT_FS_LOW_ACT"));
-    lim.battCrtAction = int(param("BATT_FS_CRT_ACT"));
+    lim.battLowAction = int(anyParam(QStringLiteral("BATT_FS_LOW_ACT")));
+    lim.battCrtAction = int(anyParam(QStringLiteral("BATT_FS_CRT_ACT")));
     if (PreflightSettingsManager::instance())
         lim.gustLimitMs = PreflightSettingsManager::instance()->windThresholdGust();
     const MissionAssess::Assessment a = MissionAssess::assess(w, cost, ctx.hasDrops ? &returned : nullptr, lim, ctx);

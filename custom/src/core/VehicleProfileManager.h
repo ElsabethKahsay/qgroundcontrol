@@ -413,6 +413,13 @@ public:
         bool landingOnReserve = false;
     };
     static TripAdvice tripAdvice(bool tripShort, bool returning);
+    /// The copter's parameters, three ways:
+    /// - copterParam: QGroundControl's full parameter list; NaN when absent;
+    /// - watchedParam: the bridge's watch list; @p fallback when not read;
+    /// - anyParam: the watch list, else the full list; NaN when neither has it.
+    double copterParam(const QString &name) const;
+    double watchedParam(const QString &name, double fallback) const;
+    double anyParam(const QString &name) const;
     /// Raises missionAlert() for what changed from the last in-flight
     /// estimate to @p next (the live update calls it every 2 s before keeping
     /// @p next): the result worse, RETURN NOW on, old weather once a flight.
@@ -594,7 +601,10 @@ private:
     /// so far. False when no wind can be given yet.
     bool _windFromLean(double *windN, double *windE);
     PayloadRelease::Config dropConfig() const;
-    double copterParam(const QString &name) const;
+    /// The release threshold for servo output @p output: the middle of its
+    /// SERVOn_MIN / SERVOn_MAX on the copter (PayloadRelease::threshold).
+    double releaseThresholdUs(int output) const;
+
     void _onOutputsForDrop();
     void _recordDrop(const QString &eventType, const QString &detail);
     /// The GCS's own count of the charge used this flight (copters whose FC
