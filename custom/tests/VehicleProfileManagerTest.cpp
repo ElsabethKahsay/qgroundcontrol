@@ -40,6 +40,7 @@ private slots:
     void testTakeoffPredictionForAnItem();
     void testReturnNowHysteresis();
     void testCruiseMeasuredAgainstAMeasuredHover();
+    void testFcCurrentJudgedInFlight();
 };
 
 // Default battery config: 6S 1P 5000mAh LiPo 20% reserve
@@ -289,6 +290,53 @@ void VehicleProfileManagerTest::testCruiseMeasuredAgainstAMeasuredHover()
     QCOMPARE(ref(0.0, 0, 2500.0, param), -1.0);
     QCOMPARE(ref(0.0, 0, -1.0, QString()), -1.0);
     QCOMPARE(ref(0.0, 0, 0.0, last), -1.0);              // a remembered hover of nothing is no hover
+}
+
+// Whether the flight controller's current is measured, judged in flight (a
+// DroneCAN monitor on the 22-inch copter reported 0.01 A while it hovered on
+// about 50 A): airborne with the table at 10 A or more, a reading under 2 A
+// and 10 % of the table for 10 s in a row means it is not measuring; half
+// the table or more for 10 s means it is again. On the ground, at low
+// current, or with no reading nothing is decided, and the run starts again.
+void VehicleProfileManagerTest::testFcCurrentJudgedInFlight()
+{
+    using VPM = VehicleProfileManager;
+    auto run = [](VPM::FcCurrentCheck s, int steps, bool airborne, double tableA, double fcA) {
+        for (int i = 0; i < steps; ++i)
+            s = VPM::fcCurrentCheck(s, airborne, tableA, fcA, 2.0);
+        return s;
+    };
+    const VPM::FcCurrentCheck fresh;
+
+    // 0.01 A against 50 A, airborne: not measuring after 10 s, not before.
+    QVERIFY(!run(fresh, 4, true, 50.0, 0.01).dead);              // 8 s
+    QVERIFY(run(fresh, 5, true, 50.0, 0.01).dead);               // 10 s
+    // On the ground, below 10 A on the table, or no reading: no decision.
+    QVERIFY(!run(fresh, 20, false, 50.0, 0.01).dead);
+    QVERIFY(!run(fresh, 20, true, 9.0, 0.01).dead);
+    QVERIFY(!run(fresh, 20, true, 50.0, qQNaN()).dead);
+    QVERIFY(!run(fresh, 20, true, 50.0, -1.0).dead);
+    // A working sensor (close to the table) stays trusted.
+    QVERIFY(!run(fresh, 20, true, 50.0, 47.0).dead);
+    // 10 % of the table is the line at high current: 5.5 A of 60 A is under it.
+    QVERIFY(run(fresh, 5, true, 60.0, 5.5).dead);
+    QVERIFY(!run(fresh, 20, true, 60.0, 6.5).dead);              // between 10 % and 50 %: no decision
+    // The 10 s must be in a row: a moment on the ground starts it again.
+    VPM::FcCurrentCheck s = run(fresh, 4, true, 50.0, 0.01);
+    s = VPM::fcCurrentCheck(s, false, 50.0, 0.01, 2.0);
+    QVERIFY(!run(s, 4, true, 50.0, 0.01).dead);
+    QVERIFY(run(s, 5, true, 50.0, 0.01).dead);
+    // Found not measuring, then measuring again (a sensor fixed): trusted
+    // again after 10 s at half the table or more, not before.
+    VPM::FcCurrentCheck dead = run(fresh, 5, true, 50.0, 0.01);
+    QVERIFY(run(dead, 4, true, 50.0, 30.0).dead);
+    QVERIFY(!run(dead, 5, true, 50.0, 30.0).dead);
+    // Remembered (dead from the start) and flown on the ground only: stays.
+    VPM::FcCurrentCheck remembered;
+    remembered.dead = true;
+    QVERIFY(run(remembered, 20, false, 50.0, 30.0).dead);
+    // No time passed: nothing counted.
+    QVERIFY(!VPM::fcCurrentCheck(fresh, true, 50.0, 0.01, 0.0).dead);
 }
 
 UT_REGISTER_TEST(VehicleProfileManagerTest)

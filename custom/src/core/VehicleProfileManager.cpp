@@ -305,6 +305,8 @@ void VehicleProfileManager::onConnectionChanged()
         m_livePayloadAboard = false;
         m_liveSeenDisarmed = false;
         m_terrainLegs.clear();   // another copter's mission; the profiles (by place) stay
+        m_fcCurrent = FcCurrentCheck();
+        m_fcCheckLastMs = 0;
         m_gcsCounting = false;
         m_gcsCountKnown = false;
         m_gcsUsedAh = 0.0;
@@ -402,6 +404,9 @@ void VehicleProfileManager::onConnectionChanged()
 
     m_motorTableId = DatabaseManager::instance().vehicleMotorTableId(m_currentDeviceUid);
     m_motorTableWaivedBy = QSettings().value(QStringLiteral("MotorTable/waivedBy/%1").arg(m_currentDeviceUid)).toString();
+    m_fcCurrent = FcCurrentCheck();
+    m_fcCurrent.dead = QSettings().value(QStringLiteral("MotorTable/fcCurrentDead/%1").arg(m_currentDeviceUid), false).toBool();
+    m_fcCheckLastMs = 0;
     m_packOhm = QSettings().value(QStringLiteral("MotorTable/packOhm/%1").arg(m_currentDeviceUid), -1.0).toDouble();
     emit motorTableChanged();
 
@@ -927,7 +932,13 @@ void VehicleProfileManager::_updateLiveEstimate()
         m_liveTimeMins = timeMin;
         emit liveDataChanged();
     }
-    _updateMissionLive(soc);
+    // The in-flight mission estimate starts from the battery estimate's
+    // charge (its own count from the arm, the same figure the Fly view shows)
+    // when it has one; the flight controller's otherwise, which is no use
+    // when its current is not measured.
+    const double estSoc = m_powerLive.value(QStringLiteral("active")).toBool()
+                              ? m_powerLive.value(QStringLiteral("socNowPct"), -1.0).toDouble() : -1.0;
+    _updateMissionLive(estSoc >= 0.0 ? qRound(estSoc) : soc);
     _updatePowerLive(mahUsed, m_telemetry->batterySocPct());
 }
 
@@ -1210,6 +1221,11 @@ QVariantMap VehicleProfileManager::motorTableSetup() const
         issues.append(m);
         off = off || i.level == QLatin1String("off");
     }
+    if (m_fcCurrent.dead) {
+        issues.append(QVariantMap{{QStringLiteral("level"), QStringLiteral("warn")},
+                                  {QStringLiteral("text"), QStringLiteral("The flight controller's current reads about 0 A "
+                                                                          "in flight: the GCS counts the charge itself")}});
+    }
     out[QStringLiteral("issues")] = issues;
     out[QStringLiteral("off")] = off;
     return out;
@@ -1383,7 +1399,10 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
                 rec.predLandLikely = m_takeoffEstimate.value(QStringLiteral("landLikelyPct")).toDouble();
                 rec.predLandPess = m_takeoffEstimate.value(QStringLiteral("landPessimisticPct")).toDouble();
                 rec.realTotalS = (nowMs - m_flightStartMs) / 1000.0;
-                rec.realLandSoc = m_liveSOC >= 0 ? double(m_liveSOC) : -1.0;
+                // The battery estimate's charge (its own count from the
+                // arm), else the flight controller's.
+                const double estSoc = m_powerLive.value(QStringLiteral("socNowPct"), -1.0).toDouble();
+                rec.realLandSoc = estSoc >= 0.0 ? estSoc : m_liveSOC >= 0 ? double(m_liveSOC) : -1.0;
                 for (const QVariant &wv : m_takeoffEstimate.value(QStringLiteral("waypoints")).toList()) {
                     const QVariantMap wp = wv.toMap();
                     MissionRecord::Item it;
@@ -1484,14 +1503,31 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         const MotorTable::BatteryCurrent now = thr.isEmpty() ? MotorTable::BatteryCurrent{}
                                                              : MotorTable::batteryCurrent(*table, thr, packV, sigma);
         const bool haveNow = armed && !thr.isEmpty();
-        // A current sensor (BATT_MONITOR other than 0, 3 or 25) is
-        // measured and wins; the table is the count otherwise.
-        const bool gcsCount = monitor == -1 || monitor == 0 || monitor == 3 || monitor == 25;
+        // Whether the flight controller's current is measured, judged in
+        // flight against the table (fcCurrentCheck): a monitor type with a
+        // current sensor can still report 0 A.
+        {
+            const double altNow = m_telemetry->altitudeRelative();
+            const bool airborneNow = haveNow && std::isfinite(altNow) && altNow > PowerTypeModel::kAirborneAltM;
+            const double dtS = m_fcCheckLastMs > 0 ? (nowMs - m_fcCheckLastMs) / 1000.0 : 0.0;
+            m_fcCheckLastMs = nowMs;
+            const FcCurrentCheck next = fcCurrentCheck(m_fcCurrent, airborneNow, haveNow ? now.amps : 0.0,
+                                                       m_telemetry->batteryCurrentAmps(), dtS);
+            const bool changed = next.dead != m_fcCurrent.dead;
+            m_fcCurrent = next;
+            if (changed)
+                setFcCurrentDead(next.dead);
+        }
+        // A current sensor (BATT_MONITOR other than 0, 3 or 25) that is
+        // measuring wins; the table is the count otherwise.
+        const bool gcsCount = monitor == -1 || monitor == 0 || monitor == 3 || monitor == 25 || m_fcCurrent.dead;
         // Motor-output readings are counted as they arrive (_onMotorOutputs);
         // only from the overall throttle does this update count the charge.
+        // Counted whatever the source in use, so that the GCS's own count is
+        // whole from the arm when a sensor is found not to measure in flight.
         m_lastSigma = sigma;
         const bool readingsCounted = fromOutputs && m_readings > 0;
-        if (gcsCount && m_gcsCounting && m_gcsLastMs > 0 && haveNow && !readingsCounted)
+        if (m_gcsCounting && m_gcsLastMs > 0 && haveNow && !readingsCounted)
             m_gcsUsedAh += now.amps * (nowMs - m_gcsLastMs) / 1000.0 / 3600.0;
         m_gcsLastMs = nowMs;
         // Steady hover without payload, from the motor outputs, airborne,
@@ -3179,6 +3215,43 @@ void VehicleProfileManager::setTerrainProfile(const QString &key, const TerrainC
     m_terrainProfiles.insert(key, profile);
     m_terrainFailedMs.remove(key);
     emit terrainChanged();
+}
+
+VehicleProfileManager::FcCurrentCheck VehicleProfileManager::fcCurrentCheck(FcCurrentCheck s, bool airborne,
+                                                                           double tableA, double fcA, double dtS)
+{
+    if (!airborne || !(tableA >= kFcCurrentMinTableA) || !std::isfinite(fcA) || fcA < 0.0 || !(dtS > 0.0)) {
+        s.deadS = s.aliveS = 0.0;   // no evidence: the run starts again
+        return s;
+    }
+    if (fcA < std::max(kFcCurrentDeadA, kFcCurrentDeadFraction * tableA)) {
+        s.aliveS = 0.0;
+        s.deadS += dtS;
+        if (s.deadS >= kFcCurrentWindowS)
+            s.dead = true;
+    } else if (fcA >= kFcCurrentAliveFraction * tableA) {
+        s.deadS = 0.0;
+        s.aliveS += dtS;
+        if (s.aliveS >= kFcCurrentWindowS)
+            s.dead = false;
+    } else {
+        s.deadS = s.aliveS = 0.0;
+    }
+    return s;
+}
+
+void VehicleProfileManager::setFcCurrentDead(bool dead)
+{
+    if (!m_currentDeviceUid.isEmpty()) {
+        const QString key = QStringLiteral("MotorTable/fcCurrentDead/%1").arg(m_currentDeviceUid);
+        if (dead)
+            QSettings().setValue(key, true);
+        else
+            QSettings().remove(key);
+    }
+    qInfo().noquote() << (dead ? QStringLiteral("VehicleProfileManager: the flight controller's current reads about 0 A in "
+                                                "flight: the GCS counts the charge itself")
+                               : QStringLiteral("VehicleProfileManager: the flight controller's current is measured again"));
 }
 
 bool VehicleProfileManager::returnNowHeld(bool wasOn, double marginPct, bool returning)

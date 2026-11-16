@@ -434,6 +434,30 @@ public:
     static double cruiseReferenceThrustG(double flightSum, int flightSamples, double setupThrustG,
                                          const QString &setupSource);
 
+    /// Whether the flight controller's current is measured, from what it
+    /// reads in flight rather than from its monitor type (a DroneCAN monitor,
+    /// BATT_MONITOR 8, can report the voltage and 0 A). While airborne with the
+    /// motor table at kFcCurrentMinTableA or more: below kFcCurrentDeadA and
+    /// kFcCurrentDeadFraction of the table for kFcCurrentWindowS in a row, it
+    /// is not measuring (the GCS counts the charge itself); at
+    /// kFcCurrentAliveFraction of the table or more for as long, it is again.
+    /// In between, or without that evidence, nothing changes and the run of
+    /// seconds starts again.
+    struct FcCurrentCheck {
+        bool dead = false;
+        double deadS = 0.0;
+        double aliveS = 0.0;
+    };
+    static constexpr double kFcCurrentMinTableA = 10.0;
+    static constexpr double kFcCurrentDeadA = 2.0;
+    static constexpr double kFcCurrentDeadFraction = 0.10;
+    static constexpr double kFcCurrentAliveFraction = 0.50;
+    static constexpr double kFcCurrentWindowS = 10.0;
+    static FcCurrentCheck fcCurrentCheck(FcCurrentCheck s, bool airborne, double tableA, double fcA, double dtS);
+    /// The connected copter's flight controller current found not to be
+    /// measured (remembered per copter).
+    bool fcCurrentDead() const { return m_fcCurrent.dead; }
+
     // ── Terrain along the mission (TerrainClearance.h) ──
     /// The mission's legs as last worked out before take-off (the mission
     /// estimate keeps them; in flight the legs not yet flown are checked).
@@ -624,6 +648,11 @@ private:
     QSet<QString> m_terrainPending;
     QHash<QString, qint64> m_terrainFailedMs;
     bool m_terrainQueriesEnabled = true;
+    // The flight controller's current, judged from what it reads in flight
+    // (fcCurrentCheck); remembered per copter in QSettings.
+    FcCurrentCheck m_fcCurrent;
+    qint64 m_fcCheckLastMs = 0;
+    void setFcCurrentDead(bool dead);
     static constexpr qint64 kTerrainRetryMs = 60000;
     void requestTerrain(const QVector<TerrainClearance::Leg> &legs);
     bool m_alertedOldWeather = false;

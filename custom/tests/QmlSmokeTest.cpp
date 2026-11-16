@@ -2376,6 +2376,13 @@ void LivePluginBenchTest::testMotorTableLiveEstimate()
     for (int i = 0; i < 100 && (!bridge->parametersReady() || vpm->kind() != VehicleKind::Multirotor); ++i)
         QTest::qWait(50);
     const MotorTable::Table &table = MotorTable::m6215_320kv_22x78_6s();
+    // The test settings persist between runs: no "current not measured"
+    // left for this copter by a run that stopped half-way, now or after.
+    const QString deadKey = QStringLiteral("MotorTable/fcCurrentDead/%1").arg(vpm->currentDeviceUid());
+    QSettings().remove(deadKey);
+    QVERIFY(QMetaObject::invokeMethod(vpm, "onConnectionChanged"));
+    QVERIFY(!vpm->fcCurrentDead());
+    const auto clearDead = qScopeGuard([deadKey]() { QSettings().remove(deadKey); });
     QVERIFY(!vpm->linkCurrentVehicleMotorTable(QStringLiteral("no-such-table")));
     QVERIFY(vpm->linkCurrentVehicleMotorTable(table.id));
     QCOMPARE(vpm->motorTableId(), table.id);
@@ -2498,6 +2505,24 @@ void LivePluginBenchTest::testMotorTableLiveEstimate()
     monitor->setRawValue(4);
     for (int i = 0; i < 100 && qRound(bridge->parameterValue(QStringLiteral("BATT_MONITOR"), -1.0f)) != 4; ++i)
         QTest::qWait(50);
+    QTest::qWait(2500);
+    QCOMPARE(live().value(QStringLiteral("chargeSource")).toString(), QStringLiteral("fc"));
+
+    // The same monitor type, but this copter's current was found not to be
+    // measured in flight (kept per copter, read on connecting): the GCS's own
+    // count, and the table's setup says why. Cleared: the sensor again.
+    QSettings().setValue(deadKey, true);
+    QVERIFY(QMetaObject::invokeMethod(vpm, "onConnectionChanged"));
+    QVERIFY(vpm->fcCurrentDead());
+    QTest::qWait(2500);
+    QCOMPARE(live().value(QStringLiteral("chargeSource")).toString(), QStringLiteral("gcs"));
+    bool said = false;
+    for (const QVariant &i : vpm->motorTableSetup().value(QStringLiteral("issues")).toList())
+        said = said || i.toMap().value(QStringLiteral("text")).toString().contains(QStringLiteral("reads about 0 A"));
+    QVERIFY2(said, "the table's setup does not say the current is not measured");
+    QSettings().remove(deadKey);
+    QVERIFY(QMetaObject::invokeMethod(vpm, "onConnectionChanged"));
+    QVERIFY(!vpm->fcCurrentDead());
     QTest::qWait(2500);
     QCOMPARE(live().value(QStringLiteral("chargeSource")).toString(), QStringLiteral("fc"));
 
