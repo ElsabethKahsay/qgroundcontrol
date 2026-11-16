@@ -653,9 +653,15 @@ private:
     FcCurrentCheck m_fcCurrent;
     qint64 m_fcCheckLastMs = 0;
     void setFcCurrentDead(bool dead);
-    static constexpr qint64 kTerrainRetryMs = 60000;
+    // A first answer is often "no data yet": QGroundControl's terrain query
+    // answers from its tile cache at once and only starts downloading the
+    // tiles then, which takes a few seconds. Asked again soon, so that the
+    // check is done before the pilot arms (a cached tile is answered at once).
+    static constexpr qint64 kTerrainRetryMs = 5000;
     QString m_terrainLogged;            ///< the last terrain summary logged before take-off
-    void requestTerrain(const QVector<TerrainClearance::Leg> &legs);
+    void requestTerrain(QVector<TerrainClearance::Leg> legs);
+    /// Keeps a profile unless one is kept already; true when it was kept.
+    bool keepTerrainProfile(const QString &key, const TerrainClearance::Profile &profile);
     bool m_alertedOldWeather = false;
     // The wind from the lean (WindFromLean.h): this flight's steady samples,
     // the copter's drag constant (saved per copter, learned on flights that

@@ -3193,7 +3193,12 @@ double VehicleProfileManager::cruiseReferenceThrustG(double flightSum, int fligh
 // The terrain under each leg not yet known, asked for once at a time per leg
 // (again after kTerrainRetryMs when it could not be had). The answer is kept
 // by the leg's key; the mission estimate reads it on its next update.
-void VehicleProfileManager::requestTerrain(const QVector<TerrainClearance::Leg> &legs)
+//
+// The query can answer at once, inside requestData() (a tile it has cached).
+// So the legs are a copy (the estimate that asked may run again and replace
+// m_terrainLegs), and terrainChanged() is sent from the event loop, never from
+// inside here: the estimate is not re-run in the middle of this loop.
+void VehicleProfileManager::requestTerrain(QVector<TerrainClearance::Leg> legs)
 {
     if (!m_terrainQueriesEnabled)
         return;
@@ -3209,7 +3214,7 @@ void VehicleProfileManager::requestTerrain(const QVector<TerrainClearance::Leg> 
         ++asked;
         auto *q = new TerrainPathQuery(true /* deletes itself after answering */);
         connect(q, &TerrainPathQuery::terrainDataReceived, this,
-                [this, key](bool success, const TerrainPathQuery::PathHeightInfo_t &info) {
+                [this, key, leg = l](bool success, const TerrainPathQuery::PathHeightInfo_t &info) {
                     m_terrainPending.remove(key);
                     TerrainClearance::Profile p;
                     p.ok = success && !info.heights.isEmpty();
@@ -3217,13 +3222,22 @@ void VehicleProfileManager::requestTerrain(const QVector<TerrainClearance::Leg> 
                     p.finalSpacingM = info.finalDistanceBetween;
                     p.heights = QVector<double>(info.heights.cbegin(), info.heights.cend());
                     if (p.ok) {
-                        setTerrainProfile(key, p);
+                        keepTerrainProfile(key, p);
                     } else {
                         m_terrainFailedMs.insert(key, QDateTime::currentMSecsSinceEpoch());
                         qInfo().noquote() << QStringLiteral("VehicleProfileManager: terrain under a mission leg could not "
                                                             "be had (asked again in %1 s)").arg(kTerrainRetryMs / 1000);
-                        emit terrainChanged();
+                        // Asked again by itself, not only when the estimate
+                        // next runs; only while the leg is still the mission's.
+                        QTimer::singleShot(kTerrainRetryMs + 100, this, [this, leg]() {
+                            for (const TerrainClearance::Leg &cur : m_terrainLegs)
+                                if (cur.key() == leg.key()) {
+                                    requestTerrain({leg});
+                                    return;
+                                }
+                        });
                     }
+                    QMetaObject::invokeMethod(this, [this]() { emit terrainChanged(); }, Qt::QueuedConnection);
                 });
         q->requestData(QGeoCoordinate(l.fromLat, l.fromLon), QGeoCoordinate(l.toLat, l.toLon));
     }
@@ -3231,13 +3245,19 @@ void VehicleProfileManager::requestTerrain(const QVector<TerrainClearance::Leg> 
         qInfo().noquote() << QStringLiteral("VehicleProfileManager: asking for the terrain under %1 mission leg(s)").arg(asked);
 }
 
-void VehicleProfileManager::setTerrainProfile(const QString &key, const TerrainClearance::Profile &profile)
+bool VehicleProfileManager::keepTerrainProfile(const QString &key, const TerrainClearance::Profile &profile)
 {
     if (m_terrainProfiles.value(key).ok)
-        return;   // kept: a later answer does not replace it
+        return false;   // kept: a later answer does not replace it
     m_terrainProfiles.insert(key, profile);
     m_terrainFailedMs.remove(key);
-    emit terrainChanged();
+    return true;
+}
+
+void VehicleProfileManager::setTerrainProfile(const QString &key, const TerrainClearance::Profile &profile)
+{
+    if (keepTerrainProfile(key, profile))
+        emit terrainChanged();
 }
 
 VehicleProfileManager::FcCurrentCheck VehicleProfileManager::fcCurrentCheck(FcCurrentCheck s, bool airborne,
