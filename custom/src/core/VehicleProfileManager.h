@@ -654,6 +654,7 @@ private:
     qint64 m_fcCheckLastMs = 0;
     void setFcCurrentDead(bool dead);
     static constexpr qint64 kTerrainRetryMs = 60000;
+    QString m_terrainLogged;            ///< the last terrain summary logged before take-off
     void requestTerrain(const QVector<TerrainClearance::Leg> &legs);
     bool m_alertedOldWeather = false;
     // The wind from the lean (WindFromLean.h): this flight's steady samples,

@@ -2877,6 +2877,23 @@ QVariantMap VehicleProfileManager::missionEstimateFrom(const LiveStart *live)
                                    : QStringLiteral("Terrain along the mission not checked: no terrain data (%1 of %2 legs)")
                                          .arg(tc.legsKnown).arg(tc.legs));
     }
+    // Before take-off, what the terrain check stands at is logged each time
+    // it changes (the estimate is made every few seconds; the log says once).
+    if (!live && w.ok) {
+        QString summary = QStringLiteral("terrain along the mission: %1 of %2 legs").arg(tc.legsKnown).arg(tc.legs);
+        if (!tc.homeKnown)
+            summary += QStringLiteral(", home's ground not known: not checked");
+        else if (std::isfinite(tc.lowestM))
+            summary += QStringLiteral(", lowest %1 m above the ground").arg(tc.lowestM, 0, 'f', 0);
+        if (!tc.lows.isEmpty()) {
+            const TerrainClearance::Low &low = tc.lows.first();
+            summary += low.seq >= 0 ? QStringLiteral(" (item %1)").arg(low.seq) : QStringLiteral(" (the return home)");
+        }
+        if (summary != m_terrainLogged) {
+            m_terrainLogged = summary;
+            qInfo().noquote() << QStringLiteral("VehicleProfileManager: ") + summary;
+        }
+    }
     out[QStringLiteral("terrainRed")] = !tc.lows.isEmpty();
     out[QStringLiteral("terrainChecked")] = tc.complete();
     out[QStringLiteral("terrainLowestM")] = tc.lowestM;
@@ -3181,6 +3198,7 @@ void VehicleProfileManager::requestTerrain(const QVector<TerrainClearance::Leg> 
     if (!m_terrainQueriesEnabled)
         return;
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    int asked = 0;
     for (const TerrainClearance::Leg &l : legs) {
         const QString key = l.key();
         if (m_terrainProfiles.value(key).ok || m_terrainPending.contains(key))
@@ -3188,6 +3206,7 @@ void VehicleProfileManager::requestTerrain(const QVector<TerrainClearance::Leg> 
         if (m_terrainFailedMs.contains(key) && now - m_terrainFailedMs.value(key) < kTerrainRetryMs)
             continue;
         m_terrainPending.insert(key);
+        ++asked;
         auto *q = new TerrainPathQuery(true /* deletes itself after answering */);
         connect(q, &TerrainPathQuery::terrainDataReceived, this,
                 [this, key](bool success, const TerrainPathQuery::PathHeightInfo_t &info) {
@@ -3201,11 +3220,15 @@ void VehicleProfileManager::requestTerrain(const QVector<TerrainClearance::Leg> 
                         setTerrainProfile(key, p);
                     } else {
                         m_terrainFailedMs.insert(key, QDateTime::currentMSecsSinceEpoch());
+                        qInfo().noquote() << QStringLiteral("VehicleProfileManager: terrain under a mission leg could not "
+                                                            "be had (asked again in %1 s)").arg(kTerrainRetryMs / 1000);
                         emit terrainChanged();
                     }
                 });
         q->requestData(QGeoCoordinate(l.fromLat, l.fromLon), QGeoCoordinate(l.toLat, l.toLon));
     }
+    if (asked > 0)
+        qInfo().noquote() << QStringLiteral("VehicleProfileManager: asking for the terrain under %1 mission leg(s)").arg(asked);
 }
 
 void VehicleProfileManager::setTerrainProfile(const QString &key, const TerrainClearance::Profile &profile)
