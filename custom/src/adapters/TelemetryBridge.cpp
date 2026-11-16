@@ -119,6 +119,23 @@ TelemetryBridge::TelemetryBridge(QObject* parent) : QObject(parent) {
     // Fire the polling timer every 200ms to pick up values that aren't pushed via signals.
     _updateTimer.setInterval(kTelemetryUpdateMs);
     connect(&_updateTimer, &QTimer::timeout, this, &TelemetryBridge::_onTelemetryUpdate);
+    _homeAskTimer.setInterval(kHomeAskMs);
+    connect(&_homeAskTimer, &QTimer::timeout, this, &TelemetryBridge::_askForHome);
+}
+
+void TelemetryBridge::_askForHome()
+{
+    const bool known = qAbs(_homeLatitude) > 1e-6 || qAbs(_homeLongitude) > 1e-6;
+    if (!_vehicle || known) {
+        _homeAskTimer.stop();
+        return;
+    }
+    if (!_homeAsked)
+        qInfo().noquote() << QStringLiteral("TelemetryBridge: no home position yet: asking the vehicle for it every %1 s")
+                                 .arg(kHomeAskMs / 1000);
+    _homeAsked = true;
+    _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_REQUEST_MESSAGE, false /* showError */,
+                             static_cast<float>(MAVLINK_MSG_ID_HOME_POSITION));
 }
 
 void TelemetryBridge::stampStream(TelemetryStream stream) {
@@ -218,6 +235,15 @@ void TelemetryBridge::setVehicle(Vehicle* vehicle) {
     // Skipped in unit tests; ArmSendTest installs its own interceptor directly.
     _installArmInterceptor();
 
+    // Home is per vehicle: the previous one's is not this one's. Asked for
+    // until it arrives (_askForHome).
+    const bool hadHome = qAbs(_homeLatitude) > 1e-6 || qAbs(_homeLongitude) > 1e-6;
+    _homeLatitude = _homeLongitude = _homeAltitude = 0.0;
+    _homeAsked = false;
+    _homeAskSinceMs = MonotonicClock::nowMs();
+    if (hadHome)
+        emit homePositionChanged();
+
     // Battery data is per-vehicle; reset SOC / EMA / freshness when switching.
     _batterySocPct = -1;
     _batteryPercent = -1;
@@ -233,10 +259,23 @@ void TelemetryBridge::setVehicle(Vehicle* vehicle) {
     if (_vehicle) {
         _connectVehicleSignals();
         _updateTimer.start();
+        // First asked soon after connecting (QGroundControl's own request may
+        // be lost), then every kHomeAskMs until home arrives.
+        _homeAskTimer.start();
+        QTimer::singleShot(kHomeFirstAskMs, this, &TelemetryBridge::_askForHome);
+        // QGroundControl's Vehicle may already know this vehicle's home.
+        const QGeoCoordinate home = _vehicle->homePosition();
+        if (home.isValid()) {
+            _homeLatitude = home.latitude();
+            _homeLongitude = home.longitude();
+            _homeAltitude = home.altitude();
+            emit homePositionChanged();
+        }
         emit isConnectedChanged();
     } else {
         // No vehicle: stop polling and reset connection quality to zero.
         _updateTimer.stop();
+        _homeAskTimer.stop();
         _connectionQuality = 0;
         emit connectionQualityChanged();
         emit isConnectedChanged();
@@ -404,6 +443,11 @@ void TelemetryBridge::_connectVehicleSignals() {
             changed = true;
         }
         if (changed) {
+            if (_homeAsked && _homeAskTimer.isActive())
+                qInfo().noquote() << QStringLiteral("TelemetryBridge: home position received %1 s after connecting")
+                                         .arg((MonotonicClock::nowMs() - _homeAskSinceMs) / 1000.0, 0, 'f', 1);
+            if (qAbs(_homeLatitude) > 1e-6 || qAbs(_homeLongitude) > 1e-6)
+                _homeAskTimer.stop();
             _updateMissionInfo();
             emit homePositionChanged();
         }

@@ -1727,10 +1727,18 @@ void LivePluginBenchTest::testMotorTableLinkFollowsTheVehicle()
     QCOMPARE(vpm->motorTableId(), table.id);
 
     QSignalSpy changed(vpm, &VehicleProfileManager::motorTableChanged);
+    auto *bridge = _pluginChild<TelemetryBridge>();
+    QVERIFY(bridge);
+    for (int i = 0; i < 200 && !(qAbs(bridge->homeLatitude()) > 1e-6); ++i)
+        QTest::qWait(50);
+    QVERIFY2(qAbs(bridge->homeLatitude()) > 1e-6, "no home from the vehicle within 10 s");
     _disconnectMockLink();
     for (int i = 0; i < 100 && !vpm->motorTableId().isEmpty(); ++i)
         QTest::qWait(50);
     QVERIFY(vpm->motorTableId().isEmpty());
+    // Home goes with the vehicle: the next one's is not this one's.
+    QCOMPARE(bridge->homeLatitude(), 0.0);
+    QCOMPARE(bridge->homeLongitude(), 0.0);
     QVERIFY2(changed.count() >= 1, "the disconnect cleared the link without saying so");
     // The mock comes back with a new system id, i.e. another aircraft: its
     // link is whatever the database holds for its own UID (an earlier run may
@@ -1738,6 +1746,9 @@ void LivePluginBenchTest::testMotorTableLinkFollowsTheVehicle()
     QVERIFY2(_connectPlane(), "mock vehicle did not reconnect");
     QTest::qWait(500);
     QCOMPARE(vpm->motorTableId(), DatabaseManager::instance().vehicleMotorTableId(vpm->currentDeviceUid()));
+    for (int i = 0; i < 200 && !(qAbs(bridge->homeLatitude()) > 1e-6); ++i)
+        QTest::qWait(50);
+    QVERIFY2(qAbs(bridge->homeLatitude()) > 1e-6, "no home from the new vehicle");
     QVERIFY(vpm->linkCurrentVehicleMotorTable(QString()));
     QVERIFY(vpm->motorTableId().isEmpty());
     QVERIFY(vpm->linkCurrentVehicleMotorTable(table.id));

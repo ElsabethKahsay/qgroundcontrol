@@ -933,6 +933,10 @@ private slots:
 private:
     /// Wires up all Vehicle signals (armed, flight mode, GPS, FactGroups, etc.).
     void _connectVehicleSignals();
+    /// Asks the copter for its home position (HOME_POSITION) while it is not
+    /// known: ArduPilot sends it only at boot and at arming, and the stream
+    /// QGroundControl asks for on connecting can be lost. Stops once known.
+    void _askForHome();
 
     /// Rebuilds the Vehicle's ARM_DISARM arm interceptor from _armingGate.
     /// Install is skipped under the unit-test harness so existing direct-arm
@@ -1013,6 +1017,11 @@ private:
     double _homeLatitude = 0.0;
     double _homeLongitude = 0.0;
     double _homeAltitude = 0.0;
+    QTimer _homeAskTimer;                 ///< every kHomeAskMs while home is not known
+    qint64 _homeAskSinceMs = 0;           ///< when this vehicle's wait for home began
+    bool _homeAsked = false;              ///< asked at least once for this vehicle (logged once)
+    static constexpr int kHomeAskMs = 5000;
+    static constexpr int kHomeFirstAskMs = 2000;
 
     bool _imuHealthy = false;
     bool _compassHealthy = false;
