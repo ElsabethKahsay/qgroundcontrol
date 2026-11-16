@@ -408,17 +408,20 @@ inline Result walk(const QVector<Item> &items, const Settings &s, double homeLat
         return true;
     };
     auto land = [&](int seq) {
-        add(StepKind::Land, seq, landTimeS(alt, s), 0.0, -alt, false);
-        alt = 0.0;
+        const double from = alt;
+        alt = 0.0;   // a step records where it ends
+        add(StepKind::Land, seq, landTimeS(from, s), 0.0, -from, false);
         stopped = true;
         r.endsLanded = true;
     };
     // ArduCopter's RTL: climb to RTL_ALT_M if lower, fly home, hold
     // RTL_LOIT_TIME, then land (or stay at RTL_ALT_FINAL_M when set).
     auto returnHome = [&](int seq) {
-        if (alt < s.rtlAltM)
-            add(StepKind::Climb, seq, heightTimeS(s.rtlAltM - alt, s), 0.0, s.rtlAltM - alt, false);
-        alt = std::max(alt, s.rtlAltM);
+        if (alt < s.rtlAltM) {
+            const double climb = s.rtlAltM - alt;
+            alt = s.rtlAltM;   // a step records where it ends
+            add(StepKind::Climb, seq, heightTimeS(climb, s), 0.0, climb, false);
+        }
         const double v = s.rtlSpeedMs > 0.0 ? s.rtlSpeedMs : s.speedMs;
         const double d = PowerTypeModel::distanceM(lat, lon, homeLat, homeLon);
         const double th = moveTimeS(d, v, s.accelMss, s.jerkMsss, stopped, true);
@@ -431,8 +434,9 @@ inline Result walk(const QVector<Item> &items, const Settings &s, double homeLat
             add(StepKind::Hold, seq, s.rtlLoiterS, 0.0, 0.0, true);
         if (s.rtlFinalAltM > 0.0) {
             // Stays in the air above home at RTL_ALT_FINAL_M.
-            add(StepKind::Climb, seq, heightTimeS(s.rtlFinalAltM - alt, s), 0.0, s.rtlFinalAltM - alt, false);
-            alt = s.rtlFinalAltM;
+            const double change = s.rtlFinalAltM - alt;
+            alt = s.rtlFinalAltM;   // a step records where it ends
+            add(StepKind::Climb, seq, heightTimeS(change, s), 0.0, change, false);
             return;
         }
         land(seq);
@@ -473,9 +477,11 @@ inline Result walk(const QVector<Item> &items, const Settings &s, double homeLat
             const double target = heightOf(it);
             if (!std::isfinite(target))
                 return r;
-            if (target > alt)
-                add(StepKind::Climb, it.seq, heightTimeS(target - alt, s), 0.0, target - alt, false);
-            alt = std::max(alt, target);
+            if (target > alt) {
+                const double climb = target - alt;
+                alt = target;   // a step records where it ends
+                add(StepKind::Climb, it.seq, heightTimeS(climb, s), 0.0, climb, false);
+            }
             stopped = true;
             arrive(it);
             break;

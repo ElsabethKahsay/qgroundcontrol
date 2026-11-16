@@ -9,7 +9,8 @@
 //   Tight, Uses the reserve, Can't assess   Warning (amber)
 //   One way only, Can't be done, Too heavy  Failed (red)
 // Gusts above the gust limit, or going over the pack's current limit, make a
-// green result amber (warnings, not results).
+// green result amber (warnings, not results). A leg closer to the ground than
+// TerrainClearance::kMarginM makes any result red ("too close to the ground").
 // The line reads, for example, "Fits — lands with 34 % (pessimistic 27 %),
 // 18:40"; the details are in its dialog.
 //
@@ -68,7 +69,13 @@ public:
             warnings += QStringLiteral(" — gusts over the limit");
         if (r.value(QStringLiteral("overCurrent")).toBool())
             warnings += QStringLiteral(" — over the pack's current limit");
-        if (colour == QLatin1String("red"))
+        // Closer to the ground than the margin somewhere along the mission:
+        // red whatever the charge says (the item is advice only; it never
+        // holds arming).
+        const bool terrainRed = r.value(QStringLiteral("terrainRed")).toBool();
+        if (terrainRed)
+            warnings += QStringLiteral(" — too close to the ground");
+        if (colour == QLatin1String("red") || terrainRed)
             set(CheckStatus::Failed, line + warnings);
         else if (colour == QLatin1String("amber") || !warnings.isEmpty())
             set(CheckStatus::Warning, line + warnings);

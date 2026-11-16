@@ -42,6 +42,7 @@
 #include "MissionRecord.h"
 #include "MissionManager/MissionManager.h"
 #include "MissionManager/MissionItem.h"
+#include "Terrain/TerrainQuery.h"
 #include "managers/FlightSession.h"
 #include "FactSystem/ParameterManager.h"
 #include "FactSystem/Fact.h"
@@ -303,6 +304,7 @@ void VehicleProfileManager::onConnectionChanged()
         m_liveWasArmed = false;
         m_livePayloadAboard = false;
         m_liveSeenDisarmed = false;
+        m_terrainLegs.clear();   // another copter's mission; the profiles (by place) stay
         m_gcsCounting = false;
         m_gcsCountKnown = false;
         m_gcsUsedAh = 0.0;
@@ -2798,9 +2800,52 @@ QVariantMap VehicleProfileManager::missionEstimateFrom(const LiveStart *live)
     out[QStringLiteral("totalText")] = clockText(a.totalS);
     out[QStringLiteral("confidence")] = SiteWeather::confidenceName(a.confidence);
     out[QStringLiteral("confidenceWhy")] = a.confidenceWhy;
-    out[QStringLiteral("reasons")] = a.reasons;
     out[QStringLiteral("weatherRed")] = a.weatherRed;
     out[QStringLiteral("overCurrent")] = a.overCurrent;
+
+    // Terrain along the mission (TerrainClearance.h). Before take-off the
+    // legs are worked out from home and their terrain asked for; in flight
+    // the legs not yet flown are checked from those (not in RTL or LAND,
+    // where the walk is the return from here). A leg closer to the ground
+    // than the margin goes first in the reasons and turns the item red.
+    QStringList reasons = a.reasons;
+    if (!live && w.ok) {
+        m_terrainLegs = TerrainClearance::legsFrom(w, homeLat, homeLon, 0.0);
+        requestTerrain(m_terrainLegs);
+    }
+    QVector<TerrainClearance::Leg> legs;
+    const bool returningNow = live && (live->mode == QLatin1String("rtl") || live->mode == QLatin1String("land"));
+    if (w.ok && !returningNow) {
+        for (const TerrainClearance::Leg &l : m_terrainLegs)
+            if (!live || l.seq < 0 || l.seq >= live->nextSeq)
+                legs.append(l);
+    }
+    const double groundAtHome = TerrainClearance::groundAtHome(m_terrainLegs, m_terrainProfiles, homeLat, homeLon);
+    const TerrainClearance::Result tc = TerrainClearance::check(legs, m_terrainProfiles, groundAtHome);
+    QStringList terrainReasons;
+    QVariantList lows;
+    for (const TerrainClearance::Low &low : tc.lows) {
+        const QString where = low.seq >= 0 ? QStringLiteral("Item %1").arg(low.seq) : QStringLiteral("The return home");
+        terrainReasons << QStringLiteral("%1: only %2 m above the ground, %3 m along the leg (needs %4 m)")
+                              .arg(where).arg(low.clearanceM, 0, 'f', 0).arg(low.alongM, 0, 'f', 0)
+                              .arg(TerrainClearance::kMarginM, 0, 'f', 0);
+        lows.append(QVariantMap{{QStringLiteral("seq"), low.seq}, {QStringLiteral("clearanceM"), low.clearanceM},
+                                {QStringLiteral("alongM"), low.alongM}, {QStringLiteral("lat"), low.lat},
+                                {QStringLiteral("lon"), low.lon}});
+    }
+    if (!legs.isEmpty() && !tc.complete()) {
+        bool loading = false;
+        for (const TerrainClearance::Leg &l : legs)
+            loading = loading || m_terrainPending.contains(l.key());
+        terrainReasons << (loading ? QStringLiteral("Terrain along the mission not checked yet: terrain data loading")
+                                   : QStringLiteral("Terrain along the mission not checked: no terrain data (%1 of %2 legs)")
+                                         .arg(tc.legsKnown).arg(tc.legs));
+    }
+    out[QStringLiteral("terrainRed")] = !tc.lows.isEmpty();
+    out[QStringLiteral("terrainChecked")] = tc.complete();
+    out[QStringLiteral("terrainLowestM")] = tc.lowestM;
+    out[QStringLiteral("terrain")] = lows;
+    out[QStringLiteral("reasons")] = terrainReasons + reasons;
     QStringList assumed;
     if (!ctx.cruiseMeasured)
         assumed << QStringLiteral("cruise power (hover in the likely case, %1× in the pessimistic case)")
@@ -3090,6 +3135,50 @@ double VehicleProfileManager::cruiseReferenceThrustG(double flightSum, int fligh
     if (setupSource == QLatin1String("last flight") && setupThrustG > 0.0)
         return setupThrustG;
     return -1.0;
+}
+
+// The terrain under each leg not yet known, asked for once at a time per leg
+// (again after kTerrainRetryMs when it could not be had). The answer is kept
+// by the leg's key; the mission estimate reads it on its next update.
+void VehicleProfileManager::requestTerrain(const QVector<TerrainClearance::Leg> &legs)
+{
+    if (!m_terrainQueriesEnabled)
+        return;
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    for (const TerrainClearance::Leg &l : legs) {
+        const QString key = l.key();
+        if (m_terrainProfiles.value(key).ok || m_terrainPending.contains(key))
+            continue;
+        if (m_terrainFailedMs.contains(key) && now - m_terrainFailedMs.value(key) < kTerrainRetryMs)
+            continue;
+        m_terrainPending.insert(key);
+        auto *q = new TerrainPathQuery(true /* deletes itself after answering */);
+        connect(q, &TerrainPathQuery::terrainDataReceived, this,
+                [this, key](bool success, const TerrainPathQuery::PathHeightInfo_t &info) {
+                    m_terrainPending.remove(key);
+                    TerrainClearance::Profile p;
+                    p.ok = success && !info.heights.isEmpty();
+                    p.spacingM = info.distanceBetween;
+                    p.finalSpacingM = info.finalDistanceBetween;
+                    p.heights = QVector<double>(info.heights.cbegin(), info.heights.cend());
+                    if (p.ok) {
+                        setTerrainProfile(key, p);
+                    } else {
+                        m_terrainFailedMs.insert(key, QDateTime::currentMSecsSinceEpoch());
+                        emit terrainChanged();
+                    }
+                });
+        q->requestData(QGeoCoordinate(l.fromLat, l.fromLon), QGeoCoordinate(l.toLat, l.toLon));
+    }
+}
+
+void VehicleProfileManager::setTerrainProfile(const QString &key, const TerrainClearance::Profile &profile)
+{
+    if (m_terrainProfiles.value(key).ok)
+        return;   // kept: a later answer does not replace it
+    m_terrainProfiles.insert(key, profile);
+    m_terrainFailedMs.remove(key);
+    emit terrainChanged();
 }
 
 bool VehicleProfileManager::returnNowHeld(bool wasOn, double marginPct, bool returning)

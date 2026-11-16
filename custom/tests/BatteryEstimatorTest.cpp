@@ -21,6 +21,7 @@
 #include "MissionAssess.h"
 #include "MissionEstimateCheck.h"
 #include "WindFromLean.h"
+#include "TerrainClearance.h"
 #include "MissionRecord.h"
 #include <QCoreApplication>
 #include <QFileInfo>
@@ -1225,6 +1226,13 @@ private slots:
         QVERIFY2(r.ok, qPrintable(r.problem));
         QVERIFY(r.endsLanded);
         QVERIFY(r.returnAssumed);
+        // Every step records where it ends: the take-off's climb at 100 m,
+        // the landing on the ground at home (the terrain check reads them).
+        QCOMPARE(r.steps.first().kind, StepKind::Climb);
+        QCOMPARE(r.steps.first().altM, 100.0);
+        QCOMPARE(r.steps.last().kind, StepKind::Land);
+        QCOMPARE(r.steps.last().altM, 0.0);
+        QCOMPARE(r.steps.last().climbM, -100.0);
 
         const double d1 = PowerTypeModel::distanceM(items[0].lat, items[0].lon, items[2].lat, items[2].lon);
         const double d2 = PowerTypeModel::distanceM(items[2].lat, items[2].lon, items[3].lat, items[3].lon);
@@ -1906,6 +1914,121 @@ private slots:
         QVERIFY(isSteady(0.2, 0.1));
         QVERIFY(!isSteady(1.0, 0.1));
         QVERIFY(!isSteady(0.0, 0.8));
+    }
+
+    // Terrain clearance: the legs of a walk (moves over the ground, heights
+    // above home changing evenly along each), each against the terrain under
+    // it, home's ground taken from the terrain at the start of the leg that
+    // leaves home. A leg closer than the margin (20 m) is reported with
+    // where; a leg without terrain leaves the check incomplete; without
+    // home's ground nothing is checked.
+    void testTerrainClearance()
+    {
+        using namespace TerrainClearance;
+        const double hLat = 9.0, hLon = 38.8;
+        const double north = 1.0 / 111194.93;                       // degrees per metre
+        const double east = north / std::cos(hLat * M_PI / 180.0);
+        auto step = [](int seq, double horizM, double lat, double lon, double altM) {
+            MissionWalk::Step s;
+            s.seq = seq;
+            s.horizM = horizM;
+            s.lat = lat;
+            s.lon = lon;
+            s.altM = altM;
+            return s;
+        };
+        MissionWalk::Result w;
+        w.ok = true;
+        w.steps = {step(1, 0.0, hLat, hLon, 50.0),                                  // climb on the spot: no leg
+                   step(2, 1000.0, hLat + 1000.0 * north, hLon, 50.0),              // 1 km north at 50 m
+                   step(3, 500.0, hLat + 1000.0 * north, hLon + 500.0 * east, 80.0), // 500 m east, up to 80 m
+                   step(3, 0.0, hLat + 1000.0 * north, hLon + 500.0 * east, 80.0),  // hold: no leg
+                   step(-1, 1118.0, hLat, hLon, 80.0)};                             // the return home
+        const QVector<Leg> legs = legsFrom(w, hLat, hLon, 0.0);
+        QCOMPARE(legs.size(), 3);
+        QCOMPARE(legs[0].seq, 2);
+        QCOMPARE(legs[0].fromAltM, 50.0);                           // after the climb
+        QCOMPARE(legs[1].fromAltM, 50.0);
+        QCOMPARE(legs[1].toAltM, 80.0);
+        QCOMPARE(legs[2].seq, -1);
+        QVERIFY(std::abs(legs[0].lengthM() - 1000.0) < 1.0);
+        QVERIFY(legs[0].key() != legs[2].key());
+
+        // Terrain at even spacing: 11 points 100 m apart on the 1 km leg.
+        auto profile = [](QVector<double> h, double spacing, double last) {
+            Profile p;
+            p.ok = true;
+            p.spacingM = spacing;
+            p.finalSpacingM = last;
+            p.heights = h;
+            return p;
+        };
+        QCOMPARE(profile({1, 2, 3}, 100.0, 40.0).alongM(2), 140.0);
+        QVector<double> flat1(11, 2000.0), flat2(6, 2000.0), flat3(12, 2000.0);
+        QHash<QString, Profile> terrain;
+        terrain[legs[0].key()] = profile(flat1, 100.0, 100.0);
+        terrain[legs[1].key()] = profile(flat2, 100.0, 100.0);
+        terrain[legs[2].key()] = profile(flat3, 100.0, 118.0);
+        const double ground = groundAtHome(legs, terrain, hLat, hLon);
+        QCOMPARE(ground, 2000.0);
+
+        // Flat ground: 50 m clearance at the lowest, nothing reported.
+        Result r = check(legs, terrain, ground);
+        QVERIFY(r.complete());
+        QCOMPARE(r.legsKnown, 3);
+        QCOMPARE(r.lowestM, 50.0);
+        QVERIFY(r.lows.isEmpty());
+
+        // A hill rising 45 m along the first leg: 5 m at its end.
+        QVector<double> hill(11);
+        for (int i = 0; i < 11; ++i)
+            hill[i] = 2000.0 + 4.5 * i;
+        terrain[legs[0].key()] = profile(hill, 100.0, 100.0);
+        QCOMPARE(groundAtHome(legs, terrain, hLat, hLon), 2000.0);   // the start of the leg leaving home
+        r = check(legs, terrain, ground);
+        QCOMPARE(r.lows.size(), 1);
+        QCOMPARE(r.lows[0].seq, 2);
+        QVERIFY(std::abs(r.lows[0].clearanceM - 5.0) < 1e-9);
+        QCOMPARE(r.lows[0].alongM, 1000.0);
+        QVERIFY(std::abs(r.lows[0].lat - (hLat + 1000.0 * north)) < 1e-7);
+        QVERIFY(std::abs(r.lowestM - 5.0) < 1e-9);
+
+        // The climbing leg: 80 m above home at its end over ground 60 m up
+        // is 20 m, the margin itself (not reported); 61 m up is 19 m.
+        terrain[legs[0].key()] = profile(flat1, 100.0, 100.0);
+        QVector<double> rise(flat2);
+        rise.last() = 2060.0;
+        terrain[legs[1].key()] = profile(rise, 100.0, 100.0);
+        QVERIFY(check(legs, terrain, ground).lows.isEmpty());
+        rise.last() = 2061.0;
+        terrain[legs[1].key()] = profile(rise, 100.0, 100.0);
+        r = check(legs, terrain, ground);
+        QCOMPARE(r.lows.size(), 1);
+        QCOMPARE(r.lows[0].seq, 3);
+        QVERIFY(std::abs(r.lows[0].clearanceM - 19.0) < 1e-9);
+        // Half way along, the planned height is half way between 50 and 80 m.
+        QVector<double> mid(flat2);
+        mid[3] = 2000.0 + 50.0 + 0.6 * 30.0 - 10.0;               // 300 m of 500: 68 m planned, 10 m clear
+        terrain[legs[1].key()] = profile(mid, 100.0, 100.0);
+        r = check(legs, terrain, ground);
+        QCOMPARE(r.lows.size(), 1);
+        QVERIFY(std::abs(r.lows[0].clearanceM - 10.0) < 1e-9);
+        QCOMPARE(r.lows[0].alongM, 300.0);
+
+        // A leg without terrain: checked as far as known, not complete.
+        terrain.remove(legs[2].key());
+        r = check(legs, terrain, ground);
+        QCOMPARE(r.legsKnown, 2);
+        QVERIFY(!r.complete());
+        Profile failed;
+        terrain[legs[2].key()] = failed;                           // a failed query counts as unknown
+        QCOMPARE(check(legs, terrain, ground).legsKnown, 2);
+
+        // Home's ground unknown (no terrain for the leg leaving home): nothing checked.
+        terrain.remove(legs[0].key());
+        QVERIFY(std::isnan(groundAtHome(legs, terrain, hLat, hLon)));
+        r = check(legs, terrain, groundAtHome(legs, terrain, hLat, hLon));
+        QVERIFY(!r.homeKnown && !r.complete() && r.lows.isEmpty() && r.legsKnown == 0);
     }
 
     // The mission estimate against the flight: kept as JSON and read back,

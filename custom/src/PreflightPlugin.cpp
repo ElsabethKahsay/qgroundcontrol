@@ -367,6 +367,7 @@ void PreflightPlugin::init()
         missionEstimateCheck->evaluate();
     };
     connect(_vehicleProfileManager, &VehicleProfileManager::emptyWeightChanged, this, reevaluatePower);
+    connect(_vehicleProfileManager, &VehicleProfileManager::terrainChanged, this, reevaluatePower);
     // In-flight mission alerts (the result getting worse, RETURN NOW, old
     // weather) and payload releases: a message on screen, and spoken through
     // QGroundControl's voice for the ones that need the pilot's attention.

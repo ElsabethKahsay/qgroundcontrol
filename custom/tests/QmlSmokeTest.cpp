@@ -1318,7 +1318,14 @@ class LivePluginBenchTest : public UnitTest {
     Q_OBJECT
 
 private slots:
-    void init() override { UnitTest::init(); preflightInitOnce(); }
+    void init() override
+    {
+        UnitTest::init();
+        preflightInitOnce();
+        // No terrain from the network: the tests give it themselves.
+        if (auto *vpm = VehicleProfileManager::instance())
+            vpm->setTerrainQueriesEnabled(false);
+    }
     void cleanup() override
     {
         if (_vehicle)
@@ -3260,6 +3267,71 @@ void LivePluginBenchTest::testMissionEstimateLive()
     QVERIFY(home.value(QStringLiteral("dropText")).toString().contains(QStringLiteral("carried home")));
     QVERIFY(home.value(QStringLiteral("landLikelyPct")).toDouble() < e.value(QStringLiteral("landLikelyPct")).toDouble());
     settings->setPayloadDropItem(3);
+
+    // Terrain along the mission (TerrainClearance.h; init() keeps the tests
+    // off the network). Without terrain it says it was not checked and stays
+    // the colour the charge gives. With the terrain given, flat except a
+    // hill under the leg to item 3 that comes to 5 m below the copter at its
+    // end, the item turns red ("too close to the ground") with the reason
+    // first; still advice only: the gate does not count it.
+    {
+        QVariantMap t = vpm->missionEstimate();
+        QVERIFY(!t.value(QStringLiteral("terrainChecked")).toBool());
+        QVERIFY(!t.value(QStringLiteral("terrainRed")).toBool());
+        QVERIFY2(t.value(QStringLiteral("reasons")).toStringList().first().startsWith(
+                     QStringLiteral("Terrain along the mission not checked")),
+                 qPrintable(t.value(QStringLiteral("reasons")).toStringList().join(QStringLiteral(" | "))));
+        const QVector<TerrainClearance::Leg> legs = vpm->terrainLegs();
+        QVERIFY2(legs.size() >= 3, qPrintable(QString::number(legs.size())));
+        const double ground = 1000.0;
+        bool hill = false;
+        for (const TerrainClearance::Leg &l : legs) {
+            TerrainClearance::Profile p;
+            p.ok = true;
+            p.spacingM = p.finalSpacingM = l.lengthM() / 5.0;
+            p.heights = QVector<double>(6, ground);
+            if (l.seq == 3) {
+                p.heights.last() = ground + l.toAltM - 5.0;
+                hill = true;
+            }
+            vpm->setTerrainProfile(l.key(), p);
+        }
+        QVERIFY2(hill, "no leg to item 3");
+        t = vpm->missionEstimate();
+        QVERIFY(t.value(QStringLiteral("terrainChecked")).toBool());
+        QVERIFY(t.value(QStringLiteral("terrainRed")).toBool());
+        const QString first = t.value(QStringLiteral("reasons")).toStringList().first();
+        QVERIFY2(first.startsWith(QStringLiteral("Item 3: only 5 m above the ground")), qPrintable(first));
+        QCOMPARE(t.value(QStringLiteral("terrain")).toList().size(), 1);
+        QCOMPARE(t.value(QStringLiteral("resultName")).toString(), e.value(QStringLiteral("resultName")).toString());
+        item->evaluate();
+        QCOMPARE(item->status(), CheckStatus::Failed);
+        QVERIFY2(item->message().contains(QStringLiteral("too close to the ground")), qPrintable(item->message()));
+        QVERIFY(!gate->currentRequest(0).failingMandatoryIds.contains(QStringLiteral("power.mission_estimate")));
+        // In flight only the legs not yet flown count: flying to item 3 the
+        // hill is ahead; flying to item 4 it is behind.
+        VehicleProfileManager::LiveStart air;
+        air.lat = hLat;
+        air.lon = hLon;
+        air.altM = 30.0;
+        air.moving = true;
+        air.mode = QStringLiteral("auto");
+        air.socPct = 80.0;
+        air.payloadKg = 0.0;
+        air.nextSeq = 3;
+        QVERIFY(vpm->missionEstimateFrom(&air).value(QStringLiteral("terrainRed")).toBool());
+        air.nextSeq = 4;
+        QVERIFY(!vpm->missionEstimateFrom(&air).value(QStringLiteral("terrainRed")).toBool());
+        // An answer coming later for a leg already kept does not replace it.
+        TerrainClearance::Profile flat;
+        flat.ok = true;
+        flat.spacingM = flat.finalSpacingM = 100.0;
+        flat.heights = QVector<double>(6, ground);
+        for (const TerrainClearance::Leg &l : legs)
+            if (l.seq == 3)
+                vpm->setTerrainProfile(l.key(), flat);
+        QVERIFY(vpm->missionEstimate().value(QStringLiteral("terrainRed")).toBool());
+    }
 
     // The dialog reads the same estimate.
     QSharedPointer<QQmlApplicationEngine> engine(QGCCorePlugin::instance()->createQmlApplicationEngine(nullptr));

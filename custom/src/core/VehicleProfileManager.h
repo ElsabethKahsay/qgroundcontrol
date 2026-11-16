@@ -15,11 +15,13 @@
 #include <QElapsedTimer>
 #include <QHash>
 #include <QPair>
+#include <QSet>
 #include <QTimer>
 
 #include "MotorTable.h"
 #include "PayloadRelease.h"
 #include "WindFromLean.h"
+#include "TerrainClearance.h"
 #include <QVector>
 #include <limits>
 
@@ -431,6 +433,19 @@ public:
     /// @p setupSource is "last flight"); -1 when neither: no ratio is kept.
     static double cruiseReferenceThrustG(double flightSum, int flightSamples, double setupThrustG,
                                          const QString &setupSource);
+
+    // ── Terrain along the mission (TerrainClearance.h) ──
+    /// The mission's legs as last worked out before take-off (the mission
+    /// estimate keeps them; in flight the legs not yet flown are checked).
+    QVector<TerrainClearance::Leg> terrainLegs() const { return m_terrainLegs; }
+    /// Keeps the terrain under a leg (by TerrainClearance::Leg::key). The
+    /// terrain query's answer comes here; tests give theirs directly. A
+    /// profile that is kept is not replaced by a later answer.
+    void setTerrainProfile(const QString &key, const TerrainClearance::Profile &profile);
+    /// Whether the terrain is asked for (QGroundControl's terrain query,
+    /// online with a cache). Tests turn it off and give the terrain
+    /// themselves, so that they do not depend on the network.
+    void setTerrainQueriesEnabled(bool enabled) { m_terrainQueriesEnabled = enabled; }
     /// The copter's parameters, three ways:
     /// - copterParam: QGroundControl's full parameter list; NaN when absent;
     /// - watchedParam: the bridge's watch list; @p fallback when not read;
@@ -475,6 +490,8 @@ signals:
     void payloadSwitchWarning(const QString &what);
     /// The empty weight was entered or changed.
     void emptyWeightChanged();
+    /// Terrain under one of the mission's legs arrived (or could not be had).
+    void terrainChanged();
     /// Something the pilot should hear about in flight: the result got
     /// worse, RETURN NOW came on, the weather in use is old. @p speak: also
     /// say it (not only a message on screen).
@@ -599,6 +616,16 @@ private:
     QVariantList m_passed;
     int m_lastMissionIndex = -1;
     int m_lastAlertResult = -1;         ///< the worst result said or seen this flight; -1 = none yet
+    // Terrain under the mission's legs: the legs from the last estimate made
+    // before take-off, their profiles by key, the queries out, and when one
+    // failed (asked again after kTerrainRetryMs).
+    QVector<TerrainClearance::Leg> m_terrainLegs;
+    QHash<QString, TerrainClearance::Profile> m_terrainProfiles;
+    QSet<QString> m_terrainPending;
+    QHash<QString, qint64> m_terrainFailedMs;
+    bool m_terrainQueriesEnabled = true;
+    static constexpr qint64 kTerrainRetryMs = 60000;
+    void requestTerrain(const QVector<TerrainClearance::Leg> &legs);
     bool m_alertedOldWeather = false;
     // The wind from the lean (WindFromLean.h): this flight's steady samples,
     // the copter's drag constant (saved per copter, learned on flights that
