@@ -143,6 +143,17 @@ void TelemetryBridge::judgeGps(const GpsTrust::Reading &reading)
     emit gpsPoorChanged();
 }
 
+// No vehicle, or none of its GPS readings yet: the GPS stream's stamp is
+// "never" (reset per vehicle in setVehicle), which is not a stop.
+void TelemetryBridge::checkGpsReadings()
+{
+    if (!GpsTrust::readingsStopped(streamAgeMs(TelemetryStream::GpsRawInt), streamAgeMs(TelemetryStream::Heartbeat)))
+        return;
+    GpsTrust::Reading reading;
+    reading.missing = true;
+    judgeGps(reading);
+}
+
 void TelemetryBridge::_askForHome()
 {
     const bool known = qAbs(_homeLatitude) > 1e-6 || qAbs(_homeLongitude) > 1e-6;
@@ -776,6 +787,8 @@ void TelemetryBridge::_updateFromVehicle() {
         _batteryDataValid = false;
         emit batteryDataValidChanged();
     }
+
+    checkGpsReadings();
 
     // Connection quality decays while autopilot heartbeats are missing,
     // instead of freezing at the value of the last heartbeat that arrived.

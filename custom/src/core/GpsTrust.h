@@ -19,11 +19,19 @@
 // The first reading from a vehicle decides at once (there is nothing to
 // recover from yet).
 //
-// Header-only, no Qt: the bridge feeds it every GPS message.
+// GPS readings that stop (none for kMissingS) while the vehicle is still
+// heard (a heartbeat within kLinkFreshS) count as a bad reading: the
+// receiver or its cable has gone. Nothing heard at all is the link, not the
+// GPS, and is said elsewhere (the data shows as stale).
+//
+// Header-only (Qt only for qint64): the bridge feeds it every GPS message,
+// and checks every 200 ms whether they have stopped.
 #pragma once
 
 #include <algorithm>
 #include <cmath>
+
+#include <QtGlobal>
 
 namespace GpsTrust {
 
@@ -32,6 +40,8 @@ constexpr int kMinSatellites = 6;
 constexpr double kMaxHdop = 5.0;      // above it the position can be off by tens of metres
 constexpr double kMaxHAccM = 8.0;     // a clean flight stays under 3 m
 constexpr double kTrustAgainS = 10.0;
+constexpr qint64 kMissingMs = 3000;
+constexpr qint64 kLinkFreshMs = 2000;
 
 struct Reading {
     int fixType = 0;
@@ -39,11 +49,12 @@ struct Reading {
     double hdop = std::nan("");       // not reported: not good
     double hAccM = std::nan("");      // not reported (older receivers): not judged
     bool ekfGlitching = false;        // ArduPilot EKF_STATUS_REPORT: EKF_GPS_GLITCHING
+    bool missing = false;             // no reading for kMissingMs (readingsStopped)
 };
 
 inline bool readingGood(const Reading &r)
 {
-    return r.fixType >= kMinFixType && r.satellites >= kMinSatellites && std::isfinite(r.hdop)
+    return !r.missing && r.fixType >= kMinFixType && r.satellites >= kMinSatellites && std::isfinite(r.hdop)
            && r.hdop <= kMaxHdop && !(std::isfinite(r.hAccM) && r.hAccM > kMaxHAccM) && !r.ekfGlitching;
 }
 
@@ -77,9 +88,18 @@ inline bool step(State &s, const Reading &r, double dtS)
     return s.trusted;
 }
 
-/// The reason in a few words, for the log ("0 satellites", "HDOP 99.99").
+/// GPS readings have stopped while the vehicle is still heard. Ages in ms,
+/// below 0 for never (MonotonicClock::kNever): never a reading is not a stop.
+inline bool readingsStopped(qint64 gpsAgeMs, qint64 heartbeatAgeMs)
+{
+    return gpsAgeMs > kMissingMs && heartbeatAgeMs >= 0 && heartbeatAgeMs <= kLinkFreshMs;
+}
+
+/// The reason in a few words, for the log ("too few satellites").
 inline const char *whyNotGood(const Reading &r)
 {
+    if (r.missing)
+        return "no GPS reading for 3 s";
     if (r.fixType < kMinFixType)
         return "no 3D fix";
     if (r.satellites < kMinSatellites)

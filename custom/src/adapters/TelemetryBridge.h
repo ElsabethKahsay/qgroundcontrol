@@ -644,6 +644,10 @@ public:
     virtual bool gpsPoor() const { return _gpsTrust.known && !_gpsTrust.trusted; }
     /// Judges one GPS reading (every GPS_RAW_INT; tests call it directly).
     void judgeGps(const GpsTrust::Reading &reading);
+    /// Every 200 ms: GPS readings that have stopped while the vehicle is
+    /// still heard (GpsTrust::readingsStopped) are judged a bad reading.
+    /// Only once this vehicle has sent one.
+    void checkGpsReadings();
     double estimatorVelRatio() const { return _estimatorVelRatio; }
     double estimatorPosHorizRatio() const { return _estimatorPosHorizRatio; }
     double estimatorPosVertRatio() const { return _estimatorPosVertRatio; }

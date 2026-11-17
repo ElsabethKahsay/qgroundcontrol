@@ -363,6 +363,19 @@ void VehicleProfileManagerTest::testGpsTrustJudgesEachReading()
     QVERIFY(with([](GpsTrust::Reading &r) { r.hAccM = 8.0; }));
     QVERIFY(with([](GpsTrust::Reading &r) { r.hAccM = qQNaN(); }));     // older receivers: not judged
     QVERIFY(!with([](GpsTrust::Reading &r) { r.ekfGlitching = true; }));
+    QVERIFY(!with([](GpsTrust::Reading &r) { r.missing = true; }));
+    GpsTrust::Reading gone;
+    gone.missing = true;
+    QCOMPARE(QString::fromLatin1(GpsTrust::whyNotGood(gone)), QStringLiteral("no GPS reading for 3 s"));
+    // Readings stopped: more than 3 s without one while the vehicle is heard
+    // (a heartbeat within 2 s). Nothing heard is the link; never a reading
+    // is not a stop.
+    QVERIFY(!GpsTrust::readingsStopped(3000, 100));
+    QVERIFY(GpsTrust::readingsStopped(3001, 100));
+    QVERIFY(GpsTrust::readingsStopped(3001, 2000));
+    QVERIFY(!GpsTrust::readingsStopped(3001, 2001));
+    QVERIFY(!GpsTrust::readingsStopped(-1, 100));
+    QVERIFY(!GpsTrust::readingsStopped(9000, -1));
     QCOMPARE(QString::fromLatin1(GpsTrust::whyNotGood(good)), QString());
 
     GpsTrust::Reading bad = good;

@@ -47,6 +47,7 @@
 #include "QGCCorePlugin.h"
 #include "PreflightPlugin.h"
 #include "utils/DatabaseManager.h"
+#include "utils/MonotonicClock.h"
 #include "MultiVehicleManager.h"
 #include "Vehicle/Vehicle.h"
 #include "Settings/SettingsManager.h"
@@ -3005,6 +3006,29 @@ void LivePluginBenchTest::testGpsJudgedFromTheVehicle()
         QTest::qWait(50);
     QVERIFY(!vpm->powerLive().value(QStringLiteral("gpsPoor")).toBool());
 
+    // GPS readings that stop while the vehicle is still heard: unreliable.
+    // Nothing heard at all is the link, not the GPS. The test clock moves
+    // time on; the check is the one the bridge runs every 200 ms.
+    {
+        TestClock clock;
+        clock.set(MonotonicClock::nowMs());
+        MonotonicClock::override_() = &clock;
+        auto restore = qScopeGuard([]() { MonotonicClock::override_() = nullptr; });
+        bridge->stampStream(TelemetryStream::GpsRawInt);
+        bridge->stampStream(TelemetryStream::Heartbeat);
+        clock.advance(4000);
+        bridge->checkGpsReadings();
+        QVERIFY2(!bridge->gpsPoor(), "the GPS blamed for a silent link");
+        bridge->stampStream(TelemetryStream::Heartbeat);
+        bridge->checkGpsReadings();
+        QVERIFY(bridge->gpsPoor());
+        QCOMPARE(changed.count(), 3);
+    }
+    for (int i = 0; i < 300 && bridge->gpsPoor(); ++i)
+        QTest::qWait(50);
+    QVERIFY2(!bridge->gpsPoor(), "the GPS was not trusted again after its readings came back");
+    QCOMPARE(changed.count(), 4);
+
     // The EKF's flag, read with the next reading (a good one).
     emitEkfFlags(_vehicle, EKF_GPS_GLITCHING);
     QVERIFY(!bridge->gpsPoor());
@@ -3016,7 +3040,19 @@ void LivePluginBenchTest::testGpsJudgedFromTheVehicle()
     for (int i = 0; i < 100 && bridge->gpsPoor(); ++i)
         QTest::qWait(50);
     QVERIFY(!bridge->gpsPoor());
-    QCOMPARE(changed.count(), 4);
+    QCOMPARE(changed.count(), 6);
+    // No vehicle: its GPS stamp went with it, so nothing has stopped, even
+    // 4 s on with something heard.
+    {
+        TestClock clock;
+        clock.set(MonotonicClock::nowMs());
+        MonotonicClock::override_() = &clock;
+        auto restore = qScopeGuard([]() { MonotonicClock::override_() = nullptr; });
+        clock.advance(4000);
+        bridge->stampStream(TelemetryStream::Heartbeat);
+        bridge->checkGpsReadings();
+        QVERIFY(!bridge->gpsPoor());
+    }
 }
 
 void LivePluginBenchTest::testParameterReaders()
