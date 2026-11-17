@@ -213,6 +213,26 @@ public:
 // Connect a real ArduPlane mock (same pattern the control-surface tests use).
 // ---------------------------------------------------------------------------
 
+// A GPS reading or an EKF report as if from the mock vehicle (the bridge
+// reads them from Vehicle::mavlinkMessageReceived). The mock's own GPS
+// (good: 3D fix, 8 satellites, HDOP 3, no accuracy) keeps coming once a second.
+static void emitGpsRaw(Vehicle *v, uint8_t fix, uint8_t sats, uint16_t ephCenti, uint32_t hAccMm)
+{
+    mavlink_message_t msg;
+    mavlink_msg_gps_raw_int_pack_chan(static_cast<uint8_t>(v->id()), static_cast<uint8_t>(v->defaultComponentId()), 0, &msg,
+                                      0, fix, 0, 0, 0, ephCenti, ephCenti, UINT16_MAX, UINT16_MAX, sats,
+                                      0, hAccMm, 0, 0, 0, 0);
+    emit v->mavlinkMessageReceived(msg);
+}
+
+static void emitEkfFlags(Vehicle *v, uint16_t flags)
+{
+    mavlink_message_t msg;
+    mavlink_msg_ekf_status_report_pack_chan(static_cast<uint8_t>(v->id()), static_cast<uint8_t>(v->defaultComponentId()), 0, &msg,
+                                            flags, 0.1f, 0.1f, 0.1f, 0.1f, 0.0f, 0.0f);
+    emit v->mavlinkMessageReceived(msg);
+}
+
 static bool connectPlane(Vehicle **outVehicle, MockLink **outMockLink, int timeoutMs = 30000)
 {
     MockLink *mockLink = MockLink::startAPMArduPlaneMockLink(false);
@@ -1356,6 +1376,7 @@ private slots:
     void testMotorTableInTheApp();
     void testTelemetryReadInMetricUnits();
     void testParameterReaders();
+    void testGpsJudgedFromTheVehicle();
 
 private:
     bool _connectPlane();
@@ -2950,6 +2971,54 @@ void LivePluginBenchTest::testMotorTableCountsEveryReading()
 // full list (anyParam falls back to it; watchedParam gives the fallback); a
 // watched one comes from the bridge; one the copter does not have is NaN (or
 // the fallback).
+// The GPS judged from the vehicle's own messages (GpsTrust.h): a reading
+// whose position wanders (33 m, satellites kept) makes it unreliable at once;
+// the live battery estimate says so; trusted again only after 10 s of good
+// readings (the mock's own, once a second, so not within 5 s); ArduPilot's
+// EKF "GPS glitching" flag makes the next reading bad; and the judgement
+// goes with the vehicle.
+void LivePluginBenchTest::testGpsJudgedFromTheVehicle()
+{
+    QVERIFY2(_connectPlane(), "mock vehicle did not connect / resolve its UID");
+    VehicleProfileManager *vpm = VehicleProfileManager::instance();
+    auto *bridge = _pluginChild<TelemetryBridge>();
+    QVERIFY(bridge);
+    for (int i = 0; i < 200 && bridge->gpsSatellites() < 6; ++i)
+        QTest::qWait(50);
+    QVERIFY(bridge->gpsSatellites() >= 6);
+    QVERIFY(!bridge->gpsPoor());
+
+    QSignalSpy changed(bridge, &TelemetryBridge::gpsPoorChanged);
+    emitGpsRaw(_vehicle, 3, 20, 80, 33000);
+    QVERIFY(bridge->gpsPoor());
+    QCOMPARE(changed.count(), 1);
+    for (int i = 0; i < 100 && !vpm->powerLive().value(QStringLiteral("gpsPoor")).toBool(); ++i)
+        QTest::qWait(50);
+    QVERIFY(vpm->powerLive().value(QStringLiteral("gpsPoor")).toBool());
+    QTest::qWait(5000);
+    QVERIFY2(bridge->gpsPoor(), "trusted again before 10 s of good readings");
+    for (int i = 0; i < 300 && bridge->gpsPoor(); ++i)
+        QTest::qWait(50);
+    QVERIFY2(!bridge->gpsPoor(), "the GPS was not trusted again after 10 s of good readings");
+    QCOMPARE(changed.count(), 2);
+    for (int i = 0; i < 100 && vpm->powerLive().value(QStringLiteral("gpsPoor")).toBool(); ++i)
+        QTest::qWait(50);
+    QVERIFY(!vpm->powerLive().value(QStringLiteral("gpsPoor")).toBool());
+
+    // The EKF's flag, read with the next reading (a good one).
+    emitEkfFlags(_vehicle, EKF_GPS_GLITCHING);
+    QVERIFY(!bridge->gpsPoor());
+    emitGpsRaw(_vehicle, 3, 20, 80, 1000);
+    QVERIFY(bridge->gpsPoor());
+
+    // Another vehicle's GPS is judged afresh.
+    _disconnectMockLink();
+    for (int i = 0; i < 100 && bridge->gpsPoor(); ++i)
+        QTest::qWait(50);
+    QVERIFY(!bridge->gpsPoor());
+    QCOMPARE(changed.count(), 4);
+}
+
 void LivePluginBenchTest::testParameterReaders()
 {
     QVERIFY2(_connectPlane(), "mock copter did not connect / resolve its UID");
@@ -3249,6 +3318,14 @@ void LivePluginBenchTest::testMissionEstimateLive()
     const QVariant weightWas = QSettings().value(weightKey);
     QSettings().remove(weightKey);
 
+    // No mission on the copter, the usual case in manual flight: no warning,
+    // the item says it is not needed.
+    QVERIFY(_vehicle->missionManager()->missionItems().size() < 2);
+    QVERIFY(vpm->missionEstimate().value(QStringLiteral("noMission")).toBool());
+    item->evaluate();
+    QCOMPARE(item->status(), CheckStatus::Skipped);
+    QCOMPARE(item->message(), QStringLiteral("No mission: not needed for manual flight"));
+
     // The mission, written to the mock (item 0 is home, as ArduPilot keeps it).
     for (int i = 0; i < 200 && !(qAbs(bridge->homeLatitude()) > 1e-6); ++i)
         QTest::qWait(50);
@@ -3367,6 +3444,27 @@ void LivePluginBenchTest::testMissionEstimateLive()
             if (l.seq == 3)
                 vpm->setTerrainProfile(l.key(), flat);
         QVERIFY(vpm->missionEstimate().value(QStringLiteral("terrainRed")).toBool());
+    }
+
+    // An unreliable GPS before arming: ArduPilot sets home where the copter
+    // arms, so the item says home would be in the wrong place (advice only:
+    // the gate does not count it). Trusted again after 10 s of the mock's
+    // good readings.
+    {
+        emitGpsRaw(_vehicle, 1, 0, 9999, 0);
+        QVERIFY(bridge->gpsPoor());
+        QVERIFY(vpm->missionEstimate().value(QStringLiteral("gpsPoor")).toBool());
+        item->evaluate();
+        QVERIFY2(item->message().contains(QStringLiteral("GPS unreliable: home would be set in the wrong place")),
+                 qPrintable(item->message()));
+        QVERIFY(item->status() != CheckStatus::Passed);
+        QVERIFY(!gate->currentRequest(0).failingMandatoryIds.contains(QStringLiteral("power.mission_estimate")));
+        for (int i = 0; i < 400 && bridge->gpsPoor(); ++i)
+            QTest::qWait(50);
+        QVERIFY2(!bridge->gpsPoor(), "the GPS was not trusted again within 20 s of good readings");
+        QVERIFY(!vpm->missionEstimate().value(QStringLiteral("gpsPoor")).toBool());
+        item->evaluate();
+        QVERIFY(!item->message().contains(QStringLiteral("GPS")));
     }
 
     // The dialog reads the same estimate.

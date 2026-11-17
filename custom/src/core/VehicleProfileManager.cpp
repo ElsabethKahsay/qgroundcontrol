@@ -1333,6 +1333,7 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         m_lastMissionIndex = -1;
         m_lastAlertResult = -1;
         m_alertedOldWeather = false;
+        m_alertedGpsPoor = false;
         m_windSamples.clear();
         m_windEstN = m_windEstE = std::numeric_limits<double>::quiet_NaN();
         m_windKLearnedThisFlight = false;
@@ -1569,8 +1570,10 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         const double hoverThrust = cruiseReferenceThrustG(m_hoverThrustSum, m_hoverSamples,
                                                           setup.value(QStringLiteral("hoverThrustG")).toDouble(),
                                                           setup.value(QStringLiteral("hoverSource")).toString());
+        // Not while the GPS is unreliable: the speed that picks the band and
+        // tells cruise from hover comes from it.
         if (haveNow && fromOutputs && !m_livePayloadAboard && packV > 0.0 && hoverThrust > 0.0
-            && std::isfinite(alt) && alt > PowerTypeModel::kAirborneAltM
+            && std::isfinite(alt) && alt > PowerTypeModel::kAirborneAltM && !m_telemetry->gpsPoor()
             && MotorTable::isCruiseSample(gsNow, climb)) {
             const int n = static_cast<int>(thr.size());
             const double hoverW = n * MotorTable::powerForThrustAt(*table, hoverThrust, sigma).watts;
@@ -1785,6 +1788,16 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
                                                      .arg(out.value(QStringLiteral("typeName")).toString(),
                                                           out.value(QStringLiteral("chargeSource")).toString())
                                                : QStringLiteral("off: ") + why);
+    }
+    // An unreliable GPS: the distance left and anything from the position
+    // may be wrong (the charge is not). Said once per flight, in the air.
+    const bool gpsPoor = m_telemetry && m_telemetry->gpsPoor();
+    out[QStringLiteral("gpsPoor")] = gpsPoor;
+    if (gpsPoor && armed && !m_alertedGpsPoor && m_telemetry
+        && m_telemetry->altitudeRelative() > PowerTypeModel::kAirborneAltM) {
+        m_alertedGpsPoor = true;
+        qInfo().noquote() << QStringLiteral("VehicleProfileManager: alert: GPS unreliable in flight");
+        emit missionAlert(QStringLiteral("GPS unreliable: the position, the distances and the return may be wrong"), true);
     }
     // RETURN NOW from the mission is logged with its reason by
     // _updateMissionLive; here only that it came from there. From the trip,
@@ -2639,8 +2652,12 @@ QVariantMap VehicleProfileManager::missionEstimateFrom(const LiveStart *live)
         return notReady(QStringLiteral("No motor table linked to this copter"));
     Vehicle *v = m_telemetry->vehicle();
     MissionManager *mm = v ? v->missionManager() : nullptr;
-    if (!mm || mm->missionItems().size() < 2)
+    // No mission is the usual case in manual flight: the item says so
+    // without a warning (MissionEstimateCheck).
+    if (!mm || mm->missionItems().size() < 2) {
+        out[QStringLiteral("noMission")] = true;
         return notReady(QStringLiteral("No mission on the copter"));
+    }
     const double homeLat = m_telemetry->homeLatitude();
     const double homeLon = m_telemetry->homeLongitude();
     if (qAbs(homeLat) < 1e-6 && qAbs(homeLon) < 1e-6)
@@ -2939,6 +2956,11 @@ QVariantMap VehicleProfileManager::missionEstimateFrom(const LiveStart *live)
                            : QStringLiteral("Too little left for the return: return now");
     }
 
+    // Before arming: ArduPilot sets home where the copter is when it arms,
+    // so an unreliable GPS now puts home in the wrong place.
+    if (!live)
+        out[QStringLiteral("gpsPoor")] = m_telemetry && m_telemetry->gpsPoor();
+
     QVariantList wps;
     for (const MissionAssess::Waypoint &p : a.waypoints) {
         int command = MissionWalk::NavReturnToLaunch;
@@ -3016,7 +3038,7 @@ void VehicleProfileManager::_updateMissionLive(int socPct)
         if (idx >= 1)
             m_lastMissionIndex = idx;
         if (pos.isValid())
-            next = missionEstimateFrom(&s);
+            next = withGpsPoor(missionEstimateFrom(&s), m_telemetry->gpsPoor());
         next[QStringLiteral("passed")] = m_passed;
         checkMissionAlerts(next);
     } else if (m_telemetry && !m_telemetry->armed()) {
@@ -3090,6 +3112,9 @@ void VehicleProfileManager::checkMissionAlerts(const QVariantMap &next)
 // speeding up) adds a sample with the weight aboard; the wind then comes from
 // the last minute with this copter's drag constant, or, with none saved yet,
 // from learning the constant on this flight once it has turned enough.
+// While the GPS is unreliable its velocity is too: no sample is added, so
+// nothing is learned from it (a wrong constant would be kept for later
+// flights), and the wind comes from the samples already kept.
 bool VehicleProfileManager::_windFromLean(double *windN, double *windE)
 {
     if (!m_telemetry)
@@ -3100,13 +3125,21 @@ bool VehicleProfileManager::_windFromLean(double *windN, double *windE)
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     if (!std::isfinite(vN) || !std::isfinite(vE) || !(emptyKg > 0.0))
         return false;
+    const bool gpsPoor = m_telemetry->gpsPoor();
+    if (gpsPoor) {
+        // The next good velocity is not compared with this one.
+        m_windLastN = m_windLastE = std::numeric_limits<double>::quiet_NaN();
+        m_windLastMs = 0;
+    }
     const double dt = m_windLastMs > 0 ? (now - m_windLastMs) / 1000.0 : 0.0;
     const double accel = dt > 0.1 && std::isfinite(m_windLastN)
                              ? std::hypot(vN - m_windLastN, vE - m_windLastE) / dt : 1e9;
-    m_windLastN = vN;
-    m_windLastE = vE;
-    m_windLastMs = now;
-    if (WindFromLean::isSteady(m_telemetry->verticalSpeed(), accel)) {
+    if (!gpsPoor) {
+        m_windLastN = vN;
+        m_windLastE = vE;
+        m_windLastMs = now;
+    }
+    if (!gpsPoor && WindFromLean::isSteady(m_telemetry->verticalSpeed(), accel)) {
         WindFromLean::Sample smp;
         smp.rollRad = m_telemetry->roll();
         smp.pitchRad = m_telemetry->pitch();
@@ -3295,6 +3328,20 @@ void VehicleProfileManager::setFcCurrentDead(bool dead)
     qInfo().noquote() << (dead ? QStringLiteral("VehicleProfileManager: the flight controller's current reads about 0 A in "
                                                 "flight: the GCS counts the charge itself")
                                : QStringLiteral("VehicleProfileManager: the flight controller's current is measured again"));
+}
+
+QVariantMap VehicleProfileManager::withGpsPoor(QVariantMap live, bool gpsPoor)
+{
+    if (!gpsPoor)
+        return live;
+    live[QStringLiteral("gpsPoor")] = true;
+    QStringList reasons = live.value(QStringLiteral("reasons")).toStringList();
+    reasons.prepend(kGpsPoorReason);
+    live[QStringLiteral("reasons")] = reasons;
+    if (live.value(QStringLiteral("returnNow")).toBool())
+        live[QStringLiteral("returnNowWhy")] = live.value(QStringLiteral("returnNowWhy")).toString()
+                                               + QStringLiteral(" (GPS unreliable: the distance home may be wrong)");
+    return live;
 }
 
 bool VehicleProfileManager::returnNowHeld(bool wasOn, double marginPct, bool returning)

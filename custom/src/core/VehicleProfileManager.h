@@ -424,6 +424,15 @@ public:
     /// returning or landing; an unknown margin keeps the last state.
     static constexpr double kReturnNowClearPts = 3.0;
     static bool returnNowHeld(bool wasOn, double marginPct, bool returning);
+
+    /// The in-flight mission estimate while the GPS is unreliable
+    /// (TelemetryBridge::gpsPoor): marked (gpsPoor), the reason first among
+    /// the reasons, and RETURN NOW's reason says the distance home may be
+    /// wrong. The numbers stay: the charge is still right, where the copter
+    /// is may not be.
+    static QVariantMap withGpsPoor(QVariantMap live, bool gpsPoor);
+    static inline const QString kGpsPoorReason =
+        QStringLiteral("GPS unreliable: the position, the distances, the times and RETURN NOW may be wrong");
     /// The hover thrust per motor (g) a cruise ratio is measured against: a
     /// hover that was measured, never one worked out from MOT_THST_HOVER (a
     /// ratio against a wrong hover would be saved and used by the next
@@ -663,6 +672,7 @@ private:
     /// Keeps a profile unless one is kept already; true when it was kept.
     bool keepTerrainProfile(const QString &key, const TerrainClearance::Profile &profile);
     bool m_alertedOldWeather = false;
+    bool m_alertedGpsPoor = false;         // said once per flight
     // The wind from the lean (WindFromLean.h): this flight's steady samples,
     // the copter's drag constant (saved per copter, learned on flights that
     // turned; 0 = not known) and the last ground velocity, for the speed-up

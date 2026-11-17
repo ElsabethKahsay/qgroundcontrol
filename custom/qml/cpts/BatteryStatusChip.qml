@@ -179,13 +179,16 @@ Rectangle {
         if (_returnNow)             return _pl.returnNowFrom === "mission" ? _pl.returnNowWhy
                                          : "The rest of the trip needs " + Number(_pl.tripNeedAh).toFixed(1) + " Ah, "
                                            + Number(_pl.usableAh).toFixed(1) + " Ah left above the reserve: return now"
+                                           + (_pl.gpsPoor ? " (GPS unreliable: the distance home may be wrong)" : "")
         if (_plActive && !_armed)   return _pl.typeName + ": cruise ~" + Math.round(_pl.cruiseMin) + " min / "
                                            + root._km(_pl.cruiseKm) + ", hover ~" + Math.round(_pl.hoverMin)
                                            + " min with the payload entered"
                                            + (_pl.startSocPct < 100 ? " (pack not full: about " + Math.round(_pl.startSocPct)
                                                                        + " % from its voltage)" : "")
         if (_plActive)              return _pl.typeName + ": ~" + Math.round(_pl.timeLeftMin) + " min / "
-                                           + root._km(_pl.distLeftKm) + " left at the current draw \u2014 tap for detail"
+                                           + root._km(_pl.distLeftKm) + " left at the current draw"
+                                           + (_pl.gpsPoor ? " (GPS unreliable: the distance may be wrong)" : "")
+                                           + " \u2014 tap for detail"
         if (_preEstShown)           return "Pre-flight estimate for the selected pack (" + _preEst.sourceLabel + ") \u2014 the live estimate starts once armed"
         if (!_gateOk)               return "Arm and draw ≥ " + kMinGateA.toFixed(1) + " A to estimate flight time"
         if (!_canComputeTime)       return "Configure battery pack (N_S · N_P · mAh) to estimate flight time"

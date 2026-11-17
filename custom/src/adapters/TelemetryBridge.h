@@ -33,6 +33,7 @@
 #include <QVariant>
 
 #include "QGCMAVLink.h"
+#include "core/GpsTrust.h"
 #include "utils/TelemetryStream.h"
 
 #include <array>
@@ -261,6 +262,11 @@ class TelemetryBridge : public QObject {
     Q_PROPERTY(uint vibrationClipping READ vibrationClipping NOTIFY vibrationChanged)
 
     // ==================== EKF estimator status ====================
+
+    /// The GPS is not to be trusted right now (GpsTrust: few satellites, poor
+    /// accuracy or an EKF glitch; trusted again after 10 s of good readings).
+    /// False before the first GPS reading from this vehicle.
+    Q_PROPERTY(bool gpsPoor READ gpsPoor NOTIFY gpsPoorChanged)
 
     /// Raw EKF status flags bitmask (from ESTIMATOR_STATUS or EKF_STATUS_REPORT).
     Q_PROPERTY(uint estimatorFlags READ estimatorFlags NOTIFY estimatorStatusChanged)
@@ -635,6 +641,9 @@ public:
     uint vibrationClipping() const { return _vibrationClipping; }
 
     uint estimatorFlags() const { return _estimatorFlags; }
+    virtual bool gpsPoor() const { return _gpsTrust.known && !_gpsTrust.trusted; }
+    /// Judges one GPS reading (every GPS_RAW_INT; tests call it directly).
+    void judgeGps(const GpsTrust::Reading &reading);
     double estimatorVelRatio() const { return _estimatorVelRatio; }
     double estimatorPosHorizRatio() const { return _estimatorPosHorizRatio; }
     double estimatorPosVertRatio() const { return _estimatorPosVertRatio; }
@@ -864,6 +873,7 @@ signals:
     void heartbeatTick();
     void vibrationChanged();
     void estimatorStatusChanged();
+    void gpsPoorChanged();
     void ahrsHealthChanged();
     void sensorHealthChanged();
     void commDropRateChanged();
@@ -1049,6 +1059,9 @@ private:
     uint _vibrationClipping = 0;
 
     uint _estimatorFlags = 0;
+    GpsTrust::State _gpsTrust;            ///< this vehicle's GPS, judged per reading
+    qint64 _gpsJudgedMs = -1;             ///< when the last reading was judged
+    bool _ekfGpsGlitching = false;        ///< EKF_STATUS_REPORT's EKF_GPS_GLITCHING
     double _estimatorVelRatio = 0.0;
     double _estimatorPosHorizRatio = 0.0;
     double _estimatorPosVertRatio = 0.0;

@@ -8,9 +8,13 @@
 //   Comfortable, Fits                       Passed (green)
 //   Tight, Uses the reserve, Can't assess   Warning (amber)
 //   One way only, Can't be done, Too heavy  Failed (red)
+//   No mission on the copter                Skipped (grey): the usual case in
+//                                           manual flight, not a warning
 // Gusts above the gust limit, or going over the pack's current limit, make a
 // green result amber (warnings, not results). A leg closer to the ground than
 // TerrainClearance::kMarginM makes any result red ("too close to the ground").
+// An unreliable GPS (TelemetryBridge::gpsPoor) makes a green result amber:
+// ArduPilot sets home where the copter is when it arms.
 // The line reads, for example, "Fits — lands with 34 % (pessimistic 27 %),
 // 18:40"; the details are in its dialog.
 //
@@ -53,6 +57,10 @@ public:
             set(CheckStatus::Skipped, QStringLiteral("Copters only"));
             return;
         }
+        if (r.value(QStringLiteral("noMission")).toBool()) {
+            set(CheckStatus::Skipped, QStringLiteral("No mission: not needed for manual flight"));
+            return;
+        }
         const int result = r.value(QStringLiteral("result")).toInt();
         if (result == MissionAssess::CantAssess) {
             set(CheckStatus::Warning, QStringLiteral("Can't assess: %1").arg(r.value(QStringLiteral("problem")).toString()));
@@ -69,6 +77,8 @@ public:
             warnings += QStringLiteral(" — gusts over the limit");
         if (r.value(QStringLiteral("overCurrent")).toBool())
             warnings += QStringLiteral(" — over the pack's current limit");
+        if (r.value(QStringLiteral("gpsPoor")).toBool())
+            warnings += QStringLiteral(" — GPS unreliable: home would be set in the wrong place");
         // Closer to the ground than the margin somewhere along the mission:
         // red whatever the charge says (the item is advice only; it never
         // holds arming).

@@ -41,6 +41,8 @@ private slots:
     void testReturnNowHysteresis();
     void testCruiseMeasuredAgainstAMeasuredHover();
     void testFcCurrentJudgedInFlight();
+    void testGpsTrustJudgesEachReading();
+    void testEstimateMarkedWhileGpsPoor();
 };
 
 // Default battery config: 6S 1P 5000mAh LiPo 20% reserve
@@ -337,6 +339,91 @@ void VehicleProfileManagerTest::testFcCurrentJudgedInFlight()
     QVERIFY(run(remembered, 20, false, 50.0, 30.0).dead);
     // No time passed: nothing counted.
     QVERIFY(!VPM::fcCurrentCheck(fresh, true, 50.0, 0.01, 0.0).dead);
+}
+
+// The GPS judged per reading (GpsTrust.h): each limit on its own, untrusted
+// at once, trusted again only after 10 s of good readings in a row.
+void VehicleProfileManagerTest::testGpsTrustJudgesEachReading()
+{
+    GpsTrust::Reading good;
+    good.fixType = 3;
+    good.satellites = 20;
+    good.hdop = 0.6;
+    good.hAccM = 1.5;
+    QVERIFY(GpsTrust::readingGood(good));
+    auto with = [&good](auto change) { GpsTrust::Reading r = good; change(r); return GpsTrust::readingGood(r); };
+    QVERIFY(!with([](GpsTrust::Reading &r) { r.fixType = 2; }));
+    QVERIFY(with([](GpsTrust::Reading &r) { r.fixType = 6; }));         // RTK: better than 3D
+    QVERIFY(!with([](GpsTrust::Reading &r) { r.satellites = 5; }));
+    QVERIFY(with([](GpsTrust::Reading &r) { r.satellites = 6; }));
+    QVERIFY(!with([](GpsTrust::Reading &r) { r.hdop = 5.01; }));
+    QVERIFY(with([](GpsTrust::Reading &r) { r.hdop = 5.0; }));
+    QVERIFY(!with([](GpsTrust::Reading &r) { r.hdop = qQNaN(); }));     // not reported
+    QVERIFY(!with([](GpsTrust::Reading &r) { r.hAccM = 8.1; }));        // satellites kept, position wanders
+    QVERIFY(with([](GpsTrust::Reading &r) { r.hAccM = 8.0; }));
+    QVERIFY(with([](GpsTrust::Reading &r) { r.hAccM = qQNaN(); }));     // older receivers: not judged
+    QVERIFY(!with([](GpsTrust::Reading &r) { r.ekfGlitching = true; }));
+    QCOMPARE(QString::fromLatin1(GpsTrust::whyNotGood(good)), QString());
+
+    GpsTrust::Reading bad = good;
+    bad.satellites = 0;
+    bad.fixType = 1;
+    QCOMPARE(QString::fromLatin1(GpsTrust::whyNotGood(bad)), QStringLiteral("no 3D fix"));
+
+    // The first reading decides at once, good or bad.
+    GpsTrust::State s;
+    QVERIFY(!s.known);
+    QVERIFY(GpsTrust::step(s, good, 0.0));
+    QVERIFY(s.known && s.trusted);
+    GpsTrust::State s2;
+    QVERIFY(!GpsTrust::step(s2, bad, 0.0));
+    QVERIFY(s2.known);
+    // One bad reading: untrusted at once.
+    QVERIFY(!GpsTrust::step(s, bad, 0.2));
+    // Good again: 9.8 s is not enough, 10 s is.
+    for (int i = 0; i < 49; ++i)
+        QVERIFY(!GpsTrust::step(s, good, 0.2));
+    QVERIFY(GpsTrust::step(s, good, 0.2));
+    // The 10 s must be in a row: one bad reading starts them again.
+    QVERIFY(!GpsTrust::step(s, bad, 0.2));
+    for (int i = 0; i < 40; ++i)
+        GpsTrust::step(s, good, 0.2);
+    QVERIFY(!GpsTrust::step(s, bad, 0.2));
+    for (int i = 0; i < 49; ++i)
+        QVERIFY(!GpsTrust::step(s, good, 0.2));
+    QVERIFY(GpsTrust::step(s, good, 0.2));
+    // A time going backwards counts as none.
+    QVERIFY(!GpsTrust::step(s, bad, 0.2));
+    QVERIFY(!GpsTrust::step(s, good, -100.0));
+    QCOMPARE(s.goodS, 0.0);
+}
+
+// The in-flight mission estimate while the GPS is unreliable: marked, the
+// reason first, RETURN NOW's reason says the distance home may be wrong, and
+// the numbers left as they are. A good GPS changes nothing.
+void VehicleProfileManagerTest::testEstimateMarkedWhileGpsPoor()
+{
+    using VPM = VehicleProfileManager;
+    QVariantMap live;
+    live[QStringLiteral("ready")] = true;
+    live[QStringLiteral("landPessimisticPct")] = 27.0;
+    live[QStringLiteral("reasons")] = QStringList{QStringLiteral("Wind from the lean")};
+    live[QStringLiteral("returnNow")] = false;
+    QCOMPARE(VPM::withGpsPoor(live, false), live);
+
+    QVariantMap m = VPM::withGpsPoor(live, true);
+    QVERIFY(m.value(QStringLiteral("gpsPoor")).toBool());
+    QCOMPARE(m.value(QStringLiteral("reasons")).toStringList(),
+             (QStringList{VPM::kGpsPoorReason, QStringLiteral("Wind from the lean")}));
+    QCOMPARE(m.value(QStringLiteral("landPessimisticPct")).toDouble(), 27.0);
+    QVERIFY(!m.contains(QStringLiteral("returnNowWhy")));
+
+    live[QStringLiteral("returnNow")] = true;
+    live[QStringLiteral("returnNowWhy")] = QStringLiteral("Too little left for the return: return now");
+    m = VPM::withGpsPoor(live, true);
+    QVERIFY(m.value(QStringLiteral("returnNow")).toBool());              // still said
+    QCOMPARE(m.value(QStringLiteral("returnNowWhy")).toString(),
+             QStringLiteral("Too little left for the return: return now (GPS unreliable: the distance home may be wrong)"));
 }
 
 UT_REGISTER_TEST(VehicleProfileManagerTest)

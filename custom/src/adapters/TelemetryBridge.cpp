@@ -123,6 +123,26 @@ TelemetryBridge::TelemetryBridge(QObject* parent) : QObject(parent) {
     connect(&_homeAskTimer, &QTimer::timeout, this, &TelemetryBridge::_askForHome);
 }
 
+void TelemetryBridge::judgeGps(const GpsTrust::Reading &reading)
+{
+    const qint64 now = MonotonicClock::nowMs();
+    const double dtS = _gpsJudgedMs >= 0 ? (now - _gpsJudgedMs) / 1000.0 : 0.0;
+    _gpsJudgedMs = now;
+    const bool wasPoor = gpsPoor();
+    GpsTrust::step(_gpsTrust, reading, dtS);
+    if (gpsPoor() == wasPoor)
+        return;
+    if (gpsPoor())
+        qInfo().noquote() << QStringLiteral("TelemetryBridge: GPS unreliable: %1 (fix %2, %3 satellites, HDOP %4, accuracy %5 m)")
+                                 .arg(QString::fromLatin1(GpsTrust::whyNotGood(reading)))
+                                 .arg(reading.fixType).arg(reading.satellites)
+                                 .arg(reading.hdop, 0, 'f', 2).arg(reading.hAccM, 0, 'f', 1);
+    else
+        qInfo().noquote() << QStringLiteral("TelemetryBridge: GPS trusted again (%1 s of good readings)")
+                                 .arg(GpsTrust::kTrustAgainS, 0, 'f', 0);
+    emit gpsPoorChanged();
+}
+
 void TelemetryBridge::_askForHome()
 {
     const bool known = qAbs(_homeLatitude) > 1e-6 || qAbs(_homeLongitude) > 1e-6;
@@ -243,6 +263,13 @@ void TelemetryBridge::setVehicle(Vehicle* vehicle) {
     _homeAskSinceMs = MonotonicClock::nowMs();
     if (hadHome)
         emit homePositionChanged();
+    // The GPS is judged per vehicle too.
+    const bool hadPoorGps = gpsPoor();
+    _gpsTrust = GpsTrust::State();
+    _gpsJudgedMs = -1;
+    _ekfGpsGlitching = false;
+    if (hadPoorGps)
+        emit gpsPoorChanged();
 
     // Battery data is per-vehicle; reset SOC / EMA / freshness when switching.
     _batterySocPct = -1;
@@ -813,6 +840,14 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message) {
             }
             emit gpsFixTypeChanged();
             emit gpsSatellitesChanged();
+
+            GpsTrust::Reading reading;
+            reading.fixType = gps.fix_type;
+            reading.satellites = gps.satellites_visible == UINT8_MAX ? 0 : gps.satellites_visible;
+            reading.hdop = gps.eph == UINT16_MAX ? std::nan("") : gps.eph / 100.0;
+            reading.hAccM = gps.h_acc > 0 ? gps.h_acc / 1000.0 : std::nan("");   // mm; 0 = not reported
+            reading.ekfGlitching = _ekfGpsGlitching;
+            judgeGps(reading);
             break;
         }
         case MAVLINK_MSG_ID_GLOBAL_POSITION_INT: {
@@ -1024,6 +1059,9 @@ void TelemetryBridge::_handleMavlinkMessage(const mavlink_message_t& message) {
             // but with different field names. Both populate the same bridge properties.
             mavlink_ekf_status_report_t ekf;
             mavlink_msg_ekf_status_report_decode(&message, &ekf);
+            // ArduPilot's own judgement that the GPS is faulty; read with the
+            // next GPS reading (judgeGps).
+            _ekfGpsGlitching = (ekf.flags & EKF_GPS_GLITCHING) != 0;
             if (ekf.flags != _estimatorFlags) {
                 _estimatorFlags = ekf.flags;
                 emit estimatorStatusChanged();

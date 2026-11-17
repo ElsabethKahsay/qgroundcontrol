@@ -1805,6 +1805,14 @@ private slots:
         item.evaluate();
         QCOMPARE(item.status(), CheckStatus::Warning);
         QCOMPARE(item.message(), QStringLiteral("Can't assess: Weight missing"));
+        // No mission on the copter (manual flight): said, not warned.
+        r[QStringLiteral("noMission")] = true;
+        r[QStringLiteral("problem")] = QStringLiteral("No mission on the copter");
+        item.evaluate();
+        QCOMPARE(item.status(), CheckStatus::Skipped);
+        QCOMPARE(item.message(), QStringLiteral("No mission: not needed for manual flight"));
+        r.remove(QStringLiteral("noMission"));
+        r[QStringLiteral("problem")] = QStringLiteral("Weight missing");
         auto set = [&r](int result) {
             r[QStringLiteral("result")] = result;
             r[QStringLiteral("resultName")] = MissionAssess::resultName(result);
@@ -1846,6 +1854,17 @@ private slots:
         item.evaluate();
         QCOMPARE(item.status(), CheckStatus::Failed);     // red stays red
         r[QStringLiteral("overCurrent")] = false;
+        // An unreliable GPS before arming: home would be in the wrong place.
+        // Green turns amber, red stays red.
+        r[QStringLiteral("gpsPoor")] = true;
+        set(MissionAssess::Comfortable);
+        item.evaluate();
+        QCOMPARE(item.status(), CheckStatus::Warning);
+        QVERIFY(item.message().endsWith(QStringLiteral("GPS unreliable: home would be set in the wrong place")));
+        set(MissionAssess::CantBeDone);
+        item.evaluate();
+        QCOMPARE(item.status(), CheckStatus::Failed);
+        r[QStringLiteral("gpsPoor")] = false;
         // A pass by hand is undone: the verdict is computed.
         r[QStringLiteral("weatherRed")] = false;
         set(MissionAssess::Tight);

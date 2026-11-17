@@ -386,11 +386,12 @@ Item {
                                              : _m.colour === "red" ? Colors.error : Colors.textSecondary
             readonly property string text: {
                 if (!_shown || !_next) return ""
-                if (_m.returnNow) return qsTr("RETURN NOW · item %1").arg(_next.seq)
+                var gps = _m.gpsPoor ? qsTr("GPS POOR · ") : ""
+                if (_m.returnNow) return gps + qsTr("RETURN NOW · item %1").arg(_next.seq)
                 var where = _m.mode === "rtl" ? qsTr("RTL") : _m.mode === "land" ? qsTr("LAND")
                           : _next.seq >= 0 ? qsTr("WP %1").arg(_next.seq) : qsTr("Home")
                 var when = _m.mode === "paused" ? qsTr("paused") : _next.timeText
-                return where + " · " + when + " · " + Math.round(_next.socPessimisticPct) + " % · " + _m.resultName
+                return gps + where + " · " + when + " · " + Math.round(_next.socPessimisticPct) + " % · " + _m.resultName
             }
             visible:            _shown
             width:              chipText.implicitWidth + ScreenTools.defaultFontPixelWidth * 2
@@ -409,11 +410,12 @@ Item {
                 color:              missionChip._colour
             }
             ToolTip.visible:    chipMouse.containsMouse
-            ToolTip.text:       missionChip._m.returnNow ? missionChip._m.returnNowWhy
+            ToolTip.text:       (missionChip._m.gpsPoor ? qsTr("GPS unreliable: the position, the distances, the times and RETURN NOW may be wrong.\n") : "")
+                                + (missionChip._m.returnNow ? missionChip._m.returnNowWhy
                                 : qsTr("Lands with %1 % (pessimistic %2 %), %3 left")
                                       .arg(Math.round(missionChip._m.landLikelyPct || 0))
                                       .arg(Math.round(missionChip._m.landPessimisticPct || 0))
-                                      .arg(missionChip._m.totalText || "--")
+                                      .arg(missionChip._m.totalText || "--"))
             MouseArea {
                 id:             chipMouse
                 anchors.fill:   parent

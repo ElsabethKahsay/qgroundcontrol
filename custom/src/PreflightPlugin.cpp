@@ -382,6 +382,7 @@ void PreflightPlugin::init()
             });
     connect(_telemetryBridge, &TelemetryBridge::missionCountChanged, this, reevaluatePower);
     connect(_telemetryBridge, &TelemetryBridge::homePositionChanged, this, reevaluatePower);
+    connect(_telemetryBridge, &TelemetryBridge::gpsPoorChanged, this, reevaluatePower);
     if (_weatherProvider)
         connect(_weatherProvider, &WeatherProvider::siteWeatherChanged, this, reevaluatePower);
     if (auto *settings = PreflightSettingsManager::instance())
