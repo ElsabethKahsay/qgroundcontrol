@@ -95,7 +95,7 @@ custom/
 │   ├── singletons/                 # QML singletons
 │   └── *.qml                       # Toolbar/FlyView overlays
 ├── custom.qrc                      # Qt resource bindings
-├── SRS_AUDIT.md                    # Requirements traceability
+├── REQUIREMENTS.md                 # Requirements and their status
 └── INTEGRATION_GUIDE.md            # This file
 ```
 

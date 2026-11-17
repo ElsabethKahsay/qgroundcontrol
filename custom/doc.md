@@ -100,7 +100,7 @@ custom/
 ├── res/                          # Icons, images
 ├── tests/                        # Smoke tests
 ├── custom.qrc                    # Qt resource bindings for custom assets
-├── SRS_AUDIT.md                  # Requirements traceability
+├── REQUIREMENTS.md               # Requirements and their status
 └── doc.md                        # This file
 ```
 
@@ -278,7 +278,7 @@ The live arm-verdict probe (`./Debug/PreflightQGroundControl --live-arm`) interm
 | `custom/include/qt6_meta_fixes.h` | Qt 6.10.3 constexpr workaround |
 | `custom/cmake/CustomOverrides.cmake` | Build configuration/branding overrides |
 | `custom/custom.qrc` | Qt resource bindings |
-| `custom/SRS_AUDIT.md` | Requirements traceability (109 reqs) |
+| `custom/REQUIREMENTS.md` | Requirements and their status |
 
 ---
 
@@ -320,7 +320,7 @@ The `qgroundcontrol.exclusion` and `qgcresources.exclusion` files control which 
 
 ## SRS Coverage
 
-109 requirements across 9 categories, **94.3% coverage** (100/106 checkable). See `SRS_AUDIT.md` for the full traceability matrix.
+109 requirements across 9 categories, **94.3% coverage** (100/106 checkable). The original traceability matrix is no longer kept; see `REQUIREMENTS.md` for the current requirements and their status.
 
 | Category | Code | Reqs | Covered | Missing |
 |---|---|---|---|---|
