@@ -90,14 +90,14 @@ void DatabaseMigrationTest::testRestartDoesNotRerunMigrations()
             "VALUES ('Flight', '2026-10-22T10:00:00', 12.5, 9.03)")), qPrintable(q.lastError().text()));
     }
     db.reset();
-    QFile::remove(path + QStringLiteral(".bak"));   // taken by the first, fresh-file migration
+    QFile::remove(path + QStringLiteral(".v0.bak"));   // taken by the first, fresh-file migration
     QVERIFY(db.initialize(path));
     QSqlQuery q(QSqlDatabase::database());
     QVERIFY(q.exec(QStringLiteral("SELECT max_ground_speed_ms, target_lat FROM flights")));
     QVERIFY(q.next());
     QCOMPARE(q.value(0).toDouble(), 12.5);
     QCOMPARE(q.value(1).toDouble(), 9.03);
-    QVERIFY2(!QFile::exists(path + QStringLiteral(".bak")), "nothing to migrate, so no backup is taken");
+    QVERIFY2(!QFile::exists(path + QStringLiteral(".v0.bak")), "nothing to migrate, so no backup is taken");
 }
 
 // A v18 database gains the v19 flight columns.
@@ -110,7 +110,7 @@ void DatabaseMigrationTest::testUpgradeFrom18AddsFlightTargetColumns()
     downgradeTo18();
     QVERIFY(!columns(QStringLiteral("flights")).contains(QStringLiteral("target_lat")));
     db.reset();
-    QFile::remove(path + QStringLiteral(".bak"));
+    QFile::remove(path + QStringLiteral(".v0.bak"));
 
     QVERIFY(db.initialize(path));
     QCOMPARE(db.storedSchemaVersion(), db.schemaVersion());
@@ -118,7 +118,8 @@ void DatabaseMigrationTest::testUpgradeFrom18AddsFlightTargetColumns()
     for (const char *col : {"device_uid", "target_lat", "target_lon", "target_source"})
         QVERIFY2(cols.contains(QLatin1String(col)), col);
     QVERIFY(db.startupError().isEmpty());
-    QVERIFY(QFile::exists(path + QStringLiteral(".bak")));
+    QVERIFY(QFile::exists(path + QStringLiteral(".v18.bak")));
+    QFile::remove(path + QStringLiteral(".v18.bak"));
 }
 
 // A failing statement rolls the whole step back, the version is not
@@ -148,6 +149,8 @@ void DatabaseMigrationTest::testFailedStepRollsBackAndStops()
     QVERIFY(q.next());
     QCOMPARE(q.value(0).toInt(), 18);
     QVERIFY(!columns(QStringLiteral("flights")).contains(QStringLiteral("target_lat")));   // ALTERs rolled back
+    QFile::remove(path + QStringLiteral(".v0.bak"));
+    QFile::remove(path + QStringLiteral(".v18.bak"));
 }
 
 // One flight database: the app renames itself during start-up, and the

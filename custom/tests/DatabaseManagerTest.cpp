@@ -30,6 +30,8 @@ private:
         QString path = tmpFile.fileName();
         tmpFile.close();
         db.initialize(path);
+        // A fresh file migrates from version 0 and leaves a versioned snapshot.
+        QFile::remove(path + QStringLiteral(".v0.bak"));
         return path;
     }
 
@@ -78,6 +80,7 @@ private slots:
     void testExportFlightDetailCsv();
     void testGetFlightStats();
     void testBackupBeforeMigration();
+    void testBackupIncludesWritesStillInTheWal();
     void testEmptyNameUpsertAndSession();
     void testUpgradeFromV24();
     void testComplianceLogKeptWithoutVehicleDetails();
@@ -88,6 +91,8 @@ private slots:
     void testVehicleImportPreservesPackWeightSysidTargetAndIsAtomic();
     void testVehicleDeleteRefusedWhileItHasHistory();
     void testVehicleDeleteRemovesSetupWhenNoHistory();
+    void testMigrationRetryKeepsOriginalBackup();
+    void testLaterUpgradeMakesItsOwnBackup();
 };
 
 void DatabaseManagerTest::testInitialize()
@@ -1617,9 +1622,10 @@ void DatabaseManagerTest::testBackupBeforeMigration()
     tmpFile.close();
     const QString path = tmpFile.fileName();
 
-    // First init writes schema and triggers migration → a .bak must exist.
+    // First init writes schema and triggers migration from version 0, so the
+    // snapshot is named after that version.
     QVERIFY(db.initialize(path));
-    QVERIFY(QFile::exists(path + QStringLiteral(".bak")));
+    QVERIFY(QFile::exists(path + QStringLiteral(".v0.bak")));
 
     // A second init is a no-op (already initialized), so the backup file is
     // still the migration-time snapshot.
@@ -1631,10 +1637,65 @@ void DatabaseManagerTest::testBackupBeforeMigration()
     QVERIFY(opId > 0);
     db.reset();
     QVERIFY(db.initialize(path));
-    QVERIFY(QFile::exists(path + QStringLiteral(".bak")));
+    QVERIFY(QFile::exists(path + QStringLiteral(".v0.bak")));
 
     QFile::remove(path);
-    QFile::remove(path + QStringLiteral(".bak"));
+    QFile::remove(path + QStringLiteral(".v0.bak"));
+}
+
+// The database runs in WAL mode: recent writes can still sit in the -wal
+// file when the migration backup is taken, for instance while another
+// connection holds a read open (a checkpoint cannot pass it). The backup must
+// still contain them, so it is written through SQLite, not copied as a file.
+void DatabaseManagerTest::testBackupIncludesWritesStillInTheWal()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    QTemporaryFile tmpFile(QDir::tempPath() + QStringLiteral("/test_walbak_XXXXXX.db"));
+    QVERIFY(tmpFile.open());
+    tmpFile.close();
+    const QString path = tmpFile.fileName();
+    QVERIFY(db.initialize(path));
+    QFile::remove(path + QStringLiteral(".v0.bak"));
+
+    {
+        // A reader whose snapshot predates the writes below keeps them in the WAL.
+        QSqlDatabase reader = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("walReader"));
+        reader.setDatabaseName(path);
+        QVERIFY(reader.open());
+        QSqlQuery r(reader);
+        QVERIFY(r.exec(QStringLiteral("BEGIN")));
+        QVERIFY(r.exec(QStringLiteral("SELECT COUNT(*) FROM operators")) && r.next());
+
+        QVERIFY(db.insertOperator(QStringLiteral("Only In The WAL"), QStringLiteral("pilot")) > 0);
+        // One version back, so the next start migrates and takes the backup.
+        QSqlQuery w(QSqlDatabase::database());
+        QVERIFY(w.exec(QStringLiteral("DELETE FROM schema_version WHERE version = (SELECT MAX(version) FROM schema_version)")));
+        db.reset();
+        QVERIFY(db.initialize(path));
+
+        r.exec(QStringLiteral("COMMIT"));
+        r.finish();
+        reader.close();
+    }
+    QSqlDatabase::removeDatabase(QStringLiteral("walReader"));
+
+    QVERIFY(QFile::exists(path + QStringLiteral(".v28.bak")));
+    {
+        QSqlDatabase bak = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("walBackup"));
+        bak.setDatabaseName(path + QStringLiteral(".v28.bak"));
+        QVERIFY(bak.open());
+        QSqlQuery b(bak);
+        QVERIFY2(b.exec(QStringLiteral("SELECT COUNT(*) FROM operators WHERE name = 'Only In The WAL'")) && b.next(),
+                 qPrintable(b.lastError().text()));
+        QCOMPARE(b.value(0).toInt(), 1);
+        b.finish();
+        bak.close();
+    }
+    QSqlDatabase::removeDatabase(QStringLiteral("walBackup"));
+
+    db.reset();
+    QFile::remove(path + QStringLiteral(".v0.bak"));
+    QFile::remove(path + QStringLiteral(".v28.bak"));
 }
 
 void DatabaseManagerTest::testEmptyNameUpsertAndSession()
@@ -1843,6 +1904,9 @@ void DatabaseManagerTest::testUpgradeFromV24()
         names << cols.value(1).toString();
     for (const char *col : { "power_type_id", "hover_min_empty", "charger_mah", "learning_state" })
         QVERIFY2(names.contains(QLatin1String(col)), col);
+
+    QFile::remove(path + QStringLiteral(".v0.bak"));
+    QFile::remove(path + QStringLiteral(".v24.bak"));
 }
 
 // The flight-end record is written with the device UID but no vehicle type
@@ -2320,6 +2384,99 @@ void DatabaseManagerTest::testVehicleDeleteRemovesSetupWhenNoHistory()
     QCOMPARE(countRows(QStringLiteral("SELECT COUNT(*) AS n FROM vehicle_config WHERE fingerprint='%1'").arg(fp)), 0);
     QVERIFY(!anyVehicleSettingPresent(key));
     clearVehicleSettings(key);
+}
+
+// Each migration step takes a snapshot named after the version it starts
+// from. A retry of the same step must keep the first snapshot, not overwrite
+// it with the half-migrated file: that copy is the only way back if a later
+// attempt fails part-way through.
+void DatabaseManagerTest::testMigrationRetryKeepsOriginalBackup()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    QTemporaryFile tmpFile(QDir::tempPath() + QStringLiteral("/test_migration_retry_XXXXXX.db"));
+    QVERIFY(tmpFile.open());
+    tmpFile.close();
+    const QString path = tmpFile.fileName();
+    const QString v0bak = path + QStringLiteral(".v0.bak");
+    const QString v28bak = path + QStringLiteral(".v28.bak");
+
+    QVERIFY(db.initialize(path));
+    QVERIFY(QFile::exists(v0bak));
+
+    // Pretend a migration stopped after version 28: the next initialize()
+    // re-runs step 29 and takes a snapshot of the v28 file.
+    {
+        QSqlQuery q(QSqlDatabase::database());
+        QVERIFY(q.exec(QStringLiteral("DELETE FROM schema_version WHERE version > 28")));
+    }
+    db.reset();
+    QVERIFY(db.initialize(path));
+    QVERIFY(QFile::exists(v28bak));
+    QFile original(v28bak);
+    QVERIFY(original.open(QIODevice::ReadOnly));
+    const QByteArray snapshot = original.readAll();
+    original.close();
+    QVERIFY(!snapshot.isEmpty());
+
+    // New writes, then the same step is retried from the same version. The
+    // snapshot from the first attempt must survive byte for byte.
+    QVERIFY(db.insertOperator(QStringLiteral("After Backup"), QStringLiteral("pilot")) > 0);
+    {
+        QSqlQuery q(QSqlDatabase::database());
+        QVERIFY(q.exec(QStringLiteral("DELETE FROM schema_version WHERE version > 28")));
+    }
+    db.reset();
+    QVERIFY(db.initialize(path));
+    QVERIFY(QFile::exists(v28bak));
+    QFile retried(v28bak);
+    QVERIFY(retried.open(QIODevice::ReadOnly));
+    QCOMPARE(retried.readAll(), snapshot);
+    retried.close();
+    QVERIFY(QFile::exists(v0bak));
+
+    QFile::remove(path);
+    QFile::remove(v0bak);
+    QFile::remove(v28bak);
+}
+
+// A fresh database keeps its v0 snapshot; upgrading later from another
+// version takes a second snapshot under that version's name and leaves the
+// first one untouched. Version 0 must still be backed up: a database written
+// before schema versioning also reads as 0.
+void DatabaseManagerTest::testLaterUpgradeMakesItsOwnBackup()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    QTemporaryFile tmpFile(QDir::tempPath() + QStringLiteral("/test_later_backup_XXXXXX.db"));
+    QVERIFY(tmpFile.open());
+    tmpFile.close();
+    const QString path = tmpFile.fileName();
+    const QString v0bak = path + QStringLiteral(".v0.bak");
+    const QString v28bak = path + QStringLiteral(".v28.bak");
+
+    QVERIFY(db.initialize(path));
+    QVERIFY(QFile::exists(v0bak));
+    QFile first(v0bak);
+    QVERIFY(first.open(QIODevice::ReadOnly));
+    const QByteArray snapshot = first.readAll();
+    first.close();
+    QVERIFY(!snapshot.isEmpty());
+
+    {
+        QSqlQuery q(QSqlDatabase::database());
+        QVERIFY(q.exec(QStringLiteral("DELETE FROM schema_version WHERE version > 28")));
+    }
+    db.reset();
+    QVERIFY(db.initialize(path));
+
+    QVERIFY(QFile::exists(v28bak));
+    QFile original(v0bak);
+    QVERIFY(original.open(QIODevice::ReadOnly));
+    QCOMPARE(original.readAll(), snapshot);
+    original.close();
+
+    QFile::remove(path);
+    QFile::remove(v0bak);
+    QFile::remove(v28bak);
 }
 
 UT_REGISTER_TEST(DatabaseManagerTest)

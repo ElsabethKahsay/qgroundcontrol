@@ -120,23 +120,50 @@ private:
 };
 } // namespace
 
-void DatabaseManager::backupBeforeMigration()
+void DatabaseManager::backupBeforeMigration(int storedVersion)
 {
     assertMainThread();
     const QString dbFile = m_db.databaseName();
     if (dbFile.isEmpty() || !QFile::exists(dbFile))
         return;
-    // If we're about to migrate, WAL frames may still hold recent data; force
-    // a checkpoint first so the backup captures everything on disk.
-    QSqlQuery cp(m_db);
-    cp.exec("PRAGMA wal_checkpoint(PASSIVE)");
-    const QString dest = dbFile + QStringLiteral(".bak");
-    if (QFile::exists(dest))
-        QFile::remove(dest);
-    if (QFile::copy(dbFile, dest))
-        qCInfo(dbLog) << "DB backed up to" << dest;
-    else
-        qCWarning(dbLog) << "DB backup failed for" << dbFile;
+    // The database runs in WAL mode: recent writes may still be in the -wal
+    // file, and a checkpoint cannot always move them into the main file (an
+    // open reader holds it back). A file copy then misses them or is not a
+    // valid database at all. VACUUM INTO writes a complete, consistent copy
+    // through SQLite itself, whatever is still in the WAL. It runs on a
+    // connection of its own: SQLite refuses VACUUM on a connection with a
+    // statement still open, and a separate connection sees every committed
+    // write, the WAL's included.
+    // The name carries the version being upgraded from: a retry of that step
+    // finds its original snapshot, while a later upgrade (v29 → v30) gets a
+    // fresh one instead of overwriting it. Version 0 is backed up too: a
+    // database written before schema versioning also reads as 0.
+    const QString dest = dbFile + QStringLiteral(".v") + QString::number(storedVersion)
+                       + QStringLiteral(".bak");
+    if (QFile::exists(dest)) {
+        qCInfo(dbLog) << "Keeping existing DB backup" << dest;
+        return;
+    }
+    const QString connName = QStringLiteral("migration_backup");
+    {
+        QSqlDatabase src = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connName);
+        src.setDatabaseName(dbFile);
+        bool ok = src.open();
+        QString error = src.lastError().text();
+        if (ok) {
+            QSqlQuery backup(src);
+            backup.prepare(QStringLiteral("VACUUM INTO ?"));
+            backup.addBindValue(dest);
+            ok = backup.exec();
+            error = backup.lastError().text();
+        }
+        src.close();
+        if (ok)
+            qCInfo(dbLog) << "DB backed up to" << dest;
+        else
+            qCWarning(dbLog) << "DB backup failed for" << dbFile << error;
+    }
+    QSqlDatabase::removeDatabase(connName);
 }
 
 void DatabaseManager::assertMainThread() const
@@ -1138,7 +1165,7 @@ bool DatabaseManager::migrateSchema()
 
     // Before modifying the schema, snapshot the current on-disk file so a
     // failed migration can be rolled back manually.
-    backupBeforeMigration();
+    backupBeforeMigration(stored);
 
     qDebug() << "DatabaseManager: migrating schema from version" << stored << "to" << latest;
 
@@ -1883,8 +1910,8 @@ bool DatabaseManager::migrateSchema()
             const QString why = q.failed() ? q.failure() : m_db.lastError().text();
             m_db.rollback();
             setStartupError(tr("Database upgrade to version %1 failed and was rolled back: %2. "
-                               "The database before the upgrade is kept as %3.bak")
-                                .arg(v).arg(why, m_db.databaseName()));
+                               "The database before the upgrade is kept as %3.v%4.bak")
+                                .arg(v).arg(why, m_db.databaseName()).arg(stored));
             return false;
         }
     }

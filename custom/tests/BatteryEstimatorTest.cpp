@@ -480,7 +480,7 @@ private slots:
         QCOMPARE(db.storedSchemaVersion(), db.schemaVersion());
 
         QFile::remove(path);
-        QFile::remove(path + QStringLiteral(".bak"));
+        QFile::remove(path + QStringLiteral(".v0.bak"));
     }
     // ── Battery maths (PowerTypeModel.h) ─────────────────────────────────
     // The worked example: 0.8 kg to a 5 km target, 2 min there, dropped,

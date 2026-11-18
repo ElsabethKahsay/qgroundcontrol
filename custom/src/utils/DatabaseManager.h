@@ -566,9 +566,10 @@ private:
     bool execOrWarn(QSqlQuery &query, const char *tableName, bool trackFailure = true);
     /// Escapes special characters for safe embedding in JSON strings.
     QString escapeJson(const QString &raw);
-    /// Copies the DB file to "<dbPath>.bak" before a schema migration so a
-    /// failed migration can be rolled back manually.
-    void backupBeforeMigration();
+    /// Snapshots the DB to "<dbPath>.v<storedVersion>.bak" before a schema
+    /// migration so a failed migration can be rolled back manually. A retry of
+    /// the same step keeps the snapshot it already took.
+    void backupBeforeMigration(int storedVersion);
     /// Runs a passive WAL checkpoint; used by the periodic reliability timer.
     void walCheckpoint();
     /// Schedules the periodic WAL checkpoint (every 5 minutes).
