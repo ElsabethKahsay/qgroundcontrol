@@ -437,6 +437,10 @@ void PreflightPlugin::init()
     auto *registry = VehicleRegistry::instance();
     connect(registry, &VehicleRegistry::knownVehicleConnected,
             this, &PreflightPlugin::_onKnownVehicleConnected);
+    // When the hardware UID re-keys the connected copter, the profile manager
+    // follows the copter to its new key.
+    connect(registry, &VehicleRegistry::vehicleReKeyed,
+            _vehicleProfileManager, &VehicleProfileManager::onVehicleReKeyed);
 
     // Gate open/close tracks the flight session lifecycle for compliance logging.
     // A refusal is never silent. Gate denials from requestArm() and

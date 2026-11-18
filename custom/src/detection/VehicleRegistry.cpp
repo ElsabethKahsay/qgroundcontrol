@@ -166,9 +166,12 @@ void VehicleRegistry::_upgradeToHardwareIdentity(Vehicle *vehicle, quint64 uid, 
         computeFingerprint(uid, true, m_currentVehicleType, m_currentVehicleId, boardVersion);
 
     if (!oldFingerprint.isEmpty() && oldFingerprint != newFingerprint) {
-        DatabaseManager::instance().updateVehicleFingerprint(oldFingerprint, newFingerprint,
-                                                             QStringLiteral("HARDWARE_UID"));
-        qCDebug(vehicleRegistryLog) << "Re-keyed vehicle record to" << newFingerprint;
+        const QString newKey = QString::number(uid);
+        if (DatabaseManager::instance().updateVehicleFingerprint(oldFingerprint, newFingerprint,
+                                                                 QStringLiteral("HARDWARE_UID"), newKey)) {
+            qCDebug(vehicleRegistryLog) << "Re-keyed vehicle record to" << newKey;
+            emit vehicleReKeyed(oldFingerprint, newKey);
+        }
     }
 
     m_currentFingerprint = newFingerprint;
@@ -376,8 +379,13 @@ void VehicleRegistry::_extractVehicleInfo(Vehicle *vehicle)
         m_currentFingerprintSource == QStringLiteral("HARDWARE_UID") &&
         oldFingerprint != m_currentFingerprint) {
         qCDebug(vehicleRegistryLog) << "Re-keying sysid fallback record to hardware UID identity";
-        DatabaseManager::instance().updateVehicleFingerprint(oldFingerprint, m_currentFingerprint,
-                                                             QStringLiteral("HARDWARE_UID"));
+        // The fallback row's key is its fingerprint; the copter's key from now
+        // on is its decimal UID (as registerNewVehicle and the profile manager
+        // use). Listeners reload only once the rows have moved.
+        const QString newKey = QString::number(m_currentUid);
+        if (DatabaseManager::instance().updateVehicleFingerprint(oldFingerprint, m_currentFingerprint,
+                                                                 QStringLiteral("HARDWARE_UID"), newKey))
+            emit vehicleReKeyed(oldFingerprint, newKey);
     }
 
     qCDebug(vehicleRegistryLog)

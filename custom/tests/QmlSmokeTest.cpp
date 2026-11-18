@@ -47,6 +47,7 @@
 #include "QGCCorePlugin.h"
 #include "PreflightPlugin.h"
 #include "utils/DatabaseManager.h"
+#include "detection/VehicleRegistry.h"
 #include "utils/MonotonicClock.h"
 #include "MultiVehicleManager.h"
 #include "Vehicle/Vehicle.h"
@@ -1381,6 +1382,7 @@ private slots:
     void testParameterReaders();
     void testGpsJudgedFromTheVehicle();
     void testUnitTestRunKeepsOwnNameAndPaths();
+    void testVehicleReKeyReloadsTheProfile();
 
 private:
     bool _connectPlane();
@@ -3867,6 +3869,37 @@ void LivePluginBenchTest::testMissionEstimateLive()
     vpm->setBatterySeriesCells(seriesBefore);
     vpm->setBatteryParallelCells(parallelBefore);
     vpm->setBatteryCellMah(mahBefore);
+}
+
+// When the registry re-keys the connected copter (its hardware UID arrived
+// after the first heartbeat), the profile manager follows: it takes the new
+// key and reloads the copter's setup from it. A re-key of another copter is
+// ignored.
+void LivePluginBenchTest::testVehicleReKeyReloadsTheProfile()
+{
+    QVERIFY2(_connectPlane(), "mock vehicle did not connect / resolve its UID");
+    VehicleProfileManager *vpm = VehicleProfileManager::instance();
+    VehicleRegistry *registry = VehicleRegistry::instance();
+    const QString oldKey = vpm->currentDeviceUid();
+    QVERIFY(!oldKey.isEmpty());
+    const int parallelBefore = vpm->batteryParallelCells();
+
+    const QString newKey = QStringLiteral("rekey-follow-test");
+    DatabaseManager &db = DatabaseManager::instance();
+    QVERIFY(db.upsertVehicleEx(newKey, QStringLiteral("Re-keyed"), QStringLiteral("ArduPilot"), QStringLiteral("Quad")));
+    QVERIFY(db.updateVehicleBatteryConfig(newKey, 6, 7, 5000, 0.2, QStringLiteral("LiIon")));
+    QVERIFY(parallelBefore != 7);
+
+    emit registry->vehicleReKeyed(QStringLiteral("some-other-copter"), QStringLiteral("elsewhere"));
+    QCOMPARE(vpm->currentDeviceUid(), oldKey);
+
+    emit registry->vehicleReKeyed(oldKey, newKey);
+    QCOMPARE(vpm->currentDeviceUid(), newKey);
+    QCOMPARE(vpm->batteryParallelCells(), 7);
+
+    emit registry->vehicleReKeyed(newKey, oldKey);
+    QCOMPARE(vpm->currentDeviceUid(), oldKey);
+    QCOMPARE(vpm->batteryParallelCells(), parallelBefore);
 }
 
 // A test run keeps the name the test runner gave it: the database folder and

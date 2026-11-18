@@ -405,6 +405,10 @@ public:
     Q_INVOKABLE QStringList knownVehicles();
 
     Q_INVOKABLE bool deleteVehicle(const QString &deviceUid);
+    /// The connected copter's records moved from @p oldKey (its sysid-fallback
+    /// key) to @p newKey (its hardware UID): take the new key and reload its
+    /// setup from it. Another copter's re-key is ignored.
+    void onVehicleReKeyed(const QString &oldKey, const QString &newKey);
     Q_INVOKABLE bool incrementFlightCount(const QString &deviceUid);
     Q_INVOKABLE bool updateVehicleProfile(const QString &deviceUid, const QString &pilotName,
                                            const QString &notes);
@@ -617,6 +621,10 @@ signals:
 
 private slots:
     void onConnectionChanged();
+    /// Loads the connected copter's stored setup under m_currentDeviceUid
+    /// (weight, pack, thrust and motor tables, the remembered sensor and pack
+    /// readings). The dead-sensor flag is kept if this session found it.
+    void _loadVehicleProfile(const QString &apType, const QString &afType);
     void _onArmedChanged(bool armed);
     void resolveVehicleTypeAndMotorCount();
     void _updateLiveEstimate();

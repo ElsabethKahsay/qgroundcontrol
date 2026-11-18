@@ -391,6 +391,32 @@ void VehicleProfileManager::onConnectionChanged()
                                                  frameClass, frameType, motorCount, {},
                                                  gpsLat, gpsLon);
 
+    m_fcCurrent = FcCurrentCheck();
+    m_fcCheckLastMs = 0;
+    _loadVehicleProfile(apType, afType);
+
+    // The flight session itself is opened by the arming-gate flow
+    // (PreflightPlugin::_onGateOpened) — the single session owner — which
+    // hands this controller the session id so live battery energy can be
+    // attached to the one and only row per flight.  Previously every telemetry
+    // connect also opened a flight_sessions row here, producing two sessions
+    // per flight and splitting history across deviceUid and fingerprint keys.
+    m_flightSessionId = -1;
+
+    // Kick off the live battery estimate immediately, then every 2 s.
+    _updateLiveEstimate();
+    m_liveTimer.start();
+
+    emit currentVehicleChanged();
+}
+
+/// Resolve the persistent device identifier for the connected vehicle.
+/// Must match the key VehicleRegistry/registerNewVehicle uses, so battery
+/// history, flight sessions and the vehicle registry all land on ONE row:
+///   hardware UID (decimal, matching QString::number(AUTOPILOT_VERSION.uid))
+///   > connection fingerprint (VehicleRegistry) > MAV_SYS_ID.
+void VehicleProfileManager::_loadVehicleProfile(const QString &apType, const QString &afType)
+{
     // Load full history
     m_currentVehicleHistoryJson = DatabaseManager::instance().getVehicleHistory(m_currentDeviceUid);
     if (m_currentVehicleHistoryJson.isEmpty()) {
@@ -417,32 +443,23 @@ void VehicleProfileManager::onConnectionChanged()
 
     m_motorTableId = DatabaseManager::instance().vehicleMotorTableId(m_currentDeviceUid);
     m_motorTableWaivedBy = QSettings().value(QStringLiteral("MotorTable/waivedBy/%1").arg(m_currentDeviceUid)).toString();
-    m_fcCurrent = FcCurrentCheck();
-    m_fcCurrent.dead = QSettings().value(QStringLiteral("MotorTable/fcCurrentDead/%1").arg(m_currentDeviceUid), false).toBool();
-    m_fcCheckLastMs = 0;
+    m_fcCurrent.dead = m_fcCurrent.dead
+        || QSettings().value(QStringLiteral("MotorTable/fcCurrentDead/%1").arg(m_currentDeviceUid), false).toBool();
     m_packOhm = QSettings().value(QStringLiteral("MotorTable/packOhm/%1").arg(m_currentDeviceUid), -1.0).toDouble();
     emit motorTableChanged();
+}
 
-    // The flight session itself is opened by the arming-gate flow
-    // (PreflightPlugin::_onGateOpened) — the single session owner — which
-    // hands this controller the session id so live battery energy can be
-    // attached to the one and only row per flight.  Previously every telemetry
-    // connect also opened a flight_sessions row here, producing two sessions
-    // per flight and splitting history across deviceUid and fingerprint keys.
-    m_flightSessionId = -1;
-
-    // Kick off the live battery estimate immediately, then every 2 s.
-    _updateLiveEstimate();
-    m_liveTimer.start();
-
+void VehicleProfileManager::onVehicleReKeyed(const QString &oldKey, const QString &newKey)
+{
+    // Emitted by the registry after the database has moved the copter's rows
+    // and settings to newKey; reloading before that would find nothing.
+    if (oldKey.isEmpty() || newKey.isEmpty() || oldKey != m_currentDeviceUid)
+        return;
+    m_currentDeviceUid = newKey;
+    _loadVehicleProfile(autopilotTypeString(), airframeTypeString());
     emit currentVehicleChanged();
 }
 
-/// Resolve the persistent device identifier for the connected vehicle.
-/// Must match the key VehicleRegistry/registerNewVehicle uses, so battery
-/// history, flight sessions and the vehicle registry all land on ONE row:
-///   hardware UID (decimal, matching QString::number(AUTOPILOT_VERSION.uid))
-///   > connection fingerprint (VehicleRegistry) > MAV_SYS_ID.
 QString VehicleProfileManager::resolveDeviceUid()
 {
     if (!m_telemetry) return {};

@@ -18,6 +18,7 @@ Q_LOGGING_CATEGORY(dbLog, "database.manager")
 #include <QJsonObject>
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QSettings>
 #include "core/BatteryPackCheck.h"
 #include <QSet>
 #include <QStandardPaths>
@@ -2617,14 +2618,106 @@ QStringList DatabaseManager::listVehicles()
     return result;
 }
 
+// Per-copter QSettings (VehicleProfileManager, the wind and mission
+// estimates): each key ends with the copter's key. MotorTable/cruiseBand has
+// one more level under the copter's key (the speed band).
+static const char *const kVehicleSettingPrefixes[] = {
+    "MotorTable/fcCurrentDead/", "MotorTable/packOhm/", "MotorTable/waivedBy/",
+    "WindFromLean/k/", "MissionEstimate/emptyKg/",
+};
+static const char *const kVehicleSettingGroups[] = { "MotorTable/cruiseBand/" };
+
+// Moves a copter's settings from one key to another. A value the target
+// already has is kept (it is the copter's own, learned under its real key);
+// the source only fills gaps. The source's keys are removed either way.
+static void moveVehicleSettings(const QString &from, const QString &to)
+{
+    QSettings s;
+    for (const char *prefix : kVehicleSettingPrefixes) {
+        const QString a = QLatin1String(prefix) + from;
+        const QString b = QLatin1String(prefix) + to;
+        if (!s.contains(a))
+            continue;
+        if (!s.contains(b))
+            s.setValue(b, s.value(a));
+        s.remove(a);
+    }
+    for (const char *group : kVehicleSettingGroups) {
+        const QString a = QLatin1String(group) + from;
+        const QString b = QLatin1String(group) + to;
+        s.beginGroup(a);
+        const QStringList keys = s.childKeys();
+        s.endGroup();
+        for (const QString &k : keys)
+            if (!s.contains(b + QLatin1Char('/') + k))
+                s.setValue(b + QLatin1Char('/') + k, s.value(a + QLatin1Char('/') + k));
+        s.remove(a);
+    }
+    s.sync();
+}
+
+static void removeVehicleSettings(const QString &key)
+{
+    QSettings s;
+    for (const char *prefix : kVehicleSettingPrefixes)
+        s.remove(QLatin1String(prefix) + key);
+    for (const char *group : kVehicleSettingGroups)
+        s.remove(QLatin1String(group) + key);
+    s.sync();
+}
+
 bool DatabaseManager::deleteVehicle(const QString &deviceUid)
 {
     assertMainThread();
-    if (!m_initialized) return false;
+    m_vehicleDeleteError.clear();
+    if (!m_initialized || deviceUid.isEmpty()) return false;
+
+    // Recorded history (flights, checks, connections) is never deleted with a
+    // copter, and rows pointing at a vehicle that is gone are worse than a
+    // vehicle that stays: refuse while the copter has any.
     QSqlQuery q(m_db);
-    q.prepare("DELETE FROM vehicles WHERE device_uid = ?");
-    q.addBindValue(deviceUid);
-    return q.exec();
+    q.prepare("SELECT (SELECT COUNT(*) FROM flight_sessions WHERE device_uid = ?) "
+              "     + (SELECT COUNT(*) FROM check_results WHERE device_uid = ?) "
+              "     + (SELECT COUNT(*) FROM connection_sessions WHERE device_uid = ?) "
+              "     + (SELECT COUNT(*) FROM flights WHERE device_uid = ?), "
+              "       (SELECT fingerprint FROM vehicles WHERE device_uid = ?)");
+    for (int i = 0; i < 5; ++i)
+        q.addBindValue(deviceUid);
+    if (!execOrWarn(q, "deleteVehicle", false) || !q.next()) {
+        m_vehicleDeleteError = QStringLiteral("Could not read the vehicle's history.");
+        return false;
+    }
+    if (q.value(0).toInt() > 0) {
+        m_vehicleDeleteError = QStringLiteral("This vehicle has recorded flights, checks or connections. "
+                                              "Its history is kept, so it can't be deleted.");
+        return false;
+    }
+    const QString fingerprint = q.value(1).toString();
+    q.finish();
+
+    // No history: the copter goes with its setup and learning, all or nothing.
+    auto run = [this](const char *sql, const QString &key) {
+        QSqlQuery d(m_db);
+        d.prepare(QLatin1String(sql));
+        d.addBindValue(key);
+        return execOrWarn(d, "deleteVehicle");
+    };
+    if (!beginTransaction()) {
+        m_vehicleDeleteError = QStringLiteral("Could not start the delete.");
+        return false;
+    }
+    const bool ok = run("DELETE FROM vehicle_motor_table WHERE device_uid = ?", deviceUid)
+                 && run("DELETE FROM motor_table_flights WHERE device_uid = ?", deviceUid)
+                 && run("DELETE FROM vehicle_power_type WHERE device_uid = ?", deviceUid)
+                 && run("DELETE FROM vehicle_config WHERE fingerprint = ?", fingerprint)
+                 && run("DELETE FROM vehicles WHERE device_uid = ?", deviceUid);
+    if (!ok || !commitTransaction()) {
+        rollbackTransaction();
+        m_vehicleDeleteError = QStringLiteral("The delete failed; nothing was changed.");
+        return false;
+    }
+    removeVehicleSettings(deviceUid);
+    return true;
 }
 
 bool DatabaseManager::incrementFlightCount(const QString &deviceUid)
@@ -2679,46 +2772,48 @@ bool DatabaseManager::updatePreflightStatus(const QString &deviceUid, const QStr
     return execOrWarn(q, "updatePreflightStatus");
 }
 
+// The vehicles columns an export carries and an import restores, by JSON
+// name. Import touches only the fields present in the file, so an export made
+// before a field was added never resets that field on import.
+namespace {
+struct VehicleJsonField { const char *json; const char *column; };
+const VehicleJsonField kVehicleJsonFields[] = {
+    {"friendlyName", "friendly_name"}, {"autopilotType", "autopilot_type"},
+    {"airframeType", "airframe_type"}, {"firstSeen", "first_seen"}, {"lastSeen", "last_seen"},
+    {"totalFlightCount", "total_flight_count"}, {"totalFlightHours", "total_flight_hours"},
+    {"compid", "compid"}, {"firmwareVersion", "firmware_version"}, {"boardVersion", "board_version"},
+    {"fingerprint", "fingerprint"}, {"vehicleUuid", "vehicle_uuid"}, {"frameClass", "frame_class"},
+    {"frameType", "frame_type"}, {"motorCount", "motor_count"}, {"motorLayout", "motor_layout"},
+    {"paramSnapshotPath", "param_snapshot_path"}, {"lastPreflightStatus", "last_preflight_status"},
+    {"gpsLatitude", "gps_latitude"}, {"gpsLongitude", "gps_longitude"}, {"pilotName", "pilot_name"},
+    {"notes", "notes"}, {"thumbnail", "thumbnail"},
+    // The copter's setup.
+    {"uavWeightKg", "uav_weight_kg"}, {"batterySeriesCells", "battery_series_cells"},
+    {"batteryParallelCells", "battery_parallel_cells"}, {"batteryCellMah", "battery_cell_mah"},
+    {"batteryReserve", "battery_reserve"}, {"batteryType", "battery_type"}, {"sysid", "sysid"},
+    {"targetLat", "target_lat"}, {"targetLon", "target_lon"}, {"targetSource", "target_source"},
+    {"fingerprintSource", "fingerprint_source"}, {"hardwareUid", "hardware_uid"},
+};
+} // namespace
+
 QString DatabaseManager::exportVehiclesJson()
 {
     assertMainThread();
     if (!m_initialized) return QStringLiteral("[]");
+    QStringList columns{QStringLiteral("device_uid")};
+    for (const VehicleJsonField &f : kVehicleJsonFields)
+        columns << QLatin1String(f.column);
     QSqlQuery q(m_db);
-    q.exec("SELECT device_uid, friendly_name, autopilot_type, airframe_type, "
-           "first_seen, last_seen, total_flight_count, total_flight_hours, "
-           "compid, firmware_version, board_version, fingerprint, "
-           "vehicle_uuid, frame_class, frame_type, motor_count, motor_layout, "
-           "param_snapshot_path, last_preflight_status, "
-           "gps_latitude, gps_longitude, pilot_name, notes, thumbnail "
-           "FROM vehicles ORDER BY last_seen DESC");
+    q.exec(QStringLiteral("SELECT %1 FROM vehicles ORDER BY last_seen DESC").arg(columns.join(QStringLiteral(", "))));
 
     QJsonArray arr;
     while (q.next()) {
         QJsonObject o;
-        o["deviceUid"] = q.value(0).toString();
-        o["friendlyName"] = q.value(1).toString();
-        o["autopilotType"] = q.value(2).toString();
-        o["airframeType"] = q.value(3).toString();
-        o["firstSeen"] = q.value(4).toString();
-        o["lastSeen"] = q.value(5).toString();
-        o["totalFlightCount"] = q.value(6).toInt();
-        o["totalFlightHours"] = q.value(7).toDouble();
-        o["compid"] = q.value(8).toInt();
-        o["firmwareVersion"] = q.value(9).toString();
-        o["boardVersion"] = q.value(10).toString();
-        o["fingerprint"] = q.value(11).toString();
-        o["vehicleUuid"] = q.value(12).toString();
-        o["frameClass"] = q.value(13).toInt();
-        o["frameType"] = q.value(14).toInt();
-        o["motorCount"] = q.value(15).toInt();
-        o["motorLayout"] = q.value(16).toString();
-        o["paramSnapshotPath"] = q.value(17).toString();
-        o["lastPreflightStatus"] = q.value(18).toString();
-        o["gpsLatitude"] = q.value(19).toDouble();
-        o["gpsLongitude"] = q.value(20).toDouble();
-        o["pilotName"] = q.value(21).toString();
-        o["notes"] = q.value(22).toString();
-        o["thumbnail"] = q.value(23).toString();
+        o[QStringLiteral("deviceUid")] = q.value(0).toString();
+        // NULL stays null (no target is not a target at 0, 0).
+        int i = 1;
+        for (const VehicleJsonField &f : kVehicleJsonFields)
+            o[QLatin1String(f.json)] = QJsonValue::fromVariant(q.value(i++));
         arr.append(o);
     }
     return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Indented));
@@ -2731,59 +2826,45 @@ bool DatabaseManager::importVehiclesJson(const QString &json)
     QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8());
     if (!doc.isArray()) return false;
 
-    QJsonArray arr = doc.array();
+    // All rows or none. A copter already here is updated in place (its
+    // flights, table link and learning keep pointing at it), and only in the
+    // fields the file has.
+    if (!beginTransaction()) return false;
+    const QJsonArray arr = doc.array();
     for (const QJsonValue &val : arr) {
-        QJsonObject o = val.toObject();
-        QString uid = o["deviceUid"].toString();
+        const QJsonObject o = val.toObject();
+        const QString uid = o.value(QStringLiteral("deviceUid")).toString();
         if (uid.isEmpty()) continue;
 
+        QStringList columns{QStringLiteral("device_uid")};
+        QStringList updates;
+        QVariantList values{uid};
+        for (const VehicleJsonField &f : kVehicleJsonFields) {
+            if (!o.contains(QLatin1String(f.json)))
+                continue;
+            columns << QLatin1String(f.column);
+            updates << QStringLiteral("%1 = excluded.%1").arg(QLatin1String(f.column));
+            values << o.value(QLatin1String(f.json)).toVariant();
+        }
+        QStringList marks;
+        for (int i = 0; i < columns.size(); ++i)
+            marks << QStringLiteral("?");
         QSqlQuery q(m_db);
-        q.prepare(R"(
-            INSERT OR REPLACE INTO vehicles
-            (device_uid, friendly_name, autopilot_type, airframe_type,
-             first_seen, last_seen, total_flight_count, total_flight_hours,
-             compid, firmware_version, board_version, fingerprint,
-             vehicle_uuid, frame_class, frame_type, motor_count, motor_layout,
-             param_snapshot_path, last_preflight_status,
-             gps_latitude, gps_longitude, pilot_name, notes, thumbnail,
-             identity_source)
-            VALUES (?, ?, ?, ?,
-                    ?, ?, ?, ?,
-                    ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?,
-                    ?, ?,
-                    ?, ?, ?, ?, ?,
-                    'import')
-        )");
-        q.addBindValue(uid);
-        q.addBindValue(o["friendlyName"].toString());
-        q.addBindValue(o["autopilotType"].toString());
-        q.addBindValue(o["airframeType"].toString());
-        q.addBindValue(o["firstSeen"].toString());
-        q.addBindValue(o["lastSeen"].toString());
-        q.addBindValue(o["totalFlightCount"].toInt());
-        q.addBindValue(o["totalFlightHours"].toDouble());
-        q.addBindValue(o["compid"].toInt());
-        q.addBindValue(o["firmwareVersion"].toString());
-        q.addBindValue(o["boardVersion"].toString());
-        q.addBindValue(o["fingerprint"].toString());
-        q.addBindValue(o["vehicleUuid"].toString());
-        q.addBindValue(o["frameClass"].toInt());
-        q.addBindValue(o["frameType"].toInt());
-        q.addBindValue(o["motorCount"].toInt());
-        q.addBindValue(o["motorLayout"].toString());
-        q.addBindValue(o["paramSnapshotPath"].toString());
-        q.addBindValue(o["lastPreflightStatus"].toString());
-        q.addBindValue(o["gpsLatitude"].toDouble());
-        q.addBindValue(o["gpsLongitude"].toDouble());
-        q.addBindValue(o["pilotName"].toString());
-        q.addBindValue(o["notes"].toString());
-        q.addBindValue(o["thumbnail"].toString());
-        if (!q.exec()) {
-            qWarning() << "DatabaseManager: importVehiclesJson failed for" << uid << q.lastError().text();
+        q.prepare(QStringLiteral("INSERT INTO vehicles (%1, identity_source) VALUES (%2, 'import') "
+                                 "ON CONFLICT(device_uid) DO %3")
+                      .arg(columns.join(QStringLiteral(", ")), marks.join(QStringLiteral(", ")),
+                           updates.isEmpty() ? QStringLiteral("NOTHING")
+                                             : QStringLiteral("UPDATE SET ") + updates.join(QStringLiteral(", "))));
+        for (const QVariant &v : values)
+            q.addBindValue(v);
+        // A failed import is reported to its caller, not as a flight-record failure.
+        if (!execOrWarn(q, "importVehiclesJson", false)) {
+            qWarning() << "DatabaseManager: importVehiclesJson failed for" << uid << "- nothing imported";
+            rollbackTransaction();
+            return false;
         }
     }
-    return true;
+    return commitTransaction();
 }
 
 QString DatabaseManager::searchVehicles(const QString &query)
@@ -3631,22 +3712,95 @@ bool DatabaseManager::updateVehicleFirmware(const QString &fingerprint, const QS
 /** @brief Re-keys a vehicle to a new (better) fingerprint, e.g. when the
  *         hardware UID arrives and upgrades a sysid-based fallback identity. */
 bool DatabaseManager::updateVehicleFingerprint(const QString &oldFingerprint, const QString &newFingerprint,
-                                               const QString &newSource)
+                                               const QString &newSource, const QString &newDeviceUid)
 {
+    assertMainThread();
     if (!m_initialized || oldFingerprint.isEmpty() || newFingerprint.isEmpty()) return false;
+
+    // The sysid-fallback row being upgraded. None: nothing to move (already
+    // upgraded, or never registered under the fallback).
     QSqlQuery q(m_db);
-    q.prepare(R"(
-        UPDATE vehicles
-        SET fingerprint = ?, fingerprint_source = ?,
-            device_uid = CASE WHEN device_uid = ? THEN ? ELSE device_uid END
-        WHERE fingerprint = ? AND fingerprint_source = 'SYSID_TYPE_FALLBACK'
-    )");
-    q.addBindValue(newFingerprint);
-    q.addBindValue(newSource);
+    q.prepare("SELECT device_uid FROM vehicles WHERE fingerprint = ? AND fingerprint_source = 'SYSID_TYPE_FALLBACK'");
     q.addBindValue(oldFingerprint);
+    if (!execOrWarn(q, "updateVehicleFingerprint", false)) return false;
+    if (!q.next()) return true;
+    const QString oldKey = q.value(0).toString();
+    q.finish();
+
+    // The copter's key from now on: its decimal hardware UID, the key
+    // registerNewVehicle and VehicleProfileManager use (the new fingerprint
+    // only when no UID is given). From the second connect on the copter already
+    // has that row; then the fallback is merged into it.
+    QString newKey = newDeviceUid.isEmpty() ? newFingerprint : newDeviceUid;
+    QString targetFingerprint;
+    q.prepare("SELECT device_uid, fingerprint FROM vehicles WHERE (device_uid = ? OR fingerprint = ?) AND device_uid <> ?");
+    q.addBindValue(newKey);
     q.addBindValue(newFingerprint);
-    q.addBindValue(oldFingerprint);
-    return execOrWarn(q, "updateVehicleFingerprint", false);  // expected FK failure once configured
+    q.addBindValue(oldKey);
+    if (!execOrWarn(q, "updateVehicleFingerprint", false)) return false;
+    const bool merge = q.next();
+    if (merge) {
+        newKey = q.value(0).toString();
+        targetFingerprint = q.value(1).toString();
+    }
+    q.finish();
+
+    auto run = [this](const QString &sql, const QVariantList &binds) {
+        QSqlQuery u(m_db);
+        u.prepare(sql);
+        for (const QVariant &b : binds)
+            u.addBindValue(b);
+        return execOrWarn(u, "updateVehicleFingerprint", false);
+    };
+    if (!beginTransaction()) return false;
+    // The key changes in the vehicles row and in the rows pointing at it
+    // within one transaction: the foreign keys are checked at the commit.
+    bool ok = run(QStringLiteral("PRAGMA defer_foreign_keys = ON"), {});
+    // History and learning (many rows per copter) all move.
+    for (const char *table : {"flight_sessions", "check_results", "connection_sessions", "flights", "motor_table_flights"})
+        ok = ok && run(QStringLiteral("UPDATE %1 SET device_uid = ? WHERE device_uid = ?").arg(QLatin1String(table)),
+                       {newKey, oldKey});
+    // One row per copter: on a merge the copter's own row wins and the
+    // fallback's only fills a gap (UPDATE OR IGNORE leaves it where the target
+    // has one, and it is then deleted).
+    for (const char *table : {"vehicle_motor_table", "vehicle_power_type"})
+        ok = ok && run(QStringLiteral("UPDATE OR IGNORE %1 SET device_uid = ? WHERE device_uid = ?").arg(QLatin1String(table)),
+                       {newKey, oldKey})
+                && run(QStringLiteral("DELETE FROM %1 WHERE device_uid = ?").arg(QLatin1String(table)), {oldKey});
+    if (merge) {
+        // The copter's own row stays, under the new fingerprint, with the
+        // fallback row's flight totals added; the fallback row goes.
+        ok = ok && run(QStringLiteral("UPDATE OR IGNORE vehicle_config SET fingerprint = ? WHERE fingerprint = ?"),
+                       {targetFingerprint, oldFingerprint})
+                && run(QStringLiteral("DELETE FROM vehicle_config WHERE fingerprint = ?"), {oldFingerprint})
+                && run(QStringLiteral(
+                       "UPDATE vehicles SET "
+                       "total_flight_count = COALESCE(total_flight_count, 0) + COALESCE((SELECT total_flight_count FROM vehicles WHERE device_uid = ?), 0), "
+                       "total_flight_hours = COALESCE(total_flight_hours, 0) + COALESCE((SELECT total_flight_hours FROM vehicles WHERE device_uid = ?), 0), "
+                       "total_flight_time_sec = COALESCE(total_flight_time_sec, 0) + COALESCE((SELECT total_flight_time_sec FROM vehicles WHERE device_uid = ?), 0), "
+                       "fingerprint_source = ?, last_seen = CURRENT_TIMESTAMP WHERE device_uid = ?"),
+                       {oldKey, oldKey, oldKey, newSource, newKey})
+                && run(QStringLiteral("DELETE FROM vehicles WHERE device_uid = ?"), {oldKey});
+        if (targetFingerprint != newFingerprint)
+            ok = ok && run(QStringLiteral("UPDATE vehicles SET fingerprint = ? WHERE device_uid = ?"), {newFingerprint, newKey})
+                    && run(QStringLiteral("UPDATE vehicle_config SET fingerprint = ? WHERE fingerprint = ?"),
+                           {newFingerprint, targetFingerprint});
+    } else {
+        ok = ok && run(QStringLiteral("UPDATE vehicle_config SET fingerprint = ? WHERE fingerprint = ?"),
+                       {newFingerprint, oldFingerprint})
+                && run(QStringLiteral("UPDATE vehicles SET device_uid = ?, fingerprint = ?, fingerprint_source = ? "
+                                      "WHERE device_uid = ?"),
+                       {newKey, newFingerprint, newSource, oldKey});
+    }
+    if (!ok || !commitTransaction()) {
+        rollbackTransaction();
+        return false;
+    }
+    // The settings move only once the rows have: a failed re-key leaves both
+    // where they were.
+    if (oldKey != newKey)
+        moveVehicleSettings(oldKey, newKey);
+    return true;
 }
 
 /** @brief Refreshes the live attribute columns for a known fingerprint.

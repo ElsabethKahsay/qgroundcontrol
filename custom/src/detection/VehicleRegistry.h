@@ -78,6 +78,11 @@ signals:
     void knownVehicleChanged();
     void newVehicleRegistered(int vehicleId);
     void knownVehicleConnected(int vehicleId);
+    /// The connected copter's records moved from @p oldKey (its sysid-fallback
+    /// key) to @p newKey (its decimal hardware UID). Emitted after the
+    /// database re-key has committed, so a listener reloading from newKey finds
+    /// the copter's setup there.
+    void vehicleReKeyed(const QString &oldKey, const QString &newKey);
 
 private slots:
     void _onVehicleAdded(Vehicle *vehicle);

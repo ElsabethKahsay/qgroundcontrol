@@ -179,6 +179,8 @@ public:
     Q_INVOKABLE QString getVehicle(const QString &deviceUid);
     Q_INVOKABLE QStringList listVehicles();
     Q_INVOKABLE bool deleteVehicle(const QString &deviceUid);
+    /// Why the last deleteVehicle() was refused; empty after a delete that went through.
+    QString vehicleDeleteError() const { return m_vehicleDeleteError; }
     Q_INVOKABLE bool incrementFlightCount(const QString &deviceUid);
     Q_INVOKABLE bool updateFlightHours(const QString &deviceUid, double hours);
     Q_INVOKABLE bool updateVehicleProfile(const QString &deviceUid, const QString &pilotName,
@@ -205,7 +207,7 @@ public:
     Q_INVOKABLE bool updateVehicleFirmware(const QString &fingerprint, const QString &firmwareVersion);
     Q_INVOKABLE bool updateVehicleName(const QString &fingerprint, const QString &name);
     Q_INVOKABLE bool updateVehicleFingerprint(const QString &oldFingerprint, const QString &newFingerprint,
-                                              const QString &newSource);
+                                              const QString &newSource, const QString &newDeviceUid = QString());
     Q_INVOKABLE bool updateVehicleAttributes(const QString &fingerprint, const QString &autopilotType,
                                              const QString &vehicleType, const QString &vehicleTypeName,
                                              const QString &firmwareVersion, const QString &hardwareUid,
@@ -581,6 +583,7 @@ private:
     QTimer m_maintenanceTimer;
     QString m_startupError;
     QString m_runtimeError;
+    QString m_vehicleDeleteError;
     int m_ctxConnectionId = -1;   ///< setRecordingContext()
     int m_ctxFlightId = -1;
     int m_ctxHistoryId = -1;      ///< flights.id of the open flight (Flight History)

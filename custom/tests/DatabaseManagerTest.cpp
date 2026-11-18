@@ -12,6 +12,7 @@
 #include <QSqlError>
 #include <QSqlRecord>
 #include <QSqlDatabase>
+#include <QSettings>
 
 #include "UnitTest.h"
 #include "DatabaseManager.h"
@@ -82,6 +83,11 @@ private slots:
     void testComplianceLogKeptWithoutVehicleDetails();
     void testRecorderHistoryEvents();
     void testVehicleMotorTableLink();
+    void testVehicleReKeyMovesDependentsAndSettings();
+    void testVehicleReKeyMergesIntoExistingVehicle();
+    void testVehicleImportPreservesPackWeightSysidTargetAndIsAtomic();
+    void testVehicleDeleteRefusedWhileItHasHistory();
+    void testVehicleDeleteRemovesSetupWhenNoHistory();
 };
 
 void DatabaseManagerTest::testInitialize()
@@ -314,6 +320,91 @@ SessionRecorder::FlightStart start(const QString &source, bool bench = false)
     s.mode = bench ? QStringLiteral("Testing") : QStringLiteral("Flight");
     s.bench = bench;
     return s;
+}
+
+// One row in every table keyed by the vehicle identity, so the re-key and
+// delete tests both face the full set of dependants (including the three
+// tables with a real FOREIGN KEY to vehicles).
+bool seedVehicleDependents(const QString &key, const QString &fingerprint)
+{
+    auto run = [](const QString &sql) {
+        QSqlQuery q(QSqlDatabase::database());
+        return q.exec(sql);
+    };
+    const QString ts = QStringLiteral("2026-01-01T00:00:00Z");
+    return run(QStringLiteral("INSERT INTO flight_sessions (device_uid, started_at) VALUES ('%1', '%2')").arg(key, ts))
+        && run(QStringLiteral("INSERT INTO check_results (device_uid, check_id, status, evaluated_at) VALUES ('%1', 'c1', 'Pass', '%2')").arg(key, ts))
+        && run(QStringLiteral("INSERT INTO vehicle_config (fingerprint, config_json) VALUES ('%1', '{}')").arg(fingerprint))
+        && run(QStringLiteral("INSERT INTO flights (mode, started_at, device_uid) VALUES ('Flight', '%2', '%1')").arg(key, ts))
+        && run(QStringLiteral("INSERT INTO connection_sessions (device_uid, opened_at) VALUES ('%1', '%2')").arg(key, ts))
+        && run(QStringLiteral("INSERT INTO power_types (frame, prop_diameter_in, prop_pitch_in, cells, created_at) VALUES ('quad', 10, 5, 6, '%1')").arg(ts))
+        && run(QStringLiteral("INSERT INTO vehicle_power_type (device_uid, power_type_id, linked_at) SELECT '%1', id, '%2' FROM power_types LIMIT 1").arg(key, ts))
+        && run(QStringLiteral("INSERT INTO vehicle_motor_table (device_uid, table_id, linked_at) VALUES ('%1', 't1', '%2')").arg(key, ts))
+        && run(QStringLiteral("INSERT INTO motor_table_flights (device_uid, table_id, started_at, ended_at, gcs_ah) VALUES ('%1', 't1', '%2', '%2', 1.0)").arg(key, ts))
+        && run(QStringLiteral("INSERT INTO compliance_logs (log_id, vehicle_id, vehicle_type, checklist_json) VALUES ('log-%1', '%1', 'quad', '{}')").arg(key));
+}
+
+// The per-copter QSettings that VehicleProfileManager reads back, keyed by a
+// test-specific key so tests cannot see each other's.
+void seedVehicleSettings(const QString &key)
+{
+    QSettings s;
+    s.setValue(QStringLiteral("MotorTable/packOhm/%1").arg(key), 0.055);
+    s.setValue(QStringLiteral("MotorTable/waivedBy/%1").arg(key), QStringLiteral("Test Pilot"));
+    s.setValue(QStringLiteral("MotorTable/fcCurrentDead/%1").arg(key), true);
+    s.setValue(QStringLiteral("MotorTable/cruiseBand/%1/0").arg(key), 12.5);
+    s.setValue(QStringLiteral("WindFromLean/k/%1").arg(key), 0.42);
+    s.setValue(QStringLiteral("MissionEstimate/emptyKg/%1").arg(key), 9.75);
+    s.sync();
+}
+
+bool allVehicleSettingsPresent(const QString &key)
+{
+    QSettings s;
+    return s.contains(QStringLiteral("MotorTable/packOhm/%1").arg(key))
+        && s.contains(QStringLiteral("MotorTable/waivedBy/%1").arg(key))
+        && s.contains(QStringLiteral("MotorTable/fcCurrentDead/%1").arg(key))
+        && s.contains(QStringLiteral("MotorTable/cruiseBand/%1/0").arg(key))
+        && s.contains(QStringLiteral("WindFromLean/k/%1").arg(key))
+        && s.contains(QStringLiteral("MissionEstimate/emptyKg/%1").arg(key));
+}
+
+bool anyVehicleSettingPresent(const QString &key)
+{
+    QSettings s;
+    return s.contains(QStringLiteral("MotorTable/packOhm/%1").arg(key))
+        || s.contains(QStringLiteral("MotorTable/waivedBy/%1").arg(key))
+        || s.contains(QStringLiteral("MotorTable/fcCurrentDead/%1").arg(key))
+        || s.contains(QStringLiteral("MotorTable/cruiseBand/%1/0").arg(key))
+        || s.contains(QStringLiteral("WindFromLean/k/%1").arg(key))
+        || s.contains(QStringLiteral("MissionEstimate/emptyKg/%1").arg(key));
+}
+
+void clearVehicleSettings(const QString &key)
+{
+    QSettings s;
+    const QStringList prefixes{
+        QStringLiteral("MotorTable/cruiseBand/%1").arg(key),
+        QStringLiteral("MotorTable/waivedBy/%1").arg(key),
+        QStringLiteral("MotorTable/fcCurrentDead/%1").arg(key),
+        QStringLiteral("MotorTable/packOhm/%1").arg(key),
+        QStringLiteral("WindFromLean/k/%1").arg(key),
+        QStringLiteral("MissionEstimate/emptyKg/%1").arg(key),
+    };
+    for (const QString &prefix : prefixes)
+        s.remove(prefix);
+    s.sync();
+}
+
+bool noForeignKeyViolations()
+{
+    QSqlQuery q(QSqlDatabase::database());
+    return q.exec(QStringLiteral("PRAGMA foreign_key_check")) && !q.next();
+}
+
+int countRows(const QString &sql)
+{
+    return row(sql).value(QStringLiteral("n")).toInt();
 }
 } // namespace
 
@@ -1935,6 +2026,300 @@ void DatabaseManagerTest::testRuntimeWriteErrorIgnoresExpectedFailures()
                                          QStringLiteral("HARDWARE_UID")));
     QVERIFY(db.runtimeError().isEmpty());
     QCOMPARE(spy.count(), 0);
+}
+
+// When the hardware UID arrives for a copter registered under the sysid
+// fallback, the copter is re-keyed to its decimal UID: every table keyed by it
+// and every per-copter setting follows, in one transaction, even once it has
+// flown. The compliance log is an audit trail keyed by sysid and stays as is.
+void DatabaseManagerTest::testVehicleReKeyMovesDependentsAndSettings()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    initTempDb(db);
+
+    const QString oldFp = QStringLiteral("rekey-fallback-1111");
+    const QString newFp = QStringLiteral("rekey-hardware-2222");
+    const QString newUid = QStringLiteral("777000111");
+    QVERIFY(db.registerNewVehicle(oldFp, 1, 1,
+                                  QStringLiteral("ArduPilot"), QStringLiteral("multirotor"),
+                                  QStringLiteral("Quad"), QStringLiteral("4.5"),
+                                  0, QString(), QStringLiteral("board"), QString(),
+                                  QStringLiteral("SYSID_TYPE_FALLBACK")));
+    QVERIFY(seedVehicleDependents(oldFp, oldFp));
+    clearVehicleSettings(oldFp);
+    clearVehicleSettings(newUid);
+    seedVehicleSettings(oldFp);
+
+    QVERIFY2(db.updateVehicleFingerprint(oldFp, newFp, QStringLiteral("HARDWARE_UID"), newUid),
+             "re-key must succeed even when the vehicle has flown");
+
+    const QVariantMap v = row(QStringLiteral(
+        "SELECT device_uid, fingerprint_source FROM vehicles WHERE fingerprint='%1'").arg(newFp));
+    QVERIFY(!v.isEmpty());
+    QCOMPARE(v.value(QStringLiteral("device_uid")).toString(), newUid);
+    QCOMPARE(v.value(QStringLiteral("fingerprint_source")).toString(), QStringLiteral("HARDWARE_UID"));
+    QCOMPARE(countRows(QStringLiteral("SELECT COUNT(*) AS n FROM vehicles")), 1);
+
+    // Every vehicle-keyed table followed the key; nothing is left on the old one.
+    const QStringList byUid{QStringLiteral("flight_sessions"), QStringLiteral("check_results"),
+                            QStringLiteral("flights"), QStringLiteral("connection_sessions"),
+                            QStringLiteral("vehicle_power_type"), QStringLiteral("vehicle_motor_table"),
+                            QStringLiteral("motor_table_flights")};
+    for (const QString &t : byUid) {
+        QVERIFY2(countRows(QStringLiteral("SELECT COUNT(*) AS n FROM %1 WHERE device_uid='%2'").arg(t, newUid)) == 1,
+                 qPrintable(t));
+        QVERIFY2(countRows(QStringLiteral("SELECT COUNT(*) AS n FROM %1 WHERE device_uid='%2'").arg(t, oldFp)) == 0,
+                 qPrintable(t));
+    }
+    QCOMPARE(countRows(QStringLiteral(
+        "SELECT COUNT(*) AS n FROM vehicle_config WHERE fingerprint='%1'").arg(newFp)), 1);
+    QCOMPARE(countRows(QStringLiteral(
+        "SELECT COUNT(*) AS n FROM compliance_logs WHERE vehicle_id='%1'").arg(oldFp)), 1);
+    QVERIFY2(noForeignKeyViolations(), "the re-key left a row pointing at a vehicle that is gone");
+
+    QVERIFY(allVehicleSettingsPresent(newUid));
+    QVERIFY(!anyVehicleSettingPresent(oldFp));
+    clearVehicleSettings(oldFp);
+    clearVehicleSettings(newUid);
+}
+
+// From the second connect on, the copter is first registered again under the
+// fallback key (the UID arrives a moment after the first heartbeat) and its
+// decimal-UID row already exists. The re-key then merges: the fallback's
+// rows move onto the existing copter, the existing copter's own setup and
+// learning win where both have one, the fallback fills only gaps, and one
+// vehicles row is left.
+void DatabaseManagerTest::testVehicleReKeyMergesIntoExistingVehicle()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    initTempDb(db);
+
+    const QString oldFp = QStringLiteral("merge-fallback-1111");
+    const QString newFp = QStringLiteral("merge-hardware-2222");
+    const quint64 uid = 777000222;
+    const QString key = QString::number(uid);
+    QVERIFY(db.registerNewVehicle(newFp, 1, 1, QStringLiteral("ArduPilot"), QStringLiteral("multirotor"),
+                                  QStringLiteral("Quad"), QStringLiteral("4.6"), uid, QStringLiteral("hw"),
+                                  QStringLiteral("board"), QStringLiteral("Real Copter"),
+                                  QStringLiteral("HARDWARE_UID")));
+    QVERIFY(db.updateVehicleBatteryConfig(key, 6, 8, 5000, 0.2, QStringLiteral("LiIon")));
+    QSqlQuery q(QSqlDatabase::database());
+    QVERIFY(q.exec(QStringLiteral("INSERT INTO vehicle_motor_table (device_uid, table_id, linked_at, hover_thrust_g, hover_samples) "
+                                  "VALUES ('%1', 'tbl-target', '2026-01-01T00:00:00Z', 3000, 40)").arg(key)));
+    clearVehicleSettings(key);
+    clearVehicleSettings(oldFp);
+    QSettings s;
+    s.setValue(QStringLiteral("MotorTable/packOhm/%1").arg(key), 0.011);
+    s.setValue(QStringLiteral("MotorTable/fcCurrentDead/%1").arg(key), true);
+
+    // This connect's fresh fallback profile, with one flight recorded under it
+    // and settings written before the UID arrived.
+    QVERIFY(db.registerNewVehicle(oldFp, 1, 1, QStringLiteral("ArduPilot"), QStringLiteral("multirotor"),
+                                  QStringLiteral("Quad"), QStringLiteral("4.6"), 0, QString(),
+                                  QStringLiteral("board"), QString(), QStringLiteral("SYSID_TYPE_FALLBACK")));
+    QVERIFY(q.exec(QStringLiteral("INSERT INTO flight_sessions (device_uid, started_at) VALUES ('%1', '2026-01-02T00:00:00Z')").arg(oldFp)));
+    QVERIFY(q.exec(QStringLiteral("INSERT INTO vehicle_motor_table (device_uid, table_id, linked_at) "
+                                  "VALUES ('%1', 'tbl-fallback', '2026-01-02T00:00:00Z')").arg(oldFp)));
+    s.setValue(QStringLiteral("MotorTable/packOhm/%1").arg(oldFp), 0.05);
+    s.setValue(QStringLiteral("WindFromLean/k/%1").arg(oldFp), 0.42);
+    s.sync();
+
+    QVERIFY(db.updateVehicleFingerprint(oldFp, newFp, QStringLiteral("HARDWARE_UID"), key));
+
+    QCOMPARE(countRows(QStringLiteral("SELECT COUNT(*) AS n FROM vehicles")), 1);
+    QCOMPARE(countRows(QStringLiteral("SELECT COUNT(*) AS n FROM vehicles WHERE device_uid='%1'").arg(key)), 1);
+    int series = 0, parallel = 0, cellMah = 0; double reserve = 0; QString type;
+    QVERIFY(db.vehicleBatteryConfig(key, &series, &parallel, &cellMah, &reserve, &type));
+    QCOMPARE(parallel, 8);
+    QCOMPARE(type, QStringLiteral("LiIon"));
+    const QVariantMap mt = row(QStringLiteral("SELECT table_id, hover_thrust_g FROM vehicle_motor_table WHERE device_uid='%1'").arg(key));
+    QCOMPARE(mt.value(QStringLiteral("table_id")).toString(), QStringLiteral("tbl-target"));
+    QCOMPARE(mt.value(QStringLiteral("hover_thrust_g")).toDouble(), 3000.0);
+    QCOMPARE(countRows(QStringLiteral("SELECT COUNT(*) AS n FROM vehicle_motor_table WHERE device_uid='%1'").arg(oldFp)), 0);
+    QCOMPARE(countRows(QStringLiteral("SELECT COUNT(*) AS n FROM flight_sessions WHERE device_uid='%1'").arg(key)), 1);
+    QCOMPARE(countRows(QStringLiteral("SELECT COUNT(*) AS n FROM flight_sessions WHERE device_uid='%1'").arg(oldFp)), 0);
+    QVERIFY2(noForeignKeyViolations(), "the re-key left a row pointing at a vehicle that is gone");
+
+    QSettings after;
+    QCOMPARE(after.value(QStringLiteral("MotorTable/packOhm/%1").arg(key)).toDouble(), 0.011);   // the copter's own wins
+    QVERIFY(after.value(QStringLiteral("MotorTable/fcCurrentDead/%1").arg(key)).toBool());
+    QCOMPARE(after.value(QStringLiteral("WindFromLean/k/%1").arg(key)).toDouble(), 0.42);       // a gap is filled
+    QVERIFY(!anyVehicleSettingPresent(oldFp));
+    clearVehicleSettings(key);
+    clearVehicleSettings(oldFp);
+}
+
+// Export carries the copter's setup (pack, weight, sysid, target), import
+// keeps it, an older export without those fields leaves them as they are,
+// and a bad row rolls the whole import back.
+void DatabaseManagerTest::testVehicleImportPreservesPackWeightSysidTargetAndIsAtomic()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    initTempDb(db);
+
+    const QString fp = QStringLiteral("import-fp-4444");
+    const int sysid = 7;
+    const quint64 uid = 777001;
+    const QString key = QString::number(uid);
+    QVERIFY(db.registerNewVehicle(fp, sysid, 1,
+                                  QStringLiteral("ArduPilot"), QStringLiteral("multirotor"),
+                                  QStringLiteral("Quad"), QStringLiteral("4.5"),
+                                  uid, QStringLiteral("hw"), QStringLiteral("board"),
+                                  QStringLiteral("Import Me"), QStringLiteral("HARDWARE_UID")));
+    QVERIFY(db.updateVehicleUavWeight(key, 13.5));
+    QVERIFY(db.updateVehicleBatteryConfig(key, 6, 8, 5000, 0.25, QStringLiteral("Li-ion")));
+    QVERIFY(db.saveVehicleTarget(key, 47.5, 8.5, QStringLiteral("test-import")));
+
+    const QJsonDocument doc = QJsonDocument::fromJson(db.exportVehiclesJson().toUtf8());
+    QVERIFY(doc.isArray());
+    QCOMPARE(doc.array().size(), 1);
+    const QJsonObject o = doc.array().first().toObject();
+    QCOMPARE(o.value(QStringLiteral("deviceUid")).toString(), key);
+    QCOMPARE(o.value(QStringLiteral("uavWeightKg")).toDouble(), 13.5);
+    QCOMPARE(o.value(QStringLiteral("batterySeriesCells")).toInt(), 6);
+    QCOMPARE(o.value(QStringLiteral("batteryParallelCells")).toInt(), 8);
+    QCOMPARE(o.value(QStringLiteral("batteryCellMah")).toInt(), 5000);
+    QCOMPARE(o.value(QStringLiteral("batteryReserve")).toDouble(), 0.25);
+    QCOMPARE(o.value(QStringLiteral("batteryType")).toString(), QStringLiteral("Li-ion"));
+    QCOMPARE(o.value(QStringLiteral("sysid")).toInt(), 7);
+    QCOMPARE(o.value(QStringLiteral("targetLat")).toDouble(), 47.5);
+    QCOMPARE(o.value(QStringLiteral("targetLon")).toDouble(), 8.5);
+    QCOMPARE(o.value(QStringLiteral("targetSource")).toString(), QStringLiteral("test-import"));
+
+    const char *setupSql =
+        "SELECT uav_weight_kg, battery_series_cells, battery_parallel_cells, battery_cell_mah, "
+        "battery_reserve, battery_type, sysid, target_lat, target_lon, target_source "
+        "FROM vehicles WHERE device_uid='%1'";
+    auto checkSetup = [&]() {
+        const QVariantMap v = row(QString::fromLatin1(setupSql).arg(key));
+        QVERIFY(!v.isEmpty());
+        QCOMPARE(v.value(QStringLiteral("uav_weight_kg")).toDouble(), 13.5);
+        QCOMPARE(v.value(QStringLiteral("battery_series_cells")).toInt(), 6);
+        QCOMPARE(v.value(QStringLiteral("battery_parallel_cells")).toInt(), 8);
+        QCOMPARE(v.value(QStringLiteral("battery_cell_mah")).toInt(), 5000);
+        QCOMPARE(v.value(QStringLiteral("battery_reserve")).toDouble(), 0.25);
+        QCOMPARE(v.value(QStringLiteral("battery_type")).toString(), QStringLiteral("Li-ion"));
+        QCOMPARE(v.value(QStringLiteral("sysid")).toInt(), 7);
+        QCOMPARE(v.value(QStringLiteral("target_lat")).toDouble(), 47.5);
+        QCOMPARE(v.value(QStringLiteral("target_lon")).toDouble(), 8.5);
+        QCOMPARE(v.value(QStringLiteral("target_source")).toString(), QStringLiteral("test-import"));
+    };
+
+    // An older export (no setup fields) imported over the configured copter
+    // leaves its setup alone.
+    QJsonObject old = o;
+    for (const char *k : {"uavWeightKg", "batterySeriesCells", "batteryParallelCells", "batteryCellMah",
+                          "batteryReserve", "batteryType", "sysid", "targetLat", "targetLon", "targetSource",
+                          "fingerprintSource", "hardwareUid"})
+        old.remove(QLatin1String(k));
+    old[QStringLiteral("friendlyName")] = QStringLiteral("Renamed On Import");
+    QVERIFY(db.importVehiclesJson(QString::fromUtf8(QJsonDocument(QJsonArray{old}).toJson(QJsonDocument::Compact))));
+    checkSetup();
+    QCOMPARE(row(QStringLiteral("SELECT friendly_name FROM vehicles WHERE device_uid='%1'").arg(key))
+                 .value(QStringLiteral("friendly_name")).toString(), QStringLiteral("Renamed On Import"));
+
+    // Round-trip into an empty vehicles table.
+    QSqlQuery q(QSqlDatabase::database());
+    QVERIFY(q.exec(QStringLiteral("DELETE FROM vehicles")));
+    QVERIFY(db.importVehiclesJson(QString::fromUtf8(QJsonDocument(doc).toJson(QJsonDocument::Compact))));
+    checkSetup();
+
+    // A bad row must roll the good one back; a partial import is not useful.
+    QVERIFY(q.exec(QStringLiteral("DELETE FROM vehicles")));
+    QVERIFY(q.exec(QStringLiteral(
+        "CREATE TRIGGER import_fail_test BEFORE INSERT ON vehicles "
+        "WHEN NEW.device_uid = 'import-bad-uid' "
+        "BEGIN SELECT RAISE(ABORT, 'forced import failure'); END")));
+    QJsonArray arr;
+    arr.append(o);
+    QJsonObject bad = o;
+    bad[QStringLiteral("deviceUid")] = QStringLiteral("import-bad-uid");
+    bad[QStringLiteral("fingerprint")] = QStringLiteral("import-bad-fp");
+    arr.append(bad);
+    QVERIFY(!db.importVehiclesJson(QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact))));
+    QCOMPARE(countRows(QStringLiteral("SELECT COUNT(*) AS n FROM vehicles")), 0);
+    QVERIFY(q.exec(QStringLiteral("DROP TRIGGER import_fail_test")));
+}
+
+// A copter with recorded history (flights, checks, connections) is never
+// deleted: the call is refused with a reason and nothing changes.
+void DatabaseManagerTest::testVehicleDeleteRefusedWhileItHasHistory()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    initTempDb(db);
+
+    const QString fp = QStringLiteral("delete-fp-3333");
+    const quint64 uid = 888888;
+    const QString key = QString::number(uid);
+    QVERIFY(db.registerNewVehicle(fp, 3, 1,
+                                  QStringLiteral("ArduPilot"), QStringLiteral("multirotor"),
+                                  QStringLiteral("Quad"), QStringLiteral("4.5"),
+                                  uid, QStringLiteral("hw"), QStringLiteral("board"),
+                                  QStringLiteral("Delete Me"), QStringLiteral("HARDWARE_UID")));
+    QVERIFY(seedVehicleDependents(key, fp));
+    clearVehicleSettings(key);
+    seedVehicleSettings(key);
+
+    QVERIFY(!db.deleteVehicle(key));
+    QVERIFY2(db.vehicleDeleteError().contains(QStringLiteral("history")), qPrintable(db.vehicleDeleteError()));
+
+    QCOMPARE(countRows(QStringLiteral("SELECT COUNT(*) AS n FROM vehicles WHERE device_uid='%1'").arg(key)), 1);
+    QCOMPARE(countRows(QStringLiteral("SELECT COUNT(*) AS n FROM flight_sessions WHERE device_uid='%1'").arg(key)), 1);
+    QCOMPARE(countRows(QStringLiteral("SELECT COUNT(*) AS n FROM vehicle_motor_table WHERE device_uid='%1'").arg(key)), 1);
+    QVERIFY(allVehicleSettingsPresent(key));
+    clearVehicleSettings(key);
+
+    // History with no foreign key behind it (only connections recorded) is
+    // history too: still refused, the copter and its table link kept.
+    const QString fp2 = QStringLiteral("delete-fp-3334");
+    const QString key2 = QStringLiteral("888889");
+    QVERIFY(db.registerNewVehicle(fp2, 4, 1, QStringLiteral("ArduPilot"), QStringLiteral("multirotor"),
+                                  QStringLiteral("Quad"), QStringLiteral("4.5"), 888889, QStringLiteral("hw"),
+                                  QStringLiteral("board"), QStringLiteral("Connected Once"), QStringLiteral("HARDWARE_UID")));
+    QSqlQuery q(QSqlDatabase::database());
+    QVERIFY(q.exec(QStringLiteral("INSERT INTO connection_sessions (device_uid, opened_at) VALUES ('%1', '2026-01-01T00:00:00Z')").arg(key2)));
+    QVERIFY(q.exec(QStringLiteral("INSERT INTO vehicle_motor_table (device_uid, table_id, linked_at) VALUES ('%1', 't1', '2026-01-01T00:00:00Z')").arg(key2)));
+    QVERIFY(!db.deleteVehicle(key2));
+    QVERIFY2(db.vehicleDeleteError().contains(QStringLiteral("history")), qPrintable(db.vehicleDeleteError()));
+    QCOMPARE(countRows(QStringLiteral("SELECT COUNT(*) AS n FROM vehicles WHERE device_uid='%1'").arg(key2)), 1);
+    QCOMPARE(countRows(QStringLiteral("SELECT COUNT(*) AS n FROM vehicle_motor_table WHERE device_uid='%1'").arg(key2)), 1);
+}
+
+// A copter with no recorded history is deleted with its setup: its table
+// link, learning, power type, config and per-copter settings go with it.
+void DatabaseManagerTest::testVehicleDeleteRemovesSetupWhenNoHistory()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    initTempDb(db);
+
+    const QString fp = QStringLiteral("delete-fp-5555");
+    const quint64 uid = 888999;
+    const QString key = QString::number(uid);
+    QVERIFY(db.registerNewVehicle(fp, 3, 1,
+                                  QStringLiteral("ArduPilot"), QStringLiteral("multirotor"),
+                                  QStringLiteral("Quad"), QStringLiteral("4.5"),
+                                  uid, QStringLiteral("hw"), QStringLiteral("board"),
+                                  QStringLiteral("Delete Me Too"), QStringLiteral("HARDWARE_UID")));
+    QSqlQuery q(QSqlDatabase::database());
+    const QString ts = QStringLiteral("2026-01-01T00:00:00Z");
+    QVERIFY(q.exec(QStringLiteral("INSERT INTO vehicle_config (fingerprint, config_json) VALUES ('%1', '{}')").arg(fp)));
+    QVERIFY(q.exec(QStringLiteral("INSERT INTO power_types (frame, prop_diameter_in, prop_pitch_in, cells, created_at) VALUES ('quad', 10, 5, 6, '%1')").arg(ts)));
+    QVERIFY(q.exec(QStringLiteral("INSERT INTO vehicle_power_type (device_uid, power_type_id, linked_at) SELECT '%1', id, '%2' FROM power_types LIMIT 1").arg(key, ts)));
+    QVERIFY(q.exec(QStringLiteral("INSERT INTO vehicle_motor_table (device_uid, table_id, linked_at) VALUES ('%1', 't1', '%2')").arg(key, ts)));
+    QVERIFY(q.exec(QStringLiteral("INSERT INTO motor_table_flights (device_uid, table_id, started_at, ended_at, gcs_ah) VALUES ('%1', 't1', '%2', '%2', 1.0)").arg(key, ts)));
+    clearVehicleSettings(key);
+    seedVehicleSettings(key);
+
+    QVERIFY2(db.deleteVehicle(key), qPrintable(db.vehicleDeleteError()));
+
+    QCOMPARE(countRows(QStringLiteral("SELECT COUNT(*) AS n FROM vehicles WHERE device_uid='%1'").arg(key)), 0);
+    for (const QString &t : {QStringLiteral("vehicle_power_type"), QStringLiteral("vehicle_motor_table"),
+                             QStringLiteral("motor_table_flights")})
+        QVERIFY2(countRows(QStringLiteral("SELECT COUNT(*) AS n FROM %1 WHERE device_uid='%2'").arg(t, key)) == 0,
+                 qPrintable(t));
+    QCOMPARE(countRows(QStringLiteral("SELECT COUNT(*) AS n FROM vehicle_config WHERE fingerprint='%1'").arg(fp)), 0);
+    QVERIFY(!anyVehicleSettingPresent(key));
+    clearVehicleSettings(key);
 }
 
 UT_REGISTER_TEST(DatabaseManagerTest)
