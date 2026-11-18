@@ -38,10 +38,16 @@ Rectangle {
     // SOC + estimated time come from VehicleProfileManager (the shared live
     // estimate refreshed every 2 s) so the chip always agrees with the panel.
     readonly property int _soc: {
+        // The GCS's own figure while the FC's current sensor is not measuring
+        // (displaySocPct: its count in flight, the pack's resting voltage on
+        // the ground), the FC's % otherwise.
+        if (_profile && _profile.displaySocPct >= 0) return _profile.displaySocPct
         if (_profile && _profile.liveSOC >= 0) return _profile.liveSOC
         if (_tel && _tel.batterySocPct >= 0) return _tel.batterySocPct
         return -1
     }
+    // Where the % comes from, for the tooltip.
+    readonly property bool _socFromCount: _profile ? _profile.displaySocFromCount : false
     readonly property double _timeMin:  _profile ? _profile.liveTimeMins : -1
     // Motor-table estimate (copter linked to its motor table): replaces the
     // generic estimate. Before the arm it shows the cruise
@@ -51,6 +57,10 @@ Rectangle {
     // The mission estimate in flight (empty on the ground or with no mission).
     readonly property var  _ml: _profile ? _profile.missionLive : ({})
     readonly property bool _plActive: !!_pl && _pl.active === true && !_packWaived
+    // The GCS joined an armed copter whose current sensor reads 0 A: the
+    // charge (and so the % and time left) is unknown — the FC's 100 % is not
+    // a real reading. Advice only; nothing here holds the arm.
+    readonly property bool _chargeUnknown: !!_pl && _pl.chargeUnknown === true
     readonly property bool _returnNow: _plActive && _pl.returnNow === true
     // Already returning or landing and the way down uses the reserve (the
     // trip to a target; not a reason to "return": it already is).
@@ -151,6 +161,7 @@ Rectangle {
     readonly property string _label: {
         if (!_connected)            return "— · —"   // no vehicle
         if (!_fresh)                return "STALE"   // stale / no BATTERY_STATUS
+        if (_chargeUnknown)         return "? · charge unknown"   // joined in flight, dead sensor
         if (_soc < 0)               return "? · —"   // FC not configured
         if (_packWaived)            return _soc + "% · no est."
         if (_returnNow)             return "RETURN NOW"
@@ -168,7 +179,7 @@ Rectangle {
     // mission speed read from the copter yet).
     function _km(km) { return km >= 0 ? Number(km).toFixed(1) + " km" : "-- km" }
 
-    readonly property string _tooltip: {
+    readonly property string _tooltipBase: {
         if (!_connected)            return "No vehicle connected"
         if (!_fresh)                return "No battery telemetry (stale)"
         if (_soc < 0)               return "Battery SOC not reported by flight controller"
@@ -195,9 +206,17 @@ Rectangle {
         if (_atReserve)             return "Battery is at the reserve (" + Math.round((_profile ? _profile.batteryReserve : 0.2) * 100) + " % of the pack): land now"
         return "Estimated flight time at current draw (" + _iSmooth.toFixed(1) + " A smoothed) \u2014 tap for detail"
     }
+    readonly property string _tooltip: _chargeUnknown
+        ? (_pl.chargeUnknownWhy || "Charge unknown: the GCS joined during the flight and the current sensor reads 0 A")
+        : _tooltipBase + (_connected && _fresh && _soc >= 0
+           ? " \u2014 % from " + (_socFromCount ? (_armed ? "the GCS's count (current sensor reads 0 A)"
+                                                         : "the pack's resting voltage (current sensor reads 0 A)")
+                                               : "the flight controller")
+           : "")
 
     readonly property color _textColor: {
         if (_connected && !_fresh) return Colors.statusStale
+        if (_chargeUnknown) return Colors.warning
         if (!_socKnown) return Colors.textDisabled
         if (_atReserve || _returnNow) return Colors.error
         if (_landingOnReserve)      return Colors.warning
@@ -212,7 +231,7 @@ Rectangle {
         id: lowSocFlashTimer
         interval: 500
         repeat: true
-        running: root._socKnown && root._soc >= 0 && root._soc < 10
+        running: root._socKnown && !root._chargeUnknown && root._soc >= 0 && root._soc < 10
         onTriggered: root._flashOn = !root._flashOn
     }
 

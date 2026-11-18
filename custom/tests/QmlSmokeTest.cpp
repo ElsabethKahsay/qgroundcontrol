@@ -68,6 +68,7 @@
 #include "TelemetryBridge.h"
 #include "VehicleProfileManager.h"
 #include "MotorTable.h"
+#include "MissionWalk.h"
 #include "FactSystem/ParameterManager.h"
 #include "FactSystem/Fact.h"
 #include "Vehicle/FactGroups/VehicleBatteryFactGroup.h"
@@ -1371,6 +1372,7 @@ private slots:
     void testFlightHistoryDetailsRecorded();
     void testMotorOutputsReadForTheEstimate();
     void testMotorTableLiveEstimate();
+    void testChargeUnknownAfterJoin();
     void testMotorTableBeforeTakeoff();
     void testMissionEstimateLive();
     void testMotorTableCountsEveryReading();
@@ -1378,6 +1380,7 @@ private slots:
     void testTelemetryReadInMetricUnits();
     void testParameterReaders();
     void testGpsJudgedFromTheVehicle();
+    void testUnitTestRunKeepsOwnNameAndPaths();
 
 private:
     bool _connectPlane();
@@ -2498,6 +2501,9 @@ void LivePluginBenchTest::testMotorTableLiveEstimate()
     QCOMPARE(live().value(QStringLiteral("tableId")).toString(), table.id);
     QCOMPARE(live().value(QStringLiteral("chargeSource")).toString(), QStringLiteral("gcs"));
     QCOMPARE(live().value(QStringLiteral("throttleSource")).toString(), QStringLiteral("motor outputs"));
+    // The FC's current is not flagged dead yet: the chip shows its %.
+    QVERIFY(!vpm->displaySocFromCount());
+    QCOMPARE(vpm->displaySocPct(), vpm->liveSOC());
 
     const double packV = bridge->batteryVoltage();
     QVERIFY2(packV > 0.0 && qAbs(packV - table.volts) > 1.5, qPrintable(QString::number(packV)));
@@ -2549,6 +2555,10 @@ void LivePluginBenchTest::testMotorTableLiveEstimate()
     QVERIFY(vpm->fcCurrentDead());
     QTest::qWait(2500);
     QCOMPARE(live().value(QStringLiteral("chargeSource")).toString(), QStringLiteral("gcs"));
+    // With the sensor known dead and the count whole, the chip shows the GCS's
+    // own count, not the FC's %.
+    QVERIFY(vpm->displaySocFromCount());
+    QCOMPARE(vpm->displaySocPct(), qRound(live().value(QStringLiteral("socNowPct")).toDouble()));
     bool said = false;
     for (const QVariant &i : vpm->motorTableSetup().value(QStringLiteral("issues")).toList())
         said = said || i.toMap().value(QStringLiteral("text")).toString().contains(QStringLiteral("reads about 0 A"));
@@ -2565,6 +2575,97 @@ void LivePluginBenchTest::testMotorTableLiveEstimate()
     restoreMockParams(quadBefore);
     QVERIFY(vpm->linkCurrentVehicleMotorTable(QString()));
     QVERIFY(vpm->motorTableId().isEmpty());
+    vpm->setBatterySeriesCells(seriesBefore);
+    vpm->setBatteryParallelCells(parallelBefore);
+    vpm->setBatteryCellMah(mahBefore);
+}
+
+// A GCS that joins a copter already armed, with a current sensor that reads
+// 0 A, cannot know the charge used: the FC's % says 100 all flight. Reconnect
+// the bridge while the mock stays armed (a mid-flight join), with the dead
+// sensor remembered for this copter, and nothing may use that 100 %: the chip
+// says "charge unknown", the mission estimate says it can't assess, and no
+// charge-based RETURN NOW is raised. With a real sensor the old fallback stays.
+void LivePluginBenchTest::testChargeUnknownAfterJoin()
+{
+    QVERIFY2(_connectPlane(), "mock copter did not connect / resolve its UID");
+    VehicleProfileManager *vpm = VehicleProfileManager::instance();
+    auto *bridge = _pluginChild<TelemetryBridge>();
+    QVERIFY(bridge);
+    for (int i = 0; i < 100 && (!bridge->parametersReady() || vpm->kind() != VehicleKind::Multirotor); ++i)
+        QTest::qWait(50);
+    const MotorTable::Table &table = MotorTable::m6215_320kv_22x78_6s();
+    const QString deadKey = QStringLiteral("MotorTable/fcCurrentDead/%1").arg(vpm->currentDeviceUid());
+    QSettings().remove(deadKey);
+    QVERIFY(QMetaObject::invokeMethod(vpm, "onConnectionChanged"));
+    const auto clearDead = qScopeGuard([deadKey]() { QSettings().remove(deadKey); });
+    QVERIFY(!vpm->fcCurrentDead());
+    QVERIFY(vpm->linkCurrentVehicleMotorTable(table.id));
+    const int seriesBefore = vpm->batterySeriesCells(), parallelBefore = vpm->batteryParallelCells(),
+              mahBefore = vpm->batteryCellMah();
+    vpm->setBatterySeriesCells(6);
+    vpm->setBatteryParallelCells(1);
+    vpm->setBatteryCellMah(20000);
+    const auto quadBefore = setMockParams(_vehicle, bridge, {{QStringLiteral("SERVO5_FUNCTION"), 0.0},
+                                                             {QStringLiteral("SERVO6_FUNCTION"), 0.0}});
+    Fact *monitor = _vehicle->parameterManager()->getParameter(_vehicle->defaultComponentId(), QStringLiteral("BATT_MONITOR"));
+    QVERIFY(monitor);
+    const QVariant monitorBefore = monitor->rawValue();
+    monitor->setRawValue(3);   // voltage only: the FC's current is not measured
+    for (int i = 0; i < 100 && qRound(bridge->parameterValue(QStringLiteral("BATT_MONITOR"), -1.0f)) != 3; ++i)
+        QTest::qWait(50);
+
+    auto live = [vpm]() { return vpm->powerLive(); };
+    auto mission = [vpm]() { return vpm->missionLive(); };
+    FlightSession::instance()->setMode(QStringLiteral("FLIGHT"));
+    _vehicle->setArmed(true, false);
+    QVERIFY(_waitArmed(true));
+    for (int i = 0; i < 120 && !live().value(QStringLiteral("active")).toBool(); ++i)
+        QTest::qWait(50);
+    QVERIFY2(live().value(QStringLiteral("active")).toBool(), qPrintable(live().value(QStringLiteral("offReason")).toString()));
+    // Seen disarmed first: the count is whole from the arm, no "unknown" yet.
+    QCOMPARE(live().value(QStringLiteral("chargeSource")).toString(), QStringLiteral("gcs"));
+    QVERIFY(!live().value(QStringLiteral("chargeUnknown")).toBool());
+
+    // Reconnect the bridge with the vehicle still armed and the dead sensor
+    // remembered: the GCS joins the flight mid-way, with no count from the arm.
+    QSettings().setValue(deadKey, true);
+    bridge->setVehicle(nullptr);
+    QTest::qWait(300);
+    bridge->setVehicle(_vehicle);
+    for (int i = 0; i < 120 && !live().value(QStringLiteral("chargeUnknown")).toBool(); ++i)
+        QTest::qWait(50);
+    QVERIFY2(vpm->fcCurrentDead(), "the dead-sensor flag was not restored on reconnect");
+    QVERIFY2(live().value(QStringLiteral("chargeUnknown")).toBool(),
+             qPrintable(QStringLiteral("powerLive after join: %1").arg(live().value(QStringLiteral("offReason")).toString())));
+    QVERIFY(live().value(QStringLiteral("chargeUnknownWhy")).toString().contains(QStringLiteral("joined during the flight")));
+    QVERIFY2(live().value(QStringLiteral("timeLeftMin")).toDouble() < 0.0,
+             qPrintable(QString::number(live().value(QStringLiteral("timeLeftMin")).toDouble())));
+    QVERIFY(live().value(QStringLiteral("socNowPct")).toDouble() < 0.0);
+    QVERIFY(live().value(QStringLiteral("startSocPct")).toDouble() < 0.0);
+    QVERIFY(!live().value(QStringLiteral("returnNow")).toBool());
+    QCOMPARE(live().value(QStringLiteral("chargeSource")).toString(), QStringLiteral("unknown"));
+    // The mission estimate must not take the controller's 100 % either.
+    QVERIFY(mission().value(QStringLiteral("chargeUnknown")).toBool());
+    QVERIFY(!mission().value(QStringLiteral("ready")).toBool());
+    QVERIFY(mission().value(QStringLiteral("problem")).toString().contains(QStringLiteral("charge unknown (joined in flight)")));
+    QVERIFY(!mission().value(QStringLiteral("returnNow")).toBool());
+
+    // A real sensor: the controller's % is real, so the old fallback stays.
+    QSettings().remove(deadKey);
+    QVERIFY(QMetaObject::invokeMethod(vpm, "onConnectionChanged"));
+    for (int i = 0; i < 120 && live().value(QStringLiteral("chargeUnknown")).toBool(); ++i)
+        QTest::qWait(50);
+    QVERIFY(!live().value(QStringLiteral("chargeUnknown")).toBool());
+    QCOMPARE(live().value(QStringLiteral("chargeSource")).toString(), QStringLiteral("fcPercent"));
+    // No motor reading after the reconnect, so time left may be unknown — but
+    // the controller's % is used again, which is what this branch checks.
+
+    _vehicle->setArmed(false, false);
+    QVERIFY(_waitArmed(false));
+    monitor->setRawValue(monitorBefore);
+    restoreMockParams(quadBefore);
+    QVERIFY(vpm->linkCurrentVehicleMotorTable(QString()));
     vpm->setBatterySeriesCells(seriesBefore);
     vpm->setBatteryParallelCells(parallelBefore);
     vpm->setBatteryCellMah(mahBefore);
@@ -3568,6 +3669,27 @@ void LivePluginBenchTest::testMissionEstimateLive()
     QVERIFY2(lv.value(QStringLiteral("returnNowWhy")).toString().contains(QStringLiteral("item 3")),
              qPrintable(lv.value(QStringLiteral("returnNowWhy")).toString()));
 
+    // AUTO flying a return/land item is already coming home: the trip path
+    // decides that with isReturning(mode, currentCommand). The mission estimate
+    // must too, so the unknown-margin hold cannot leave RETURN NOW on through
+    // the descent. A waypoint item is not returning: the hold stays on.
+    ls.mode = QStringLiteral("auto");
+    ls.currentCommand = MissionWalk::NavReturnToLaunch;
+    lv = vpm->missionEstimateFrom(&ls);
+    QVERIFY(lv.value(QStringLiteral("returning")).toBool());
+    QVERIFY(!lv.value(QStringLiteral("returningLand")).toBool());
+    QVERIFY(!lv.value(QStringLiteral("returnNow")).toBool());
+    ls.currentCommand = MissionWalk::NavLand;
+    lv = vpm->missionEstimateFrom(&ls);
+    QVERIFY(lv.value(QStringLiteral("returning")).toBool());
+    QVERIFY(lv.value(QStringLiteral("returningLand")).toBool());
+    QVERIFY(!lv.value(QStringLiteral("returnNow")).toBool());
+    ls.currentCommand = MissionWalk::NavWaypoint;
+    lv = vpm->missionEstimateFrom(&ls);
+    QVERIFY(!lv.value(QStringLiteral("returning")).toBool());
+    QVERIFY(lv.value(QStringLiteral("returnNow")).toBool());
+    ls.currentCommand = -1;
+
     // In RTL only the return is left (and RETURN NOW is not asked for: it is
     // already returning).
     ls.mode = QStringLiteral("rtl");
@@ -3745,6 +3867,22 @@ void LivePluginBenchTest::testMissionEstimateLive()
     vpm->setBatterySeriesCells(seriesBefore);
     vpm->setBatteryParallelCells(parallelBefore);
     vpm->setBatteryCellMah(mahBefore);
+}
+
+// A test run keeps the name the test runner gave it: the database folder and
+// the QSettings file follow the application name, so renaming the app to
+// "Skywin GCS" would point a test at the real records and settings.
+void LivePluginBenchTest::testUnitTestRunKeepsOwnNameAndPaths()
+{
+    // Boot the plugin here as well, so the check does not depend on which
+    // test ran first.
+    preflightInitOnce();
+    const QString appName = QCoreApplication::applicationName();
+    QVERIFY2(appName.endsWith(QStringLiteral("_unittest")), qPrintable(appName));
+    const QString dbPath = DatabaseManager::defaultDatabasePath();
+    QVERIFY2(!dbPath.contains(QStringLiteral("/UAVPreflight/Skywin GCS/")), qPrintable(dbPath));
+    const QString settingsPath = QSettings().fileName();
+    QVERIFY2(!settingsPath.endsWith(QStringLiteral("Skywin GCS.ini")), qPrintable(settingsPath));
 }
 
 UT_REGISTER_TEST(LivePluginBenchTest)

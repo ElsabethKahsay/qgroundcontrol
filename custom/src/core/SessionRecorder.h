@@ -98,6 +98,20 @@ public:
     void setSampleProvider(std::function<Sample()> provider) { m_sample = std::move(provider); }
     void setFlightClosedHandler(std::function<void(const FlightEnd &)> handler) { m_onFlightClosed = std::move(handler); }
 
+    /// The GCS's own charge count when the controller's current sensor does
+    /// not measure. Read once at close, before anything resets the count.
+    /// applies is false for a copter whose sensor works: its own counter and %
+    /// are recorded then. When it applies, -1 values mean the count is unknown
+    /// and the record says so (NULL), never the controller's 0 / 100.
+    struct GcsCharge {
+        double mahUsed = -1;   ///< raw mAh used this flight
+        double percent = -1;   ///< % of the pack left at the end
+        bool applies = false;  ///< the controller's current sensor does not measure
+    };
+    void setGcsChargeProvider(std::function<GcsCharge()> provider) { m_gcsCharge = std::move(provider); }
+    /// Returns the Flight form's row to adopt as the recorded flight, or -1.
+    void setHistoryIdProvider(std::function<int(int)> provider) { m_historyIdProvider = std::move(provider); }
+
     int connectionId() const { return m_connId; }
     int flightId() const { return m_flightId; }
     bool flightOpen() const { return m_flightId > 0; }
@@ -177,14 +191,22 @@ public:
         // The pack as it was at arm; editing it later changes no flight.
         if (m_flightId > 0) {
             m_db.openFlightBattery(m_flightId, 1, start.pack, s.voltage, s.percent);
-            // The row Flight History, exports and stats read.
-            m_historyId = m_db.openHistoryFlight(m_flightId, start.operatorId, start.vehicleSysId,
-                                                 start.mode.toUpper(),
-                                                 QStringLiteral("arm source: %1%2").arg(start.armSource,
-                                                     start.bench ? QStringLiteral(", bench") : QString()),
-                                                 start.weatherSummary);
-            // Flight History's events: the arm, and who armed.
-            if (m_historyId > 0)
+            // The row Flight History, exports and stats read. A Flight form
+            // row already exists: adopt it rather than opening a second one.
+            bool adopted = false;
+            if (m_historyIdProvider) {
+                m_historyId = m_historyIdProvider(m_flightId);
+                adopted = m_historyId > 0;
+            }
+            if (m_historyId <= 0)
+                m_historyId = m_db.openHistoryFlight(m_flightId, start.operatorId, start.vehicleSysId,
+                                                     start.mode.toUpper(),
+                                                     QStringLiteral("arm source: %1%2").arg(start.armSource,
+                                                         start.bench ? QStringLiteral(", bench") : QString()),
+                                                     start.weatherSummary);
+            // Flight History's events: the arm, and who armed. The form path
+            // already wrote ARM, so don't write it twice on an adopted row.
+            if (m_historyId > 0 && !adopted)
                 logHistoryEvent(QStringLiteral("ARM"), start.armSource, s);
         }
         updateContext();
@@ -311,16 +333,27 @@ private:
         end.bench = m_start.bench;
         end.endReason = reason;
         end.durationSec = elapsedSec(atLinkLoss ? m_linkLostAtMs : MonotonicClock::nowMs());
-        end.mahUsed = mahUsed(s.mahConsumed);
+        // A dead current sensor leaves the FC's counter at 0 and its % at 100
+        // all flight. When the source says it applies (dead sensor), take the
+        // GCS's own count and end %; -1 from it means unknown, never the FC's
+        // misleading 0 / 100. Otherwise the FC's own counter and % are real.
+        int endPercent = s.percent;
+        const GcsCharge gcs = m_gcsCharge ? m_gcsCharge() : GcsCharge{};   // read once, before any reset
+        if (gcs.applies) {
+            end.mahUsed = gcs.mahUsed;
+            endPercent = gcs.percent >= 0.0 ? qRound(gcs.percent) : -1;
+        } else {
+            end.mahUsed = mahUsed(s.mahConsumed);
+        }
         end.whUsed = energyUsedWh(m_startSample.energyWh, s.energyWh, end.mahUsed, m_startSample.voltage, s.voltage);
         m_db.closeFlightRecord(m_flightId, end.durationSec, reason, atLinkLoss ? m_linkLostAtUtc : QString(),
                                m_minVoltage, end.mahUsed);
-        m_db.closeFlightBattery(m_flightId, 1, s.voltage, s.percent, m_minVoltage, end.mahUsed, end.whUsed);
-        // Energy and distance from measurements only; unknown stays unset.
+        m_db.closeFlightBattery(m_flightId, 1, s.voltage, endPercent, m_minVoltage, end.mahUsed, end.whUsed);
+        // Energy and distance from measurements only; unknown is stored as
+        // NULL, not 0, so History and the stats show "—" for it.
         const double distM = (m_startSample.distanceM >= 0 && s.distanceM >= m_startSample.distanceM)
                 ? s.distanceM - m_startSample.distanceM : -1;
-        if (end.whUsed >= 0 || distM >= 0)
-            m_db.updateFlightSessionEnergy(m_flightId, qMax(0.0, end.whUsed), qMax(0.0, distM));
+        m_db.updateFlightSessionEnergy(m_flightId, end.whUsed, distM);
         if (m_historyId > 0) {
             if (!atLinkLoss)
                 noteAltitude(s.altitudeM);
@@ -357,6 +390,8 @@ private:
     DatabaseManager &m_db;
     std::function<Sample()> m_sample;
     std::function<void(const FlightEnd &)> m_onFlightClosed;
+    std::function<GcsCharge()> m_gcsCharge;
+    std::function<int(int)> m_historyIdProvider;
     QTimer m_summaryTimer;
 
     int m_connId = -1;

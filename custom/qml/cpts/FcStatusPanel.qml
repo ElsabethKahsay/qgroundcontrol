@@ -31,6 +31,14 @@ Rectangle {
         return (p > 0 && c > 0) ? (p * c / 1000.0) : 0
     }
 
+    // The battery % the GCS shows everywhere: its own count while the FC's
+    // current sensor is not measuring, the FC's % otherwise.
+    function _displaySoc() {
+        if (typeof VehicleProfileManager !== "undefined" && VehicleProfileManager)
+            return VehicleProfileManager.displaySocPct
+        return _tel.batterySocPct
+    }
+
     function _minutesString() {
         if (!_connected) return ""                 // no telemetry → no minutes at all
         if (!root._isArmed) return ""              // disarmed → "· —"
@@ -38,7 +46,7 @@ Rectangle {
         if (i < 3.0) return ""                     // no meaningful draw (< 3 A)
         var capAh = _capacityAh()
         if (capAh <= 0) return ""                  // no capacity → no honest minutes
-        var remAh  = capAh * (_tel.batterySocPct / 100.0)
+        var remAh  = capAh * (_displaySoc() / 100.0)
         if (remAh <= 0) return ""
         var usableAh = remAh * 0.8                 // 20% reserve
         var tMin     = (usableAh / i) * 60.0
@@ -47,7 +55,7 @@ Rectangle {
 
     function _batteryValue() {
         if (!_connected) return "—"
-        var soc = _tel.batterySocPct
+        var soc = _displaySoc()
         var socStr = soc < 0 ? "?" : soc + "%"
         var v = _tel.batteryVoltage
         var vStr = v > 0.1 ? v.toFixed(1) + " V" : "—"
@@ -60,7 +68,7 @@ Rectangle {
 
     function _batteryColor() {
         if (!_connected) return Colors.textDisabled
-        var soc = _tel.batterySocPct
+        var soc = _displaySoc()
         if (soc < 0) return Colors.warning
         if (soc < 15) return Colors.error
         if (soc < 30) return Colors.warning

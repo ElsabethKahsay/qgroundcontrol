@@ -667,7 +667,9 @@ private slots:
         QVERIFY(near(restingSocPct(3.70, QStringLiteral("LiPo")), 12.5, 1e-9));   // between 3.69 (10) and 3.71 (15)
         QCOMPARE(restingSocPct(3.0, QStringLiteral("LiPo")), 0.0);
         QCOMPARE(restingSocPct(4.10, QStringLiteral("LiHV")), 70.0);              // LiHV: 0.15 V higher
-        QCOMPARE(restingSocPct(3.73, QStringLiteral("LiIon")), 50.0);   // Li-ion used 4.3 → 2.9 V
+        QCOMPARE(restingSocPct(3.73, QStringLiteral("LiIon")), 50.0);   // Li-ion used 4.2 → 2.9 V
+        QCOMPARE(restingSocPct(4.20, QStringLiteral("LiIon")), 100.0);
+        QCOMPARE(restingSocPct(4.08, QStringLiteral("LiIon")), 90.0);
         QVERIFY(qAbs(restingSocPct(3.70, QStringLiteral("LiIon")) - 46.25) < 1e-9);
         QCOMPARE(restingSocPct(1.2, QStringLiteral("LiPo")), -1.0);                // not a cell voltage
         QCOMPARE(fullCellVolts(QStringLiteral("LiHV")), 4.30);
@@ -941,8 +943,20 @@ private slots:
         QVERIFY2(near(thrustAt(t, act).grams, 3000.0, 30.0), qPrintable(QString::number(thrustAt(t, act).grams)));
     }
 
+    // One bad charger value must not move the factor: no adjustment until
+    // three usable flights, then the median of all three.
+    void testMotorTableCalibrationNeedsThreeFlights()
+    {
+        using namespace MotorTable;
+        // Two flights: median is a mean and would land on the 1.20 clamp.
+        QCOMPARE(calibrationFactor(QVector<double>{1.1, 1.2}), 1.0);
+        // Three flights: the median is applied.
+        QCOMPARE(calibrationFactor(QVector<double>{1.1, 1.2, 1.15}), 1.15);
+        QCOMPARE(kMinCalibrationFlights, kProofFlights);
+    }
+
     // The pack's voltage through a flight: one curve per chemistry read both
-    // ways (charge from voltage, voltage from charge); Li-ion from 4.3 V full
+    // ways (charge from voltage, voltage from charge); Li-ion from 4.20 V full
     // to 2.9 V empty per cell.
     void testPackVoltageCurves()
     {
@@ -953,14 +967,14 @@ private slots:
                 QVERIFY2(qAbs(restingSocPct(restingCellVolts(soc, c), c) - soc) < 1e-6,
                          qPrintable(QStringLiteral("%1 at %2 %").arg(c).arg(soc)));
         }
-        QCOMPARE(restingCellVolts(100.0, QStringLiteral("LiIon")), 4.30);
+        QCOMPARE(restingCellVolts(100.0, QStringLiteral("LiIon")), 4.20);
         QCOMPARE(restingCellVolts(0.0, QStringLiteral("LiIon")), 2.90);
         QCOMPARE(restingCellVolts(50.0, QStringLiteral("LiIon")), 3.73);
         QCOMPARE(restingCellVolts(100.0, QStringLiteral("LiPo")), 4.20);
         QVERIFY(qAbs(restingCellVolts(100.0, QStringLiteral("LiHV")) - 4.35) < 1e-9);
-        QCOMPARE(restingCellVolts(150.0, QStringLiteral("LiIon")), 4.30);   // clamped
+        QCOMPARE(restingCellVolts(150.0, QStringLiteral("LiIon")), 4.20);   // clamped
         QCOMPARE(restingCellVolts(-5.0, QStringLiteral("LiIon")), 2.90);
-        QCOMPARE(fullCellVolts(QStringLiteral("LiIon")), 4.25);
+        QCOMPARE(fullCellVolts(QStringLiteral("LiIon")), 4.15);
     }
 
     // Time left for a power the motors take, through the rest of the pack:
@@ -1005,7 +1019,7 @@ private slots:
 
         // Average current: between the current at the start and at the reserve.
         const double avg = averageCurrent(p, w, 100.0, 20.0);
-        const double atStart = packCurrent(w, 6 * 4.30, 0.025);
+        const double atStart = packCurrent(w, 6 * 4.20, 0.025);
         const double atReserve = packCurrent(w, 6 * PowerTypeModel::restingCellVolts(20.0, p.chemistry), 0.025);
         QVERIFY(near(avg, 16.0 / h, 1e-9));
         QVERIFY(avg > atStart && avg < atReserve);
@@ -2290,7 +2304,7 @@ private slots:
     }
 
     // The charger comparison: charger ÷ count per flight that started full;
-    // fine-tuning = the median of the last 5, from 2 flights, limited to
+    // fine-tuning = the median of the last 5, from 3 flights, limited to
     // 0.80–1.20; proven when the last 3 each agree within 10 % with the count
     // as the GCS would have shown it (fine-tuned by the flights before only).
     void testMotorTableCalibration()
@@ -2305,12 +2319,12 @@ private slots:
         QCOMPARE(c.usable, 0); QCOMPARE(c.factor, 1.0); QVERIFY(!c.proven);
         c = calibrate({fl(14.0, 14.7)});                      // one flight: no fine-tuning yet
         QCOMPARE(c.usable, 1); QCOMPARE(c.factor, 1.0);
-        c = calibrate({fl(14.0, 14.7), fl(10.0, 10.5)});      // two at 1.05
-        QVERIFY(near(c.factor, 1.05)); QVERIFY(!c.proven);
+        c = calibrate({fl(14.0, 14.7), fl(10.0, 10.5)});      // two at 1.05: not enough yet
+        QCOMPARE(c.factor, 1.0); QVERIFY(!c.proven);
         c = calibrate({fl(14.0, 14.7), fl(10.0, 10.5), fl(12.0, 12.6)});
         QVERIFY(near(c.factor, 1.05)); QVERIFY(c.proven);
         QCOMPARE(c.errors.size(), 3);
-        QVERIFY(near(c.errors[2], 0.0));                       // the third was shown fine-tuned × 1.05
+        QVERIFY(near(c.errors[2], 0.05));                      // shown with factor 1.0: third flight not counted yet
 
         // Not counted: a pack not full at the arm, a dismissed flight, no
         // charger number, a tiny count.
@@ -2324,9 +2338,9 @@ private slots:
         // Last five: 1.03, 1.30, 1.025, 1.03, 1.02 → median 1.03.
         c = calibrate({fl(10, 10.2), fl(10, 10.3), fl(10, 13.0), fl(10, 10.25), fl(10, 10.3), fl(10, 10.2)});
         QVERIFY(near(c.factor, 1.03));
-        // Limited to 0.80–1.20.
-        QCOMPARE(calibrate({fl(10, 15.0), fl(10, 16.0)}).factor, 1.20);
-        QCOMPARE(calibrate({fl(10, 5.0), fl(10, 6.0)}).factor, 0.80);
+        // Limited to 0.80–1.20 (needs three flights to move at all).
+        QCOMPARE(calibrate({fl(10, 15.0), fl(10, 16.0), fl(10, 15.5)}).factor, 1.20);
+        QCOMPARE(calibrate({fl(10, 5.0), fl(10, 6.0), fl(10, 5.5)}).factor, 0.80);
     }
 
     // The table is for a quad on 6S with a pack size: anything else turns the

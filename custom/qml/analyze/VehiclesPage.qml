@@ -556,7 +556,7 @@ AnalyzePage {
                                               + "The mission estimate counts it as proven (its confidence goes up). It never holds the arm.")
                                        : qsTr("%1 more flight(s) with a charger number to prove the table; until then the "
                                               + "mission estimate's confidence stays lower.").arg(_ptPane.tableCal.needed))
-                                      + (_ptPane.tableCal.usable >= 2
+                                      + (_ptPane.tableCal.usable >= 3
                                          ? qsTr(" Fine-tuned × %1 from %2 flights.").arg(Number(_ptPane.tableCal.factor).toFixed(3))
                                                                                      .arg(_ptPane.tableCal.usable)
                                          : "")
@@ -652,7 +652,8 @@ AnalyzePage {
                                                 text: qsTr("Save")
                                                 flat: true
                                                 onClicked: if (!_ptPane._vpm.setMotorTableFlightCharger(f.id, Number(_mtCharger.text)))
-                                                               _ptPane.message = qsTr("Charger number not saved: 1–200000 mAh.")
+                                                               _ptPane.message = _ptPane._vpm.motorTableChargerError
+                                                                                 || qsTr("Charger number not saved: 1–200000 mAh.")
                                             }
                                             Item { Layout.fillWidth: true }
                                             Button {

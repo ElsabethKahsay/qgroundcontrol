@@ -76,6 +76,7 @@ void DatabaseManager::reset()
     m_initialized = false;
     setRecordingContext(-1, -1, QString());
     setStartupError(QString());
+    m_runtimeError.clear();   // test-only reset; the real app keeps it until restart
 }
 
 void DatabaseManager::setStartupError(const QString &error)
@@ -1027,11 +1028,15 @@ QString DatabaseManager::getHardwareTestEvents(int flightId)
  * @brief Execute a query, logging a warning with the table name on failure
  * @return true if the query succeeded
  */
-bool DatabaseManager::execOrWarn(QSqlQuery &query, const char *tableName)
+bool DatabaseManager::execOrWarn(QSqlQuery &query, const char *tableName, bool trackFailure)
 {
     assertMainThread();
     if (!query.exec()) {
         qWarning() << "DatabaseManager:" << tableName << "error:" << query.lastError().text();
+        if (trackFailure && m_runtimeError.isEmpty()) {
+            m_runtimeError = QStringLiteral("%1: %2").arg(QLatin1String(tableName), query.lastError().text());
+            emit runtimeErrorChanged();
+        }
         return false;
     }
     return true;
@@ -2195,6 +2200,20 @@ int DatabaseManager::openHistoryFlight(int flightSessionId, int operatorId, int 
     return id;
 }
 
+bool DatabaseManager::adoptHistoryFlight(int flightSessionId, int historyId)
+{
+    assertMainThread();
+    if (!m_initialized || flightSessionId <= 0 || historyId <= 0) return false;
+    QSqlQuery q(m_db);
+    // Only an open, not-yet-disarmed form row may be adopted.
+    q.prepare("UPDATE flight_sessions SET history_flight_id = ? WHERE id = ? "
+              "AND EXISTS (SELECT 1 FROM flights WHERE id = ? AND ended_at IS NULL AND disarmed_at IS NULL)");
+    q.addBindValue(historyId);
+    q.addBindValue(flightSessionId);
+    q.addBindValue(historyId);
+    return execOrWarn(q, "adoptHistoryFlight") && q.numRowsAffected() == 1;
+}
+
 // Link drops for the vehicle that is connected now, since the app started.
 // Two kinds of drop are recorded by SessionRecorder and both count:
 //   * the link went quiet and came back (a "link_lost" event on the
@@ -2950,6 +2969,29 @@ bool DatabaseManager::closeFlight(int flightId, int durationSec,
     return execOrWarn(q, "closeFlight");
 }
 
+bool DatabaseManager::updateFlightFormStats(int flightId, int modeChanges, double maxGroundSpeedMs,
+                                            double maxVerticalSpeedMs, double avgBatteryV,
+                                            int checkPassCount, int checkFailCount, int checkWarnCount,
+                                            int anomalyCount)
+{
+    assertMainThread();
+    if (!m_initialized || flightId <= 0) return false;
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE flights SET flight_mode_changes = ?, max_ground_speed_ms = ?, "
+              "max_vertical_speed_ms = ?, avg_battery_v = ?, check_pass_count = ?, "
+              "check_fail_count = ?, check_warn_count = ?, anomaly_count = ? WHERE id = ?");
+    q.addBindValue(modeChanges);
+    q.addBindValue(maxGroundSpeedMs);
+    q.addBindValue(maxVerticalSpeedMs);
+    q.addBindValue(avgBatteryV);
+    q.addBindValue(checkPassCount);
+    q.addBindValue(checkFailCount);
+    q.addBindValue(checkWarnCount);
+    q.addBindValue(anomalyCount);
+    q.addBindValue(flightId);
+    return execOrWarn(q, "updateFlightFormStats");
+}
+
 QList<QVariantMap> DatabaseManager::getFlightsForVehicle(int vehicleId, int limit)
 {
     assertMainThread();
@@ -3604,7 +3646,7 @@ bool DatabaseManager::updateVehicleFingerprint(const QString &oldFingerprint, co
     q.addBindValue(oldFingerprint);
     q.addBindValue(newFingerprint);
     q.addBindValue(oldFingerprint);
-    return execOrWarn(q, "updateVehicleFingerprint");
+    return execOrWarn(q, "updateVehicleFingerprint", false);  // expected FK failure once configured
 }
 
 /** @brief Refreshes the live attribute columns for a known fingerprint.
@@ -4574,7 +4616,7 @@ QVariantMap DatabaseManager::vehicleTarget(const QString &deviceUid)
     q.prepare("SELECT target_lat, target_lon, target_source FROM vehicles "
               "WHERE device_uid = ? AND target_lat IS NOT NULL AND target_lon IS NOT NULL");
     q.addBindValue(deviceUid);
-    if (!execOrWarn(q, "vehicleTarget") || !q.next()) return out;
+    if (!execOrWarn(q, "vehicleTarget", false) || !q.next()) return out;
     out.insert(QStringLiteral("lat"), q.value(0).toDouble());
     out.insert(QStringLiteral("lon"), q.value(1).toDouble());
     out.insert(QStringLiteral("source"), q.value(2).toString());
@@ -4624,7 +4666,7 @@ QVariantMap DatabaseManager::getTargetLocation(int flightId)
     q.prepare("SELECT target_lat, target_lon, target_source "
               "FROM flights WHERE id = ?");
     q.addBindValue(flightId);
-    if (!execOrWarn(q, "getTargetLocation")) return out;
+    if (!execOrWarn(q, "getTargetLocation", false)) return out;
     if (!q.next()) return out;
     const double lat = q.value(0).toDouble();
     const double lon = q.value(1).toDouble();
@@ -4653,8 +4695,10 @@ bool DatabaseManager::updateFlightSessionEnergy(int sessionId, double energyCons
     if (!m_initialized) return false;
     QSqlQuery q(m_db);
     q.prepare("UPDATE flight_sessions SET energy_consumed_wh = ?, distance_m = ? WHERE id = ?");
-    q.addBindValue(energyConsumedWh);
-    q.addBindValue(distanceM);
+    // Unknown measurements are NULL, not 0: the stats skip NULL rather than
+    // counting a flight that used no energy and went nowhere.
+    q.addBindValue(energyConsumedWh >= 0 ? QVariant(energyConsumedWh) : QVariant(QMetaType::fromType<double>()));
+    q.addBindValue(distanceM >= 0 ? QVariant(distanceM) : QVariant(QMetaType::fromType<double>()));
     q.addBindValue(sessionId);
     return execOrWarn(q, "updateFlightSessionEnergy");
 }
@@ -4803,7 +4847,7 @@ QVector<QPair<double, double>> DatabaseManager::getPowerCalibrationHistory(
               "ORDER BY id DESC LIMIT ?").arg(QLatin1String(kCalibrationFlightFilter)));
     q.addBindValue(deviceUid);
     q.addBindValue(limit);
-    if (!execOrWarn(q, "getPowerCalibrationHistory")) return out;
+    if (!execOrWarn(q, "getPowerCalibrationHistory", false)) return out;
     while (q.next()) {
         const double whPerKm = q.value(1).toDouble() / (q.value(2).toDouble() / 1000.0);
         out.append({q.value(0).toDouble(), whPerKm});
@@ -5288,7 +5332,7 @@ QString DatabaseManager::vehicleMotorTableId(const QString &deviceUid)
     QSqlQuery q(m_db);
     q.prepare("SELECT table_id FROM vehicle_motor_table WHERE device_uid = ?");
     q.addBindValue(deviceUid.trimmed());
-    if (!execOrWarn(q, "vehicleMotorTableId") || !q.next()) return QString();
+    if (!execOrWarn(q, "vehicleMotorTableId", false) || !q.next()) return QString();
     return q.value(0).toString();
 }
 
@@ -5314,7 +5358,7 @@ QVariantMap DatabaseManager::vehicleMotorHover(const QString &deviceUid)
     q.prepare("SELECT hover_thrust_g, hover_samples, hover_at FROM vehicle_motor_table "
               "WHERE device_uid = ? AND hover_thrust_g IS NOT NULL");
     q.addBindValue(deviceUid.trimmed());
-    if (!execOrWarn(q, "vehicleMotorHover") || !q.next()) return out;
+    if (!execOrWarn(q, "vehicleMotorHover", false) || !q.next()) return out;
     out[QStringLiteral("thrustG")] = q.value(0).toDouble();
     out[QStringLiteral("samples")] = q.value(1).toInt();
     out[QStringLiteral("at")] = q.value(2).toString();
@@ -5359,7 +5403,7 @@ QVariantList DatabaseManager::motorTableFlights(const QString &deviceUid, const 
               "mission_json FROM motor_table_flights WHERE device_uid = ? AND table_id = ? ORDER BY id");
     q.addBindValue(deviceUid);
     q.addBindValue(tableId);
-    if (!execOrWarn(q, "motorTableFlights")) return out;
+    if (!execOrWarn(q, "motorTableFlights", false)) return out;
     static const char *const kKeys[] = { "id", "startedAt", "endedAt", "gcsAh", "startedFull", "startSoc", "hoverW",
                                          "hoverS", "cruiseRatio", "cruiseS", "avgVolts", "minVolts", "beyondS",
                                          "overallThrottleS", "density", "packOhm", "chargerMah", "state" };

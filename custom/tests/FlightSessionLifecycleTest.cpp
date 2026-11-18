@@ -27,6 +27,8 @@
 
 #include <QTest>
 #include <QSignalSpy>
+#include <QSqlQuery>
+#include <QSqlDatabase>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -68,10 +70,18 @@ private slots:
     void testArmWithoutSessionStartCreatesNoRecord();
     void testBenchModeCreatesNoFlightOrSessionRows();
     void testSecondFlightRecordAfterDisarm();
+    void testFormFlightArmDisarmMakesOneRow();
+    void testFormCloseKeepsRecorderDuration();
+    void testTwoArmsInOneFormSessionMakeTwoRows();
 
 private:
     // Connects a mock plane and returns true when a vehicle + registry id exist.
     bool _connectAndRegister(int *vehicleIdOut, QString *fingerprintOut);
+    bool _waitArmed(bool armed, int ms = 10000);
+    // The one flights row carrying the given purpose, or an empty map.
+    static QVariantMap _formRow(int vehicleId, const QString &purpose);
+    static int _eventCount(int flightId, const QString &type);
+    static int _sessionForHistory(int historyId);
     static int _flightCount(int vehicleId) {
         return DatabaseManager::instance().getFlightsForVehicle(vehicleId, 500).size();
     }
@@ -95,6 +105,42 @@ bool FlightSessionLifecycleTest::_connectAndRegister(int *vehicleIdOut, QString 
     *vehicleIdOut = VehicleRegistry::instance()->currentVehicleId();
     *fingerprintOut = VehicleRegistry::instance()->currentFingerprint();
     return *vehicleIdOut > 0;
+}
+
+bool FlightSessionLifecycleTest::_waitArmed(bool armed, int ms)
+{
+    for (int waited = 0; waited < ms; waited += 50) {
+        if (_vehicle->armed() == armed)
+            return true;
+        QTest::qWait(50);
+    }
+    return _vehicle->armed() == armed;
+}
+
+QVariantMap FlightSessionLifecycleTest::_formRow(int vehicleId, const QString &purpose)
+{
+    for (const QVariantMap &row : DatabaseManager::instance().getFlightsForVehicle(vehicleId, 500))
+        if (row.value(QStringLiteral("purpose")).toString() == purpose)
+            return row;
+    return {};
+}
+
+int FlightSessionLifecycleTest::_eventCount(int flightId, const QString &type)
+{
+    int n = 0;
+    for (const QVariantMap &e : DatabaseManager::instance().getTelemetryEventsForFlight(flightId))
+        if (e.value(QStringLiteral("event_type")).toString() == type)
+            ++n;
+    return n;
+}
+
+int FlightSessionLifecycleTest::_sessionForHistory(int historyId)
+{
+    QSqlQuery q(QSqlDatabase::database());
+    if (!q.exec(QStringLiteral("SELECT id FROM flight_sessions WHERE history_flight_id = %1").arg(historyId))
+            || !q.next())
+        return -1;
+    return q.value(0).toInt();
 }
 
 // (a-lite) Arming alone must not create an audited flight record: a flight
@@ -197,6 +243,157 @@ void FlightSessionLifecycleTest::testSecondFlightRecordAfterDisarm()
     // FlightSession's arm handling writes no extra rows (SessionRecorder does,
     // from the vehicle's real armed state, which this test does not change).
     QCOMPARE(_flightCount(vid), base + 1);
+}
+
+// Filling the Flight form opens one flights row. Arming and disarming the real
+// mock vehicle drives SessionRecorder, which must reuse that row: one row, one
+// ARM and one DISARM, with the form's purpose and notes plus the arm/disarm
+// times. Today the recorder opens a second row and both paths write DISARM.
+void FlightSessionLifecycleTest::testFormFlightArmDisarmMakesOneRow()
+{
+    int vid = 0; QString fp;
+    if (!_connectAndRegister(&vid, &fp)) QSKIP("MockLink vehicle did not register a vehicle id");
+
+    int opId = OperatorManager::instance()->addOperator(QStringLiteral("Form Op"), QStringLiteral("pilot"));
+    OperatorManager::instance()->selectOperator(opId);
+    QVERIFY(OperatorManager::instance()->currentOperatorId() > 0);
+
+    FlightSession *fs = FlightSession::instance();
+    fs->setVehicle(_vehicle);
+    fs->setMode(QStringLiteral("FLIGHT"));
+    const int base = _flightCount(vid);
+    fs->startFlightSession(QStringLiteral("form purpose"), QStringLiteral("form loc"), QStringLiteral("form notes"));
+    const int formId = fs->currentFlightId();
+    QVERIFY(formId > 0);
+    QCOMPARE(_flightCount(vid), base + 1);
+
+    // Arm / disarm the vehicle for real so ArmStateTracker -> SessionRecorder runs.
+    _vehicle->setArmed(true, false);
+    QVERIFY(_waitArmed(true));
+    QTest::qWait(300);
+    _vehicle->setArmed(false, false);
+    QVERIFY(_waitArmed(false));
+    QTest::qWait(300);
+
+    // One flights row for this flight, not two.
+    QCOMPARE(_flightCount(vid), base + 1);
+    const QVariantMap row = _formRow(vid, QStringLiteral("form purpose"));
+    QVERIFY2(!row.isEmpty(), "form row missing");
+    const int id = row.value(QStringLiteral("id")).toInt();
+    QCOMPARE(row.value(QStringLiteral("notes")).toString(), QStringLiteral("form notes"));
+    QVERIFY(!row.value(QStringLiteral("armed_at")).toString().isEmpty());
+    QVERIFY(!row.value(QStringLiteral("disarmed_at")).toString().isEmpty());
+    QCOMPARE(_eventCount(id, QStringLiteral("ARM")), 1);
+    QCOMPARE(_eventCount(id, QStringLiteral("DISARM")), 1);
+    // The recorder's flight session must point at the form row it adopted.
+    QVERIFY2(_sessionForHistory(id) > 0, "flight_sessions.history_flight_id not linked to form row");
+}
+
+// Once the recorder owns the form row, closing the form session must not
+// overwrite the recorder's arm-to-disarm duration_sec / ended_at with the
+// wall-clock duration from form submit to close.
+void FlightSessionLifecycleTest::testFormCloseKeepsRecorderDuration()
+{
+    int vid = 0; QString fp;
+    if (!_connectAndRegister(&vid, &fp)) QSKIP("MockLink vehicle did not register a vehicle id");
+
+    int opId = OperatorManager::instance()->addOperator(QStringLiteral("Form Op"), QStringLiteral("pilot"));
+    OperatorManager::instance()->selectOperator(opId);
+
+    FlightSession *fs = FlightSession::instance();
+    fs->setVehicle(_vehicle);
+    fs->setMode(QStringLiteral("FLIGHT"));
+    fs->startFlightSession(QStringLiteral("close purpose"), QStringLiteral("loc"), QStringLiteral("notes"));
+    QVERIFY(fs->currentFlightId() > 0);
+
+    _vehicle->setArmed(true, false);
+    QVERIFY(_waitArmed(true));
+    QTest::qWait(300);
+    _vehicle->setArmed(false, false);
+    QVERIFY(_waitArmed(false));
+    QTest::qWait(300);
+
+    const QVariantMap beforeClose = _formRow(vid, QStringLiteral("close purpose"));
+    QVERIFY(!beforeClose.isEmpty());
+    const int id = beforeClose.value(QStringLiteral("id")).toInt();
+    const int recorderDuration = beforeClose.value(QStringLiteral("duration_sec")).toInt();
+    const QString recorderEnded = beforeClose.value(QStringLiteral("ended_at")).toString();
+    QVERIFY(!recorderEnded.isEmpty());
+
+    // Checklist results and an anomaly on the form's flight: only the form
+    // knows them, so closing the form must still write their counts.
+    DatabaseManager &db = DatabaseManager::instance();
+    QVERIFY(db.insertFlightCheckResult(id, QStringLiteral("gps"), QStringLiteral("nav"), false,
+                                       QStringLiteral("PASS"), QString()));
+    QVERIFY(db.insertFlightCheckResult(id, QStringLiteral("rc"), QStringLiteral("rc"), false,
+                                       QStringLiteral("PASS"), QString()));
+    QVERIFY(db.insertFlightCheckResult(id, QStringLiteral("wind"), QStringLiteral("weather"), false,
+                                       QStringLiteral("WARN"), QString()));
+    QVERIFY(db.insertTelemetryEvent(id, QStringLiteral("BATTERY_WARN"), QStringLiteral("test"),
+                                    15.0, 10.0, 8, QStringLiteral("Loiter")));
+    // The preflight checks run during the test may have filed results too.
+    const QVariantMap expected = db.getCheckCountsForFlight(id);
+    const int expectedAnomalies = db.getAnomalyCountForFlight(id);
+    QVERIFY(expected.value(QStringLiteral("pass")).toInt() >= 2);
+    QVERIFY(expected.value(QStringLiteral("warn")).toInt() >= 1);
+    QVERIFY(expectedAnomalies >= 1);
+
+    // End the form session after a deliberate wall-clock gap.
+    QTest::qWait(1100);
+    fs->closeSession();
+
+    const QVariantMap afterClose = _formRow(vid, QStringLiteral("close purpose"));
+    QVERIFY(!afterClose.isEmpty());
+    QCOMPARE(afterClose.value(QStringLiteral("duration_sec")).toInt(), recorderDuration);
+    QCOMPARE(afterClose.value(QStringLiteral("ended_at")).toString(), recorderEnded);
+
+    QSqlQuery q(QSqlDatabase::database());
+    QVERIFY(q.exec(QStringLiteral("SELECT check_pass_count, check_fail_count, check_warn_count, anomaly_count "
+                                  "FROM flights WHERE id = %1").arg(id)) && q.next());
+    QCOMPARE(q.value(0).toInt(), expected.value(QStringLiteral("pass")).toInt());
+    QCOMPARE(q.value(1).toInt(), expected.value(QStringLiteral("fail")).toInt());
+    QCOMPARE(q.value(2).toInt(), expected.value(QStringLiteral("warn")).toInt());
+    QCOMPARE(q.value(3).toInt(), expectedAnomalies);
+}
+
+// Two arms in one form session: one flights row per arm is right. The form
+// row is adopted for the first flight; the second arm opens its own recorder
+// row. Each row gets exactly one DISARM.
+void FlightSessionLifecycleTest::testTwoArmsInOneFormSessionMakeTwoRows()
+{
+    int vid = 0; QString fp;
+    if (!_connectAndRegister(&vid, &fp)) QSKIP("MockLink vehicle did not register a vehicle id");
+
+    int opId = OperatorManager::instance()->addOperator(QStringLiteral("Form Op"), QStringLiteral("pilot"));
+    OperatorManager::instance()->selectOperator(opId);
+
+    FlightSession *fs = FlightSession::instance();
+    fs->setVehicle(_vehicle);
+    fs->setMode(QStringLiteral("FLIGHT"));
+    const int base = _flightCount(vid);
+    fs->startFlightSession(QStringLiteral("two arm purpose"), QStringLiteral("loc"), QStringLiteral("notes"));
+    QVERIFY(fs->currentFlightId() > 0);
+    QCOMPARE(_flightCount(vid), base + 1);   // form row only
+
+    for (int arm = 0; arm < 2; ++arm) {
+        _vehicle->setArmed(true, false);
+        QVERIFY(_waitArmed(true));
+        QTest::qWait(300);
+        _vehicle->setArmed(false, false);
+        QVERIFY(_waitArmed(false));
+        QTest::qWait(300);
+        // After the first flight the form row is reused; the second arm opens
+        // a second row, so one row per arm overall.
+        QCOMPARE(_flightCount(vid), base + 1 + arm);
+    }
+
+    int rows = 0;
+    for (const QVariantMap &row : DatabaseManager::instance().getFlightsForVehicle(vid, 500)) {
+        const int id = row.value(QStringLiteral("id")).toInt();
+        if (_eventCount(id, QStringLiteral("DISARM")) > 0)
+            ++rows;
+    }
+    QCOMPARE(rows, 2);
 }
 
 UT_REGISTER_TEST(FlightSessionLifecycleTest)

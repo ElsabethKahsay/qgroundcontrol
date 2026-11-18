@@ -54,6 +54,9 @@ private slots:
     void testRecorderCheckResultsKeyedToSession();
     void testRecorderBatterySnapshotIsFrozen();
     void testRecorderEnergyFromMeasurementsOnly();
+    void testRecorderGcsChargeForDeadSensor();
+    void testRuntimeWriteErrorOnFirstFailure();
+    void testRuntimeWriteErrorIgnoresExpectedFailures();
     void testRecorderWritesFlightHistoryAndHandovers();
     void testRecorderJoinsAFlightAlreadyArmed();
     void testBenchTestResultsLinkToFlightAndConnection();
@@ -510,6 +513,81 @@ void DatabaseManagerTest::testRecorderEnergyFromMeasurementsOnly()
     QVERIFY(b.value(QStringLiteral("start_voltage")).isNull());
     QVERIFY(b.value(QStringLiteral("wh_used")).isNull());
     QVERIFY(b.value(QStringLiteral("mah_used")).isNull());
+}
+
+// The flight controller's current monitor reads 0 A, so its mAh counter stays
+// 0 and its % stays 100. When the GCS counted the charge itself, that count
+// (raw, the same one the charger is compared against) and the % it ended on
+// go into the flight record; when it has no count either, both stay unknown
+// and the columns are NULL rather than 0. With no source set, another vehicle
+// still records the controller's own counter as before.
+void DatabaseManagerTest::testRecorderGcsChargeForDeadSensor()
+{
+    RecorderFixture f;
+    QVERIFY(f.init());
+    DatabaseManager &db = DatabaseManager::instance();
+    SessionRecorder rec(db);
+    f.wire(rec);
+    rec.connectionOpened(QStringLiteral("UID-R"), QStringLiteral("Flight"), QString(), QString());
+
+    f.sample = SessionRecorder::Sample{16.4, 0.0, 100, -1, 100.0};
+    rec.setGcsChargeProvider([]() { return SessionRecorder::GcsCharge{12000.0, 82.0, true}; });
+    rec.armed(start(QStringLiteral("external")));
+    const int counted = rec.flightId();
+    f.clock.advance(600000);
+    f.sample = SessionRecorder::Sample{14.9, 0.0, 100, -1, 5100.0};
+    const SessionRecorder::FlightEnd end = rec.disarmed();
+    QCOMPARE(end.mahUsed, 12000.0);
+    QVERIFY2(end.whUsed > 0.0, qPrintable(QString::number(end.whUsed)));
+    QVariantMap b = row(QStringLiteral("SELECT * FROM flight_batteries WHERE flight_session_id = %1").arg(counted));
+    QCOMPARE(b.value(QStringLiteral("mah_used")).toDouble(), 12000.0);
+    QCOMPARE(b.value(QStringLiteral("end_percent")).toInt(), 82);
+    QVERIFY(b.value(QStringLiteral("wh_used")).toDouble() > 0.0);
+    QCOMPARE(row(QStringLiteral("SELECT mah_used FROM flight_sessions WHERE id = %1").arg(counted))
+                 .value(QStringLiteral("mah_used")).toDouble(), 12000.0);
+
+    // Dead monitor but no GCS count (the GCS joined in flight): unknown, not 0.
+    rec.setGcsChargeProvider([]() { return SessionRecorder::GcsCharge{-1.0, -1.0, true}; });
+    f.sample = SessionRecorder::Sample{16.4, 0.0, 100, -1, -1};
+    rec.armed(start(QStringLiteral("external")));
+    const int unknown = rec.flightId();
+    f.clock.advance(60000);
+    const SessionRecorder::FlightEnd noCount = rec.disarmed();
+    QCOMPARE(noCount.mahUsed, -1.0);
+    QCOMPARE(noCount.whUsed, -1.0);
+    b = row(QStringLiteral("SELECT * FROM flight_batteries WHERE flight_session_id = %1").arg(unknown));
+    QVERIFY(b.value(QStringLiteral("mah_used")).isNull());
+    QVERIFY(b.value(QStringLiteral("wh_used")).isNull());
+    QVERIFY(b.value(QStringLiteral("end_percent")).isNull());
+    QVariantMap fs = row(QStringLiteral("SELECT * FROM flight_sessions WHERE id = %1").arg(unknown));
+    QVERIFY(fs.value(QStringLiteral("mah_used")).isNull());
+    QVERIFY(fs.value(QStringLiteral("energy_consumed_wh")).isNull());
+
+    // No source set: the controller's counter is used, as before.
+    rec.setGcsChargeProvider({});
+    f.sample = SessionRecorder::Sample{16.4, 100.0};
+    rec.armed(start(QStringLiteral("external")));
+    const int fc = rec.flightId();
+    f.clock.advance(60000);
+    f.sample = SessionRecorder::Sample{15.1, 1400.0};
+    rec.disarmed();
+    QCOMPARE(row(QStringLiteral("SELECT mah_used FROM flight_batteries WHERE flight_session_id = %1").arg(fc))
+                 .value(QStringLiteral("mah_used")).toDouble(), 1300.0);
+
+    // The app always sets a source. For a copter whose current sensor works
+    // the source does not apply, and the controller's own counter and % are
+    // recorded, not "unknown".
+    rec.setGcsChargeProvider([]() { return SessionRecorder::GcsCharge{}; });
+    f.sample = SessionRecorder::Sample{16.4, 100.0, 90};
+    rec.armed(start(QStringLiteral("external")));
+    const int working = rec.flightId();
+    f.clock.advance(60000);
+    f.sample = SessionRecorder::Sample{15.1, 1400.0, 70};
+    const SessionRecorder::FlightEnd fcEnd = rec.disarmed();
+    QCOMPARE(fcEnd.mahUsed, 1300.0);
+    b = row(QStringLiteral("SELECT * FROM flight_batteries WHERE flight_session_id = %1").arg(working));
+    QCOMPARE(b.value(QStringLiteral("mah_used")).toDouble(), 1300.0);
+    QCOMPARE(b.value(QStringLiteral("end_percent")).toInt(), 70);
 }
 
 // Flight History reads the flights table: every recorded flight gets a row
@@ -1814,6 +1892,49 @@ void DatabaseManagerTest::testVehicleMotorTableLink()
     QCOMPARE(rows.last().toMap().value(QStringLiteral("id")).toInt(), id3);
     QCOMPARE(rows.last().toMap().value(QStringLiteral("missionJson")).toString(),
              QStringLiteral("{\"predTotalS\":179,\"realTotalS\":181}"));
+}
+
+// The first failed write sets a runtime error (separate from startupError,
+// which the flight form uses to refuse to start) and notifies once. Further
+// failures keep the first message and do not notify again.
+void DatabaseManagerTest::testRuntimeWriteErrorOnFirstFailure()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    initTempDb(db);
+    QSignalSpy spy(&db, &DatabaseManager::runtimeErrorChanged);
+    QVERIFY(db.runtimeError().isEmpty());
+
+    // Force a write failure through a public write function by removing its
+    // table (the default SQLite connection is the one DatabaseManager uses).
+    QSqlQuery q(QSqlDatabase::database());
+    QVERIFY(q.exec(QStringLiteral("DROP TABLE flight_telemetry_events")));
+
+    QVERIFY(!db.insertTelemetryEvent(1, QStringLiteral("X"), QString(), 0, 0, 0, QString()));
+    QVERIFY(!db.insertTelemetryEvent(1, QStringLiteral("X"), QString(), 0, 0, 0, QString()));
+    QVERIFY(!db.runtimeError().isEmpty());
+    QVERIFY2(db.runtimeError().contains(QStringLiteral("insertTelemetryEvent")),
+             qPrintable(db.runtimeError()));
+    QCOMPARE(spy.count(), 1);
+    // The form's startup error is untouched: logging did open at start-up.
+    QVERIFY(db.startupError().isEmpty());
+}
+
+// Known normal-path failures must not raise the banner: the fingerprint
+// re-key on a hardware UID (vehicle_config FK) and the read-only helpers.
+void DatabaseManagerTest::testRuntimeWriteErrorIgnoresExpectedFailures()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    initTempDb(db);
+    QSignalSpy spy(&db, &DatabaseManager::runtimeErrorChanged);
+
+    // Make updateVehicleFingerprint's UPDATE fail with "no such table".
+    QSqlQuery q(QSqlDatabase::database());
+    QVERIFY(q.exec(QStringLiteral("PRAGMA foreign_keys = OFF")));
+    QVERIFY(q.exec(QStringLiteral("DROP TABLE vehicles")));
+    QVERIFY(!db.updateVehicleFingerprint(QStringLiteral("old"), QStringLiteral("new"),
+                                         QStringLiteral("HARDWARE_UID")));
+    QVERIFY(db.runtimeError().isEmpty());
+    QCOMPARE(spy.count(), 0);
 }
 
 UT_REGISTER_TEST(DatabaseManagerTest)

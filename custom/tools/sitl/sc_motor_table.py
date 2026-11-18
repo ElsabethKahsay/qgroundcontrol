@@ -3,7 +3,7 @@ ArduCopter SITL flight set up like the Skywin 6S quad.
 
 The simulated copter is the drone as far as it is known
 (models/skywin_m6215_6s.json): 12 kg, quad X, four 22-inch props, a 6S
-Li-ion pack of 20 Ah from 25.8 V, its hover and thrust curve from the maker's
+Li-ion pack of 20 Ah from 25.2 V, its hover and thrust curve from the maker's
 thrust test, flown from a home at 2900 m. The flight controller is set up as
 the real one is expected to be: no current sensor on the pack the GCS reads
 (BATT_MONITOR = 3, voltage only), the ESC and spin ranges, voltage
@@ -54,10 +54,10 @@ PARAMS = {
     # The simulator's own current count, for comparison only.
     "BATT2_MONITOR": 4, "BATT2_VOLT_PIN": 13, "BATT2_CURR_PIN": 12, "BATT2_CAPACITY": 20000,
     # ESC and spin ranges, thrust curve, voltage compensation (6S Li-ion
-    # 4.3 -> 2.9 V per cell), hover learning.
+    # 4.2 -> 2.9 V per cell), hover learning.
     "MOT_PWM_MIN": 1000, "MOT_PWM_MAX": 2000, "MOT_SPIN_MIN": 0.15, "MOT_SPIN_MAX": 0.95,
     "MOT_THST_EXPO": 0.27, "MOT_THST_HOVER": 0.27, "MOT_HOVER_LEARN": 2,
-    "MOT_BAT_VOLT_MAX": 25.8, "MOT_BAT_VOLT_MIN": 17.4,
+    "MOT_BAT_VOLT_MAX": 25.2, "MOT_BAT_VOLT_MIN": 17.4,
     # Filters for 22-inch props (the usual starting values for this size).
     "INS_GYRO_FILTER": 22, "ATC_RAT_RLL_FLTD": 11, "ATC_RAT_PIT_FLTD": 11,
     "ATC_RAT_RLL_FLTT": 11, "ATC_RAT_PIT_FLTT": 11, "ATC_RAT_YAW_FLTE": 2,
@@ -222,7 +222,7 @@ def run(vehicle="ArduCopter", instance=6):
         r.note("flight record: " + detail)
         num = lambda k: f.get(k) if f.get(k) is not None else -1
         r.check("charge counted by the GCS", num("gcs_ah") > 0.3, detail)
-        r.check("started on a full pack (25.8 V, 4.3 V per cell)", f.get("started_full") == 1)
+        r.check("started on a full pack (25.2 V, 4.2 V per cell)", f.get("started_full") == 1)
         r.check("at least 30 s of steady hover", num("hover_s") >= 30)
         r.check("motor signals the whole flight (no time on the overall throttle)", 0 <= num("overall_throttle_s") <= 2)
         r.check("pack voltage recorded (6S)", 17.0 < num("avg_volts") <= 26.0)

@@ -268,8 +268,12 @@ void PreflightPlugin::init()
     _powerModel = new PowerModel(this);
     _exportHelper = new ExportHelper(this);
 
-    // Application branding used by the title bar and OS
-    QCoreApplication::setApplicationName(QStringLiteral("Skywin GCS"));
+    // Application branding used by the title bar and OS. The QSettings file
+    // and the database folder follow the application name, so a unit-test run
+    // keeps the name the test runner gave it and stays away from the real
+    // records and settings.
+    if (!QCoreApplication::applicationName().endsWith(QLatin1String("_unittest")))
+        QCoreApplication::setApplicationName(QStringLiteral("Skywin GCS"));
 
     _vehicleProfileManager = new VehicleProfileManager(this);
     _vehicleProfileManager->setTelemetryBridge(_telemetryBridge);
@@ -465,6 +469,28 @@ void PreflightPlugin::init()
             s.flightMode = _telemetryBridge->flightMode();
         }
         return s;
+    });
+    // The controller's mAh and % are 0 / 100 all flight with a dead current
+    // sensor. The flight record takes the GCS's own count instead (raw, as
+    // compared against the charger); when that count does not cover the
+    // flight, both stay unknown. Read at close, before the next arm resets it.
+    _sessionRecorder->setGcsChargeProvider([this]() {
+        SessionRecorder::GcsCharge c;
+        // Only for a copter whose current sensor was found not to measure; a
+        // working sensor's own counter is recorded as before.
+        if (_vehicleProfileManager && _vehicleProfileManager->fcCurrentDead()) {
+            c.applies = true;
+            const QPair<double, double> gcs = _vehicleProfileManager->recordedGcsCharge();
+            c.mahUsed = gcs.first;
+            c.percent = gcs.second;
+        }
+        return c;
+    });
+    // A Flight form already opened its own row: let the recorder adopt that
+    // row at arm instead of creating a second one (one row per flight).
+    _sessionRecorder->setHistoryIdProvider([](int flightSessionId) {
+        FlightSession *fs = FlightSession::instance();
+        return fs && fs->adoptHistoryRow(flightSessionId) ? fs->currentFlightId() : -1;
     });
     _sessionRecorder->setFlightClosedHandler([this](const SessionRecorder::FlightEnd &end) {
         // The target was for this flight (it stays on the flight's own

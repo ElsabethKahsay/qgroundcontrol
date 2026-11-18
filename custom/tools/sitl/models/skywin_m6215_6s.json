@@ -29,8 +29,8 @@
     # GCS's starting value until a flight measures it)
     "refBatRes" : 0.0252,
 
-    # full pack: 6 x 4.3 V Li-ion, 20 Ah
-    "maxVoltage" : 25.8,
+    # full pack: 6 x 4.2 V Li-ion, 20 Ah
+    "maxVoltage" : 25.2,
     "battCapacityAh" : 20,
 
     # thrust curve of the prop: fitted to the maker's test rows
@@ -40,9 +40,9 @@
     # approximate maximum yaw rate, deg/s (SITL default)
     "refRotRate" : 120,
 
-    # thrust share at hover: 3000 g of about 11 070 g at full throttle on a
-    # full 25.8 V pack (the test's 8801 g at 23 V, x (25.8 / 23)^2)
-    "hoverThrOut" : 0.27,
+    # thrust share at hover: 3000 g of about 10 566 g at full throttle on a
+    # full 25.2 V pack (the test's 8801 g at 23 V, x (25.2 / 23)^2)
+    "hoverThrOut" : 0.284,
 
     # ESC range and spin range (ArduPilot defaults; to confirm on the aircraft)
     "pwmMin" : 1000,

@@ -62,6 +62,9 @@ class VehicleProfileManager : public QObject {
     Q_PROPERTY(bool typeResolved READ typeResolved NOTIFY vehicleTypeResolved)
     /// Motor table the connected copter's estimate uses (MotorTable.h id); empty = none.
     Q_PROPERTY(QString motorTableId READ motorTableId NOTIFY motorTableChanged)
+    /// Reason the last charger entry was refused (e.g. implausible for the
+    /// pack), empty when it was accepted. The Vehicles page shows it.
+    Q_PROPERTY(QString motorTableChargerError READ motorTableChargerError NOTIFY motorTableChanged)
     /// Per copter: the pilot who chose to fly this copter without a motor
     /// table; empty when not waived. Kept (QSettings, by device UID) across
     /// flights and reconnections until a motor table is linked to the copter.
@@ -87,7 +90,7 @@ class VehicleProfileManager : public QObject {
     Q_PROPERTY(int batteryCellMah READ batteryCellMah WRITE setBatteryCellMah NOTIFY batteryConfigChanged)
     /// Reserve fraction never flown through (default 0.20). 0..0.9.
     Q_PROPERTY(double batteryReserve READ batteryReserve WRITE setBatteryReserve NOTIFY batteryConfigChanged)
-    /// Battery chemistry: "LiPo" (3.7V nom / 4.2V max), "LiIon" (3.6V/4.1V),
+    /// Battery chemistry: "LiPo" (3.7V nom / 4.2V max), "LiIon" (3.6V/4.2V),
     /// "LiHV" (3.8V/4.35V). Persisted per vehicle.
     Q_PROPERTY(QString batteryType READ batteryType WRITE setBatteryType NOTIFY batteryConfigChanged)
     /// Pack capacity in Ah = N_parallel × cell_mAh / 1000. 0 when the profile
@@ -104,6 +107,16 @@ class VehicleProfileManager : public QObject {
     /// (armed && I_smooth >= 3 A) is not met or data is missing.
     Q_PROPERTY(int liveSOC READ liveSOC NOTIFY liveDataChanged)
     Q_PROPERTY(double liveTimeMins READ liveTimeMins NOTIFY liveDataChanged)
+    /// The battery % the Fly view shows. When the copter is linked to its
+    /// motor table, is armed, its current sensor is known not to measure and
+    /// the GCS's own count covers the flight, that count (powerLive.socNowPct);
+    /// liveSOC otherwise. Every screen showing the battery % uses this one.
+    Q_PROPERTY(int displaySocPct READ displaySocPct NOTIFY liveDataChanged)
+    /// True when displaySocPct comes from the GCS rather than the flight
+    /// controller (its count in flight, the pack's resting voltage on the
+    /// ground, both because the current sensor reads 0 A); the tooltips use
+    /// it to say where the % comes from.
+    Q_PROPERTY(bool displaySocFromCount READ displaySocFromCount NOTIFY liveDataChanged)
     /// The battery estimate (copters linked to a motor table;
     /// PowerTypeModel::liveEstimate), refreshed with the live
     /// estimate: time and distance left, and whether the rest of the trip
@@ -197,6 +210,13 @@ public:
     void setBatteryType(const QString &type);
     double capacityAh() const { return m_batteryParallelCells * m_batteryCellMah / 1000.0; }
 
+    /// A charger number is plausible when the pack is unknown (the database's
+    /// 1–200000 mAh limit still applies then) or at most 120 % of a known pack.
+    static bool chargerMahPlausible(double chargerMah, double capacityMah)
+    {
+        return !(capacityMah > 0.0 && chargerMah > 1.2 * capacityMah);
+    }
+
     /// Ah that may still be used before the reserve. The reserve is a share of
     /// the WHOLE pack (land with e.g. 20 % of the pack left), so this is
     /// capacity × (SOC − reserve), 0 at or below the reserve. (It used to be
@@ -221,6 +241,53 @@ public:
         return fcSocPct >= 0 ? qBound(0, fcSocPct, 100) : -1;
     }
 
+    /// True when the battery % must come from the GCS's own count: the
+    /// estimate is running on a copter that is armed, whose current was found
+    /// not to be measured, with a count whole from the arm.
+    /// A GCS that joined a flight already armed, on a copter whose current
+    /// sensor does not measure, has no idea of the charge used: the FC's %
+    /// reads 100 all flight and must not stand in for the GCS's count. Advice
+    /// only — nothing here holds the arm or changes what reaches the vehicle.
+    static bool chargeUnknown(bool armed, bool sensorDead, bool countKnown)
+    {
+        return armed && sensorDead && !countKnown;
+    }
+    /// Why the charge is unknown, for the battery chip's tooltip.
+    static QString chargeUnknownWhy();
+    /// The in-flight mission estimate while the charge is unknown: it must not
+    /// use the controller's % either (100 with a dead sensor), so nothing is
+    /// costed and no RETURN NOW can be raised from a charge we cannot know.
+    static QVariantMap missionLiveChargeUnknown();
+    static bool socFromGcsCount(bool powerActive, bool armed, bool sensorDead, bool countKnown,
+                                double socNowPct)
+    {
+        return powerActive && armed && sensorDead && countKnown && socNowPct >= 0.0;
+    }
+    /// On the ground, a copter whose current sensor does not measure still
+    /// reports 100 % whatever the pack holds. With the estimate running, the
+    /// pack's resting-voltage charge (packRestingSocPct) is shown instead.
+    static bool restingSocShown(bool powerActive, bool armed, bool sensorDead, double restingSocPct)
+    {
+        return powerActive && !armed && sensorDead && restingSocPct >= 0.0;
+    }
+    /// The % the Fly view shows:
+    ///   -1 when the charge is unknown (chargeUnknown(): joined armed with a
+    ///      dead sensor), so a plain % display says "?" rather than 100;
+    ///   in flight, the GCS's count when socFromGcsCount();
+    ///   on the ground, the resting-voltage charge when restingSocShown();
+    ///   the flight controller's liveSOC otherwise (-1 when it has none).
+    static int displaySocPctFor(bool powerActive, bool armed, bool sensorDead, bool countKnown,
+                                double socNowPct, int liveSoc, double restingSocPct = -1.0)
+    {
+        if (chargeUnknown(armed, sensorDead, countKnown))
+            return -1;
+        if (socFromGcsCount(powerActive, armed, sensorDead, countKnown, socNowPct))
+            return qRound(socNowPct);
+        if (restingSocShown(powerActive, armed, sensorDead, restingSocPct))
+            return qRound(restingSocPct);
+        return liveSoc;
+    }
+
     /// The same with this profile's pack and reserve (for QML).
     Q_INVOKABLE double usableAhAboveReserveFor(int socPct) const
     {
@@ -231,6 +298,11 @@ public:
     int liveSOC() const { return m_liveSOC; }
     double liveTimeMins() const { return m_liveTimeMins; }
     bool powerLiveActive() const { return m_powerLive.value(QStringLiteral("active")).toBool(); }
+    bool displaySocFromCount() const;
+    int displaySocPct() const;
+    /// The pack's charge from its voltage read as a resting one
+    /// (packRestingSocPct); -1 without a voltage reading or a pack set up.
+    double displayRestingSocPct() const;
     /// {active, armed, airborne, hover, usableAh, currentA, timeLeftMin,
     /// distLeftKm, hoverMin, cruiseMin, cruiseKm, tripKnown, tripNeedAh,
     /// tripShortAh, returnNow, payloadAboard, source, typeName}.
@@ -257,7 +329,9 @@ public:
     /// with {…as DatabaseManager::motorTableFlights, ratio (charger ÷ count),
     /// usable}. Empty when it is not on a table.
     Q_INVOKABLE QVariantList motorTableFlights() const;
-    /// Enters the charger's mAh after a motor-table flight (1–200000).
+    /// Enters the charger's mAh after a motor-table flight (1–200000, and at
+    /// most 120 % of the pack when its capacity is known). On refusal the
+    /// reason is in motorTableChargerError.
     Q_INVOKABLE bool setMotorTableFlightCharger(int flightId, double chargerMah);
     /// Leaves a motor-table flight out of the comparison (wrong pack charged…).
     Q_INVOKABLE bool dismissMotorTableFlight(int flightId);
@@ -309,6 +383,7 @@ public:
     Q_INVOKABLE double maxTableThrust() const;
     QString thrustTableInfo() const { return m_thrustTableInfo; }
     QString thrustTableWarning() const { return m_thrustTableWarning; }
+    QString motorTableChargerError() const { return m_chargerEntryError; }
 
     QString currentLocationName() const { return m_locationName; }
     void setLocationName(const QString &name);
@@ -385,6 +460,7 @@ public:
     struct LiveStart {
         double lat = 0.0, lon = 0.0, altM = 0.0;   ///< altitude above home
         int nextSeq = 1;                           ///< the mission item it is flying to
+        int currentCommand = -1;                   ///< MAVLink command of the item being flown (-1 unknown)
         bool moving = false;
         QString mode;                              ///< "auto", "rtl", "land", "paused"
         double socPct = -1.0;                      ///< charge left now
@@ -466,6 +542,15 @@ public:
     /// The connected copter's flight controller current found not to be
     /// measured (remembered per copter).
     bool fcCurrentDead() const { return m_fcCurrent.dead; }
+
+    /// The GCS's own charge count for the closing flight record, when the
+    /// flight controller's current sensor does not measure. Returns the raw
+    /// mAh used and the % left (both -1 when the count is unknown). Raw, not
+    /// charger-calibrated: motor_table_flights compares the charger against
+    /// this same count. Computed from the accumulator, not powerLive, which
+    /// the disarm refresh reports as a full pack. Read at disarm, before the
+    /// next arm resets the count.
+    QPair<double, double> recordedGcsCharge() const;
 
     // ── Terrain along the mission (TerrainClearance.h) ──
     /// The mission's legs as last worked out before take-off (the mission
@@ -638,7 +723,7 @@ private:
     /// released this flight.
     PayloadRelease::Detector m_drop;
     QVariantMap m_missionLive;          ///< missionLive()
-    void _updateMissionLive(int socPct);
+    void _updateMissionLive(int socPct, bool chargeUnknown = false);
     // This flight, from the arm: the take-off estimate, the items reached
     // ({seq, timeS, socPct}), the mission item flown last, and what has been
     // alerted already.
@@ -718,6 +803,7 @@ private:
     QVector<QPair<double, double>> m_thrustTable;
     QString m_thrustTableInfo;
     QString m_thrustTableWarning;
+    QString m_chargerEntryError;
 
     /// Install a table + meta and persist it for the connected vehicle.
     void _applyThrustTable(const QVector<QPair<double, double>> &table,

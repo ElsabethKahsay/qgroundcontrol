@@ -378,17 +378,21 @@ Item {
             objectName:         "missionChip"
             readonly property var _vpm: typeof VehicleProfileManager !== "undefined" ? VehicleProfileManager : null
             readonly property var _m: _vpm ? _vpm.missionLive : ({})
-            readonly property bool _shown: _m.live === true && _m.ready === true
+            readonly property bool _shown: _m.live === true && (_m.ready === true || _m.chargeUnknown === true || _m.stale === true)
             readonly property var _next: (_m.waypoints || []).length > 0 ? _m.waypoints[0] : null
-            readonly property color _colour: _m.returnNow ? Colors.error
+            readonly property color _colour: _m.stale ? Colors.statusStale
+                                             : _m.chargeUnknown ? Colors.warning
+                                             : _m.returnNow ? Colors.error
                                              : _m.colour === "green" ? Colors.success
                                              : _m.colour === "amber" ? Colors.warning
                                              : _m.colour === "red" ? Colors.error : Colors.textSecondary
             readonly property string text: {
+                if (_m.stale) return qsTr("STALE · link lost")
+                if (_m.chargeUnknown) return qsTr("Can't assess: %1").arg(_m.problem || "charge unknown (joined in flight)")
                 if (!_shown || !_next) return ""
                 var gps = _m.gpsPoor ? qsTr("GPS POOR · ") : ""
                 if (_m.returnNow) return gps + qsTr("RETURN NOW · item %1").arg(_next.seq)
-                var where = _m.mode === "rtl" ? qsTr("RTL") : _m.mode === "land" ? qsTr("LAND")
+                var where = _m.returning ? (_m.returningLand ? qsTr("LAND") : qsTr("RTL"))
                           : _next.seq >= 0 ? qsTr("WP %1").arg(_next.seq) : qsTr("Home")
                 var when = _m.mode === "paused" ? qsTr("paused") : _next.timeText
                 return gps + where + " · " + when + " · " + Math.round(_next.socPessimisticPct) + " % · " + _m.resultName
@@ -410,7 +414,11 @@ Item {
                 color:              missionChip._colour
             }
             ToolTip.visible:    chipMouse.containsMouse
-            ToolTip.text:       (missionChip._m.gpsPoor ? qsTr("GPS unreliable: the position, the distances, the times and RETURN NOW may be wrong.\n") : "")
+            ToolTip.text:       missionChip._m.stale
+                                ? qsTr("No heartbeat for 5 s: the numbers are frozen, not live.")
+                                : missionChip._m.chargeUnknown
+                                ? qsTr("Can't assess: %1").arg(missionChip._m.problem || "charge unknown (joined in flight)")
+                                : (missionChip._m.gpsPoor ? qsTr("GPS unreliable: the position, the distances, the times and RETURN NOW may be wrong.\n") : "")
                                 + (missionChip._m.returnNow ? missionChip._m.returnNowWhy
                                 : qsTr("Lands with %1 % (pessimistic %2 %), %3 left")
                                       .arg(Math.round(missionChip._m.landLikelyPct || 0))
@@ -496,7 +504,7 @@ Item {
         height:                 panelCol.implicitHeight + ScreenTools.defaultFontPixelHeight
         radius:                 Config.radiusLarge
         color:                  Qt.rgba(Colors.background.r, Colors.background.g, Colors.background.b, 0.92)
-        border.color:           Colors.accentCyan
+        border.color:           _m.stale ? Colors.statusStale : Colors.accentCyan
         onVisibleChanged:       _confirmDrop = false
 
         function _pct(v) { return (v === undefined || v === null || isNaN(v) || v < 0) ? "--" : Math.round(v) + " %" }
@@ -525,7 +533,11 @@ Item {
                 wrapMode:       Text.WordWrap
                 color:          Colors.textPrimary
                 font.pixelSize: ScreenTools.defaultFontPixelHeight * 0.8
-                text: missionPanel._m.mode === "paused"
+                text: missionPanel._m.stale
+                      ? qsTr("STALE · link lost: the last estimate is frozen, not live.")
+                      : missionPanel._m.chargeUnknown
+                      ? qsTr("Can't assess: %1").arg(missionPanel._m.problem || "charge unknown (joined in flight)")
+                      : missionPanel._m.mode === "paused"
                       ? qsTr("Paused: the pilot is flying. Charge as if the mission went on.")
                       : qsTr("Lands with %1 (pessimistic %2), %3 left")
                             .arg(missionPanel._pct(missionPanel._m.landLikelyPct))
@@ -883,6 +895,34 @@ Item {
             font.pixelSize: Config.fontSizeBody
             font.bold: true
             color: Colors.background   // text on a status colour, as on the PASS/FAIL badges
+        }
+    }
+
+    // First unexpected write failure after start-up: records from now on may
+    // be incomplete, but flying and arming are unaffected (RC-primary).
+    Rectangle {
+        id: dbWriteBanner
+        visible: typeof Database !== "undefined" && Database.runtimeError !== ""
+        anchors {
+            top: databaseBanner.visible ? databaseBanner.bottom : parent.top
+            topMargin: databaseBanner.visible ? 0
+                       : _toolInsets.topEdgeCenterInset + (testingBanner.visible ? testingBanner.height : 0)
+            left: parent.left; right: parent.right
+        }
+        height: dbWriteBannerText.implicitHeight + 16
+        z: QGroundControl.zOrderWidgets + 4
+        color: Qt.rgba(Colors.danger.r, Colors.danger.g, Colors.danger.b, 0.85)
+
+        Text {
+            id: dbWriteBannerText
+            anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; margins: Config.spacingSmall }
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.Wrap
+            text: qsTr("\u26A0 A FLIGHT RECORD WRITE FAILED \u2014 %1. Records from now on may be incomplete.")
+                      .arg(typeof Database !== "undefined" ? Database.runtimeError : "")
+            font.pixelSize: Config.fontSizeBody
+            font.bold: true
+            color: Colors.background
         }
     }
 

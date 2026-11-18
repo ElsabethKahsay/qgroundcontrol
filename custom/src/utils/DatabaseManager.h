@@ -106,6 +106,10 @@ class DatabaseManager : public QObject {
     /// Non-empty when the database could not be opened or migrated at startup,
     /// i.e. nothing is being logged. The Fly view shows it as a banner.
     Q_PROPERTY(QString startupError READ startupError NOTIFY startupErrorChanged)
+    /// First unexpected write failure after start-up (empty until then).
+    /// Separate from startupError so the flight form can still open; the Fly
+    /// view shows this as a warning banner. Stays until the app restarts.
+    Q_PROPERTY(QString runtimeError READ runtimeError NOTIFY runtimeErrorChanged)
 public:
     static DatabaseManager &instance();
 
@@ -341,6 +345,14 @@ public:
     Q_INVOKABLE bool setFlightPostChecklistComplete(int flightId);
     Q_INVOKABLE bool setFlightArmedAt(int flightId, const QDateTime &time);
     Q_INVOKABLE bool setFlightDisarmedAt(int flightId, const QDateTime &time);
+    /// The columns of a flights row that only the Flight form knows (mode
+    /// changes, speeds, mean voltage, checklist counts, anomalies). For a form
+    /// row the recorder adopted and closed: its duration, end time, altitude,
+    /// voltages and distance are left as the recorder wrote them.
+    bool updateFlightFormStats(int flightId, int modeChanges, double maxGroundSpeedMs,
+                               double maxVerticalSpeedMs, double avgBatteryV,
+                               int checkPassCount, int checkFailCount, int checkWarnCount,
+                               int anomalyCount);
     Q_INVOKABLE bool closeFlight(int flightId, int durationSec,
                                  double maxAltitude, double minBatteryV,
                                  double maxBatteryV, int modeChanges,
@@ -508,6 +520,9 @@ public:
     /// allowed. Linked from flight_sessions.history_flight_id.
     int openHistoryFlight(int flightSessionId, int operatorId, int vehicleSysId,
                           const QString &mode, const QString &notes, const QString &weatherSummary);
+    /// Reuse the Flight form's still-open row as the recorded flight: link it
+    /// to the recorder's session. Fails if the row is already disarmed/closed.
+    bool adoptHistoryFlight(int flightSessionId, int historyId);
     /// Where recordCheckResult() files results (set by SessionRecorder).
     void setRecordingContext(int connectionSessionId, int flightId, const QString &deviceUid,
                              int historyFlightId = -1);
@@ -521,9 +536,11 @@ public:
     bool recordCheckResult(const QString &checkId, const QString &status, const QString &message);
 
     QString startupError() const { return m_startupError; }
+    QString runtimeError() const { return m_runtimeError; }
 
 signals:
     void startupErrorChanged();
+    void runtimeErrorChanged();
 
 private:
     void setStartupError(const QString &error);
@@ -542,7 +559,9 @@ private:
     /// Creates all tables and indexes if they don't already exist.
     bool createTables();
     /// Executes a query, logging a warning with the table name on failure.
-    bool execOrWarn(QSqlQuery &query, const char *tableName);
+    /// trackFailure=false for expected failures (e.g. the fingerprint re-key)
+    /// and read-only queries: they must not raise the write-failed banner.
+    bool execOrWarn(QSqlQuery &query, const char *tableName, bool trackFailure = true);
     /// Escapes special characters for safe embedding in JSON strings.
     QString escapeJson(const QString &raw);
     /// Copies the DB file to "<dbPath>.bak" before a schema migration so a
@@ -561,6 +580,7 @@ private:
     bool m_initialized = false;
     QTimer m_maintenanceTimer;
     QString m_startupError;
+    QString m_runtimeError;
     int m_ctxConnectionId = -1;   ///< setRecordingContext()
     int m_ctxFlightId = -1;
     int m_ctxHistoryId = -1;      ///< flights.id of the open flight (Flight History)

@@ -166,15 +166,16 @@ inline double returnShortAh(double usableLeftAh, double remainingAh)
 
 inline bool isHover(double groundSpeedMs) { return groundSpeedMs < kHoverMaxSpeedMs; }
 
-/// Resting cell voltage at or above which a pack counts as full: 4.15 V,
-/// 4.30 V for high-voltage LiPo ("LiHV").
+/// Resting cell voltage at or above which a pack counts as full: 4.15 V for
+/// LiPo and Li-ion (charged to 4.20 V; they rest a little below that), 4.30 V
+/// for high-voltage LiPo ("LiHV").
 inline double fullCellVolts(const QString &chemistry)
 {
     if (chemistry.compare(QLatin1String("LiHV"), Qt::CaseInsensitive) == 0)
         return 4.30;
-    // Li-ion here is charged to 4.3 V per cell; it rests a little below that.
+    // Li-ion here is charged to 4.20 V per cell; it rests a little below that.
     if (chemistry.compare(QLatin1String("LiIon"), Qt::CaseInsensitive) == 0)
-        return 4.25;
+        return 4.15;
     return kFullCellV;
 }
 
@@ -182,7 +183,7 @@ namespace detail {
 struct CurvePoint { double v, pct; };
 /// Resting cell voltage against charge left, for each chemistry, on a typical
 /// discharge curve: LiPo; LiHV is LiPo 0.15 V higher; Li-ion ("LiIon") is used
-/// from 4.3 V (full) to 2.9 V (empty) per cell, with the usual Li-ion shape
+/// from 4.20 V (full) to 2.9 V (empty) per cell, with the usual Li-ion shape
 /// (steeper at both ends, flatter in the middle). A pack's own curve, from its
 /// cell maker or learned from flights, is better than these.
 inline const CurvePoint *curve(const QString &chemistry, int &n)
@@ -193,7 +194,7 @@ inline const CurvePoint *curve(const QString &chemistry, int &n)
         {4.02, 80}, {4.08, 85}, {4.11, 90}, {4.15, 95}, {4.20, 100} };
     static const CurvePoint liion[] = {
         {2.90, 0}, {3.20, 5}, {3.35, 10}, {3.48, 20}, {3.57, 30}, {3.65, 40}, {3.73, 50},
-        {3.81, 60}, {3.90, 70}, {4.00, 80}, {4.12, 90}, {4.30, 100} };
+        {3.81, 60}, {3.90, 70}, {4.00, 80}, {4.08, 90}, {4.20, 100} };
     if (chemistry.compare(QLatin1String("LiIon"), Qt::CaseInsensitive) == 0) {
         n = int(sizeof(liion) / sizeof(CurvePoint));
         return liion;

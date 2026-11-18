@@ -238,6 +238,7 @@ void FlightSession::startFlightSession(const QString &purpose,
     }
 
     m_flightId = id;
+    m_historyRowAdopted = false;
     m_startedAt = QDateTime::currentDateTimeUtc();
     _setMode(SessionMode::Flight);
     _setState(SessionState::PreFlight);
@@ -347,6 +348,16 @@ void FlightSession::onPreFlightComplete()
     emit armingPermittedChanged();
 }
 
+bool FlightSession::adoptHistoryRow(int flightSessionId)
+{
+    if (isFlight() && m_flightId > 0 && !m_historyRowAdopted
+        && DatabaseManager::instance().adoptHistoryFlight(flightSessionId, m_flightId)) {
+        m_historyRowAdopted = true;
+        return true;
+    }
+    return false;
+}
+
 void FlightSession::closeSession()
 {
     if (m_flightId > 0 && m_state != SessionState::Closed) {
@@ -360,14 +371,27 @@ void FlightSession::closeSession()
         // "finalize session" — wrap them in a single transaction so a failure
         // mid-way can't leave the flight closed but the stats stale.
         db.beginTransaction();
-        bool ok = db.closeFlight(
-            m_flightId, durationSec,
-            m_maxAltitude, m_minBatteryV, m_maxBatteryV, m_modeChanges,
-            m_maxGroundSpeedMs, m_maxVerticalSpeedMs, m_distanceFlownM, m_avgBatteryV,
-            counts.value(QStringLiteral("pass")).toInt(),
-            counts.value(QStringLiteral("fail")).toInt(),
-            counts.value(QStringLiteral("warn")).toInt(),
-            anomalies);
+        bool ok = true;
+        const int pass = counts.value(QStringLiteral("pass")).toInt();
+        const int fail = counts.value(QStringLiteral("fail")).toInt();
+        const int warn = counts.value(QStringLiteral("warn")).toInt();
+        if (!m_historyRowAdopted) {
+            ok = db.closeFlight(
+                m_flightId, durationSec,
+                m_maxAltitude, m_minBatteryV, m_maxBatteryV, m_modeChanges,
+                m_maxGroundSpeedMs, m_maxVerticalSpeedMs, m_distanceFlownM, m_avgBatteryV,
+                pass, fail, warn, anomalies);
+        } else {
+            // The recorder already closed an adopted row with the real
+            // arm-to-disarm duration, end time, altitude, voltages and
+            // distance; don't overwrite those with the form's wall-clock
+            // figures. It wrote 0 for what only the form knows (checklist
+            // results, anomalies, mode changes, speeds, mean voltage), so
+            // those are filled in here.
+            ok = db.updateFlightFormStats(m_flightId, m_modeChanges, m_maxGroundSpeedMs,
+                                          m_maxVerticalSpeedMs, m_avgBatteryV,
+                                          pass, fail, warn, anomalies);
+        }
         ok &= db.updateOperatorStats(
             OperatorManager::instance()->currentOperatorId(), true);
 
@@ -462,8 +486,9 @@ void FlightSession::onVehicleDisarmed()
         _setState(SessionState::PreFlight);
     QDateTime now = QDateTime::currentDateTimeUtc();
 
-    // Only persist to DB for audited Flight sessions.
-    if (m_mode == SessionMode::Flight && m_flightId > 0 && wasArmed) {
+    // Only persist to DB for audited Flight sessions. When the recorder owns
+    // this row it is the single DISARM writer (it handles link loss too).
+    if (m_mode == SessionMode::Flight && m_flightId > 0 && wasArmed && !m_historyRowAdopted) {
         // Disarm write = flights update + telemetry event → single atomic unit.
         DatabaseManager &db = DatabaseManager::instance();
         db.beginTransaction();

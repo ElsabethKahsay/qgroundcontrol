@@ -827,8 +827,9 @@ inline ThrustAt maxThrustAt(const Table &t, double packVolts, double sigma = kTa
 
 /// Fine-tuning uses the median of this many latest flights …
 constexpr int kCalibrationFlights = 5;
-/// … once there are at least this many …
-constexpr int kMinCalibrationFlights = 2;
+/// … once there are at least this many (one bad charger value must not move
+/// the factor, so this matches kProofFlights) …
+constexpr int kMinCalibrationFlights = 3;
 /// … limited to this range.
 constexpr double kMinCalibration = 0.80;
 constexpr double kMaxCalibration = 1.20;

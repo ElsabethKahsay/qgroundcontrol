@@ -14,9 +14,15 @@
 
 #include <QTest>
 #include <QSignalSpy>
+#include <QTemporaryFile>
+#include <QDir>
+#include <QSqlDatabase>
 
 #include "UnitTest.h"
+#include "MissionAssess.h"
 #include "VehicleProfileManager.h"
+#include "DatabaseManager.h"
+#include "utils/MonotonicClock.h"
 #include "mocks/MockTelemetryBridge.h"
 
 class VehicleProfileManagerTest : public UnitTest {
@@ -27,6 +33,7 @@ private slots:
     void cleanup() override { UnitTest::cleanup(); }
 
     void testDefaultBatteryConfig();
+    void testLiIonPackCountsAsFull();
     void testCapacityCalculation();
     void testBatteryConfigSignals();
     void testSetBatterySerial();
@@ -34,6 +41,10 @@ private slots:
     void testKindFromTypeString();
     void testKindString();
     void testLiveSOCDefault();
+    void testDisplaySocPropertyExists();
+    void testDisplaySocUsesGcsCount();
+    void testChargeUnknownAfterJoin();
+    void testMotorTableChargerPlausibleAgainstPackCapacity();
     void testBatteryReserveBounds();
     void testUsableAhStopsAtTheReserve();
     void testPackSocFromSelectedPackNotFcCapacity();
@@ -43,6 +54,7 @@ private slots:
     void testFcCurrentJudgedInFlight();
     void testGpsTrustJudgesEachReading();
     void testEstimateMarkedWhileGpsPoor();
+    void testMissionLiveStaleOnLinkLoss();
 };
 
 // Default battery config: 6S 1P 5000mAh LiPo 20% reserve
@@ -54,6 +66,19 @@ void VehicleProfileManagerTest::testDefaultBatteryConfig()
     QCOMPARE(vpm.batteryCellMah(), 5000);
     QCOMPARE(vpm.batteryReserve(), 0.20);
     QCOMPARE(vpm.batteryType(), QStringLiteral("LiPo"));
+}
+
+// Li-ion is charged to 4.20 V per cell: a 6S pack at 25.2 V is full, and so
+// is one resting just below it (4.15 V/cell); 24.6 V (4.10 V/cell) is not.
+void VehicleProfileManagerTest::testLiIonPackCountsAsFull()
+{
+    VehicleProfileManager vpm;
+    vpm.setBatterySeriesCells(6);
+    vpm.setBatteryType(QStringLiteral("LiIon"));
+
+    QCOMPARE(vpm.packRestingSocPct(25.2), 100.0);
+    QCOMPARE(vpm.packRestingSocPct(24.9), 100.0);
+    QVERIFY(vpm.packRestingSocPct(24.6) < 100.0);
 }
 
 // Capacity = parallel × cellMah / 1000
@@ -149,6 +174,67 @@ void VehicleProfileManagerTest::testLiveSOCDefault()
     VehicleProfileManager vpm;
     QCOMPARE(vpm.liveSOC(), -1);
     QCOMPARE(vpm.liveTimeMins(), -1.0);
+}
+
+// The Fly view's battery % has a property of its own so every screen can use
+// it. With nothing better known it is the flight controller's liveSOC.
+void VehicleProfileManagerTest::testDisplaySocPropertyExists()
+{
+    VehicleProfileManager vpm;
+    const QVariant shown = vpm.property("displaySocPct");
+    QVERIFY2(shown.isValid(), "VehicleProfileManager has no displaySocPct property");
+    QCOMPARE(shown.toInt(), vpm.liveSOC());
+}
+
+// The % shown is the GCS's own count when the flight controller's current is
+// not measured (the sensor reads 0 A) and the count covers the flight; the
+// flight controller's % in every other case. liveSOC itself is left alone: the
+// records and the database still use the FC's figure.
+void VehicleProfileManagerTest::testDisplaySocUsesGcsCount()
+{
+    QCOMPARE(VehicleProfileManager::displaySocPctFor(true, true, true, true, 82.0, 100), 82);
+    QVERIFY(VehicleProfileManager::socFromGcsCount(true, true, true, true, 82.0));
+
+    // The flight controller's % whenever one of the conditions is missing.
+    QCOMPARE(VehicleProfileManager::displaySocPctFor(true, true, false, true, 82.0, 100), 100);  // sensor live
+    QCOMPARE(VehicleProfileManager::displaySocPctFor(false, true, true, true, 82.0, 100), 100);  // no estimate
+    QCOMPARE(VehicleProfileManager::displaySocPctFor(true, false, true, true, 82.0, 100), 100);  // on the ground
+    QCOMPARE(VehicleProfileManager::displaySocPctFor(true, true, true, true, -1.0, 100), 100);   // count not yet
+    QCOMPARE(VehicleProfileManager::displaySocPctFor(true, true, true, true, 82.4, -1), 82);     // rounded
+
+    // Joined armed with a dead sensor: no % at all (-1), so the panels that
+    // show a plain % say "?" instead of the controller's 100.
+    QCOMPARE(VehicleProfileManager::displaySocPctFor(true, true, true, false, 82.0, 100), -1);
+
+    // On the ground with a dead sensor the controller's % is 100 whatever the
+    // pack holds: the pack's resting-voltage charge is shown instead.
+    QCOMPARE(VehicleProfileManager::displaySocPctFor(true, false, true, true, -1.0, 100, 55.0), 55);
+    QVERIFY(VehicleProfileManager::restingSocShown(true, false, true, 55.0));
+    QCOMPARE(VehicleProfileManager::displaySocPctFor(true, false, false, true, -1.0, 100, 55.0), 100);  // sensor live
+    QCOMPARE(VehicleProfileManager::displaySocPctFor(false, false, true, true, -1.0, 100, 55.0), 100);  // no estimate
+    QCOMPARE(VehicleProfileManager::displaySocPctFor(true, false, true, true, -1.0, 100, -1.0), 100);  // no voltage
+    QCOMPARE(VehicleProfileManager::displaySocPctFor(true, true, true, true, 82.0, 100, 55.0), 82);    // armed: count
+}
+
+// A GCS that joins an armed copter whose current sensor does not measure has
+// no charge reading: the FC's % (100 all flight) must not stand in for it, in
+// the chip or in the mission estimate. A real sensor or a whole count is fine.
+void VehicleProfileManagerTest::testChargeUnknownAfterJoin()
+{
+    using VPM = VehicleProfileManager;
+    QVERIFY(VPM::chargeUnknown(true, true, false));
+    QVERIFY(!VPM::chargeUnknown(true, false, false));   // a real sensor: the FC's % is real
+    QVERIFY(!VPM::chargeUnknown(true, true, true));     // count whole from the arm
+    QVERIFY(!VPM::chargeUnknown(false, true, false));   // on the ground
+
+    QVERIFY(VPM::chargeUnknownWhy().contains(QStringLiteral("current sensor reads 0 A")));
+    const QVariantMap m = VPM::missionLiveChargeUnknown();
+    QVERIFY(m.value(QStringLiteral("chargeUnknown")).toBool());
+    QVERIFY(m.value(QStringLiteral("live")).toBool());
+    QVERIFY(!m.value(QStringLiteral("ready")).toBool());
+    QCOMPARE(m.value(QStringLiteral("result")).toInt(), int(MissionAssess::CantAssess));
+    QVERIFY(m.value(QStringLiteral("problem")).toString().contains(QStringLiteral("charge unknown (joined in flight)")));
+    QVERIFY(!m.value(QStringLiteral("returnNow")).toBool());
 }
 
 // Battery reserve should be clamped to valid range
@@ -437,6 +523,90 @@ void VehicleProfileManagerTest::testEstimateMarkedWhileGpsPoor()
     QVERIFY(m.value(QStringLiteral("returnNow")).toBool());              // still said
     QCOMPARE(m.value(QStringLiteral("returnNowWhy")).toString(),
              QStringLiteral("Too little left for the return: return now (GPS unreliable: the distance home may be wrong)"));
+}
+
+// A mistyped charger value must not move the calibration: reject anything over
+// 1.2x the pack's mAh when the capacity is known. With no capacity, the
+// database's own 1-200000 mAh limit still governs.
+void VehicleProfileManagerTest::testMotorTableChargerPlausibleAgainstPackCapacity()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    db.reset();
+    const QString tmpPath = QDir::tempPath() + QStringLiteral("/vpm_charger_XXXXXX.db");
+    QTemporaryFile tmp;
+    tmp.setFileTemplate(tmpPath);
+    QVERIFY(tmp.open());
+    const QString path = tmp.fileName();
+    tmp.close();
+    QVERIFY(db.initialize(path));
+
+    QVariantMap f;
+    f[QStringLiteral("deviceUid")] = QStringLiteral("charger-test-uid");
+    f[QStringLiteral("tableId")] = QStringLiteral("t");
+    f[QStringLiteral("gcsAh")] = 14.0;
+    f[QStringLiteral("startedFull")] = true;
+    const int flightId = db.insertMotorTableFlight(f);
+    QVERIFY(flightId > 0);
+
+    VehicleProfileManager vpm;
+    // 8P x 5000 mAh = 40 Ah -> limit 48000 mAh.
+    vpm.setBatteryParallelCells(8);
+    vpm.setBatteryCellMah(5000);
+    QCOMPARE(vpm.capacityAh(), 40.0);
+
+    QVERIFY(vpm.setMotorTableFlightCharger(flightId, 48000.0));
+    QVERIFY(vpm.motorTableChargerError().isEmpty());
+    QVERIFY(!vpm.setMotorTableFlightCharger(flightId, 48001.0));
+    QVERIFY2(vpm.motorTableChargerError().contains(QStringLiteral("pack")),
+             qPrintable(vpm.motorTableChargerError()));
+    // The text shown on the Vehicles page reads "120%", not "120%%".
+    QVERIFY2(vpm.motorTableChargerError().contains(QStringLiteral("120% of the 40000 mAh pack")),
+             qPrintable(vpm.motorTableChargerError()));
+
+    // Unknown capacity: no 1.2x limit; the database's 1-200000 still applies.
+    QVERIFY(VehicleProfileManager::chargerMahPlausible(48001.0, 0.0));
+    QVERIFY(VehicleProfileManager::chargerMahPlausible(200001.0, 0.0));  // DB, not VPM, rejects
+    QVERIFY(VehicleProfileManager::chargerMahPlausible(48000.0, 40000.0));
+    QVERIFY(!VehicleProfileManager::chargerMahPlausible(48001.0, 40000.0));
+
+    db.reset();
+}
+
+// A link that goes quiet in flight freezes the mission numbers. The battery
+// chip goes stale at 5 s (the same rule); the mission estimate must too, so a
+// frozen RETURN NOW is not shown as valid. The 2 s live timer re-evaluates
+// with no new messages, which a config setter stands in for here.
+void VehicleProfileManagerTest::testMissionLiveStaleOnLinkLoss()
+{
+    TestClock clock;
+    MonotonicClock::setForTesting(&clock);
+    struct Restore { ~Restore() { MonotonicClock::setForTesting(nullptr); } } restore;
+
+    VehicleProfileManager vpm;
+    MockTelemetryBridge bridge;
+    vpm.setTelemetryBridge(&bridge);
+    bridge.setConnected(true);
+    bridge.stampStream(TelemetryStream::Heartbeat);
+
+    // A fresh heartbeat: not stale. setBatteryCellMah drives the same live
+    // estimate the timer does, without waiting 2 s.
+    vpm.setBatteryCellMah(5001);
+    QVERIFY2(!vpm.missionLive().value(QStringLiteral("stale")).toBool(),
+             "a fresh heartbeat must not be stale");
+
+    // The link goes quiet while the copter is still present and armed.
+    clock.advance(6000);
+    vpm.setBatteryCellMah(5002);
+    QVERIFY2(vpm.missionLive().value(QStringLiteral("stale")).toBool(),
+             "mission estimate must go stale 5 s after the last heartbeat");
+    QVERIFY2(!vpm.missionLive().value(QStringLiteral("returnNow")).toBool(),
+             "no red RETURN NOW from frozen numbers");
+
+    // Heartbeats return: stale clears on the next tick.
+    bridge.stampStream(TelemetryStream::Heartbeat);
+    vpm.setBatteryCellMah(5003);
+    QVERIFY2(!vpm.missionLive().value(QStringLiteral("stale")).toBool(),
+             "stale must clear when heartbeats return");
 }
 
 UT_REGISTER_TEST(VehicleProfileManagerTest)

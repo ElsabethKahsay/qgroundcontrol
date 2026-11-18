@@ -60,6 +60,19 @@ static MissionWalk::Lookup copterParams(const TelemetryBridge *bridge)
     };
 }
 
+// The MAVLink command of the mission item the autopilot is flying now;
+// -1 when it is not known. Shared by the trip check and the mission estimate
+// so "returning" is decided the same way in both.
+static int currentMissionCommand(MissionManager *mm)
+{
+    if (!mm)
+        return -1;
+    for (const MissionItem *mi : mm->missionItems())
+        if (mi->sequenceNumber() == mm->currentIndex())
+            return int(mi->command());
+    return -1;
+}
+
 // The cruise ratio (cruise power ÷ hover power) last measured on this copter
 // in the speed band of @p speedMs; -1 when that band has not been flown long
 // enough.
@@ -935,11 +948,73 @@ void VehicleProfileManager::_updateLiveEstimate()
     // The in-flight mission estimate starts from the battery estimate's
     // charge (its own count from the arm, the same figure the Fly view shows)
     // when it has one; the flight controller's otherwise, which is no use
-    // when its current is not measured.
-    const double estSoc = m_powerLive.value(QStringLiteral("active")).toBool()
-                              ? m_powerLive.value(QStringLiteral("socNowPct"), -1.0).toDouble() : -1.0;
-    _updateMissionLive(estSoc >= 0.0 ? qRound(estSoc) : soc);
+    // when its current is not measured. After a mid-flight join with a dead
+    // sensor the FC's % is 100 all flight: never let the mission cost a charge
+    // the GCS cannot know (its RETURN NOW would disappear).
+    if (chargeUnknown(m_telemetry && armed, m_fcCurrent.dead, m_gcsCountKnown)) {
+        _updateMissionLive(-1, true);
+    } else {
+        const double estSoc = m_powerLive.value(QStringLiteral("active")).toBool()
+                                  ? m_powerLive.value(QStringLiteral("socNowPct"), -1.0).toDouble() : -1.0;
+        _updateMissionLive(estSoc >= 0.0 ? qRound(estSoc) : soc);
+    }
     _updatePowerLive(mahUsed, m_telemetry->batterySocPct());
+}
+
+QString VehicleProfileManager::chargeUnknownWhy()
+{
+    return QStringLiteral("charge unknown: the GCS joined during the flight and the current sensor reads 0 A");
+}
+
+QVariantMap VehicleProfileManager::missionLiveChargeUnknown()
+{
+    QVariantMap out;
+    out[QStringLiteral("live")] = true;
+    out[QStringLiteral("ready")] = false;
+    out[QStringLiteral("chargeUnknown")] = true;
+    out[QStringLiteral("result")] = int(MissionAssess::CantAssess);
+    out[QStringLiteral("resultName")] = MissionAssess::resultName(MissionAssess::CantAssess);
+    out[QStringLiteral("colour")] = MissionAssess::resultColour(MissionAssess::CantAssess);
+    out[QStringLiteral("problem")] = QStringLiteral("charge unknown (joined in flight)");
+    out[QStringLiteral("reasons")] = QStringList{out.value(QStringLiteral("problem")).toString()};
+    out[QStringLiteral("returnNow")] = false;
+    return out;
+}
+
+bool VehicleProfileManager::displaySocFromCount() const
+{
+    const bool armed = m_telemetry && m_telemetry->armed();
+    return socFromGcsCount(powerLiveActive(), armed, m_fcCurrent.dead, m_gcsCountKnown,
+                           m_powerLive.value(QStringLiteral("socNowPct"), -1.0).toDouble())
+        || restingSocShown(powerLiveActive(), armed, m_fcCurrent.dead, displayRestingSocPct());
+}
+
+int VehicleProfileManager::displaySocPct() const
+{
+    return displaySocPctFor(powerLiveActive(), m_telemetry && m_telemetry->armed(),
+                            m_fcCurrent.dead, m_gcsCountKnown,
+                            m_powerLive.value(QStringLiteral("socNowPct"), -1.0).toDouble(),
+                            m_liveSOC, displayRestingSocPct());
+}
+
+double VehicleProfileManager::displayRestingSocPct() const
+{
+    // packRestingSocPct() answers 100 when it has nothing to go on; here
+    // "nothing to go on" must stay unknown, so check for a reading first.
+    const double volts = m_telemetry ? m_telemetry->batteryVoltage() : 0.0;
+    return (volts > 1.0 && m_batterySeriesCells > 0) ? packRestingSocPct(volts) : -1.0;
+}
+
+QPair<double, double> VehicleProfileManager::recordedGcsCharge() const
+{
+    if (!m_fcCurrent.dead || !m_gcsCountKnown)
+        return {-1.0, -1.0};
+    const double mah = m_gcsUsedAh * 1000.0;   // raw count, as stored in motor_table_flights
+    const double capAh = capacityAh();
+    const double pct = capAh > 0.0
+        ? (capAh * std::clamp(m_armStartSocPct, 0.0, 100.0) / 100.0 - m_gcsUsedAh) / capAh * 100.0
+        : -1.0;
+    return {mah, pct};
 }
 
 QVariantMap VehicleProfileManager::airDensity() const
@@ -1025,8 +1100,19 @@ QVariantList VehicleProfileManager::motorTableFlights() const
 
 bool VehicleProfileManager::setMotorTableFlightCharger(int flightId, double chargerMah)
 {
-    if (!DatabaseManager::instance().setMotorTableFlightCharger(flightId, chargerMah))
+    const double capMah = capacityAh() * 1000.0;
+    // One mistyped value must not be able to shove the calibration to its
+    // clamp: at most 120 % of the pack when its capacity is known.
+    if (!chargerMahPlausible(chargerMah, capMah)) {
+        m_chargerEntryError = QStringLiteral("More than 120% of the %1 mAh pack (max %2 mAh).")
+                                  .arg(capMah, 0, 'f', 0).arg(1.2 * capMah, 0, 'f', 0);
         return false;
+    }
+    if (!DatabaseManager::instance().setMotorTableFlightCharger(flightId, chargerMah)) {
+        m_chargerEntryError = QStringLiteral("Charger number not saved: 1–200000 mAh.");
+        return false;
+    }
+    m_chargerEntryError.clear();
     emit motorTableChanged();
     return true;
 }
@@ -1129,7 +1215,7 @@ QVariantMap VehicleProfileManager::motorTableSetup() const
     const double socNow = packRestingSocPct(m_telemetry->batteryVoltage());
     const double socReserve = m_batteryReserve * 100.0;
     // The fine-tuning from the charger comparison multiplies the table's
-    // current (1 until two flights have a charger number).
+    // current (1 until three flights have a charger number).
     const MotorTable::Calibration cal = motorTableCalibrationNow();
     out[QStringLiteral("calibrationFactor")] = cal.factor;
     out[QStringLiteral("calibrationFlights")] = cal.usable;
@@ -1453,6 +1539,10 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         }
     }
     m_liveWasArmed = armed;
+    // Set once the arm transition above has decided whether the count covers
+    // this flight (a GCS that joined armed has no count). The dead-sensor flag
+    // is refreshed further down, in step with the flight's current readings.
+    bool unknownCharge = false;
     if (m_livePayloadAboard && !target.isEmpty() && pos.isValid()
         && PowerTypeModel::distanceM(pos.latitude(), pos.longitude(), target.value(QStringLiteral("lat")).toDouble(),
                                      target.value(QStringLiteral("lon")).toDouble()) <= PowerTypeModel::kDropRadiusM)
@@ -1522,6 +1612,12 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         // A current sensor (BATT_MONITOR other than 0, 3 or 25) that is
         // measuring wins; the table is the count otherwise.
         const bool gcsCount = monitor == -1 || monitor == 0 || monitor == 3 || monitor == 25 || m_fcCurrent.dead;
+        // Dead sensor and a count that does not cover the flight: the FC's %
+        // (100 with a dead monitor) is not a charge reading. Keep the charge
+        // fields unknown instead of falling back to it.
+        unknownCharge = chargeUnknown(armed, m_fcCurrent.dead, m_gcsCountKnown);
+        if (unknownCharge)
+            in.socPct = -1.0;
         // Motor-output readings are counted as they arrive (_onMotorOutputs);
         // only from the overall throttle does this update count the charge.
         // Counted whatever the source in use, so that the GCS's own count is
@@ -1671,8 +1767,11 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         out[QStringLiteral("packOhmLive")] = m_packOhmLive;
         if (haveNow && m_tableSmoothW > 0.0)
             out[QStringLiteral("reserveVolts")] = MotorTable::loadedVolts(pack, socReserve, m_tableSmoothW);
-        out[QStringLiteral("chargeSource")] = !gcsCount ? QStringLiteral("fc")
+        out[QStringLiteral("chargeSource")] = unknownCharge ? QStringLiteral("unknown")
+                                            : !gcsCount ? QStringLiteral("fc")
                                             : in.fcMahUsed >= 0.0 ? QStringLiteral("gcs") : QStringLiteral("fcPercent");
+        out[QStringLiteral("chargeUnknown")] = unknownCharge;
+        out[QStringLiteral("chargeUnknownWhy")] = unknownCharge ? chargeUnknownWhy() : QString();
         out[QStringLiteral("tableCurrentA")] = haveNow ? now.amps : -1.0;
         out[QStringLiteral("motorsBeyond")] = haveNow ? now.motorsBeyond : 0;
         out[QStringLiteral("hoverSource")] = setup.value(QStringLiteral("hoverSource"));
@@ -1724,11 +1823,7 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         // The trip to a target: no RETURN NOW once already returning or
         // landing (there is nothing to return from); the landing using the
         // reserve is said instead.
-        int currentCommand = -1;
-        if (v && v->missionManager())
-            for (const MissionItem *mi : v->missionManager()->missionItems())
-                if (mi->sequenceNumber() == v->missionManager()->currentIndex())
-                    currentCommand = int(mi->command());
+        const int currentCommand = currentMissionCommand(v ? v->missionManager() : nullptr);
         const bool returning = isReturning(m_telemetry->flightMode(), currentCommand);
         TripAdvice advice = tripAdvice(r.returnNow, returning);
         // Held with hysteresis (returnNowHeld): the margin is what is left
@@ -1739,9 +1834,12 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         const bool tripWasOn = m_powerLive.value(QStringLiteral("returnNowFrom")).toString() == QLatin1String("trip")
                                && m_powerLive.value(QStringLiteral("returnNow")).toBool();
         advice.returnNow = armed && r.airborne && returnNowHeld(tripWasOn, tripMarginPct, returning);
-        out[QStringLiteral("returnNow")] = fromMission ? m_missionLive.value(QStringLiteral("returnNow")).toBool()
+        // No charge-based RETURN NOW from a charge we cannot know. Distance
+        // home is still known, but there is no trip advice to cost against it.
+        out[QStringLiteral("returnNow")] = unknownCharge ? false
+                                         : fromMission ? m_missionLive.value(QStringLiteral("returnNow")).toBool()
                                                        : advice.returnNow;
-        out[QStringLiteral("landingOnReserve")] = !fromMission && advice.landingOnReserve;
+        out[QStringLiteral("landingOnReserve")] = !unknownCharge && !fromMission && advice.landingOnReserve;
         out[QStringLiteral("returnNowFrom")] = fromMission ? QStringLiteral("mission") : QStringLiteral("trip");
         out[QStringLiteral("returnNowWhy")] = fromMission ? m_missionLive.value(QStringLiteral("returnNowWhy")) : QVariant(QString());
         out[QStringLiteral("payloadAboard")] = in.payloadAboard;
@@ -1750,7 +1848,9 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         const PayloadRelease::Config drop = dropConfig();
         out[QStringLiteral("payloadCount")] = drop.payloads;
         out[QStringLiteral("dropOutputSet")] = drop.isSet();
-        out[QStringLiteral("startSocPct")] = in.startSocPct;
+        // m_armStartSocPct is only measured while disarmed: after a join it is
+        // still its default 100, which is not a start charge. Say unknown.
+        out[QStringLiteral("startSocPct")] = (armed && !m_gcsCountKnown) ? -1.0 : in.startSocPct;
         out[QStringLiteral("source")] = QStringLiteral("motor table");
         out[QStringLiteral("typeName")] = table->name;
         out[QStringLiteral("tableId")] = table->id;
@@ -1763,7 +1863,8 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
     const bool isActive = out.value(QStringLiteral("active")).toBool();
     if (!isActive)
         out[QStringLiteral("offReason")] =
-            !v ? QStringLiteral("no vehicle")
+            unknownCharge ? QStringLiteral("charge unknown (joined in flight)")
+            : !v ? QStringLiteral("no vehicle")
             : m_kind == VehicleKind::Unknown ? QStringLiteral("vehicle type not known yet")
             : m_kind != VehicleKind::Multirotor ? QStringLiteral("not a copter")
             : table ? (batteryPackWaived() ? QStringLiteral("pack waived")
@@ -2628,6 +2729,8 @@ QVariantMap VehicleProfileManager::missionEstimate()
 QVariantMap VehicleProfileManager::missionEstimateFrom(const LiveStart *live)
 {
     QVariantMap out;
+    // Already going home/down: RTL, LAND, or AUTO flying a return/land item.
+    const bool returning = live && isReturning(live->mode, live->currentCommand);
     out[QStringLiteral("live")] = live != nullptr;
     out[QStringLiteral("applicable")] = m_kind == VehicleKind::Multirotor;
     out[QStringLiteral("ready")] = false;
@@ -2703,6 +2806,9 @@ QVariantMap VehicleProfileManager::missionEstimateFrom(const LiveStart *live)
         if (!found || start.nextSeq < 1)
             start.nextSeq = 1;
         out[QStringLiteral("mode")] = live->mode;
+        out[QStringLiteral("returning")] = returning;
+        out[QStringLiteral("returningLand")] = returning
+            && (live->mode == QLatin1String("land") || live->currentCommand == MissionWalk::NavLand);
         out[QStringLiteral("nextSeq")] = start.nextSeq;
     }
     const MissionWalk::Settings ws = MissionWalk::Settings::read(copterParams(m_telemetry));
@@ -2858,8 +2964,9 @@ QVariantMap VehicleProfileManager::missionEstimateFrom(const LiveStart *live)
 
     // Terrain along the mission (TerrainClearance.h). Before take-off the
     // legs are worked out from home and their terrain asked for; in flight
-    // the legs not yet flown are checked from those (not in RTL or LAND,
-    // where the walk is the return from here). A leg closer to the ground
+    // the legs not yet flown are checked from those (not in RTL or LAND, or
+    // AUTO flying a return/land item, where the walk is the return from here).
+    // A leg closer to the ground
     // than the margin goes first in the reasons and turns the item red.
     QStringList reasons = a.reasons;
     if (!live && w.ok) {
@@ -2867,8 +2974,7 @@ QVariantMap VehicleProfileManager::missionEstimateFrom(const LiveStart *live)
         requestTerrain(m_terrainLegs);
     }
     QVector<TerrainClearance::Leg> legs;
-    const bool returningNow = live && (live->mode == QLatin1String("rtl") || live->mode == QLatin1String("land"));
-    if (w.ok && !returningNow) {
+    if (w.ok && !returning) {
         for (const TerrainClearance::Leg &l : m_terrainLegs)
             if (!live || l.seq < 0 || l.seq >= live->nextSeq)
                 legs.append(l);
@@ -2929,10 +3035,9 @@ QVariantMap VehicleProfileManager::missionEstimateFrom(const LiveStart *live)
 
     // In flight: the time to the next waypoint, and RETURN NOW when the next
     // waypoint is already past the turn-back point (cost.turnBackSeq -1: not
-    // even the first one ahead leaves a safe return). Not in RTL or LAND:
-    // the copter is already on its way down.
+    // even the first one ahead leaves a safe return). Not in RTL, LAND, or
+    // AUTO flying a return/land item: already on the way down.
     if (live) {
-        const bool returning = live->mode == QLatin1String("rtl") || live->mode == QLatin1String("land");
         out[QStringLiteral("timeToNextS")] = w.arrivals.isEmpty() ? -1.0 : w.arrivals.first().timeS;
         out[QStringLiteral("turnBackSeq")] = cost.ok ? cost.turnBackSeq : -2;
         // The margin: how far the pessimistic return from the next waypoint
@@ -2990,13 +3095,18 @@ QVariantMap VehicleProfileManager::missionEstimateFrom(const LiveStart *live)
 // The in-flight estimate, every 2 s while armed and airborne (see
 // missionEstimateFrom()). The charge now is the pack's own count (the FC's mAh
 // against the selected pack, as the battery chip shows it).
-void VehicleProfileManager::_updateMissionLive(int socPct)
+void VehicleProfileManager::_updateMissionLive(int socPct, bool chargeUnknown)
 {
     QVariantMap next;
     Vehicle *v = m_telemetry ? m_telemetry->vehicle() : nullptr;
     const double alt = m_telemetry ? m_telemetry->altitudeRelative() : qQNaN();
     const bool airborne = m_telemetry && m_telemetry->armed() && std::isfinite(alt) && alt > PowerTypeModel::kAirborneAltM;
-    if (v && airborne && MotorTable::byId(m_motorTableId) && socPct >= 0) {
+    if (chargeUnknown) {
+        // The FC's % is 100 with a dead sensor: it is not a charge reading.
+        // Say so rather than cost a mission against a full pack that was not
+        // there. No RETURN NOW is raised either (advice only, never an arm).
+        next = missionLiveChargeUnknown();
+    } else if (v && airborne && MotorTable::byId(m_motorTableId) && socPct >= 0) {
         LiveStart s;
         const QGeoCoordinate pos = v->coordinate();
         s.lat = pos.latitude();
@@ -3007,6 +3117,7 @@ void VehicleProfileManager::_updateMissionLive(int socPct)
         s.payloadKg = livePayloadAboardKg();
         MissionManager *mm = v->missionManager();
         s.nextSeq = mm ? std::max(1, mm->currentIndex()) : 1;
+        s.currentCommand = currentMissionCommand(mm);
         s.mode = liveModeOf(m_telemetry->flightMode());
         _windFromLean(&s.windN, &s.windE);
         // An item is reached when the autopilot moves on to the next one:
@@ -3043,6 +3154,16 @@ void VehicleProfileManager::_updateMissionLive(int socPct)
         checkMissionAlerts(next);
     } else if (m_telemetry && !m_telemetry->armed()) {
         m_lastMissionIndex = -1;
+    }
+    // The 2 s live timer re-evaluates even with no messages. A link that goes
+    // quiet in flight freezes these numbers: mark them stale after 5 s (the
+    // battery chip's rule) and drop RETURN NOW, which must not stay red on
+    // figures that are no longer live. isConnected() is deliberately untouched
+    // — connect/disconnect still means a vehicle was added or removed.
+    if (m_telemetry && m_telemetry->isConnected()
+            && m_telemetry->streamAgeMs(TelemetryStream::Heartbeat) > 5000) {
+        next[QStringLiteral("stale")] = true;
+        next[QStringLiteral("returnNow")] = false;
     }
     if (next != m_missionLive) {
         const bool was = m_missionLive.value(QStringLiteral("returnNow")).toBool();

@@ -14,7 +14,7 @@ import com.uav.preflight 1.0
 //   remaining_Ah  = capacity_Ah × (SOC / 100)
 //   usable_Ah     = remaining_Ah × (1 - 0.20)        // 20% reserve always
 //   time_min      = usable_Ah / I_smooth × 60, gated on armed && I_smooth >= 3 A
-// and is delivered to the FlyView chip through VehicleProfileManager.liveSOC /
+// and is delivered to the FlyView chip through VehicleProfileManager.displaySocPct /
 // .liveTimeMins, so the estimator panel and the chip always agree.
 Rectangle {
     id: root
@@ -29,12 +29,12 @@ Rectangle {
     signal closeRequested()
 
     // Live data delivered by VehicleProfileManager (updated every 2 s).
-    readonly property int    liveSOC:  VehicleProfileManager ? VehicleProfileManager.liveSOC : -1
+    readonly property int    liveSOC:  VehicleProfileManager ? VehicleProfileManager.displaySocPct : -1
     readonly property double liveMin:  VehicleProfileManager ? VehicleProfileManager.liveTimeMins : -1
 
-    // Cell voltage per chemistry: LiPo=3.7/4.2, LiIon=3.6/4.1, LiHV=3.8/4.35.
+    // Cell voltage per chemistry: LiPo=3.7/4.2, LiIon=3.6/4.2, LiHV=3.8/4.35.
     readonly property var __nomV: [3.7, 3.6, 3.8]
-    readonly property var __maxV: [4.2, 4.1, 4.35]
+    readonly property var __maxV: [4.2, 4.2, 4.35]
 
     ColumnLayout {
         id: estCol

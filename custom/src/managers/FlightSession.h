@@ -98,6 +98,8 @@ public:
                                         const QString &notes);
     Q_INVOKABLE void onPreFlightComplete();
     Q_INVOKABLE void closeSession();
+    /// Let the recorder use this form's open row as the recorded flight.
+    bool adoptHistoryRow(int flightSessionId);
 
     void onVehicleArmed();
     void onVehicleDisarmed();
@@ -139,6 +141,7 @@ private:
     SessionMode  m_mode         = SessionMode::None;
     SessionState m_state        = SessionState::Idle;
     int          m_flightId     = -1;
+    bool         m_historyRowAdopted = false;
     bool         m_formComplete = false;
     QDateTime    m_armedAt;
     QDateTime    m_startedAt;
