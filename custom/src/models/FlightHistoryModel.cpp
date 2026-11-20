@@ -184,7 +184,7 @@ QVariantMap FlightHistoryModel::getFlightDetail(int flightId)
 
     const QVariantMap flight = db.getFlightById(flightId);
     const int vehicleSysId = flight.value(QStringLiteral("vehicle_id")).toInt();
-    detail[QStringLiteral("motor_tests")] = asList(db.getMotorTestsForVehicle(vehicleSysId));
+    detail[QStringLiteral("motor_tests")] = asList(db.getMotorTestsForVehicle(vehicleSysId, flightId));
     return detail;
 }
 

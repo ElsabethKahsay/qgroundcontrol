@@ -46,6 +46,7 @@ private slots:
     void testRoles();
     void testFiltersViaSetters();
     void testGetFlightDetail();
+    void testFlightDetailExcludesOtherVehiclesMotorTests();
 };
 
 void FlightHistoryModelTest::testFilterByMode()
@@ -444,6 +445,43 @@ void FlightHistoryModelTest::testGetFlightDetail()
 
     const QVariantMap surface = detail.value(QStringLiteral("surface_tests")).toList().at(0).toMap();
     QCOMPARE(surface.value(QStringLiteral("surface_id")).toString(), QStringLiteral("aileron"));
+}
+
+// Two vehicles on the same MAVLink sysid must not borrow each other's motor
+// tests in Flight History. Rows written before flight_id existed still show
+// up under the sysid, so old data is not hidden.
+void FlightHistoryModelTest::testFlightDetailExcludesOtherVehiclesMotorTests()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    initTempDb(db);
+    const int op = seedOperator(db, QStringLiteral("Alice"));
+    QVERIFY(op > 0);
+    const int fid = db.openFlight(op, 1, QStringLiteral("FLIGHT"), QString(), QString(),
+                                  QString(), QString());
+    const int otherFid = db.openFlight(op, 1, QStringLiteral("FLIGHT"), QString(), QString(),
+                                       QString(), QString());
+    QVERIFY(fid > 0 && otherFid > 0);
+
+    auto addMotorTest = [&](int motorIndex, int flightId) {
+        QSqlQuery q(QSqlDatabase::database());
+        q.prepare(QStringLiteral(
+            "INSERT INTO motor_test_results (vehicle_sys_id, motor_index, throttle_pct, "
+            "duration_sec, expected_pwm, actual_pwm, pwm_delta, result, timestamp, flight_id) "
+            "VALUES (1, ?, 50, 3, 1150, 1148, 2, 'PASS', '2026-11-20 10:00:00', ?)"));
+        q.addBindValue(motorIndex);
+        q.addBindValue(flightId > 0 ? QVariant(flightId) : QVariant(QMetaType::fromType<int>()));
+        return q.exec();
+    };
+    QVERIFY(addMotorTest(3, fid));       // this flight
+    QVERIFY(addMotorTest(9, otherFid));  // same sysid, different copter
+    QVERIFY(addMotorTest(7, -1));        // legacy row, sysid only
+
+    FlightHistoryModel model;
+    const QVariantList tests = model.getFlightDetail(fid)
+                                   .value(QStringLiteral("motor_tests")).toList();
+    QCOMPARE(tests.size(), 2);
+    QCOMPARE(tests.at(0).toMap().value(QStringLiteral("motor_index")).toInt(), 7);
+    QCOMPARE(tests.at(1).toMap().value(QStringLiteral("motor_index")).toInt(), 3);
 }
 
 UT_REGISTER_TEST(FlightHistoryModelTest)

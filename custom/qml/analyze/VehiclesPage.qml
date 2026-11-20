@@ -694,6 +694,7 @@ AnalyzePage {
                         id: nameField
                         Layout.fillWidth: true
                         text: v.friendlyName || ""
+                        maximumLength: 64
                         color: Colors.textPrimary
                         placeholderText: qsTr("Display name")
                         background: Rectangle { color: Colors.surfaceLight; radius: 4; border.color: Colors.divider }
@@ -703,9 +704,10 @@ AnalyzePage {
                         text: qsTr("Save")
                         // Display names persist via Database (owner); reload refreshes the rows.
                         onClicked: {
-                            if (v.fingerprint && nameField.text.length > 0) {
+                            const name = nameField.text.trim()
+                            if (v.fingerprint && name.length > 0) {
                                 // Rename keyed on fingerprint (stable ID) and persisted via Database (C++)
-                                Database.updateVehicleName(v.fingerprint, nameField.text)
+                                Database.updateVehicleName(v.fingerprint, name)
                                 VehicleListModel.reload()
                             }
                         }

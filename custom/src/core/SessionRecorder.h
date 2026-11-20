@@ -365,7 +365,12 @@ private:
             if (!atLinkLoss)
                 noteAltitude(s.altitudeM);
             logHistoryEvent(QStringLiteral("DISARM"), reason, s);
-            m_db.setFlightDisarmedAt(m_historyId, QDateTime::currentDateTimeUtc());
+            // A link loss is discovered when the link returns; the history row
+            // must show the instant it was lost, like the flight record does.
+            const QDateTime lossTime = QDateTime::fromString(m_linkLostAtUtc, Qt::ISODateWithMs);
+            m_db.setFlightDisarmedAt(m_historyId,
+                                     atLinkLoss && lossTime.isValid() ? lossTime
+                                                                      : QDateTime::currentDateTimeUtc());
             m_db.closeFlight(m_historyId, qRound(end.durationSec),
                              m_maxAltitude,   // NaN -> NULL: unknown is not 0 m
                              std::isfinite(m_minVoltage) ? m_minVoltage : 0.0,

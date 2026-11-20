@@ -17,6 +17,7 @@
 
 #include "UnitTest.h"
 #include "DatabaseManager.h"
+#include "utils/ExportHelper.h"
 
 class DatabaseManagerTest : public UnitTest {
     Q_OBJECT
@@ -77,6 +78,7 @@ private slots:
     void testCheckCountsAndAnomalies();
     void testRecoverOrphanedSessions();
     void testOrphanedSessionRecoveredOnRelaunch();
+    void testRecoveredFormRowEndsAtLastEvent();
     void testExportFlightsCsv();
     void testExportFlightDetailCsv();
     void testGetFlightStats();
@@ -87,6 +89,10 @@ private slots:
     void testBackupBeforeMigration();
     void testBackupIncludesWritesStillInTheWal();
     void testEmptyNameUpsertAndSession();
+    void testVehicleProfileCsvQuotesName();
+    void testVehicleNamesAreTrimmedAndCapped();
+    void testFlightArmTimesUseUtcIsoAndOldRowsStillRead();
+    void testFlightDateFiltersUseLocalDay();
     void testUpgradeFromV24();
     void testComplianceLogKeptWithoutVehicleDetails();
     void testRecorderHistoryEvents();
@@ -471,7 +477,11 @@ void DatabaseManagerTest::testRecorderLinkLossClosesAtLossTime()
     f.wire(rec);
     rec.connectionOpened(QStringLiteral("UID-R"), QStringLiteral("Flight"), QString(), QString());
 
-    rec.armed(start(QStringLiteral("gcs")));
+    SessionRecorder::FlightStart st = start(QStringLiteral("gcs"));
+    st.vehicleSysId = 1;
+    rec.armed(st);
+    const int historyId = rec.historyFlightId();
+    QVERIFY(historyId > 0);
     f.clock.advance(10000);
     rec.linkLost();
     rec.linkRestored(/*armed*/ true);
@@ -480,6 +490,9 @@ void DatabaseManagerTest::testRecorderLinkLossClosesAtLossTime()
     const int id = rec.flightId();
     f.clock.advance(20000);
     rec.linkLost();                                         // lost at t = 30 s
+    // The fake clock does not move the wall clock; give the real timestamp a
+    // few milliseconds of separation so a wrong "now" write is detectable.
+    QTest::qWait(20);
     f.clock.advance(45000);
     rec.linkRestored(/*armed*/ false);                      // came back disarmed
     QVERIFY(!rec.flightOpen());
@@ -488,6 +501,15 @@ void DatabaseManagerTest::testRecorderLinkLossClosesAtLossTime()
     QCOMPARE(r.value(QStringLiteral("duration_seconds")).toDouble(), 30.0);
     QCOMPARE(row(QStringLiteral("SELECT COUNT(*) AS n FROM session_events WHERE flight_session_id = %1").arg(id))
                  .value(QStringLiteral("n")).toInt(), 4);   // lost, restored, lost, restored
+
+    // The Flight History row must end at the same instant as the flight
+    // record, not at the later moment the link came back and disarm was seen.
+    const QString lossEnd = row(QStringLiteral("SELECT ended_at FROM flight_sessions WHERE id = %1").arg(id))
+                                .value(QStringLiteral("ended_at")).toString();
+    const QVariantMap history = row(QStringLiteral(
+        "SELECT disarmed_at, ended_at FROM flights WHERE id = %1").arg(historyId));
+    QCOMPARE(history.value(QStringLiteral("disarmed_at")).toString(), lossEnd);
+    QCOMPARE(history.value(QStringLiteral("ended_at")).toString(), lossEnd);
 }
 
 // Rows left open by a crash close at the last 10 s summary,
@@ -1959,6 +1981,180 @@ void DatabaseManagerTest::testEmptyNameUpsertAndSession()
     QVERIFY(QJsonDocument::fromJson(sessions.toUtf8()).array().size() >= 1);
 }
 
+// RFC 4180: a friendly name with a comma or quote must survive as one field.
+void DatabaseManagerTest::testVehicleProfileCsvQuotesName()
+{
+    QJsonObject o;
+    o[QStringLiteral("deviceUid")] = QStringLiteral("UID-CSV");
+    o[QStringLiteral("friendlyName")] = QStringLiteral("A \"quoted\", name");
+    o[QStringLiteral("autopilotType")] = QStringLiteral("ArduPilot");
+    o[QStringLiteral("airframeType")] = QStringLiteral("Copter");
+    o[QStringLiteral("firstSeen")] = QStringLiteral("2026-01-01");
+    o[QStringLiteral("lastSeen")] = QStringLiteral("2026-01-02");
+    o[QStringLiteral("totalFlightCount")] = 3;
+    o[QStringLiteral("totalFlightHours")] = 1.5;
+    o[QStringLiteral("identitySource")] = QStringLiteral("manual");
+    QCOMPARE(ExportHelper::formatVehicleProfileRow(o),
+             QStringLiteral("UID-CSV,\"A \"\"quoted\"\", name\",ArduPilot,Copter,"
+                            "2026-01-01,2026-01-02,3,1.50,manual"));
+}
+
+// The C++ write paths are the enforcement point: QML is only one caller.
+void DatabaseManagerTest::testVehicleNamesAreTrimmedAndCapped()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    initTempDb(db);
+    const QString longName(70, QLatin1Char('X'));
+    const QString capped = longName.left(64);
+    auto storedName = [](const QString &uid) {
+        return row(QStringLiteral("SELECT friendly_name FROM vehicles WHERE device_uid='%1'").arg(uid))
+            .value(QStringLiteral("friendly_name")).toString();
+    };
+
+    QVERIFY(db.upsertVehicle(QStringLiteral("UID-NAME"), QStringLiteral("  Spaced  Name  "),
+                             QStringLiteral("ArduPilot"), QStringLiteral("Copter")));
+    QCOMPARE(storedName(QStringLiteral("UID-NAME")), QStringLiteral("Spaced  Name"));
+    QVERIFY(db.upsertVehicle(QStringLiteral("UID-LONG"), longName,
+                             QStringLiteral("ArduPilot"), QStringLiteral("Copter")));
+    QCOMPARE(storedName(QStringLiteral("UID-LONG")), capped);
+
+    const quint64 uid = 99123;
+    const QString key = QString::number(uid);
+    QVERIFY(db.registerNewVehicle(QStringLiteral("fp-name"), 5, 1,
+                                  QStringLiteral("ArduPilot"), QStringLiteral("multirotor"),
+                                  QStringLiteral("type"), QStringLiteral("4.5"), uid,
+                                  QStringLiteral("hw"), QStringLiteral("board"),
+                                  QStringLiteral("  Registered  "), QStringLiteral("HARDWARE_UID")));
+    QCOMPARE(storedName(key), QStringLiteral("Registered"));
+
+    QVERIFY(!db.updateVehicleName(QStringLiteral("fp-name"), QStringLiteral("   ")));
+    QCOMPARE(storedName(key), QStringLiteral("Registered"));
+    QVERIFY(db.updateVehicleName(QStringLiteral("fp-name"), QStringLiteral("  Renamed  ")));
+    QCOMPARE(storedName(key), QStringLiteral("Renamed"));
+    // A whitespace-only upsert means "no name yet", so it must not wipe a name.
+    QVERIFY(db.upsertVehicle(QStringLiteral("UID-NAME"), QStringLiteral("   "),
+                             QStringLiteral("ArduPilot"), QStringLiteral("Copter")));
+    QCOMPARE(storedName(QStringLiteral("UID-NAME")), QStringLiteral("Spaced  Name"));
+
+    QJsonObject imported;
+    imported[QStringLiteral("deviceUid")] = QStringLiteral("UID-IMPORT");
+    imported[QStringLiteral("friendlyName")] = QStringLiteral("  Imported  ");
+    imported[QStringLiteral("firstSeen")] = QStringLiteral("2026-01-01 00:00:00");
+    imported[QStringLiteral("lastSeen")] = QStringLiteral("2026-01-02 00:00:00");
+    QVERIFY(db.importVehiclesJson(QString::fromUtf8(
+        QJsonDocument(QJsonArray{imported}).toJson(QJsonDocument::Compact))));
+    QCOMPARE(storedName(QStringLiteral("UID-IMPORT")), QStringLiteral("Imported"));
+    imported[QStringLiteral("friendlyName")] = longName;
+    QVERIFY(db.importVehiclesJson(QString::fromUtf8(
+        QJsonDocument(QJsonArray{imported}).toJson(QJsonDocument::Compact))));
+    QCOMPARE(storedName(QStringLiteral("UID-IMPORT")), capped);
+    imported[QStringLiteral("friendlyName")] = QStringLiteral("   ");
+    QVERIFY(db.importVehiclesJson(QString::fromUtf8(
+        QJsonDocument(QJsonArray{imported}).toJson(QJsonDocument::Compact))));
+    QCOMPARE(storedName(QStringLiteral("UID-IMPORT")), capped);
+}
+
+void DatabaseManagerTest::testFlightArmTimesUseUtcIsoAndOldRowsStillRead()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    initTempDb(db);
+    const int opId = db.insertOperator(QStringLiteral("Time Tester"), QStringLiteral("Pilot"));
+    QVERIFY(opId > 0);
+
+    int fid = db.openFlight(opId, 1, QStringLiteral("FLIGHT"), QString(),
+                            QString(), QString(), QString());
+    QVERIFY(fid > 0);
+    const QDateTime armTime = QDateTime::fromString(QStringLiteral("2026-11-20T12:34:56Z"), Qt::ISODate);
+    QVERIFY(armTime.isValid());
+    // A local-time QDateTime must still be written as UTC with a Z suffix.
+    const QDateTime localArmTime = armTime.toLocalTime();
+    QVERIFY(db.setFlightArmedAt(fid, localArmTime));
+    QVERIFY(db.setFlightDisarmedAt(fid, localArmTime.addSecs(45)));
+    QCOMPARE(row(QStringLiteral("SELECT armed_at FROM flights WHERE id=%1").arg(fid))
+                 .value(QStringLiteral("armed_at")).toString(),
+             QStringLiteral("2026-11-20T12:34:56.000Z"));
+    QCOMPARE(row(QStringLiteral("SELECT disarmed_at FROM flights WHERE id=%1").arg(fid))
+                 .value(QStringLiteral("disarmed_at")).toString(),
+             QStringLiteral("2026-11-20T12:35:41.000Z"));
+
+    // The other writer of armed_at (history flight opened from a session) must
+    // use the same format; only the exact instant is not predictable here.
+    QVERIFY(db.upsertVehicle(QStringLiteral("UID-TIME"), QStringLiteral("Time Copter"),
+                             QStringLiteral("ArduPilot"), QStringLiteral("Copter")));
+    const int connId = db.openConnectionSession(QStringLiteral("UID-TIME"), QStringLiteral("FLIGHT"),
+                                                QStringLiteral("Time Tester"), QStringLiteral("test"));
+    QVERIFY(connId > 0);
+    const int sessionId = db.openFlightRecord(connId, QStringLiteral("UID-TIME"), QString(), 0.0,
+                                              QStringLiteral("rc"), true, QStringLiteral("auto"), false);
+    QVERIFY(sessionId > 0);
+    const int historyId = db.openHistoryFlight(sessionId, opId, 1, QStringLiteral("FLIGHT"),
+                                               QString(), QString());
+    QVERIFY(historyId > 0);
+    const QString historyArmed = row(QStringLiteral("SELECT armed_at FROM flights WHERE id=%1").arg(historyId))
+                                     .value(QStringLiteral("armed_at")).toString();
+    QVERIFY2(historyArmed.contains(QLatin1Char('T')) && historyArmed.endsWith(QLatin1Char('Z')),
+             qPrintable(QStringLiteral("unexpected armed_at: %1").arg(historyArmed)));
+
+    // Old space-separated rows are still returned and still usable by the
+    // julianday() duration queries — no schema bump, no rewrite of old rows.
+    QSqlQuery insert(QSqlDatabase::database());
+    insert.prepare(QStringLiteral("INSERT INTO flights (operator_id, vehicle_id, mode, started_at, "
+                                  "armed_at, disarmed_at, duration_sec) "
+                                  "VALUES (?, ?, 'FLIGHT', '2026-11-20 10:00:00', "
+                                  "'2026-11-20 10:00:30', '2026-11-20 10:01:30', 60)"));
+    insert.addBindValue(opId);
+    insert.addBindValue(1);
+    QVERIFY(insert.exec());
+    const int oldId = insert.lastInsertId().toInt();
+    const QVariantMap old = db.getFlightById(oldId);
+    QCOMPARE(old.value(QStringLiteral("armed_at")).toString(), QStringLiteral("2026-11-20 10:00:30"));
+    QCOMPARE(old.value(QStringLiteral("disarmed_at")).toString(), QStringLiteral("2026-11-20 10:01:30"));
+    QSqlQuery duration(QSqlDatabase::database());
+    QVERIFY(duration.exec(QStringLiteral(
+        "SELECT CAST((julianday(disarmed_at) - julianday(armed_at)) * 86400 AS INTEGER) "
+        "FROM flights WHERE id=%1").arg(oldId)));
+    QVERIFY(duration.next());
+    const int oldDuration = duration.value(0).toInt();
+    QVERIFY2(oldDuration >= 59 && oldDuration <= 61,
+             qPrintable(QStringLiteral("unexpected old-row duration: %1").arg(oldDuration)));
+}
+
+void DatabaseManagerTest::testFlightDateFiltersUseLocalDay()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    initTempDb(db);
+    const int opId = db.insertOperator(QStringLiteral("Day Tester"), QStringLiteral("Pilot"));
+    QVERIFY(opId > 0);
+
+    const QString localDay = QStringLiteral("2026-06-15");
+    auto insertAtLocal = [&](const QString &localIso) {
+        const QDateTime utc = QDateTime::fromString(localIso, Qt::ISODate).toUTC();
+        QSqlQuery q(QSqlDatabase::database());
+        q.prepare(QStringLiteral("INSERT INTO flights (operator_id, vehicle_id, mode, purpose, "
+                                 "location, notes, weather_summary, started_at, duration_sec) "
+                                 "VALUES (?, 1, 'FLIGHT', '', '', '', '', ?, 0)"));
+        q.addBindValue(opId);
+        // Mix the legacy space-separated UTC form and the new ISO form: both
+        // must be filtered by the same local calendar day.
+        q.addBindValue(localIso.endsWith(QLatin1String("Z"))
+                           ? utc.toString(Qt::ISODateWithMs)
+                           : utc.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")));
+        return q.exec();
+    };
+
+    // 00:30 and 03:30 local belong to 15 June even though their UTC dates are
+    // the day before. 23:30 on 14 June and 00:30 on 16 June must stay out.
+    QVERIFY(insertAtLocal(localDay + QStringLiteral("T00:30:00")));
+    QVERIFY(insertAtLocal(localDay + QStringLiteral("T03:30:00Z")));
+    QVERIFY(insertAtLocal(QStringLiteral("2026-06-14T23:30:00")));
+    QVERIFY(insertAtLocal(QStringLiteral("2026-06-16T00:30:00")));
+
+    const QVariantMap flights = db.queryFlights(0, localDay, localDay);
+    QCOMPARE(flights.value(QStringLiteral("totalCount")).toInt(), 2);
+    const QVariantMap stats = db.getFlightStats(localDay, localDay, QString(), QString());
+    QCOMPARE(stats.value(QStringLiteral("totalFlights")).toInt(), 2);
+}
+
 void DatabaseManagerTest::testOrphanedSessionRecoveredOnRelaunch()
 {
     // Unexpected-exit-and-relaunch, at the level this codebase actually supports.
@@ -2086,6 +2282,41 @@ void DatabaseManagerTest::testOrphanedSessionRecoveredOnRelaunch()
     QCOMPARE(again.value(QStringLiteral("notes")).toString()
                  .count(QStringLiteral("interrupted")), 1);
 
+    db.reset();
+}
+
+// A form row recovered after an abnormal exit must end at the last data the
+// app recorded for it, not at the next launch days or hours later.
+void DatabaseManagerTest::testRecoveredFormRowEndsAtLastEvent()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    QString tmpPath = QDir::tempPath() + QStringLiteral("/test_form_recover_XXXXXX.db");
+    QTemporaryFile tmpFile;
+    tmpFile.setFileTemplate(tmpPath);
+    QVERIFY(tmpFile.open());
+    const QString path = tmpFile.fileName();
+    QVERIFY(db.initialize(path));
+    const int opId = db.insertOperator(QStringLiteral("Form Tester"), QStringLiteral("Pilot"));
+    QVERIFY(opId > 0);
+    const int fid = db.openFlight(opId, 1, QStringLiteral("FLIGHT"), QString(),
+                                  QString(), QString(), QString());
+    QVERIFY(fid > 0);
+
+    QSqlQuery q(QSqlDatabase::database());
+    QVERIFY(q.exec(QStringLiteral(
+        "UPDATE flights SET armed_at = '2026-11-20 10:00:00' WHERE id = %1").arg(fid)));
+    QVERIFY(q.exec(QStringLiteral(
+        "INSERT INTO flight_telemetry_events (flight_id, event_type, triggered_by, timestamp) "
+        "VALUES (%1, 'MODE', 'manual', '2026-11-20 10:07:30')").arg(fid)));
+
+    db.reset();
+    QVERIFY(db.initialize(path));
+
+    const QVariantMap f = db.getFlightById(fid);
+    QCOMPARE(f.value(QStringLiteral("ended_at")).toString(), QStringLiteral("2026-11-20 10:07:30"));
+    const int duration = f.value(QStringLiteral("duration_sec")).toInt();
+    QVERIFY2(duration >= 449 && duration <= 451,
+             qPrintable(QStringLiteral("unexpected recovered duration: %1").arg(duration)));
     db.reset();
 }
 

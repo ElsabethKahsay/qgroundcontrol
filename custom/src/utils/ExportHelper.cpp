@@ -304,6 +304,21 @@ QString ExportHelper::savePostFlightHtml(const QString &baseName, const QString 
     return path;
 }
 
+QString ExportHelper::formatVehicleProfileRow(const QJsonObject &o)
+{
+    QStringList row;
+    row << o.value(QStringLiteral("deviceUid")).toString()
+        << escCsv(o.value(QStringLiteral("friendlyName")).toString())
+        << o.value(QStringLiteral("autopilotType")).toString()
+        << o.value(QStringLiteral("airframeType")).toString()
+        << o.value(QStringLiteral("firstSeen")).toString()
+        << o.value(QStringLiteral("lastSeen")).toString()
+        << QString::number(o.value(QStringLiteral("totalFlightCount")).toInt())
+        << QString::number(o.value(QStringLiteral("totalFlightHours")).toDouble(), 'f', 2)
+        << o.value(QStringLiteral("identitySource")).toString();
+    return row.join(QLatin1Char(','));
+}
+
 QString ExportHelper::saveVehicleProfileCsv(const QString &baseName)
 {
     QStringList vehicles = DatabaseManager::instance().listVehicles();
@@ -315,17 +330,7 @@ QString ExportHelper::saveVehicleProfileCsv(const QString &baseName)
         QString v = DatabaseManager::instance().getVehicle(uid);
         if (v.isEmpty()) continue;
         QJsonObject o = QJsonDocument::fromJson(v.toUtf8()).object();
-        QStringList row;
-        row << o.value(QStringLiteral("deviceUid")).toString()
-            << QStringLiteral("\"%1\"").arg(o.value(QStringLiteral("friendlyName")).toString())
-            << o.value(QStringLiteral("autopilotType")).toString()
-            << o.value(QStringLiteral("airframeType")).toString()
-            << o.value(QStringLiteral("firstSeen")).toString()
-            << o.value(QStringLiteral("lastSeen")).toString()
-            << QString::number(o.value(QStringLiteral("totalFlightCount")).toInt())
-            << QString::number(o.value(QStringLiteral("totalFlightHours")).toDouble(), 'f', 2)
-            << o.value(QStringLiteral("identitySource")).toString();
-        csv += row.join(QStringLiteral(",")) + QStringLiteral("\n");
+        csv += formatVehicleProfileRow(o) + QStringLiteral("\n");
     }
 
     QString path = makePath(baseName, QStringLiteral("_vehicle_profiles.csv"));

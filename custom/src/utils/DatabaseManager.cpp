@@ -121,6 +121,17 @@ private:
 };
 } // namespace
 
+namespace {
+constexpr int kMaxVehicleNameLength = 64;
+
+/// One normalization rule for every C++ path that can write a display name:
+/// QML, identity registration and JSON imports all end up here.
+QString normalizedVehicleName(const QString &name)
+{
+    return name.isNull() ? QStringLiteral("") : name.trimmed().left(kMaxVehicleNameLength);
+}
+} // namespace
+
 void DatabaseManager::backupBeforeMigration(int storedVersion)
 {
     assertMainThread();
@@ -1953,16 +1964,22 @@ bool DatabaseManager::recoverOrphanedSessions()
         qWarning() << "DatabaseManager: recoverOrphanedSessions (history rows) failed:" << q.lastError().text();
         return false;
     }
-    q.prepare(R"(
+    // An unlinked form row was open when the app exited. Its last telemetry
+    // event is the latest data we actually have; using launch time here would
+    // claim it flew through the whole shutdown and restart.
+    const QString lastKnownEnd = QStringLiteral(
+        "COALESCE(disarmed_at, "
+        "(SELECT MAX(e.timestamp) FROM flight_telemetry_events e WHERE e.flight_id = flights.id), "
+        "started_at)");
+    q.prepare(QStringLiteral(R"(
         UPDATE flights
-        SET ended_at = datetime('now'),
+        SET ended_at = %1,
             duration_sec = CAST(
-                (julianday(COALESCE(disarmed_at, datetime('now'))) -
-                 julianday(armed_at)) * 86400 AS INTEGER),
+                (julianday(%1) - julianday(armed_at)) * 86400 AS INTEGER),
             notes = COALESCE(notes || ' ', '') || '[Session interrupted — app closed mid-flight]'
         WHERE ended_at IS NULL
           AND armed_at IS NOT NULL
-    )");
+    )").arg(lastKnownEnd));
     if (!q.exec()) {
         qWarning() << "DatabaseManager: recoverOrphanedSessions (armed) failed:" << q.lastError().text();
         return false;
@@ -2021,9 +2038,33 @@ bool DatabaseManager::recoverOrphanedSessions()
 
 // ── Session recording (SessionRecorder is the only caller) ──────────────────
 
+static QString utcIso(const QDateTime &time)
+{
+    // One storage format for flight timestamps: ISO 8601 with milliseconds
+    // and an explicit UTC Z, whatever time spec the caller used.
+    return time.toUTC().toString(Qt::ISODateWithMs);
+}
+
 static QString utcNowIso()
 {
-    return QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
+    return utcIso(QDateTime::currentDateTimeUtc());
+}
+
+/// Date-range filters are calendar-day filters in the operator's local time.
+/// The stored UTC instant is converted by SQLite; both the legacy
+/// "YYYY-MM-DD HH:MM:SS" rows and ISO "YYYY-MM-DDTHH:MM:SS.mmmZ" rows parse.
+static void addLocalDayFilters(const QString &fromDate, const QString &toDate,
+                               const QString &column,
+                               QStringList &where, QVariantList &binds)
+{
+    if (!fromDate.isEmpty()) {
+        where << QStringLiteral("date(%1, 'localtime') >= ?").arg(column);
+        binds << fromDate;
+    }
+    if (!toDate.isEmpty()) {
+        where << QStringLiteral("date(%1, 'localtime') <= ?").arg(column);
+        binds << toDate;
+    }
 }
 
 int DatabaseManager::openConnectionSession(const QString &deviceUid, const QString &mode,
@@ -2213,12 +2254,13 @@ int DatabaseManager::openHistoryFlight(int flightSessionId, int operatorId, int 
     // operator_id is nullable since v12: an RC arm before anyone picked an
     // operator still gets a history row.
     q.prepare("INSERT INTO flights (operator_id, vehicle_id, mode, notes, weather_summary, started_at, armed_at) "
-              "VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)");
+              "VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)");
     q.addBindValue(operatorId > 0 ? QVariant(operatorId) : QVariant(QMetaType::fromType<int>()));
     q.addBindValue(vehicleSysId);
     q.addBindValue(mode);
     q.addBindValue(notes);
     q.addBindValue(weatherSummary);
+    q.addBindValue(utcNowIso());
     if (!execOrWarn(q, "openHistoryFlight")) return -1;
     const int id = q.lastInsertId().toInt();
     QSqlQuery link(m_db);
@@ -2422,9 +2464,10 @@ bool DatabaseManager::upsertVehicle(const QString &deviceUid, const QString &fri
                                     const QString &autopilotType, const QString &airframeType)
 {
     if (!m_initialized) return false;
-    // A default-constructed QString is null; Qt binds it as SQL NULL and the
-    // vehicles.friendly_name column is NOT NULL. Normalize null to '' first.
-    const QString safeName = friendlyName.isNull() ? QStringLiteral("") : friendlyName;
+    // Normalize null, surrounding whitespace and over-long names once, for
+    // every C++ caller. An empty result keeps the existing "no name yet"
+    // behaviour: synthesize a default on insert, keep the old name on update.
+    const QString safeName = normalizedVehicleName(friendlyName);
     // On a brand-new insert there is no display name yet, so synthesize one
     // from the UID tail rather than leaving the list row blank.  The
     // ON CONFLICT branch discards this VALUES row, so reconnects never
@@ -2461,8 +2504,9 @@ bool DatabaseManager::upsertVehicleEx(const QString &deviceUid, const QString &f
                                        double gpsLat, double gpsLon)
 {
     if (!m_initialized) return false;
-    // Null strings bind as SQL NULL and the vehicles columns are NOT NULL.
-    const QString safeName = friendlyName.isNull() ? QStringLiteral("") : friendlyName;
+    // Null names bind as SQL NULL; whitespace/over-long names are normalized
+    // the same way as in upsertVehicle().
+    const QString safeName = normalizedVehicleName(friendlyName);
     const QString defaultName = safeName.isEmpty()
             ? QStringLiteral("Vehicle %1").arg(deviceUid.right(4).toUpper()).trimmed()
             : safeName;
@@ -2870,9 +2914,18 @@ bool DatabaseManager::importVehiclesJson(const QString &json)
         for (const VehicleJsonField &f : kVehicleJsonFields) {
             if (!o.contains(QLatin1String(f.json)))
                 continue;
+            QVariant value = o.value(QLatin1String(f.json)).toVariant();
+            if (QString::fromLatin1(f.json) == QStringLiteral("friendlyName")) {
+                const QString safeName = normalizedVehicleName(value.toString());
+                // Refuse to store an empty name from an import; leave the
+                // existing name (or the table default) untouched instead.
+                if (safeName.isEmpty())
+                    continue;
+                value = safeName;
+            }
             columns << QLatin1String(f.column);
             updates << QStringLiteral("%1 = excluded.%1").arg(QLatin1String(f.column));
-            values << o.value(QLatin1String(f.json)).toVariant();
+            values << value;
         }
         QStringList marks;
         for (int i = 0; i < columns.size(); ++i)
@@ -3030,7 +3083,7 @@ bool DatabaseManager::setFlightArmedAt(int flightId, const QDateTime &time)
     if (!m_initialized || flightId <= 0) return false;
     QSqlQuery q(m_db);
     q.prepare("UPDATE flights SET armed_at = ? WHERE id = ?");
-    q.addBindValue(time.toString(Qt::ISODate));
+    q.addBindValue(utcIso(time));
     q.addBindValue(flightId);
     return execOrWarn(q, "setFlightArmedAt");
 }
@@ -3040,7 +3093,7 @@ bool DatabaseManager::setFlightDisarmedAt(int flightId, const QDateTime &time)
     if (!m_initialized || flightId <= 0) return false;
     QSqlQuery q(m_db);
     q.prepare("UPDATE flights SET disarmed_at = ? WHERE id = ?");
-    q.addBindValue(time.toString(Qt::ISODate));
+    q.addBindValue(utcIso(time));
     q.addBindValue(flightId);
     return execOrWarn(q, "setFlightDisarmedAt");
 }
@@ -3055,7 +3108,7 @@ bool DatabaseManager::closeFlight(int flightId, int durationSec,
 {
     if (!m_initialized || flightId <= 0) return false;
     QSqlQuery q(m_db);
-    q.prepare("UPDATE flights SET ended_at = CURRENT_TIMESTAMP, duration_sec = ?, "
+    q.prepare("UPDATE flights SET ended_at = COALESCE(disarmed_at, CURRENT_TIMESTAMP), duration_sec = ?, "
               "max_altitude_m = ?, min_battery_v = ?, max_battery_v = ?, "
               "flight_mode_changes = ?, max_ground_speed_ms = ?, "
               "max_vertical_speed_ms = ?, distance_flown_m = ?, avg_battery_v = ?, "
@@ -3234,14 +3287,7 @@ QVariantMap DatabaseManager::queryFlights(int page, const QString &fromDate,
     QStringList where;
     QVariantList binds;
 
-    if (!fromDate.isEmpty()) {
-        where << QStringLiteral("f.started_at >= ?");
-        binds << fromDate;
-    }
-    if (!toDate.isEmpty()) {
-        where << QStringLiteral("f.started_at <= ?");
-        binds << toDate + QStringLiteral(" 23:59:59");
-    }
+    addLocalDayFilters(fromDate, toDate, QStringLiteral("f.started_at"), where, binds);
     if (!vehicleKey.isEmpty()) {
         where << QStringLiteral("COALESCE(fs.device_uid, f.device_uid) = ?");
         binds << vehicleKey;
@@ -3443,16 +3489,20 @@ QList<QVariantMap> DatabaseManager::getHandoverEventsForFlight(int flightId)
     return records;
 }
 
-QList<QVariantMap> DatabaseManager::getMotorTestsForVehicle(int vehicleSysId)
+QList<QVariantMap> DatabaseManager::getMotorTestsForVehicle(int vehicleSysId, int flightId)
 {
     assertMainThread();
     QList<QVariantMap> records;
     if (!m_initialized || vehicleSysId <= 0) return records;
     QSqlQuery q(m_db);
+    const QString where = flightId > 0
+            ? QStringLiteral("WHERE flight_id = ? OR (flight_id IS NULL AND vehicle_sys_id = ?)")
+            : QStringLiteral("WHERE vehicle_sys_id = ?");
     q.prepare("SELECT id, vehicle_sys_id, motor_index, throttle_pct, duration_sec, "
               "expected_pwm, actual_pwm, pwm_delta, result, timestamp "
-              "FROM motor_test_results WHERE vehicle_sys_id = ? "
-              "ORDER BY timestamp DESC, id DESC");
+              "FROM motor_test_results " + where +
+              " ORDER BY timestamp DESC, id DESC");
+    if (flightId > 0) q.addBindValue(flightId);
     q.addBindValue(vehicleSysId);
     if (!q.exec()) return records;
     while (q.next()) {
@@ -3657,8 +3707,8 @@ bool DatabaseManager::registerNewVehicle(const QString &fingerprint, int sysid, 
                                           const QString &fingerprintSource)
 {
     if (!m_initialized || fingerprint.isEmpty()) return false;
-    // friendly_name is NOT NULL; normalize a null display name (binds as SQL NULL) to ''.
-    const QString safeDisplayName = displayName.isNull() ? QStringLiteral("") : displayName;
+    // friendly_name is NOT NULL; normalize null/whitespace/length centrally.
+    const QString safeDisplayName = normalizedVehicleName(displayName);
     // Synthesize a default display name on first registration instead of
     // storing an empty row; the ON CONFLICT branch ignores this VALUES value.
     const QString defaultName = safeDisplayName.isEmpty()
@@ -3728,10 +3778,11 @@ bool DatabaseManager::updateVehicleLastSeen(const QString &fingerprint)
 
 bool DatabaseManager::updateVehicleName(const QString &fingerprint, const QString &name)
 {
-    if (!m_initialized || fingerprint.isEmpty()) return false;
+    const QString safeName = normalizedVehicleName(name);
+    if (!m_initialized || fingerprint.isEmpty() || safeName.isEmpty()) return false;
     QSqlQuery q(m_db);
     q.prepare("UPDATE vehicles SET friendly_name = ? WHERE fingerprint = ?");
-    q.addBindValue(name);
+    q.addBindValue(safeName);
     q.addBindValue(fingerprint);
     return execOrWarn(q, "updateVehicleName");
 }
@@ -4063,14 +4114,7 @@ QString DatabaseManager::exportFlightsCsv(const QString &fromDate,
 
     QStringList where;
     QVariantList binds;
-    if (!fromDate.isEmpty()) {
-        where << QStringLiteral("f.started_at >= ?");
-        binds << fromDate;
-    }
-    if (!toDate.isEmpty()) {
-        where << QStringLiteral("f.started_at <= ?");
-        binds << toDate + QStringLiteral(" 23:59:59");
-    }
+    addLocalDayFilters(fromDate, toDate, QStringLiteral("f.started_at"), where, binds);
     if (vehicleId > 0) {
         where << QStringLiteral("f.vehicle_id = ?");
         binds << vehicleId;
@@ -4228,11 +4272,11 @@ QString DatabaseManager::exportFlightDetailCsv(int flightId)
             QStringList{ QStringLiteral("timestamp"), QStringLiteral("event_type"),
                          QStringLiteral("triggered_by") });
 
-    // Motor tests (keyed by the flight's vehicle sysid).
+    // Motor tests: this flight's rows, plus legacy sysid-only rows.
     section(QStringLiteral("MOTOR TESTS"),
             QStringLiteral("MotorIndex,Throttle(%),Duration(sec),ExpectedPWM,ActualPWM,"
                            "PWMDelta,Result,Timestamp"),
-            getMotorTestsForVehicle(flight.value(QStringLiteral("vehicle_id")).toInt()),
+            getMotorTestsForVehicle(flight.value(QStringLiteral("vehicle_id")).toInt(), flightId),
             QStringList{ QStringLiteral("motor_index"), QStringLiteral("throttle_pct"),
                          QStringLiteral("duration_sec"), QStringLiteral("expected_pwm"),
                          QStringLiteral("actual_pwm"), QStringLiteral("pwm_delta"),
@@ -4280,14 +4324,7 @@ QVariantMap DatabaseManager::getFlightStats(const QString &fromDate,
 
     QStringList where;
     QVariantList binds;
-    if (!fromDate.isEmpty()) {
-        where << QStringLiteral("f.started_at >= ?");
-        binds << fromDate;
-    }
-    if (!toDate.isEmpty()) {
-        where << QStringLiteral("f.started_at <= ?");
-        binds << toDate + QStringLiteral(" 23:59:59");
-    }
+    addLocalDayFilters(fromDate, toDate, QStringLiteral("f.started_at"), where, binds);
     if (!vehicleKey.isEmpty()) {
         where << QStringLiteral("COALESCE(fs.device_uid, f.device_uid) = ?");
         binds << vehicleKey;

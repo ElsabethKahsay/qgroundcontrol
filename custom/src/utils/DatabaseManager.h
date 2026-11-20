@@ -395,8 +395,9 @@ public:
     Q_INVOKABLE QList<QVariantMap> getTelemetryEventsForFlight(int flightId);
     /// Trainer handover events recorded during a training session.
     Q_INVOKABLE QList<QVariantMap> getHandoverEventsForFlight(int flightId);
-    /// Motor test audit rows for a vehicle (keyed by MAVLink sysid).
-    Q_INVOKABLE QList<QVariantMap> getMotorTestsForVehicle(int vehicleSysId);
+    /// Motor test audit rows. When flightId is given, include only that
+    /// flight's rows plus legacy sysid-only rows; otherwise use the sysid.
+    Q_INVOKABLE QList<QVariantMap> getMotorTestsForVehicle(int vehicleSysId, int flightId = -1);
     /// Control-surface sweep test rows for a flight.
     Q_INVOKABLE QList<QVariantMap> getSurfaceTestsForFlight(int flightId);
 

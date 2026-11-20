@@ -36,6 +36,10 @@ public:
     Q_INVOKABLE QString generateHash(const QString &data);
     Q_INVOKABLE QString defaultExportDir() const;
 
+    /// One vehicle-profile CSV row. Kept separate so field escaping can be
+    /// tested without writing a file to the user's Documents folder.
+    static QString formatVehicleProfileRow(const QJsonObject &vehicle);
+
     // ── Compliance log access ─────────────────────────────────────
     Q_INVOKABLE bool saveComplianceLog(const QString &logId, const QString &vehicleId,
                                        const QString &vehicleType, const QString &operatorId,
