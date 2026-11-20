@@ -151,6 +151,8 @@ PreflightPlugin *PreflightPlugin::instance()
 // ---------------------------------------------------------------------------
 void PreflightPlugin::init()
 {
+    if (_initialized)
+        return;
     QGCCorePlugin::init();
 
     // Load custom application font and apply it globally
@@ -593,6 +595,7 @@ void PreflightPlugin::init()
     if (activeVehicle) {
         _setupForVehicle(activeVehicle);
     }
+    _initialized = true;
 }
 
 // ---------------------------------------------------------------------------

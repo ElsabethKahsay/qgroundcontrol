@@ -81,6 +81,7 @@ private slots:
     void testExportFlightDetailCsv();
     void testGetFlightStats();
     void testGetFlightStatsExcludesBenchAndGroundFlights();
+    void testStatsCountFlightWithUnknownAltitude();
     void testIncrementVehicleFlightTimeUsesDeviceUid();
     void testHistoryVehicleKeyDoesNotMergeSysid();
     void testBackupBeforeMigration();
@@ -640,6 +641,9 @@ void DatabaseManagerTest::testRecorderGcsChargeForDeadSensor()
     QCOMPARE(end.mahUsed, 12000.0);
     QVERIFY2(end.whUsed > 0.0, qPrintable(QString::number(end.whUsed)));
     QVariantMap b = row(QStringLiteral("SELECT * FROM flight_batteries WHERE flight_session_id = %1").arg(counted));
+    // The FC's 100 % at arm is meaningless with a dead current sensor: the
+    // GCS's count, from the resting voltage at arm, is the start charge.
+    QCOMPARE(b.value(QStringLiteral("start_percent")).toInt(), 82);
     QCOMPARE(b.value(QStringLiteral("mah_used")).toDouble(), 12000.0);
     QCOMPARE(b.value(QStringLiteral("end_percent")).toInt(), 82);
     QVERIFY(b.value(QStringLiteral("wh_used")).toDouble() > 0.0);
@@ -656,6 +660,7 @@ void DatabaseManagerTest::testRecorderGcsChargeForDeadSensor()
     QCOMPARE(noCount.mahUsed, -1.0);
     QCOMPARE(noCount.whUsed, -1.0);
     b = row(QStringLiteral("SELECT * FROM flight_batteries WHERE flight_session_id = %1").arg(unknown));
+    QVERIFY(b.value(QStringLiteral("start_percent")).isNull());
     QVERIFY(b.value(QStringLiteral("mah_used")).isNull());
     QVERIFY(b.value(QStringLiteral("wh_used")).isNull());
     QVERIFY(b.value(QStringLiteral("end_percent")).isNull());
@@ -686,6 +691,7 @@ void DatabaseManagerTest::testRecorderGcsChargeForDeadSensor()
     const SessionRecorder::FlightEnd fcEnd = rec.disarmed();
     QCOMPARE(fcEnd.mahUsed, 1300.0);
     b = row(QStringLiteral("SELECT * FROM flight_batteries WHERE flight_session_id = %1").arg(working));
+    QCOMPARE(b.value(QStringLiteral("start_percent")).toInt(), 90);
     QCOMPARE(b.value(QStringLiteral("mah_used")).toDouble(), 1300.0);
     QCOMPARE(b.value(QStringLiteral("end_percent")).toInt(), 70);
 }
@@ -1668,6 +1674,50 @@ void DatabaseManagerTest::testGetFlightStatsExcludesBenchAndGroundFlights()
     QFile::remove(path + QStringLiteral(".v0.bak"));
 }
 
+// A link lost before any altitude sample leaves max_altitude_m unknown. That
+// must be stored as NULL and still count as a flight; a known low altitude
+// (below the airborne threshold) does not count. All three stay in History.
+void DatabaseManagerTest::testStatsCountFlightWithUnknownAltitude()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    RecorderFixture f;
+    QVERIFY(f.init());
+    SessionRecorder rec(db);
+    f.wire(rec);
+    rec.connectionOpened(QStringLiteral("UID-R"), QStringLiteral("Flight"),
+                         QStringLiteral("Pilot"), QStringLiteral("1.0"));
+    f.sample = {16.4, 100.0};   // no altitude sample: m_maxAltitude stays NaN
+    rec.armed(start(QStringLiteral("external")));
+    QVERIFY(rec.flightId() > 0);
+    f.clock.advance(65000);
+    rec.disarmed();
+
+    const QVariantMap unknownRow = row(QStringLiteral(
+        "SELECT max_altitude_m FROM flights ORDER BY id DESC LIMIT 1"));
+    QVERIFY2(unknownRow.value(QStringLiteral("max_altitude_m")).isNull(),
+             "an unknown altitude must be stored as NULL, not 0");
+
+    const int op = db.insertOperator(QStringLiteral("Pilot"), QStringLiteral("Pilot"));
+    QVERIFY(op > 0);
+    const int low = db.openFlight(op, 1, QStringLiteral("FLIGHT"), QString(),
+                                  QString(), QString(), QString());
+    QVERIFY(low > 0);
+    QVERIFY(db.closeFlight(low, 60, 0.4, 11.0, 13.5, 0, 0, 0, 0, 0));
+    const int high = db.openFlight(op, 1, QStringLiteral("FLIGHT"), QString(),
+                                   QString(), QString(), QString());
+    QVERIFY(high > 0);
+    QVERIFY(db.closeFlight(high, 60, 12.0, 11.0, 13.5, 0, 0, 0, 0, 0));
+
+    // Unknown (65 s) + high (60 s) count; low (0.4 m, 60 s) does not.
+    const QVariantMap stats = db.getFlightStats(QString(), QString(), QString(), QString());
+    QCOMPARE(stats.value(QStringLiteral("totalFlights")).toInt(), 2);
+    QCOMPARE(stats.value(QStringLiteral("totalHoursStr")).toString(), QStringLiteral("2m 5s"));
+
+    const QVariantMap history = db.queryFlights(0, QString(), QString(), QString(), 0,
+                                                QString(), QString(), QStringLiteral("date_desc"), 50);
+    QCOMPARE(history.value(QStringLiteral("totalCount")).toInt(), 3);
+}
+
 // Vehicle totals are keyed by the canonical device_uid. A legacy fingerprint
 // is only a lookup key, never the identity the totals accumulate onto.
 void DatabaseManagerTest::testIncrementVehicleFlightTimeUsesDeviceUid()
@@ -1740,6 +1790,10 @@ void DatabaseManagerTest::testHistoryVehicleKeyDoesNotMergeSysid()
                                      QString(), QString(), QString());
     QVERIFY(legacy > 0);
     QVERIFY(q.exec(QStringLiteral("UPDATE flights SET device_uid = 'UID-C' WHERE id = %1").arg(legacy)));
+    // These two rows are about vehicle keys, not airborne flights; keep them
+    // below the threshold now that an unknown (NULL) altitude counts too.
+    QVERIFY(q.exec(QStringLiteral("UPDATE flights SET max_altitude_m = 0.4 WHERE id IN (%1, %2)")
+                   .arg(unknown).arg(legacy)));
 
     auto query = [&](const QString &key) {
         return db.queryFlights(0, QString(), QString(), key, 0,
@@ -1827,6 +1881,7 @@ void DatabaseManagerTest::testBackupIncludesWritesStillInTheWal()
     const QString path = tmpFile.fileName();
     QVERIFY(db.initialize(path));
     QFile::remove(path + QStringLiteral(".v0.bak"));
+    const QString previousBak = path + QStringLiteral(".v%1.bak").arg(db.schemaVersion() - 1);
 
     {
         // A reader whose snapshot predates the writes below keeps them in the WAL.
@@ -1850,10 +1905,10 @@ void DatabaseManagerTest::testBackupIncludesWritesStillInTheWal()
     }
     QSqlDatabase::removeDatabase(QStringLiteral("walReader"));
 
-    QVERIFY(QFile::exists(path + QStringLiteral(".v28.bak")));
+    QVERIFY(QFile::exists(previousBak));
     {
         QSqlDatabase bak = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("walBackup"));
-        bak.setDatabaseName(path + QStringLiteral(".v28.bak"));
+        bak.setDatabaseName(previousBak);
         QVERIFY(bak.open());
         QSqlQuery b(bak);
         QVERIFY2(b.exec(QStringLiteral("SELECT COUNT(*) FROM operators WHERE name = 'Only In The WAL'")) && b.next(),
@@ -1866,7 +1921,7 @@ void DatabaseManagerTest::testBackupIncludesWritesStillInTheWal()
 
     db.reset();
     QFile::remove(path + QStringLiteral(".v0.bak"));
-    QFile::remove(path + QStringLiteral(".v28.bak"));
+    QFile::remove(previousBak);
 }
 
 void DatabaseManagerTest::testEmptyNameUpsertAndSession()
@@ -2569,21 +2624,22 @@ void DatabaseManagerTest::testMigrationRetryKeepsOriginalBackup()
     tmpFile.close();
     const QString path = tmpFile.fileName();
     const QString v0bak = path + QStringLiteral(".v0.bak");
-    const QString v28bak = path + QStringLiteral(".v28.bak");
+    const int previousVersion = db.schemaVersion() - 1;
+    const QString prevBak = path + QStringLiteral(".v%1.bak").arg(previousVersion);
 
     QVERIFY(db.initialize(path));
     QVERIFY(QFile::exists(v0bak));
 
-    // Pretend a migration stopped after version 28: the next initialize()
-    // re-runs step 29 and takes a snapshot of the v28 file.
+    // Pretend a migration stopped one version back: the next initialize()
+    // re-runs the last step and takes a snapshot of that file.
     {
         QSqlQuery q(QSqlDatabase::database());
-        QVERIFY(q.exec(QStringLiteral("DELETE FROM schema_version WHERE version > 28")));
+        QVERIFY(q.exec(QStringLiteral("DELETE FROM schema_version WHERE version > %1").arg(previousVersion)));
     }
     db.reset();
     QVERIFY(db.initialize(path));
-    QVERIFY(QFile::exists(v28bak));
-    QFile original(v28bak);
+    QVERIFY(QFile::exists(prevBak));
+    QFile original(prevBak);
     QVERIFY(original.open(QIODevice::ReadOnly));
     const QByteArray snapshot = original.readAll();
     original.close();
@@ -2594,12 +2650,12 @@ void DatabaseManagerTest::testMigrationRetryKeepsOriginalBackup()
     QVERIFY(db.insertOperator(QStringLiteral("After Backup"), QStringLiteral("pilot")) > 0);
     {
         QSqlQuery q(QSqlDatabase::database());
-        QVERIFY(q.exec(QStringLiteral("DELETE FROM schema_version WHERE version > 28")));
+        QVERIFY(q.exec(QStringLiteral("DELETE FROM schema_version WHERE version > %1").arg(previousVersion)));
     }
     db.reset();
     QVERIFY(db.initialize(path));
-    QVERIFY(QFile::exists(v28bak));
-    QFile retried(v28bak);
+    QVERIFY(QFile::exists(prevBak));
+    QFile retried(prevBak);
     QVERIFY(retried.open(QIODevice::ReadOnly));
     QCOMPARE(retried.readAll(), snapshot);
     retried.close();
@@ -2607,7 +2663,7 @@ void DatabaseManagerTest::testMigrationRetryKeepsOriginalBackup()
 
     QFile::remove(path);
     QFile::remove(v0bak);
-    QFile::remove(v28bak);
+    QFile::remove(prevBak);
 }
 
 // A fresh database keeps its v0 snapshot; upgrading later from another
@@ -2622,7 +2678,8 @@ void DatabaseManagerTest::testLaterUpgradeMakesItsOwnBackup()
     tmpFile.close();
     const QString path = tmpFile.fileName();
     const QString v0bak = path + QStringLiteral(".v0.bak");
-    const QString v28bak = path + QStringLiteral(".v28.bak");
+    const int previousVersion = db.schemaVersion() - 1;
+    const QString prevBak = path + QStringLiteral(".v%1.bak").arg(previousVersion);
 
     QVERIFY(db.initialize(path));
     QVERIFY(QFile::exists(v0bak));
@@ -2634,12 +2691,12 @@ void DatabaseManagerTest::testLaterUpgradeMakesItsOwnBackup()
 
     {
         QSqlQuery q(QSqlDatabase::database());
-        QVERIFY(q.exec(QStringLiteral("DELETE FROM schema_version WHERE version > 28")));
+        QVERIFY(q.exec(QStringLiteral("DELETE FROM schema_version WHERE version > %1").arg(previousVersion)));
     }
     db.reset();
     QVERIFY(db.initialize(path));
 
-    QVERIFY(QFile::exists(v28bak));
+    QVERIFY(QFile::exists(prevBak));
     QFile original(v0bak);
     QVERIFY(original.open(QIODevice::ReadOnly));
     QCOMPARE(original.readAll(), snapshot);
@@ -2647,7 +2704,7 @@ void DatabaseManagerTest::testLaterUpgradeMakesItsOwnBackup()
 
     QFile::remove(path);
     QFile::remove(v0bak);
-    QFile::remove(v28bak);
+    QFile::remove(prevBak);
 }
 
 UT_REGISTER_TEST(DatabaseManagerTest)

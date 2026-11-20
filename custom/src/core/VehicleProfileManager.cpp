@@ -906,6 +906,38 @@ void VehicleProfileManager::_persistBatteryConfig()
         m_batteryCellMah, m_batteryReserve, m_batteryType);
 }
 
+// The pack's charge from the count at the arm less the mAh used. The power
+// estimate's socNowPct and the mission estimate's starting charge share this
+// arithmetic: passing this tick's value to _updateMissionLive (instead of the
+// previous update's m_powerLive.socNowPct) keeps them from disagreeing by 2 s.
+double VehicleProfileManager::socNowPctFromCount(double armStartSocPct, double mahUsedMah, double factor, double capAh)
+{
+    if (mahUsedMah < 0.0 || capAh <= 0.0)
+        return -1.0;
+    return (capAh * std::clamp(armStartSocPct, 0.0, 100.0) / 100.0 - mahUsedMah / 1000.0 * factor) / capAh * 100.0;
+}
+
+// The mAh used and factor counted on this update: the GCS's own count when
+// there is no measuring current sensor, else the controller's counter since
+// the arm. The same inputs feed _updatePowerLive's socNowPct and the mission
+// estimate's charge.
+VehicleProfileManager::ChargeCount VehicleProfileManager::chargeCount(double fcMahUsed) const
+{
+    ChargeCount c;
+    const bool armed = m_telemetry && m_telemetry->armed();
+    const int monitor = m_telemetry && m_telemetry->hasParameter(QStringLiteral("BATT_MONITOR"))
+        ? qRound(m_telemetry->parameterValue(QStringLiteral("BATT_MONITOR"), -1.0f)) : -1;
+    c.gcsCount = monitor == -1 || monitor == 0 || monitor == 3 || monitor == 25 || m_fcCurrent.dead;
+    c.factor = c.gcsCount ? motorTableSetup().value(QStringLiteral("calibrationFactor"), 1.0).toDouble() : 1.0;
+    if (!armed)
+        c.mahUsed = 0.0;
+    else if (c.gcsCount)
+        c.mahUsed = m_gcsCountKnown ? m_gcsUsedAh * 1000.0 : -1.0;
+    else if (m_gcsCountKnown && fcMahUsed >= 0.0 && m_fcMahAtArm >= 0.0)
+        c.mahUsed = std::max(0.0, fcMahUsed - m_fcMahAtArm);
+    return c;
+}
+
 // ── Live battery estimate (Feeds the FlyView chip) ────────────────────────
 // Runs every 2 s from TelemetryBridge telemetry while a vehicle is connected:
 //   I_smooth  = 0.095·I + 0.905·I_smooth    (EMA, α=0.095 @ 0.5 Hz ≈ 10 s)
@@ -971,8 +1003,16 @@ void VehicleProfileManager::_updateLiveEstimate()
     if (chargeUnknown(m_telemetry && armed, m_fcCurrent.dead, m_gcsCountKnown)) {
         _updateMissionLive(-1, true);
     } else {
+        // This update's charge comes from the same function _updatePowerLive
+        // uses for socNowPct. For the controller's counter that is this tick's
+        // reading; the GCS's own count only advances inside _updatePowerLive,
+        // which runs after the mission update, so that count is one update
+        // behind (about 0.06 % of the pack). The chargeUnknown guard above is
+        // untouched.
+        const ChargeCount count = chargeCount(mahUsed);
         const double estSoc = m_powerLive.value(QStringLiteral("active")).toBool()
-                                  ? m_powerLive.value(QStringLiteral("socNowPct"), -1.0).toDouble() : -1.0;
+            ? socNowPctFromCount(m_armStartSocPct, count.mahUsed, count.factor, capacityAh())
+            : -1.0;
         _updateMissionLive(estSoc >= 0.0 ? qRound(estSoc) : soc);
     }
     _updatePowerLive(mahUsed, m_telemetry->batterySocPct());
@@ -1534,6 +1574,8 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
                                                               m_hoverSamples);
         m_hoverThrustSum = 0.0;
         m_hoverSamples = 0;
+        m_missionReturnNowRaw = false;
+        m_missionReturnHeld = false;
         // Each speed band flown level for long enough (30 s) leaves its
         // cruise ratio for the next take-off; bands not flown keep theirs.
         if (table) {
@@ -1577,8 +1619,6 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         in.startSocPct = m_armStartSocPct;
         in.groundSpeedMs = m_telemetry->groundSpeed();
 
-        const int monitor = m_telemetry->hasParameter(QStringLiteral("BATT_MONITOR"))
-            ? qRound(m_telemetry->parameterValue(QStringLiteral("BATT_MONITOR"), -1.0f)) : -1;
         // Battery current from the motor table: each motor's throttle from
         // its output signal, or, when those stop arriving, the overall
         // throttle the FC reports turned into motor output the way
@@ -1627,8 +1667,10 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
                 setFcCurrentDead(next.dead);
         }
         // A current sensor (BATT_MONITOR other than 0, 3 or 25) that is
-        // measuring wins; the table is the count otherwise.
-        const bool gcsCount = monitor == -1 || monitor == 0 || monitor == 3 || monitor == 25 || m_fcCurrent.dead;
+        // measuring wins; the table is the count otherwise. The same count
+        // feeds the mission estimate's charge on this tick.
+        const ChargeCount count = chargeCount(fcMahUsed);
+        const bool gcsCount = count.gcsCount;
         // Dead sensor and a count that does not cover the flight: the FC's %
         // (100 with a dead monitor) is not a charge reading. Keep the charge
         // fields unknown instead of falling back to it.
@@ -1709,15 +1751,10 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         // The fine-tuning from the charger comparison: the table's count
         // and current × the factor (a current sensor's count is not).
         const double calFactor = setup.value(QStringLiteral("calibrationFactor"), 1.0).toDouble();
-        in.factor = gcsCount ? calFactor : 1.0;
+        in.factor = count.factor;
         in.currentA = -1.0;
         in.throttleRatio = 1.0;
-        if (gcsCount)
-            in.fcMahUsed = !armed ? 0.0 : m_gcsCountKnown ? m_gcsUsedAh * 1000.0 : -1.0;
-        else
-            in.fcMahUsed = !armed ? 0.0
-                         : (m_gcsCountKnown && fcMahUsed >= 0.0 && m_fcMahAtArm >= 0.0)
-                               ? std::max(0.0, fcMahUsed - m_fcMahAtArm) : -1.0;
+        in.fcMahUsed = count.mahUsed;
 
         // The motors' power now: from the table, or from a current sensor
         // (its current less the electronics, at the pack voltage).
@@ -1742,9 +1779,7 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         const MotorTable::Pack pack = motorTablePack(setup.value(QStringLiteral("cells")).toInt() > 0
                                                          ? setup.value(QStringLiteral("cells")).toInt() : table->cells);
         const double capAh = capacityAh();
-        const double socNow = (in.fcMahUsed >= 0.0 && capAh > 0.0)
-            ? (capAh * std::clamp(m_armStartSocPct, 0.0, 100.0) / 100.0 - in.fcMahUsed / 1000.0 * in.factor) / capAh * 100.0
-            : -1.0;
+        const double socNow = socNowPctFromCount(m_armStartSocPct, in.fcMahUsed, in.factor, capAh);
         if (haveNow && packV > 0.0 && socNow > 0.0) {
             const double r = MotorTable::observedResistance(pack, socNow, packV, now.amps);
             if (r >= 0.0) {
@@ -1858,6 +1893,7 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
                                                        : advice.returnNow;
         out[QStringLiteral("landingOnReserve")] = !unknownCharge && !fromMission && advice.landingOnReserve;
         out[QStringLiteral("returnNowFrom")] = fromMission ? QStringLiteral("mission") : QStringLiteral("trip");
+        out[QStringLiteral("returning")] = returning;
         out[QStringLiteral("returnNowWhy")] = fromMission ? m_missionLive.value(QStringLiteral("returnNowWhy")) : QVariant(QString());
         out[QStringLiteral("payloadAboard")] = in.payloadAboard;
         out[QStringLiteral("payloadAboardKg")] = in.payloadAboard ? in.payloadKg : 0.0;
@@ -1924,11 +1960,13 @@ void VehicleProfileManager::_updatePowerLive(double fcMahUsed, int socPct)
         const QString onOff = out.value(QStringLiteral("returnNow")).toBool() ? QStringLiteral("on") : QStringLiteral("off");
         if (out.value(QStringLiteral("returnNowFrom")).toString() == QLatin1String("mission"))
             qInfo().noquote() << QStringLiteral("VehicleProfileManager: RETURN NOW %1 (from the mission estimate)").arg(onOff);
-        else
-            qInfo().noquote() << QStringLiteral("VehicleProfileManager: RETURN NOW %1 (trip needs %2 Ah, %3 Ah left)")
-                                     .arg(onOff)
+        else if (out.value(QStringLiteral("returnNow")).toBool())
+            qInfo().noquote() << QStringLiteral("VehicleProfileManager: RETURN NOW on (trip needs %1 Ah, %2 Ah left)")
                                      .arg(out.value(QStringLiteral("tripNeedAh")).toDouble(), 0, 'f', 2)
                                      .arg(out.value(QStringLiteral("usableAh")).toDouble(), 0, 'f', 2);
+        else
+            qInfo().noquote() << QStringLiteral("VehicleProfileManager: RETURN NOW off (%1)")
+                                     .arg(returnNowOffWhy(out, out.value(QStringLiteral("returning")).toBool()));
     }
     if (out != m_powerLive) {
         m_powerLive = out;
@@ -2776,11 +2814,16 @@ QVariantMap VehicleProfileManager::missionEstimateFrom(const LiveStart *live)
     // without a warning (MissionEstimateCheck).
     if (!mm || mm->missionItems().size() < 2) {
         out[QStringLiteral("noMission")] = true;
+        // Before arming a bad GPS still matters: home is set where the
+        // copter is when it arms. Set it here too; the check further down is
+        // only reached when there is a mission to cost.
+        if (!live)
+            out[QStringLiteral("gpsPoor")] = m_telemetry && m_telemetry->gpsPoor();
         return notReady(QStringLiteral("No mission on the copter"));
     }
     const double homeLat = m_telemetry->homeLatitude();
     const double homeLon = m_telemetry->homeLongitude();
-    if (qAbs(homeLat) < 1e-6 && qAbs(homeLon) < 1e-6)
+    if (qAbs(homeLat) < 1e-6 || qAbs(homeLon) < 1e-6)
         return notReady(QStringLiteral("Home position not known yet"));
     const double homeAmsl = m_telemetry->homeAltitude();
 
@@ -3069,7 +3112,13 @@ QVariantMap VehicleProfileManager::missionEstimateFrom(const LiveStart *live)
             marginPct = !first.canReturn ? std::min(-1.0, first.returnLandPessimisticPct - in.reserveSocPct)
                                          : first.returnLandPessimisticPct - in.reserveSocPct;
         }
-        const bool now = returnNowHeld(m_missionLive.value(QStringLiteral("returnNow")).toBool(), marginPct, returning);
+        // While the hover hold suppresses the displayed RETURN NOW, the
+        // hysteresis must still see the unheld decision: once the model is
+        // learned the red hint can come back without waiting for another
+        // margin crossing.
+        const bool wasOn = live ? m_missionReturnNowRaw
+                                : m_missionLive.value(QStringLiteral("returnNow")).toBool();
+        const bool now = returnNowHeld(wasOn, marginPct, returning);
         out[QStringLiteral("returnNow")] = now;
         const int pastSeq = cost.firstPastSeq >= 0 ? cost.firstPastSeq : nextSeq;
         out[QStringLiteral("returnNowWhy")] =
@@ -3114,6 +3163,7 @@ QVariantMap VehicleProfileManager::missionEstimateFrom(const LiveStart *live)
 // against the selected pack, as the battery chip shows it).
 void VehicleProfileManager::_updateMissionLive(int socPct, bool chargeUnknown)
 {
+    m_lastMissionSocPct = chargeUnknown ? -1 : socPct;
     QVariantMap next;
     Vehicle *v = m_telemetry ? m_telemetry->vehicle() : nullptr;
     const double alt = m_telemetry ? m_telemetry->altitudeRelative() : qQNaN();
@@ -3168,6 +3218,34 @@ void VehicleProfileManager::_updateMissionLive(int socPct, bool chargeUnknown)
         if (pos.isValid())
             next = withGpsPoor(missionEstimateFrom(&s), m_telemetry->gpsPoor());
         next[QStringLiteral("passed")] = m_passed;
+
+        // The take-off hover model is conservative: it can raise RETURN NOW
+        // ~16 s into a flight and clear it ~48 s later as the first hover
+        // samples refine it. Hold the mission advice until this flight's
+        // hover is actually used (15 samples), with a hard cap after the arm
+        // for climbs that never hover. Only when take-off said it fits: a red
+        // or absent estimate must show at once. Advice only, never an arm or
+        // a flight change. returnNowWhy stays empty while held: the battery
+        // panel shows it.
+        const qint64 sinceArmMs = m_flightStartMs > 0
+            ? QDateTime::currentMSecsSinceEpoch() - m_flightStartMs : -1;
+        m_missionReturnNowRaw = next.value(QStringLiteral("returnNow")).toBool();
+        const bool holding = holdMissionReturnNow(m_takeoffEstimate, m_hoverSamples, sinceArmMs);
+        if (holding) {
+            if (!m_missionReturnHeld)
+                qInfo().noquote() << QStringLiteral("VehicleProfileManager: mission RETURN NOW held: waiting for this flight's hover (cap %1 s)")
+                                         .arg(kHoverHoldMaxMs / 1000);
+            next[QStringLiteral("returnNow")] = false;
+            next[QStringLiteral("returnNowWhy")] = QString();
+        } else if (m_missionReturnHeld) {
+            const QString why = m_hoverSamples >= MotorTable::kMinHoverSamples
+                ? QStringLiteral("hover learned")
+                : sinceArmMs >= kHoverHoldMaxMs ? QStringLiteral("cap reached")
+                : !takeoffEstimateFits(m_takeoffEstimate) ? QStringLiteral("take-off estimate said it does not fit")
+                : QStringLiteral("hold ended");
+            qInfo().noquote() << QStringLiteral("VehicleProfileManager: mission RETURN NOW hold ended: %1").arg(why);
+        }
+        m_missionReturnHeld = holding;
         checkMissionAlerts(next);
     } else if (m_telemetry && !m_telemetry->armed()) {
         m_lastMissionIndex = -1;
@@ -3491,6 +3569,37 @@ bool VehicleProfileManager::returnNowHeld(bool wasOn, double marginPct, bool ret
     if (marginPct < 0.0)
         return true;
     return wasOn && marginPct < kReturnNowClearPts;
+}
+
+bool VehicleProfileManager::takeoffEstimateFits(const QVariantMap &estimate)
+{
+    if (!estimate.value(QStringLiteral("ready")).toBool())
+        return false;
+    const int result = estimate.value(QStringLiteral("result"), int(MissionAssess::CantAssess)).toInt();
+    return result == MissionAssess::Fits || result == MissionAssess::Comfortable;
+}
+
+bool VehicleProfileManager::holdMissionReturnNow(const QVariantMap &takeoffEstimate, int hoverSamples, qint64 sinceArmMs)
+{
+    return takeoffEstimateFits(takeoffEstimate)
+        && hoverSamples < MotorTable::kMinHoverSamples
+        && sinceArmMs >= 0
+        && sinceArmMs < kHoverHoldMaxMs;
+}
+
+QString VehicleProfileManager::returnNowOffWhy(const QVariantMap &powerLive, bool returning)
+{
+    if (powerLive.value(QStringLiteral("returnNowFrom")).toString() == QLatin1String("mission"))
+        return QStringLiteral("from the mission estimate");
+    if (powerLive.value(QStringLiteral("chargeUnknown")).toBool())
+        return QStringLiteral("charge unknown (joined in flight)");
+    if (!powerLive.value(QStringLiteral("armed")).toBool())
+        return QStringLiteral("disarmed / flight ended");
+    if (!powerLive.value(QStringLiteral("airborne")).toBool())
+        return QStringLiteral("on the ground / flight ended");
+    if (returning)
+        return QStringLiteral("already returning");
+    return QStringLiteral("trip fits again");
 }
 
 VehicleProfileManager::TripAdvice VehicleProfileManager::tripAdvice(bool tripShort, bool returning)

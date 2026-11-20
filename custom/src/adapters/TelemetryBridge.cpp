@@ -156,7 +156,7 @@ void TelemetryBridge::checkGpsReadings()
 
 void TelemetryBridge::_askForHome()
 {
-    const bool known = qAbs(_homeLatitude) > 1e-6 || qAbs(_homeLongitude) > 1e-6;
+    const bool known = qAbs(_homeLatitude) > 1e-6 && qAbs(_homeLongitude) > 1e-6;
     if (!_vehicle || known) {
         _homeAskTimer.stop();
         return;
@@ -268,7 +268,7 @@ void TelemetryBridge::setVehicle(Vehicle* vehicle) {
 
     // Home is per vehicle: the previous one's is not this one's. Asked for
     // until it arrives (_askForHome).
-    const bool hadHome = qAbs(_homeLatitude) > 1e-6 || qAbs(_homeLongitude) > 1e-6;
+    const bool hadHome = qAbs(_homeLatitude) > 1e-6 && qAbs(_homeLongitude) > 1e-6;
     _homeLatitude = _homeLongitude = _homeAltitude = 0.0;
     _homeAsked = false;
     _homeAskSinceMs = MonotonicClock::nowMs();
@@ -484,7 +484,7 @@ void TelemetryBridge::_connectVehicleSignals() {
             if (_homeAsked && _homeAskTimer.isActive())
                 qInfo().noquote() << QStringLiteral("TelemetryBridge: home position received %1 s after connecting")
                                          .arg((MonotonicClock::nowMs() - _homeAskSinceMs) / 1000.0, 0, 'f', 1);
-            if (qAbs(_homeLatitude) > 1e-6 || qAbs(_homeLongitude) > 1e-6)
+            if (qAbs(_homeLatitude) > 1e-6 && qAbs(_homeLongitude) > 1e-6)
                 _homeAskTimer.stop();
             _updateMissionInfo();
             emit homePositionChanged();

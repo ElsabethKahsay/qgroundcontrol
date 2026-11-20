@@ -3062,7 +3062,10 @@ bool DatabaseManager::closeFlight(int flightId, int durationSec,
               "check_pass_count = ?, check_fail_count = ?, check_warn_count = ?, "
               "anomaly_count = ? WHERE id = ?");
     q.addBindValue(durationSec);
-    q.addBindValue(maxAltitude);
+    // An unknown altitude is data we never received, not a measured 0 m.
+    // Keep it NULL so the stats banner can still count the flight.
+    q.addBindValue(std::isfinite(maxAltitude) ? QVariant(maxAltitude)
+                                              : QVariant(QMetaType::fromType<double>()));
     q.addBindValue(minBatteryV);
     q.addBindValue(maxBatteryV);
     q.addBindValue(modeChanges);
@@ -4296,8 +4299,8 @@ QVariantMap DatabaseManager::getFlightStats(const QString &fromDate,
     // Stats count real flights only: bench arms and runs that never got
     // airborne are still in History, but must not inflate the banner.
     // LEFT JOIN keeps legacy form rows that have no linked flight session.
+    where << QStringLiteral("(f.max_altitude_m IS NULL OR f.max_altitude_m >= ?)");
     where << QStringLiteral("COALESCE(fs.is_bench, 0) = 0");
-    where << QStringLiteral("COALESCE(f.max_altitude_m, 0) >= ?");
     binds << PowerTypeModel::kAirborneAltM;
     const QString whereSql = where.join(QStringLiteral(" AND "));
 

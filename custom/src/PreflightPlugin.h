@@ -213,4 +213,5 @@ private:
     double _batteryMahConsumed() const;
     QTimer _weatherRefreshTimer;      // Periodic timer that triggers weather data refresh
     ArmStateTracker *_armStateTracker = nullptr; // Armed transitions from HEARTBEAT only
+    bool _initialized = false;        // init() creates the managers and wires them once
 };

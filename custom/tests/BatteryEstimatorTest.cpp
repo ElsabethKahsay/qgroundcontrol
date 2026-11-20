@@ -956,8 +956,8 @@ private slots:
     }
 
     // The pack's voltage through a flight: one curve per chemistry read both
-    // ways (charge from voltage, voltage from charge); Li-ion from 4.20 V full
-    // to 2.9 V empty per cell.
+    // ways (charge from voltage, voltage from charge); Li-ion from 4.15 V full
+    // (the full threshold) to 2.9 V empty per cell.
     void testPackVoltageCurves()
     {
         using namespace PowerTypeModel;
@@ -967,14 +967,34 @@ private slots:
                 QVERIFY2(qAbs(restingSocPct(restingCellVolts(soc, c), c) - soc) < 1e-6,
                          qPrintable(QStringLiteral("%1 at %2 %").arg(c).arg(soc)));
         }
-        QCOMPARE(restingCellVolts(100.0, QStringLiteral("LiIon")), 4.20);
+        QCOMPARE(restingCellVolts(100.0, QStringLiteral("LiIon")), 4.15);
         QCOMPARE(restingCellVolts(0.0, QStringLiteral("LiIon")), 2.90);
         QCOMPARE(restingCellVolts(50.0, QStringLiteral("LiIon")), 3.73);
-        QCOMPARE(restingCellVolts(100.0, QStringLiteral("LiPo")), 4.20);
-        QVERIFY(qAbs(restingCellVolts(100.0, QStringLiteral("LiHV")) - 4.35) < 1e-9);
-        QCOMPARE(restingCellVolts(150.0, QStringLiteral("LiIon")), 4.20);   // clamped
+        QCOMPARE(restingCellVolts(100.0, QStringLiteral("LiPo")), 4.15);
+        QVERIFY(qAbs(restingCellVolts(100.0, QStringLiteral("LiHV")) - 4.30) < 1e-9);
+        QCOMPARE(restingCellVolts(150.0, QStringLiteral("LiIon")), 4.15);   // clamped
         QCOMPARE(restingCellVolts(-5.0, QStringLiteral("LiIon")), 2.90);
         QCOMPARE(fullCellVolts(QStringLiteral("LiIon")), 4.15);
+    }
+
+    // The resting curve ends where the full threshold is, so a pack right
+    // below it is already about 100 % on the curve instead of ~96 %. Without
+    // that, the displayed charge jumps four points as it crosses the
+    // threshold, and a pack left full for days reads as only 95 %.
+    void testFullThresholdCurveIsContinuous()
+    {
+        using namespace PowerTypeModel;
+        for (const char *chem : {"LiPo", "LiHV", "LiIon"}) {
+            const QString c = QLatin1String(chem);
+            const double full = fullCellVolts(c);
+            QVERIFY2(qAbs(restingCellVolts(100.0, c) - full) < 1e-9,
+                     qPrintable(QStringLiteral("%1: full maps to %2 V, threshold %3 V")
+                                .arg(c).arg(restingCellVolts(100.0, c)).arg(full)));
+            QVERIFY2(qAbs(restingSocPct(full, c) - 100.0) < 1e-9, qPrintable(c));
+            QVERIFY2(restingSocPct(full - 0.001, c) > 99.0,
+                     qPrintable(QStringLiteral("%1: %2 % just below full")
+                                .arg(c).arg(restingSocPct(full - 0.001, c))));
+        }
     }
 
     // Time left for a power the motors take, through the rest of the pack:
@@ -1019,14 +1039,14 @@ private slots:
 
         // Average current: between the current at the start and at the reserve.
         const double avg = averageCurrent(p, w, 100.0, 20.0);
-        const double atStart = packCurrent(w, 6 * 4.20, 0.025);
+        const double atStart = packCurrent(w, 6 * PowerTypeModel::fullCellVolts(p.chemistry), 0.025);
         const double atReserve = packCurrent(w, 6 * PowerTypeModel::restingCellVolts(20.0, p.chemistry), 0.025);
         QVERIFY(near(avg, 16.0 / h, 1e-9));
         QVERIFY(avg > atStart && avg < atReserve);
         // Costing the flight at the starting current would overstate the time
-        // to the reserve by more than 10 % on this pack.
+        // to the reserve by about 10 % on this pack.
         const double naiveH = 16.0 / atStart;
-        QVERIFY2(naiveH > h * 1.10, qPrintable(QStringLiteral("naive %1 h, real %2 h").arg(naiveH).arg(h)));
+        QVERIFY2(naiveH > h * 1.09, qPrintable(QStringLiteral("naive %1 h, real %2 h").arg(naiveH).arg(h)));
         // Less charge left, less time, and part-way the average is higher.
         QVERIFY(hoursBetween(p, w, 60.0, 20.0) < h);
         QVERIFY(averageCurrent(p, w, 60.0, 20.0) > avg);
@@ -1885,6 +1905,24 @@ private slots:
         item.evaluate();
         item.confirm(QStringLiteral("by hand"));
         QCOMPARE(item.status(), CheckStatus::Warning);
+    }
+
+    // No mission is the usual case in manual flight, but an unreliable GPS is
+    // still a pre-arm problem: the row must not hide it behind "no mission".
+    void testNoMissionStillShowsGpsPoor()
+    {
+        QVariantMap r;
+        r[QStringLiteral("applicable")] = true;
+        r[QStringLiteral("noMission")] = true;
+        r[QStringLiteral("gpsPoor")] = true;
+        MissionEstimateCheck item([&r]() { return r; });
+        QCOMPARE(item.status(), CheckStatus::Warning);
+        QVERIFY2(item.message().contains(QStringLiteral("GPS unreliable")), qPrintable(item.message()));
+
+        r[QStringLiteral("gpsPoor")] = false;
+        item.evaluate();
+        QCOMPARE(item.status(), CheckStatus::Skipped);
+        QCOMPARE(item.message(), QStringLiteral("No mission: not needed for manual flight"));
     }
 
     // The wind from the lean: samples made for a known drag constant and wind

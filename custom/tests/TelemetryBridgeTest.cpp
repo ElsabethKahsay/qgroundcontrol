@@ -5,6 +5,7 @@
 #include <cmath>
 
 #include "UnitTest.h"
+#include "Vehicle/Vehicle.h"
 #include "mocks/MockTelemetryBridge.h"
 #include "core/TrainerSwitchTracker.h"
 
@@ -19,6 +20,9 @@ private slots:
     void testGimbalMountMessagesDecode();
     void testTrainerSwitchTracker();
     void testTrainerChannelDetector();
+    void testAskForHomeNeedsBothCoordinates();
+    void testPartialHomeMessageKeepsAsking();
+    void testPartialHomeIsNotLostOnVehicleSwitch();
     void init() override { UnitTest::init(); }
     void cleanup() override { UnitTest::cleanup(); }
 
@@ -319,6 +323,65 @@ void TelemetryBridgeTest::testTrainerChannelDetector()
     d.start(8);
     d.feed(QVariantList(16, 0));
     QCOMPARE(d.finish(&ch), O::NoRc);
+}
+
+// Home is known only when both coordinates have arrived. With just one of
+// them, the bridge must keep asking the vehicle for HOME_POSITION; stopping
+// early leaves the mission estimate without a home for the whole flight.
+void TelemetryBridgeTest::testAskForHomeNeedsBothCoordinates()
+{
+    _connectMockLink(MAV_AUTOPILOT_ARDUPILOTMEGA);
+    TelemetryBridge bridge;
+    bridge._vehicle = _vehicle;   // no signal wiring: drive the decision directly
+
+    bridge._homeLatitude = 37.4;
+    bridge._homeLongitude = 0.0;
+    bridge._homeAskTimer.start();
+    bridge._askForHome();
+    QVERIFY2(bridge._homeAskTimer.isActive(), "latitude alone is not a known home");
+
+    bridge._homeLatitude = 0.0;
+    bridge._homeLongitude = -122.1;
+    bridge._homeAskTimer.start();
+    bridge._askForHome();
+    QVERIFY2(bridge._homeAskTimer.isActive(), "longitude alone is not a known home");
+
+    bridge._homeLatitude = 37.4;
+    bridge._homeLongitude = -122.1;
+    bridge._homeAskTimer.start();
+    bridge._askForHome();
+    QVERIFY(!bridge._homeAskTimer.isActive());
+}
+
+// A HOME_POSITION message carrying only one coordinate must not stop the
+// request timer: otherwise the _askForHome fix never gets a second chance.
+void TelemetryBridgeTest::testPartialHomeMessageKeepsAsking()
+{
+    _connectMockLink(MAV_AUTOPILOT_ARDUPILOTMEGA);
+    TelemetryBridge bridge;
+    bridge.setVehicle(_vehicle);
+    QVERIFY(bridge._homeAskTimer.isActive());
+
+    emit _vehicle->homePositionChanged(QGeoCoordinate(37.4, 0.0, 0.0));
+    QVERIFY2(bridge._homeAskTimer.isActive(), "a latitude-only HOME_POSITION is not a home fix");
+
+    emit _vehicle->homePositionChanged(QGeoCoordinate(37.4, -122.1, 0.0));
+    QVERIFY(!bridge._homeAskTimer.isActive());
+}
+
+// Switching vehicles clears the previous home. A half-known home is not a
+// position to announce as changed while it is being cleared.
+void TelemetryBridgeTest::testPartialHomeIsNotLostOnVehicleSwitch()
+{
+    _connectMockLink(MAV_AUTOPILOT_ARDUPILOTMEGA);
+    TelemetryBridge bridge;
+    bridge._vehicle = _vehicle;
+    bridge._homeLatitude = 37.4;
+    bridge._homeLongitude = 0.0;
+    QSignalSpy homeChanged(&bridge, &TelemetryBridge::homePositionChanged);
+
+    bridge.setVehicle(nullptr);
+    QCOMPARE(homeChanged.count(), 0);
 }
 
 UT_REGISTER_TEST(TelemetryBridgeTest)

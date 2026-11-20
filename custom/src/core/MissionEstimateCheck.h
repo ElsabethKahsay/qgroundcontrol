@@ -58,7 +58,13 @@ public:
             return;
         }
         if (r.value(QStringLiteral("noMission")).toBool()) {
-            set(CheckStatus::Skipped, QStringLiteral("No mission: not needed for manual flight"));
+            // A bad GPS still matters with no mission: ArduPilot sets home
+            // where the copter is when it arms, so say so instead of hiding
+            // the problem behind the grey "no mission" row.
+            if (r.value(QStringLiteral("gpsPoor")).toBool())
+                set(CheckStatus::Warning, QStringLiteral("GPS unreliable: home would be set in the wrong place"));
+            else
+                set(CheckStatus::Skipped, QStringLiteral("No mission: not needed for manual flight"));
             return;
         }
         const int result = r.value(QStringLiteral("result")).toInt();

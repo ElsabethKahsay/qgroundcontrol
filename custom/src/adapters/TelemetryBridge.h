@@ -51,6 +51,10 @@ class Vehicle;
 class TelemetryBridge : public QObject {
     Q_OBJECT
 
+    // Test seam: drive the home-request decision directly instead of waiting
+    // for the first-ask timer to fire in a live link.
+    friend class TelemetryBridgeTest;
+
     // ==================== Connection status ====================
 
     /// True when a Vehicle is set (i.e. a link to the autopilot exists).

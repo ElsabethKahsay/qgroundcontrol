@@ -88,18 +88,10 @@
 // ---------------------------------------------------------------------------
 // Harness: unit-test mode skips the normal app boot, so PreflightPlugin::init()
 // (which constructs every manager the plugin exposes to QML) never runs. Call
-// it once per test process so createQmlApplicationEngine exposes real context
+// it before createQmlApplicationEngine so the engine exposes real context
 // properties instead of silently skipping its null-guarded registrations.
+// init() is idempotent, so no test-side once-guard is needed.
 // ---------------------------------------------------------------------------
-
-static void preflightInitOnce()
-{
-    static bool initialized = false;
-    if (!initialized) {
-        PreflightPlugin::instance()->init();
-        initialized = true;
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Tiny helpers shared by both smoke suites.
@@ -295,7 +287,7 @@ void MotorCheckPanelSmokeTest::cleanupTestCase()
 
 void MotorCheckPanelSmokeTest::_loadComponent()
 {
-    preflightInitOnce();
+    PreflightPlugin::instance()->init();
     _engine.reset(QGCCorePlugin::instance()->createQmlApplicationEngine(nullptr));
     QVERIFY2(_engine, "createQmlApplicationEngine returned null");
     QVERIFY2(_engine->rootContext()->contextProperty(QStringLiteral("HardwareTestController")).isValid(),
@@ -456,7 +448,7 @@ void MainStatusIndicatorSmokeTest::cleanupTestCase()
 
 void MainStatusIndicatorSmokeTest::_loadComponent()
 {
-    preflightInitOnce();
+    PreflightPlugin::instance()->init();
 
     // The real app keeps ONE QML engine for its whole lifetime. The suite also
     // shares one engine+window across every test (destroying a fresh engine per
@@ -775,7 +767,7 @@ void FlyQuickActionsSmokeTest::cleanupTestCase()
 
 void FlyQuickActionsSmokeTest::_loadComponent()
 {
-    preflightInitOnce();
+    PreflightPlugin::instance()->init();
 
     if (!_engine) {
         _engine.reset(QGCCorePlugin::instance()->createQmlApplicationEngine(nullptr));
@@ -1248,7 +1240,7 @@ QStringList ChecklistPagesSmokeTest::_texts(QQuickItem *item, int depth)
 
 void ChecklistPagesSmokeTest::_load(const QString &relPath)
 {
-    preflightInitOnce();
+    PreflightPlugin::instance()->init();
     if (!_engine) {
         _engine.reset(QGCCorePlugin::instance()->createQmlApplicationEngine(nullptr));
         QVERIFY(_engine);
@@ -1345,7 +1337,7 @@ private slots:
     void init() override
     {
         UnitTest::init();
-        preflightInitOnce();
+        PreflightPlugin::instance()->init();
         // No terrain from the network: the tests give it themselves.
         if (auto *vpm = VehicleProfileManager::instance())
             vpm->setTerrainQueriesEnabled(false);
@@ -1360,6 +1352,7 @@ private slots:
         UnitTest::cleanup();
     }
 
+    void testInitIsIdempotent();
     void testForceArmNeedsPackOrWaiver();
     void testWaiverKeptAcrossBenchArmClearedAfterFlight();
     void testFlyViewTargetDistanceFromVehicle();
@@ -1385,6 +1378,7 @@ private slots:
     void testGpsJudgedFromTheVehicle();
     void testUnitTestRunKeepsOwnNameAndPaths();
     void testVehicleReKeyReloadsTheProfile();
+    void testLinkLossKeepsDatabaseErrorClear();
 
 private:
     bool _connectPlane();
@@ -1420,6 +1414,20 @@ bool LivePluginBenchTest::_waitArmed(bool armed, int ms)
 // The bench Force Arm button calls TelemetryBridge::forceArm(). With no pack
 // and no waiver the gate refuses it and nothing reaches the vehicle; once the
 // pilot waives the pack the same call arms.
+// init() is called by the test harness when unit-test mode skips the app boot.
+// A second call (several suites in one process, or a host calling it again)
+// must not build a second set of managers or re-run its signal wiring.
+void LivePluginBenchTest::testInitIsIdempotent()
+{
+    PreflightPlugin *plugin = PreflightPlugin::instance();
+    QVERIFY(plugin);
+    QCOMPARE(plugin->findChildren<PreflightManager *>().size(), 1);
+    QCOMPARE(plugin->findChildren<TelemetryBridge *>().size(), 1);
+    plugin->init();
+    QCOMPARE(plugin->findChildren<PreflightManager *>().size(), 1);
+    QCOMPARE(plugin->findChildren<TelemetryBridge *>().size(), 1);
+}
+
 void LivePluginBenchTest::testForceArmNeedsPackOrWaiver()
 {
     QVERIFY2(_connectPlane(), "mock plane did not connect / resolve its UID");
@@ -4001,13 +4009,43 @@ void LivePluginBenchTest::testUnitTestRunKeepsOwnNameAndPaths()
 {
     // Boot the plugin here as well, so the check does not depend on which
     // test ran first.
-    preflightInitOnce();
+    PreflightPlugin::instance()->init();
     const QString appName = QCoreApplication::applicationName();
     QVERIFY2(appName.endsWith(QStringLiteral("_unittest")), qPrintable(appName));
     const QString dbPath = DatabaseManager::defaultDatabasePath();
     QVERIFY2(!dbPath.contains(QStringLiteral("/UAVPreflight/Skywin GCS/")), qPrintable(dbPath));
     const QString settingsPath = QSettings().fileName();
     QVERIFY2(!settingsPath.endsWith(QStringLiteral("Skywin GCS.ini")), qPrintable(settingsPath));
+}
+
+// Closing an open flight when the link drops must leave no write error: the
+// banner is bound to DatabaseManager::runtimeError(), and every flight row
+// still looks correct if one of the close writes fails. This guards the empty
+// error after that path (the banner itself did not reproduce in this harness).
+void LivePluginBenchTest::testLinkLossKeepsDatabaseErrorClear()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    QVERIFY2(db.runtimeError().isEmpty(), qPrintable(db.runtimeError()));
+    QVERIFY2(_connectPlane(), "mock copter did not connect / resolve its UID");
+
+    FlightSession::instance()->setMode(QStringLiteral("FLIGHT"));
+    _vehicle->setArmed(true, false);
+    QVERIFY(_waitArmed(true));
+    int historyId = -1;
+    for (int i = 0; i < 100 && historyId <= 0; ++i) {
+        QTest::qWait(50);
+        historyId = db.recordingHistoryFlightId();
+    }
+    QVERIFY2(historyId > 0, "no Flight History row for the flight");
+    QTest::qWait(200);
+
+    // The vehicle disappears while the flight is still open.
+    _disconnectMockLink();
+    for (int i = 0; i < 200 && db.recordingHistoryFlightId() > 0; ++i)
+        QTest::qWait(50);
+    QVERIFY2(db.recordingHistoryFlightId() <= 0, "the flight did not close on vehicle removal");
+
+    QVERIFY2(db.runtimeError().isEmpty(), qPrintable(db.runtimeError()));
 }
 
 UT_REGISTER_TEST(LivePluginBenchTest)

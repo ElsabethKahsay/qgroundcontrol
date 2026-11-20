@@ -54,12 +54,8 @@ private slots:
         UnitTest::init();
         // Unit-test mode skips the app boot, so PreflightPlugin::init() (which
         // constructs FlightSession, OperatorManager, ArmingGate, ...) never runs.
-        // Mirror QmlSmokeTest's harness: boot it once per process.
-        static bool once = false;
-        if (!once) {
-            PreflightPlugin::instance()->init();
-            once = true;
-        }
+        // init() is idempotent, so every test can call it without a once-guard.
+        PreflightPlugin::instance()->init();
         // Fresh database per test (same pattern as FlightSessionTest).
         DatabaseManager::instance().reset();
         DatabaseManager::instance().initialize();

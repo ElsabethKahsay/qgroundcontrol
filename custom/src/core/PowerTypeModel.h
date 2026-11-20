@@ -183,18 +183,20 @@ namespace detail {
 struct CurvePoint { double v, pct; };
 /// Resting cell voltage against charge left, for each chemistry, on a typical
 /// discharge curve: LiPo; LiHV is LiPo 0.15 V higher; Li-ion ("LiIon") is used
-/// from 4.20 V (full) to 2.9 V (empty) per cell, with the usual Li-ion shape
-/// (steeper at both ends, flatter in the middle). A pack's own curve, from its
-/// cell maker or learned from flights, is better than these.
+/// from 4.15 V (full) to 2.9 V (empty) per cell, with the usual Li-ion shape
+/// (steeper at both ends, flatter in the middle). The top of each curve is
+/// fullCellVolts, so the charge is continuous at the full threshold instead of
+/// jumping from ~96 to 100. A pack's own curve, from its cell maker or learned
+/// from flights, is better than these.
 inline const CurvePoint *curve(const QString &chemistry, int &n)
 {
     static const CurvePoint lipo[] = {
         {3.27, 0}, {3.61, 5}, {3.69, 10}, {3.71, 15}, {3.73, 20}, {3.75, 25}, {3.77, 30}, {3.79, 35},
         {3.80, 40}, {3.82, 45}, {3.84, 50}, {3.85, 55}, {3.87, 60}, {3.91, 65}, {3.95, 70}, {3.98, 75},
-        {4.02, 80}, {4.08, 85}, {4.11, 90}, {4.15, 95}, {4.20, 100} };
+        {4.02, 80}, {4.08, 85}, {4.11, 90}, {4.15, 100} };
     static const CurvePoint liion[] = {
         {2.90, 0}, {3.20, 5}, {3.35, 10}, {3.48, 20}, {3.57, 30}, {3.65, 40}, {3.73, 50},
-        {3.81, 60}, {3.90, 70}, {4.00, 80}, {4.08, 90}, {4.20, 100} };
+        {3.81, 60}, {3.90, 70}, {4.00, 80}, {4.08, 90}, {4.15, 100} };
     if (chemistry.compare(QLatin1String("LiIon"), Qt::CaseInsensitive) == 0) {
         n = int(sizeof(liion) / sizeof(CurvePoint));
         return liion;

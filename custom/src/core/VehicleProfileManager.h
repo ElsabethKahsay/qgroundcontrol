@@ -240,6 +240,12 @@ public:
             return qBound(0, qRound(100.0 * (1.0 - mahConsumed / (packCapacityAh * 1000.0))), 100);
         return fcSocPct >= 0 ? qBound(0, fcSocPct, 100) : -1;
     }
+    /// The charge (%) counted from the arm: the charge at the arm less the mAh
+    /// used, scaled by the calibration factor. This is the arithmetic behind
+    /// powerLive.socNowPct; the mission estimate calls it on the same tick's
+    /// readings instead of reusing the previous update's value. -1 when the
+    /// count is unknown.
+    static double socNowPctFromCount(double armStartSocPct, double mahUsedMah, double factor, double capAh);
 
     /// True when the battery % must come from the GCS's own count: the
     /// estimate is running on a copter that is armed, whose current was found
@@ -504,6 +510,21 @@ public:
     /// returning or landing; an unknown margin keeps the last state.
     static constexpr double kReturnNowClearPts = 3.0;
     static bool returnNowHeld(bool wasOn, double marginPct, bool returning);
+    /// The take-off estimate said the mission fits: ready, pessimistic result
+    /// green (Fits or Comfortable). Only then may a premature mission RETURN
+    /// NOW wait for this flight's hover; a red/amber or absent estimate must
+    /// show at once.
+    static bool takeoffEstimateFits(const QVariantMap &estimate);
+    /// Hold the mission RETURN NOW while the hover model still comes from
+    /// take-off: fewer than MotorTable::kMinHoverSamples learned this flight
+    /// and inside the cap after the arm. Advice only — never an arm or flight
+    /// change. One hover sample changes nothing in the estimate.
+    static constexpr qint64 kHoverHoldMaxMs = 90'000;
+    static bool holdMissionReturnNow(const QVariantMap &takeoffEstimate, int hoverSamples, qint64 sinceArmMs);
+    /// Why the trip-based RETURN NOW went off, for the after-flight log. The
+    /// trip numbers are meaningless in an "off" line: it can go off because
+    /// the flight ended, the copter is coming home, or the trip fits again.
+    static QString returnNowOffWhy(const QVariantMap &powerLive, bool returning);
 
     /// The in-flight mission estimate while the GPS is unreliable
     /// (TelemetryBridge::gpsPoor): marked (gpsPoor), the reason first among
@@ -631,6 +652,18 @@ private slots:
     void _updatePowerLive(double fcMahUsed, int socPct);
 
 private:
+    friend class VehicleProfileManagerTest;
+
+    /// The mAh used and factor this update counts from, and whether it is the
+    /// GCS's own count. Shared by _updatePowerLive (for socNowPct) and
+    /// _updateLiveEstimate (for the mission estimate) so both use one charge.
+    struct ChargeCount {
+        double mahUsed = -1.0;   ///< mAh used since the arm; -1 when unknown.
+        double factor = 1.0;     ///< calibration factor when counting in the GCS.
+        bool gcsCount = false;   ///< the GCS's count, not the controller's.
+    };
+    ChargeCount chargeCount(double fcMahUsed) const;
+
     static VehicleProfileManager *s_instance;
     QString m_vehicleType = QStringLiteral("UNKNOWN");
     VehicleKind m_kind = VehicleKind::Unknown;
@@ -731,6 +764,9 @@ private:
     /// released this flight.
     PayloadRelease::Detector m_drop;
     QVariantMap m_missionLive;          ///< missionLive()
+    bool m_missionReturnNowRaw = false; ///< unheld RETURN NOW decision, so the hold does not break the hysteresis
+    bool m_missionReturnHeld = false;   ///< whether the hover hold is active, for the start/end log lines
+    int m_lastMissionSocPct = -1;       ///< charge the last _updateMissionLive call was given (-1: unknown)
     void _updateMissionLive(int socPct, bool chargeUnknown = false);
     // This flight, from the arm: the take-off estimate, the items reached
     // ({seq, timeS, socPct}), the mission item flown last, and what has been

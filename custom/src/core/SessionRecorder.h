@@ -189,8 +189,15 @@ public:
         m_maxAltitude = s.altitudeM;
         m_maxVoltage = s.voltage;
         // The pack as it was at arm; editing it later changes no flight.
+        // A dead current sensor leaves the FC's % at 100 all flight; the GCS's
+        // own count, from the resting voltage at arm, is the real start charge
+        // (as it already is for the end %). -1 means unknown, stored as NULL.
+        int startPercent = s.percent;
+        const GcsCharge gcsAtArm = m_gcsCharge ? m_gcsCharge() : GcsCharge{};
+        if (gcsAtArm.applies)
+            startPercent = gcsAtArm.percent >= 0.0 ? qRound(gcsAtArm.percent) : -1;
         if (m_flightId > 0) {
-            m_db.openFlightBattery(m_flightId, 1, start.pack, s.voltage, s.percent);
+            m_db.openFlightBattery(m_flightId, 1, start.pack, s.voltage, startPercent);
             // The row Flight History, exports and stats read. A Flight form
             // row already exists: adopt it rather than opening a second one.
             bool adopted = false;
@@ -360,7 +367,7 @@ private:
             logHistoryEvent(QStringLiteral("DISARM"), reason, s);
             m_db.setFlightDisarmedAt(m_historyId, QDateTime::currentDateTimeUtc());
             m_db.closeFlight(m_historyId, qRound(end.durationSec),
-                             std::isfinite(m_maxAltitude) ? m_maxAltitude : 0.0,
+                             m_maxAltitude,   // NaN -> NULL: unknown is not 0 m
                              std::isfinite(m_minVoltage) ? m_minVoltage : 0.0,
                              std::isfinite(m_maxVoltage) ? m_maxVoltage : 0.0, 0,
                              0.0, 0.0, qMax(0.0, distM));
