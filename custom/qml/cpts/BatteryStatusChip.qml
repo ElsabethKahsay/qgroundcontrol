@@ -7,9 +7,12 @@
 //     FC not configured (battery_remaining = -1)    → "? · —"
 //     disarmed or current below gate (3 A)          → "87% · —"
 //     armed + current streaming + capacity known    → "87% · ~29 min"
-//   Tapping the chip toggles a lightweight detail popover (SOC, smoothed
-//   current, voltage, usable Ah, reserve %, pack source, Live/Stale) that is
-//   allowed to coexist with the panel quick actions.
+//   Tapping the chip toggles a lightweight detail popover that may coexist
+//   with the panel quick actions: the charge and where it comes from, why
+//   RETURN NOW is on, time/distance left, the rest of the trip, charge left
+//   and usable above the reserve, charge used this flight, the current and
+//   voltage (per cell, reserve voltage), the pack (flagged while it is still
+//   the default), the motor table, the pre-flight estimate and the payload.
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 UAV Preflight Contributors
 
@@ -116,12 +119,27 @@ Rectangle {
     readonly property bool _canComputeTime:
         _socKnown && _gateOk && _capacityAh > 0 && _iSmooth > 0
 
-    readonly property string _packLabel: {
-        if (_series > 0 && _parallel > 0 && _cellMah > 0) {
-            return _series + "S \u00D7 " + _parallel + "P \u00D7 " + _cellMah + " mAh"
-        }
-        return "Not configured"
-    }
+    // Where the shown % comes from, in words, for the detail popover.
+    readonly property string _socSource: _socFromCount ? (_armed ? qsTr("GCS's count") : qsTr("resting voltage"))
+                                                       : qsTr("flight controller")
+    // A new copter starts with this default pack (6S 1P 5000 mAh LiPo) until
+    // its own is set on the Vehicles page; every estimate depends on it.
+    readonly property bool _packIsDefault: _series === 6 && _parallel === 1 && _cellMah === 5000
+                                           && !!_profile && _profile.batteryType === "LiPo"
+    readonly property string _packText: (_series > 0 && _parallel > 0 && _cellMah > 0)
+        ? _series + "S " + _parallel + "P " + _capacityAh.toFixed(1) + " Ah " + (_profile ? _profile.batteryType : "")
+          + " · " + qsTr("reserve %1 %").arg(Math.round((_profile ? _profile.batteryReserve : 0.2) * 100))
+        : qsTr("not set")
+    // Charge used since the arm: the estimate's start charge (resting
+    // voltage at the arm) less its charge now; -1 when either is unknown.
+    readonly property double _usedAh: (_plActive && _armed && _capacityAh > 0
+                                       && typeof _pl.startSocPct === "number" && _pl.startSocPct >= 0
+                                       && typeof _pl.socNowPct === "number" && _pl.socNowPct >= 0)
+        ? Math.max(0, _capacityAh * (_pl.startSocPct - _pl.socNowPct) / 100.0) : -1
+    // The motor table's current is the one counted when the GCS keeps the
+    // count (no measuring sensor); the sensor's own reading otherwise.
+    readonly property bool _tableCurrentShown: _plActive && _armed && _pl.chargeSource !== "fc"
+                                               && typeof _pl.tableCurrentA === "number" && _pl.tableCurrentA >= 0
 
     Connections {
         target: _profile
@@ -386,47 +404,43 @@ Rectangle {
                 }
             }
 
-            DetailRow { label: qsTr("State");        value: root._stateLabel
-                        valueColor: root._fresh && root._connected ? Colors.success
-                                  : (!root._connected ? Colors.textDisabled : Colors.warning) }
-            DetailRow { label: qsTr("SOC");          value: root._soc < 0 ? "—" : root._soc + " %"
+            // The charge and where it comes from: the GCS's own count in
+            // flight or the pack's resting voltage on the ground when the
+            // current sensor reads 0 A, the flight controller otherwise.
+            DetailRow { label: qsTr("Charge");
+                        objectName: "chipCharge"
+                        value: root._chargeUnknown ? qsTr("unknown (joined in flight)")
+                               : root._soc < 0 ? "—" : root._soc + " % · " + root._socSource
                         valueColor: root._textColor }
-            DetailRow { label: qsTr("Current (avg)"); value: root._fresh ? root._iSmooth.toFixed(1) + " A" : "—"
-                        valueColor: Colors.textPrimary }
-            DetailRow { label: qsTr("Voltage");       value: root._voltage > 0.1 ? root._voltage.toFixed(1) + " V" : "—"
-                        valueColor: Colors.textPrimary }
-            DetailRow { label: qsTr("Full capacity");  value: root._capacityAh > 0 ? root._capacityAh.toFixed(2) + " Ah" : "—"
-                        valueColor: Colors.textPrimary }
-            DetailRow { label: qsTr("Remaining");      value: root._remainingAh >= 0 ? root._remainingAh.toFixed(2) + " Ah" : "—"
-                        valueColor: Colors.textPrimary }
-            DetailRow { label: qsTr("Usable (−reserve)"); value: root._usableAh >= 0 ? root._usableAh.toFixed(2) + " Ah" : "—"
-                        valueColor: Colors.textPrimary }
-            DetailRow { label: qsTr("Reserve");        value: _profile && _profile.batteryReserve > 0
-                                                       ? Math.round(_profile.batteryReserve * 100) + " %" : "—"
-                        valueColor: Colors.textPrimary }
-            DetailRow { label: qsTr("Pack");           value: root._packLabel
-                        valueColor: Colors.textPrimary }
-            DetailRow { label: qsTr("Est. flight time");
-                        value: root._timeMin >= 0 ? "~" + Math.round(root._timeMin) + " min" : "—"
-                        valueColor: root._timeShown ? Colors.success : Colors.textSecondary }
-            DetailRow { label: qsTr("Pre-flight est.");
-                        value: root._preEstShown
-                               ? "~" + Math.round(root._preEst.flightTimeMin) + " min / " + root._preEst.rangeKm.toFixed(1) + " km"
-                               : "—"
-                        valueColor: root._preEstShown && root._preEst.isCalibrated ? Colors.success : Colors.textSecondary }
-            DetailRow { label: qsTr("Motor table");
-                        objectName: "chipEstimateSource"
-                        visible: root._plActive
-                        value: !root._plActive ? ""
-                               : root._pl.typeName
-                                 + (root._pl.motorsBeyond > 0 ? qsTr(" (beyond table)") : "")
-                                 + (root._pl.throttleSource === "overall throttle" ? qsTr(" (from the overall throttle)") : "")
-                        valueColor: Colors.textPrimary }
+            // Why RETURN NOW is on: the mission's own reason, else how far the
+            // rest of the trip is short.
+            Text {
+                objectName: "chipReturnWhy"
+                Layout.fillWidth: true
+                visible: root._returnNow
+                text: qsTr("Why: ") + (root._pl.returnNowWhy
+                                       ? root._pl.returnNowWhy
+                                       : root._pl.tripKnown
+                                         ? qsTr("the rest of the trip is short by %1 Ah").arg(Number(root._pl.tripShortAh).toFixed(1))
+                                         : qsTr("the charge is at the reserve"))
+                wrapMode: Text.Wrap
+                font.pixelSize: Config.fontSizeSmall
+                font.weight: Font.DemiBold
+                color: Colors.error
+            }
+            // Time and distance left: the motor-table estimate when the copter
+            // is linked to one (cruise endurance before the arm), else the
+            // estimate from the flight controller's current.
             DetailRow { label: qsTr("Left");
-                        visible: root._plActive
-                        value: root._plActive && root._pl.timeLeftMin >= 0
-                               ? "~" + Math.round(root._pl.timeLeftMin) + " min / " + root._km(root._pl.distLeftKm)
-                               : "—"
+                        objectName: "chipLeft"
+                        value: root._chargeUnknown ? "—"
+                               : root._plActive && root._armed
+                                 ? (root._pl.timeLeftMin >= 0
+                                    ? "~" + Math.round(root._pl.timeLeftMin) + " min / " + root._km(root._pl.distLeftKm) : "—")
+                               : root._plActive
+                                 ? (root._pl.cruiseMin >= 0
+                                    ? "~" + Math.round(root._pl.cruiseMin) + " min / " + root._km(root._pl.cruiseKm) + qsTr(" cruising") : "—")
+                               : root._timeMin >= 0 ? "~" + Math.round(root._timeMin) + " min" : "—"
                         valueColor: Colors.textPrimary }
             // The rest of the flight: from the mission estimate while it runs
             // (the same source as RETURN NOW), else the trip to a target.
@@ -441,6 +455,69 @@ Rectangle {
                                : root._returnNow ? "short by " + Number(root._pl.tripShortAh).toFixed(1) + " Ah"
                                : Number(root._pl.tripNeedAh).toFixed(1) + " of " + Number(root._pl.usableAh).toFixed(1) + " Ah"
                         valueColor: root._returnNow ? Colors.error : Colors.success }
+            // What is in the pack, and what can be used above the reserve.
+            DetailRow { label: qsTr("Charge left");
+                        objectName: "chipChargeLeft"
+                        value: root._chargeUnknown || root._remainingAh < 0 ? "—"
+                               : root._remainingAh.toFixed(1) + " of " + root._capacityAh.toFixed(1) + " Ah · "
+                                 + Math.max(0, root._usableAh).toFixed(1) + qsTr(" usable")
+                        valueColor: Colors.textPrimary }
+            // Used since the arm, from the estimate's start charge (the
+            // resting voltage at the arm) and its charge now.
+            DetailRow { label: qsTr("Used this flight");
+                        objectName: "chipUsed"
+                        visible: root._plActive && root._armed
+                        value: root._usedAh >= 0
+                               ? root._usedAh.toFixed(1) + " Ah · " + qsTr("started at %1 %").arg(Math.round(root._pl.startSocPct))
+                               : "—"
+                        valueColor: Colors.textPrimary }
+            // The current the charge is counted from: the motor table's when
+            // the GCS counts (the sensor reads 0 A), the sensor's otherwise.
+            DetailRow { label: qsTr("Current");
+                        objectName: "chipCurrent"
+                        value: root._tableCurrentShown
+                               ? Number(root._pl.tableCurrentA).toFixed(1) + qsTr(" A (motor table)")
+                               : root._fresh ? root._iSmooth.toFixed(1) + qsTr(" A (sensor)") : "—"
+                        valueColor: Colors.textPrimary }
+            DetailRow { label: qsTr("Voltage");
+                        objectName: "chipVoltage"
+                        value: root._voltage <= 0.1 ? "—"
+                               : root._voltage.toFixed(1) + " V"
+                                 + (root._series > 0 ? " · " + (root._voltage / root._series).toFixed(2) + qsTr(" V/cell") : "")
+                                 + (root._armed && root._plActive && root._pl.reserveVolts > 0
+                                    ? qsTr(" · reserve ~%1 V").arg(Number(root._pl.reserveVolts).toFixed(1)) : "")
+                        valueColor: Colors.textPrimary }
+            // The pack the estimate uses. A new copter starts with a default
+            // 6S 1P 5000 mAh LiPo: said plainly, since every number above
+            // depends on it.
+            DetailRow { label: qsTr("Pack");
+                        objectName: "chipPack"
+                        value: root._packIsDefault
+                               ? qsTr("default 6S 1P 5 Ah: set it on the Vehicles page")
+                               : root._packText
+                        valueColor: root._packIsDefault ? Colors.warning : Colors.textPrimary }
+            DetailRow { label: qsTr("Motor table");
+                        objectName: "chipEstimateSource"
+                        visible: root._plActive
+                        value: !root._plActive ? ""
+                               : root._pl.typeName
+                                 + (root._pl.motorsBeyond > 0 ? qsTr(" (beyond table)") : "")
+                                 + (root._pl.throttleSource === "overall throttle" ? qsTr(" (from the overall throttle)") : "")
+                        valueColor: Colors.textPrimary }
+            // Before the arm, without a motor table: the pre-flight estimate
+            // from this copter's past flights (or the airframe's default).
+            Text {
+                objectName: "chipPreflight"
+                Layout.fillWidth: true
+                visible: root._preEstShown && !root._plActive
+                text: !visible ? ""
+                      : qsTr("Pre-flight: ~%1 min / %2 km, %3").arg(Math.round(root._preEst.flightTimeMin))
+                            .arg(root._preEst.rangeKm.toFixed(1))
+                            .arg(root._preEst.sourceLabel + (root._preEst.assumedFull ? qsTr(", assuming a full pack") : ""))
+                wrapMode: Text.Wrap
+                font.pixelSize: Config.fontSizeSmall
+                color: root._preEst && root._preEst.isCalibrated ? Colors.success : Colors.textSecondary
+            }
             // The payload: what is still aboard, and how many were released
             // (seen on the release servo output, or the button below).
             DetailRow { label: qsTr("Payload");
@@ -467,12 +544,6 @@ Rectangle {
                 text: qsTr("Payload dropped")
                 onClicked: if (root._profile) root._profile.payloadDroppedTap()
             }
-            DetailRow { label: qsTr("Based on");
-                        visible: root._preEstShown
-                        value: root._preEstShown
-                               ? root._preEst.sourceLabel + (root._preEst.assumedFull ? ", assuming a full pack" : "")
-                               : ""
-                        valueColor: Colors.textSecondary }
         }
     }
 }

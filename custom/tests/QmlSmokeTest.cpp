@@ -61,6 +61,7 @@
 #include "mocks/MockTelemetryBridge.h"
 #include "QGCPalette.h"
 #include "FlightSession.h"
+#include "OperatorManager.h"
 #include "MissionManager/MissionManager.h"
 #include "MissionManager/MissionItem.h"
 #include "MissionAssess.h"
@@ -1371,6 +1372,7 @@ private slots:
     void testPowerLiveInFlyView();
     void testEstimatorPanelKeepsTheStoredPack();
     void testFlightHistoryDetailsRecorded();
+    void testVehicleTotalsFromRecorderClose();
     void testMotorOutputsReadForTheEstimate();
     void testMotorTableLiveEstimate();
     void testChargeUnknownAfterJoin();
@@ -2341,6 +2343,67 @@ void LivePluginBenchTest::testFlightHistoryDetailsRecorded()
              qPrintable(events.join(QStringLiteral(", "))));
     QVERIFY2(_vehicle->flightMode() != other || events.contains(QStringLiteral("MODE_CHANGE")),
              qPrintable(QStringLiteral("mode %1 -> %2, events %3").arg(before, other, events.join(QStringLiteral(", ")))));
+}
+
+// The vehicle's flight time and count come from the recorder's close, once
+// per non-bench arm: an RC flight with no form counts, a form flight is not
+// double-counted when its form closes, and a bench arm counts for neither.
+void LivePluginBenchTest::testVehicleTotalsFromRecorderClose()
+{
+    QVERIFY2(_connectPlane(), "mock plane did not connect / resolve its UID");
+    const QString uid = VehicleProfileManager::instance()->currentDeviceUid();
+    QVERIFY(!uid.isEmpty());
+    FlightSession *fs = FlightSession::instance();
+    QVERIFY(fs);
+
+    auto totals = [&uid]() -> QVariantList {
+        QSqlQuery q(QSqlDatabase::database());
+        q.prepare(QStringLiteral("SELECT total_flight_time_sec, total_flight_count FROM vehicles WHERE device_uid = ?"));
+        q.addBindValue(uid);
+        if (!q.exec() || !q.next()) return {};
+        return {q.value(0), q.value(1)};
+    };
+    auto flyAndDisarm = [this]() {
+        _vehicle->setArmed(true, false);
+        if (!_waitArmed(true)) return false;
+        QTest::qWait(1200);
+        _vehicle->setArmed(false, false);
+        if (!_waitArmed(false)) return false;
+        QTest::qWait(300);
+        return true;
+    };
+
+    // 1) RC flight, no Flight form at all.
+    const QVariantList beforeRc = totals();
+    QVERIFY2(!beforeRc.isEmpty(), "vehicle row missing");
+    fs->setVehicle(_vehicle);
+    fs->setMode(QStringLiteral("FLIGHT"));
+    _vehicle->setArmCommandInterceptor({});
+    QVERIFY(flyAndDisarm());
+    const QVariantList afterRc = totals();
+    QCOMPARE(afterRc.at(1).toInt(), beforeRc.at(1).toInt() + 1);
+    QVERIFY(afterRc.at(0).toInt() > beforeRc.at(0).toInt());
+
+    // 2) Form flight: the recorder adopts the row and closes it; closing the
+    // form afterwards must not add a second flight's time or count.
+    const QVariantList beforeForm = totals();
+    const int op = OperatorManager::instance()->addOperator(QStringLiteral("Totals Pilot"), QStringLiteral("pilot"));
+    QVERIFY(op > 0);
+    OperatorManager::instance()->selectOperator(op);
+    fs->setMode(QStringLiteral("FLIGHT"));
+    fs->startFlightSession(QStringLiteral("totals purpose"), QStringLiteral("loc"), QStringLiteral("notes"));
+    QVERIFY(fs->currentFlightId() > 0);
+    QVERIFY(flyAndDisarm());
+    fs->closeSession();
+    const QVariantList afterForm = totals();
+    QCOMPARE(afterForm.at(1).toInt(), beforeForm.at(1).toInt() + 1);
+    QVERIFY(afterForm.at(0).toInt() > beforeForm.at(0).toInt());
+
+    // 3) Bench arm (Testing mode): no time, no count.
+    const QVariantList beforeBench = totals();
+    fs->setMode(QStringLiteral("TESTING"));
+    QVERIFY(flyAndDisarm());
+    QCOMPARE(totals(), beforeBench);
 }
 
 // The motor-table estimate's inputs on the mock copter (the real plugin): the
@@ -3405,6 +3468,35 @@ void LivePluginBenchTest::testMotorTableInTheApp()
     QVERIFY(row);
     QCOMPARE(row->property("label").toString(), QStringLiteral("Motor table"));
     QVERIFY2(row->property("value").toString().startsWith(table.name), qPrintable(row->property("value").toString()));
+
+    // The detail popover: the charge with where it comes from, charge left,
+    // time left, and the pack, flagged while it is still a new copter's
+    // default (every estimate depends on it).
+    QObject *charge = findItem(chip.data(), QStringLiteral("chipCharge"));
+    QVERIFY(charge);
+    QCOMPARE(charge->property("label").toString(), QStringLiteral("Charge"));
+    QVERIFY(findItem(chip.data(), QStringLiteral("chipChargeLeft")));
+    QVERIFY(findItem(chip.data(), QStringLiteral("chipLeft")));
+    QObject *packRow = findItem(chip.data(), QStringLiteral("chipPack"));
+    QVERIFY(packRow);
+    const int chipParallelBefore = vpm->batteryParallelCells();
+    const int chipCellMahBefore = vpm->batteryCellMah();
+    const QString chipTypeBefore = vpm->batteryType();
+    vpm->setBatterySeriesCells(6);
+    vpm->setBatteryParallelCells(1);
+    vpm->setBatteryCellMah(5000);
+    vpm->setBatteryType(QStringLiteral("LiPo"));
+    pumpQml(100);
+    QVERIFY2(packRow->property("value").toString().startsWith(QStringLiteral("default 6S 1P")),
+             qPrintable(packRow->property("value").toString()));
+    vpm->setBatteryParallelCells(8);
+    vpm->setBatteryType(QStringLiteral("LiIon"));
+    pumpQml(100);
+    QVERIFY2(packRow->property("value").toString().startsWith(QStringLiteral("6S 8P 40.0 Ah LiIon")),
+             qPrintable(packRow->property("value").toString()));
+    vpm->setBatteryParallelCells(chipParallelBefore);
+    vpm->setBatteryCellMah(chipCellMahBefore);
+    vpm->setBatteryType(chipTypeBefore);
 
     // Unlink from the page: the item needs a link or a waiver again.
     combo->setProperty("currentIndex", 0);

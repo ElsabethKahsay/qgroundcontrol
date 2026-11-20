@@ -4,6 +4,7 @@
 #include <QVariantMap>
 #include <limits>
 #include <QtQml/qqmlregistration.h>
+#include "utils/MonotonicClock.h"
 
 class Vehicle;
 
@@ -144,7 +145,8 @@ private:
     bool         m_historyRowAdopted = false;
     bool         m_formComplete = false;
     QDateTime    m_armedAt;
-    QDateTime    m_startedAt;
+    QDateTime    m_startedAt;   ///< UTC timestamp for the flight row only.
+    qint64       m_startedMs = MonotonicClock::kNever;  ///< Duration's start.
     double       m_maxAltitude  = 0.0;
     double       m_minBatteryV  = 999.0;
     double       m_maxBatteryV  = 0.0;

@@ -112,7 +112,7 @@ void FlightHistoryModel::reload()
     DatabaseManager &db = DatabaseManager::instance();
     const QVariantMap result = db.queryFlights(
         m_currentPage, m_filterFromDate, m_filterToDate,
-        m_filterVehicleId, m_filterOperatorId, m_filterMode,
+        m_filterVehicleKey, m_filterOperatorId, m_filterMode,
         m_filterSearch, m_sortBy, m_pageSize);
     const QVariantList rows = result.value(QStringLiteral("rows")).toList();
     m_flights.clear();
@@ -127,7 +127,7 @@ void FlightHistoryModel::reload()
     endResetModel();
 
     const QVariantMap newStats = db.getFlightStats(
-        m_filterFromDate, m_filterToDate, m_filterVehicleId, m_filterMode);
+        m_filterFromDate, m_filterToDate, m_filterVehicleKey, m_filterMode);
     if (newStats != m_stats) {
         m_stats = newStats;
         emit statsChanged();

@@ -12,7 +12,7 @@ class FlightHistoryModel : public QAbstractListModel
     Q_OBJECT
     Q_PROPERTY(QString filterFromDate READ filterFromDate WRITE setFilterFromDate NOTIFY filterFromDateChanged)
     Q_PROPERTY(QString filterToDate   READ filterToDate   WRITE setFilterToDate   NOTIFY filterToDateChanged)
-    Q_PROPERTY(int     filterVehicleId READ filterVehicleId WRITE setFilterVehicleId NOTIFY filterVehicleIdChanged)
+    Q_PROPERTY(QString filterVehicleKey READ filterVehicleKey WRITE setFilterVehicleKey NOTIFY filterVehicleKeyChanged)
     Q_PROPERTY(int     filterOperatorId READ filterOperatorId WRITE setFilterOperatorId NOTIFY filterOperatorIdChanged)
     Q_PROPERTY(QString filterMode     READ filterMode     WRITE setFilterMode     NOTIFY filterModeChanged)
     Q_PROPERTY(QString filterSearch   READ filterSearch   WRITE setFilterSearch   NOTIFY filterSearchChanged)
@@ -52,10 +52,9 @@ public:
     Q_INVOKABLE void nextPage();
     Q_INVOKABLE void prevPage();
     Q_INVOKABLE void goToPage(int page);
-    /// Backwards-compatible entry point used by the current flight history
-    /// page: sets the vehicle filter and reloads.  The rewritten page (part 3)
-    /// will drive the model purely through filter properties.
-    Q_INVOKABLE void loadForVehicle(int vehicleId) { setFilterVehicleId(vehicleId); }
+    /// Entry point used by the flight history page: sets the vehicle key
+    /// filter and reloads. An empty key shows every vehicle.
+    Q_INVOKABLE void loadForVehicle(const QString &vehicleKey) { setFilterVehicleKey(vehicleKey); }
     /// Full flight record + sub-records (checks, events, tests, compliance)
     /// assembled for the detail panel.
     Q_INVOKABLE QVariantMap getFlightDetail(int flightId);
@@ -67,7 +66,7 @@ public:
     int currentPage() const { return m_currentPage; }
     QString filterFromDate() const { return m_filterFromDate; }
     QString filterToDate() const { return m_filterToDate; }
-    int filterVehicleId() const { return m_filterVehicleId; }
+    QString filterVehicleKey() const { return m_filterVehicleKey; }
     int filterOperatorId() const { return m_filterOperatorId; }
     QString filterMode() const { return m_filterMode; }
     QString filterSearch() const { return m_filterSearch; }
@@ -77,7 +76,7 @@ public:
     // Setters (WRITE props) — each triggers reload().
     Q_INVOKABLE void setFilterFromDate(const QString &v) { m_filterFromDate = v; emit filterFromDateChanged(); reload(); }
     Q_INVOKABLE void setFilterToDate(const QString &v) { m_filterToDate = v; emit filterToDateChanged(); reload(); }
-    Q_INVOKABLE void setFilterVehicleId(int v) { m_filterVehicleId = v; emit filterVehicleIdChanged(); goToPage(0); reload(); }
+    Q_INVOKABLE void setFilterVehicleKey(const QString &v) { m_filterVehicleKey = v; emit filterVehicleKeyChanged(); goToPage(0); reload(); }
     Q_INVOKABLE void setFilterOperatorId(int v) { m_filterOperatorId = v; emit filterOperatorIdChanged(); reload(); }
     Q_INVOKABLE void setFilterMode(const QString &v) { m_filterMode = v; emit filterModeChanged(); reload(); }
     Q_INVOKABLE void setFilterSearch(const QString &v) { m_filterSearch = v; emit filterSearchChanged(); reload(); }
@@ -89,7 +88,7 @@ signals:
     void statsChanged();
     void filterFromDateChanged();
     void filterToDateChanged();
-    void filterVehicleIdChanged();
+    void filterVehicleKeyChanged();
     void filterOperatorIdChanged();
     void filterModeChanged();
     void filterSearchChanged();
@@ -107,7 +106,7 @@ private:
 
     QString m_filterFromDate;
     QString m_filterToDate;
-    int     m_filterVehicleId = 0;
+    QString m_filterVehicleKey;
     int     m_filterOperatorId = 0;
     QString m_filterMode;
     QString m_filterSearch;

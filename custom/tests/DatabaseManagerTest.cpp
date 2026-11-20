@@ -2,6 +2,7 @@
 #include <QTemporaryDir>
 #include "core/SessionRecorder.h"
 #include "core/GcsLinkDropsCheck.h"
+#include "core/PowerTypeModel.h"
 #include <QSignalSpy>
 #include <QTemporaryFile>
 #include <QDir>
@@ -79,6 +80,9 @@ private slots:
     void testExportFlightsCsv();
     void testExportFlightDetailCsv();
     void testGetFlightStats();
+    void testGetFlightStatsExcludesBenchAndGroundFlights();
+    void testIncrementVehicleFlightTimeUsesDeviceUid();
+    void testHistoryVehicleKeyDoesNotMergeSysid();
     void testBackupBeforeMigration();
     void testBackupIncludesWritesStillInTheWal();
     void testEmptyNameUpsertAndSession();
@@ -1581,9 +1585,15 @@ void DatabaseManagerTest::testGetFlightStats()
     QVERIFY(f3 > 0);
     QVERIFY(db.closeFlight(f3, 120, 50.0, 12.0, 13.8, 1, 0, 0, 0, 0,
                            1, 0, 0, 1));
+    // Form rows carry only a sysid; give them the canonical key the History
+    // filter now uses (recorded flights get it from their session).
+    QSqlQuery q(QSqlDatabase::database());
+    QVERIFY(q.exec(QStringLiteral("UPDATE flights SET device_uid = 'UID-NINE' WHERE id IN (%1, %2)")
+                   .arg(f1).arg(f2)));
+    QVERIFY(q.exec(QStringLiteral("UPDATE flights SET device_uid = 'UID-TEN' WHERE id = %1").arg(f3)));
 
     // Unfiltered: 3 flights, 1320s -> 22m 0s, 2 vehicles, 2 operators.
-    QVariantMap stats = db.getFlightStats(QString(), QString(), 0, QString());
+    QVariantMap stats = db.getFlightStats(QString(), QString(), QString(), QString());
     QCOMPARE(stats.value(QStringLiteral("totalFlights")).toInt(), 3);
     QCOMPARE(stats.value(QStringLiteral("totalHoursStr")).toString(), QStringLiteral("22m 0s"));
     QCOMPARE(stats.value(QStringLiteral("vehicleCount")).toInt(), 2);
@@ -1595,21 +1605,182 @@ void DatabaseManagerTest::testGetFlightStats()
 
     // Filtered to FLIGHT only: 2 flights, 1200s -> 20m 0s, 1 vehicle,
     // each row is 100% pass, anomalies (0+2)/2 -> 100%.
-    stats = db.getFlightStats(QString(), QString(), 0, QStringLiteral("FLIGHT"));
+    stats = db.getFlightStats(QString(), QString(), QString(), QStringLiteral("FLIGHT"));
     QCOMPARE(stats.value(QStringLiteral("totalFlights")).toInt(), 2);
     QCOMPARE(stats.value(QStringLiteral("totalHoursStr")).toString(), QStringLiteral("20m 0s"));
     QCOMPARE(stats.value(QStringLiteral("vehicleCount")).toInt(), 1);
     QCOMPARE(stats.value(QStringLiteral("avgPassRate")).toInt(), 100);
     QCOMPARE(stats.value(QStringLiteral("anomalyRate")).toInt(), 100);
 
-    // Filtered to sysid 9 only: 2 flights.
-    stats = db.getFlightStats(QString(), QString(), 9, QString());
+    // Filtered to one vehicle key only: 2 flights.
+    stats = db.getFlightStats(QString(), QString(), QStringLiteral("UID-NINE"), QString());
     QCOMPARE(stats.value(QStringLiteral("totalFlights")).toInt(), 2);
 
-    // Filtered to sysid 10: 1 flight, 120s -> 2m 0s.
-    stats = db.getFlightStats(QString(), QString(), 10, QString());
+    // Filtered to the other vehicle: 1 flight, 120s -> 2m 0s.
+    stats = db.getFlightStats(QString(), QString(), QStringLiteral("UID-TEN"), QString());
     QCOMPARE(stats.value(QStringLiteral("totalHoursStr")).toString(), QStringLiteral("2m 0s"));
     QCOMPARE(stats.value(QStringLiteral("totalFlights")).toInt(), 1);
+}
+
+// The stats banner counts real flights only: a bench arm and a flight that
+// never got airborne are left out, while both rows stay in Flight History.
+void DatabaseManagerTest::testGetFlightStatsExcludesBenchAndGroundFlights()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    QTemporaryFile tmpFile(QDir::tempPath() + QStringLiteral("/test_stats_bench_XXXXXX.db"));
+    QVERIFY(tmpFile.open());
+    const QString path = tmpFile.fileName();
+    QVERIFY(db.initialize(path));
+    QFile::remove(path + QStringLiteral(".v0.bak"));
+    QVERIFY(db.upsertVehicle(QStringLiteral("UID-STATS"), QStringLiteral("Stats Rig"),
+                             QStringLiteral("ArduPilot"), QStringLiteral("Quad")));
+
+    const int op = db.insertOperator(QStringLiteral("Pilot"), QStringLiteral("Pilot"));
+    QVERIFY(op > 0);
+
+    auto addFlight = [&](bool bench, double maxAlt) {
+        const int session = db.openFlightRecord(0, QStringLiteral("UID-STATS"), QString(), 0.0,
+                                                bench ? QStringLiteral("force_token") : QStringLiteral("external"),
+                                                true, QStringLiteral("FLIGHT"), bench);
+        QVERIFY(session > 0);
+        const int history = db.openHistoryFlight(session, op, 1, QStringLiteral("FLIGHT"),
+                                                 bench ? QStringLiteral("bench") : QStringLiteral("real"),
+                                                 QString());
+        QVERIFY(history > 0);
+        QVERIFY(db.closeFlight(history, 600, maxAlt, 11.0, 13.5, 0,
+                               0, 0, 0, 0, 0, 0, 0, 0));
+        QVERIFY(db.closeFlightRecord(session, 600, QStringLiteral("disarmed"), QString(), 11.0, -1));
+    };
+    addFlight(false, 10.0);
+    addFlight(true, 10.0);
+    addFlight(false, PowerTypeModel::kAirborneAltM - 0.1);
+
+    const QVariantMap stats = db.getFlightStats(QString(), QString(), QString(), QString());
+    QCOMPARE(stats.value(QStringLiteral("totalFlights")).toInt(), 1);
+    QCOMPARE(stats.value(QStringLiteral("totalHoursStr")).toString(), QStringLiteral("10m 0s"));
+
+    const QVariantMap history = db.queryFlights(0, QString(), QString(), QString(), 0,
+                                                QString(), QString(), QStringLiteral("date_desc"), 50);
+    QCOMPARE(history.value(QStringLiteral("totalCount")).toInt(), 3);
+
+    db.reset();
+    QFile::remove(path);
+    QFile::remove(path + QStringLiteral(".v0.bak"));
+}
+
+// Vehicle totals are keyed by the canonical device_uid. A legacy fingerprint
+// is only a lookup key, never the identity the totals accumulate onto.
+void DatabaseManagerTest::testIncrementVehicleFlightTimeUsesDeviceUid()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("vehicle-time.db"));
+    QVERIFY(db.initialize(path));
+    QFile::remove(path + QStringLiteral(".v0.bak"));
+    QVERIFY(db.upsertVehicle(QStringLiteral("UID-TIME"), QStringLiteral("Time Rig"),
+                             QStringLiteral("ArduPilot"), QStringLiteral("Quad")));
+    QSqlQuery q(QSqlDatabase::database());
+    QVERIFY(q.exec(QStringLiteral("UPDATE vehicles SET fingerprint = 'FP-TIME' WHERE device_uid = 'UID-TIME'")));
+
+    QVERIFY(db.incrementVehicleFlightTime(QStringLiteral("UID-TIME"), 120));
+    QVariantMap v = row(QStringLiteral("SELECT total_flight_time_sec, total_flight_count, total_flight_hours "
+                                       "FROM vehicles WHERE device_uid = 'UID-TIME'"));
+    QCOMPARE(v.value(QStringLiteral("total_flight_time_sec")).toInt(), 120);
+    QCOMPARE(v.value(QStringLiteral("total_flight_count")).toInt(), 1);
+    QCOMPARE(v.value(QStringLiteral("total_flight_hours")).toDouble(), 120.0 / 3600.0);
+
+    // The same call with a fingerprint must not touch the vehicle.
+    QVERIFY(db.incrementVehicleFlightTime(QStringLiteral("FP-TIME"), 60));
+    v = row(QStringLiteral("SELECT total_flight_time_sec, total_flight_count FROM vehicles "
+                           "WHERE device_uid = 'UID-TIME'"));
+    QCOMPARE(v.value(QStringLiteral("total_flight_time_sec")).toInt(), 120);
+    QCOMPARE(v.value(QStringLiteral("total_flight_count")).toInt(), 1);
+
+    db.reset();
+    QFile::remove(path + QStringLiteral(".v0.bak"));
+}
+
+// History keys a row by its flight session's device uid (falling back to the
+// flights row's own uid). Two airframes on the same MAVLink sysid must not
+// merge; a row with no key is still visible under "All vehicles".
+void DatabaseManagerTest::testHistoryVehicleKeyDoesNotMergeSysid()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("history-key.db"));
+    QVERIFY(db.initialize(path));
+    QFile::remove(path + QStringLiteral(".v0.bak"));
+    const int op = db.insertOperator(QStringLiteral("Pilot"), QStringLiteral("Pilot"));
+    QVERIFY(op > 0);
+    QVERIFY(db.upsertVehicle(QStringLiteral("UID-A"), QStringLiteral("Alpha"),
+                             QStringLiteral("ArduPilot"), QStringLiteral("Quad")));
+    QVERIFY(db.upsertVehicle(QStringLiteral("UID-B"), QStringLiteral("Beta"),
+                             QStringLiteral("ArduPilot"), QStringLiteral("Quad")));
+    QSqlQuery q(QSqlDatabase::database());
+    QVERIFY(q.exec(QStringLiteral("UPDATE vehicles SET sysid = 1 WHERE device_uid IN ('UID-A','UID-B')")));
+
+    auto addSessionFlight = [&](const QString &uid, const QString &purpose) {
+        const int session = db.openFlightRecord(0, uid, QString(), 0.0, QStringLiteral("external"),
+                                                true, QStringLiteral("FLIGHT"), false);
+        QVERIFY(session > 0);
+        const int history = db.openHistoryFlight(session, op, 1, QStringLiteral("FLIGHT"),
+                                                 purpose, QString());
+        QVERIFY(history > 0);
+        // Stats only count flights that got airborne.
+        QVERIFY(q.exec(QStringLiteral("UPDATE flights SET max_altitude_m = 100 WHERE id = %1")
+                       .arg(history)));
+    };
+    addSessionFlight(QStringLiteral("UID-A"), QStringLiteral("alpha"));
+    addSessionFlight(QStringLiteral("UID-B"), QStringLiteral("beta"));
+
+    const int unknown = db.openFlight(op, 1, QStringLiteral("FLIGHT"), QStringLiteral("unknown"),
+                                      QString(), QString(), QString());
+    QVERIFY(unknown > 0);
+    const int legacy = db.openFlight(op, 1, QStringLiteral("FLIGHT"), QStringLiteral("legacy"),
+                                     QString(), QString(), QString());
+    QVERIFY(legacy > 0);
+    QVERIFY(q.exec(QStringLiteral("UPDATE flights SET device_uid = 'UID-C' WHERE id = %1").arg(legacy)));
+
+    auto query = [&](const QString &key) {
+        return db.queryFlights(0, QString(), QString(), key, 0,
+                               QString(), QString(), QStringLiteral("date_desc"), 50);
+    };
+    const QVariantMap byA = query(QStringLiteral("UID-A"));
+    QCOMPARE(byA.value(QStringLiteral("totalCount")).toInt(), 1);
+    const QVariantList aRows = byA.value(QStringLiteral("rows")).toList();
+    QCOMPARE(aRows.size(), 1);
+    QCOMPARE(aRows.at(0).toMap().value(QStringLiteral("notes")).toString(), QStringLiteral("alpha"));
+    QCOMPARE(aRows.at(0).toMap().value(QStringLiteral("vehicle_name")).toString(), QStringLiteral("Alpha"));
+
+    const QVariantMap byB = query(QStringLiteral("UID-B"));
+    QCOMPARE(byB.value(QStringLiteral("totalCount")).toInt(), 1);
+    QCOMPARE(byB.value(QStringLiteral("rows")).toList().at(0).toMap()
+                 .value(QStringLiteral("vehicle_name")).toString(), QStringLiteral("Beta"));
+
+    // The fallback to the form row's own uid finds a row with no session.
+    QCOMPARE(query(QStringLiteral("UID-C")).value(QStringLiteral("totalCount")).toInt(), 1);
+
+    // With no filter, all four rows remain visible; the unkeyed one has no
+    // vehicle name (it is an unknown vehicle, not merged into either one).
+    const QVariantMap all = query(QString());
+    QCOMPARE(all.value(QStringLiteral("totalCount")).toInt(), 4);
+    for (const QVariant &v : all.value(QStringLiteral("rows")).toList()) {
+        const QVariantMap r = v.toMap();
+        if (r.value(QStringLiteral("purpose")).toString() == QStringLiteral("unknown"))
+            QVERIFY(r.value(QStringLiteral("vehicle_name")).toString().isEmpty());
+    }
+
+    const QVariantMap stats = db.getFlightStats(QString(), QString(), QStringLiteral("UID-A"), QString());
+    QCOMPARE(stats.value(QStringLiteral("totalFlights")).toInt(), 1);
+    QCOMPARE(stats.value(QStringLiteral("vehicleCount")).toInt(), 1);
+
+    // Both airborne sessions used sysid 1, but they are two distinct vehicles.
+    const QVariantMap allStats = db.getFlightStats(QString(), QString(), QString(), QString());
+    QCOMPARE(allStats.value(QStringLiteral("totalFlights")).toInt(), 2);
+    QCOMPARE(allStats.value(QStringLiteral("vehicleCount")).toInt(), 2);
+
+    db.reset();
+    QFile::remove(path + QStringLiteral(".v0.bak"));
 }
 
 void DatabaseManagerTest::testBackupBeforeMigration()

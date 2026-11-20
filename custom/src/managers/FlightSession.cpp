@@ -190,6 +190,7 @@ void FlightSession::startTrainingSession()
     _setMode(SessionMode::Training);
     m_formComplete = true;
     m_startedAt = QDateTime::currentDateTimeUtc();
+    m_startedMs = MonotonicClock::nowMs();
     _setState(SessionState::PreFlight);
     emit armingPermittedChanged();
     emit formCompleteChanged();
@@ -201,6 +202,7 @@ void FlightSession::startTestingSession()
     _setMode(SessionMode::Testing);
     m_formComplete = true;
     m_startedAt = QDateTime::currentDateTimeUtc();
+    m_startedMs = MonotonicClock::nowMs();
     _setState(SessionState::PreFlight);
     emit armingPermittedChanged();
     emit formCompleteChanged();
@@ -240,6 +242,7 @@ void FlightSession::startFlightSession(const QString &purpose,
     m_flightId = id;
     m_historyRowAdopted = false;
     m_startedAt = QDateTime::currentDateTimeUtc();
+    m_startedMs = MonotonicClock::nowMs();
     _setMode(SessionMode::Flight);
     _setState(SessionState::PreFlight);
     reloadTargetLocation();
@@ -361,15 +364,21 @@ bool FlightSession::adoptHistoryRow(int flightSessionId)
 void FlightSession::closeSession()
 {
     if (m_flightId > 0 && m_state != SessionState::Closed) {
-        int durationSec = static_cast<int>(m_startedAt.secsTo(QDateTime::currentDateTimeUtc()));
+        // A clock change must not make the form's duration negative (or
+        // inflate it). m_startedAt stays the UTC timestamp; the age itself
+        // comes from the monotonic clock and is clamped at zero.
+        const qint64 elapsedMs = m_startedMs == MonotonicClock::kNever
+            ? 0 : qMax<qint64>(0, MonotonicClock::nowMs() - m_startedMs);
+        const int durationSec = static_cast<int>(elapsedMs / 1000);
 
         DatabaseManager &db = DatabaseManager::instance();
         QVariantMap counts = db.getCheckCountsForFlight(m_flightId);
         int anomalies = db.getAnomalyCountForFlight(m_flightId);
 
-        // closeFlight + operator stats + vehicle flight time are one logical
-        // "finalize session" — wrap them in a single transaction so a failure
-        // mid-way can't leave the flight closed but the stats stale.
+        // closeFlight + operator stats are one logical "finalize session" —
+        // wrap them in a single transaction so a failure mid-way can't leave
+        // the flight closed but the stats stale. The vehicle's time/count
+        // are updated once by the recorder at the flight's close instead.
         db.beginTransaction();
         bool ok = true;
         const int pass = counts.value(QStringLiteral("pass")).toInt();
@@ -395,12 +404,6 @@ void FlightSession::closeSession()
         ok &= db.updateOperatorStats(
             OperatorManager::instance()->currentOperatorId(), true);
 
-        // Accumulate flight time onto the connected vehicle's record so the
-        // Vehicles page shows real total flight time per airframe.
-        const QString fingerprint = VehicleRegistry::instance()->currentFingerprint();
-        if (!fingerprint.isEmpty()) {
-            ok &= db.incrementVehicleFlightTime(fingerprint, durationSec);
-        }
         if (ok) {
             db.commitTransaction();
         } else {
@@ -416,6 +419,7 @@ void FlightSession::closeSession()
     m_formComplete = false;
     m_armedAt = QDateTime();
     m_startedAt = QDateTime();
+    m_startedMs = MonotonicClock::kNever;
     m_maxAltitude = 0.0;
     m_minBatteryV = 999.0;
     m_maxBatteryV = 0.0;

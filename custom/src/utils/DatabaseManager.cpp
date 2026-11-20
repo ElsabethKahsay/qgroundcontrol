@@ -20,6 +20,7 @@ Q_LOGGING_CATEGORY(dbLog, "database.manager")
 #include <QSqlQuery>
 #include <QSettings>
 #include "core/BatteryPackCheck.h"
+#include "core/PowerTypeModel.h"
 #include <QSet>
 #include <QStandardPaths>
 #include <QThread>
@@ -3206,7 +3207,7 @@ QVariantMap DatabaseManager::getFlightById(int flightId)
 
 QVariantMap DatabaseManager::queryFlights(int page, const QString &fromDate,
                                           const QString &toDate,
-                                          int vehicleId, int operatorId,
+                                          const QString &vehicleKey, int operatorId,
                                           const QString &mode,
                                           const QString &search,
                                           const QString &sortBy,
@@ -3217,6 +3218,15 @@ QVariantMap DatabaseManager::queryFlights(int page, const QString &fromDate,
     result[QStringLiteral("rows")] = QVariantList();
     result[QStringLiteral("totalCount")] = 0;
     if (!m_initialized || page < 0 || pageSize <= 0) return result;
+
+    // A flight's vehicle is the recorder's device uid when the row was made
+    // by an arm, else the uid stored on the form row. Legacy rows with neither
+    // stay unkeyed (visible under "All vehicles", shown with no name).
+    const QString fromSql = QStringLiteral(
+        "FROM flights f LEFT JOIN flight_sessions fs ON fs.history_flight_id = f.id ");
+    const QString vehicleNameSql = QStringLiteral(
+        "(SELECT v.friendly_name FROM vehicles v "
+        "WHERE v.device_uid = COALESCE(fs.device_uid, f.device_uid) LIMIT 1)");
 
     QStringList where;
     QVariantList binds;
@@ -3229,9 +3239,9 @@ QVariantMap DatabaseManager::queryFlights(int page, const QString &fromDate,
         where << QStringLiteral("f.started_at <= ?");
         binds << toDate + QStringLiteral(" 23:59:59");
     }
-    if (vehicleId > 0) {
-        where << QStringLiteral("f.vehicle_id = ?");
-        binds << vehicleId;
+    if (!vehicleKey.isEmpty()) {
+        where << QStringLiteral("COALESCE(fs.device_uid, f.device_uid) = ?");
+        binds << vehicleKey;
     }
     if (operatorId > 0) {
         where << QStringLiteral("f.operator_id = ?");
@@ -3243,10 +3253,9 @@ QVariantMap DatabaseManager::queryFlights(int page, const QString &fromDate,
     }
     if (!search.isEmpty()) {
         const QString pattern = QStringLiteral("%%1%").arg(search);
-        where << QStringLiteral(
-            "(f.purpose LIKE ? OR f.location LIKE ? OR "
-            "(SELECT op.name FROM operators op WHERE op.id = f.operator_id) LIKE ? OR "
-            "(SELECT v.friendly_name FROM vehicles v WHERE v.sysid = f.vehicle_id LIMIT 1) LIKE ?)");
+        where << QStringLiteral("(f.purpose LIKE ? OR f.location LIKE ? OR "
+                                "(SELECT op.name FROM operators op WHERE op.id = f.operator_id) LIKE ? OR ")
+                 + vehicleNameSql + QStringLiteral(" LIKE ?)");
         binds << pattern << pattern << pattern << pattern;
     }
 
@@ -3262,8 +3271,7 @@ QVariantMap DatabaseManager::queryFlights(int page, const QString &fromDate,
         orderSql = QStringLiteral("(SELECT op.name FROM operators op WHERE op.id = f.operator_id) "
                                   "COLLATE NOCASE ASC");
     else if (sortBy == QStringLiteral("vehicle"))
-        orderSql = QStringLiteral("(SELECT v.friendly_name FROM vehicles v "
-                                  "WHERE v.sysid = f.vehicle_id LIMIT 1) COLLATE NOCASE ASC");
+        orderSql = vehicleNameSql + QStringLiteral(" COLLATE NOCASE ASC");
     else if (sortBy == QStringLiteral("pass_rate_desc"))
         orderSql = QStringLiteral(
             "CASE WHEN (f.check_pass_count + f.check_fail_count + f.check_warn_count) = 0 "
@@ -3281,13 +3289,12 @@ QVariantMap DatabaseManager::queryFlights(int page, const QString &fromDate,
         "f.avg_battery_v, f.check_pass_count, f.check_fail_count, f.check_warn_count, "
         "f.anomaly_count, "
         "(SELECT op.name FROM operators op WHERE op.id = f.operator_id) AS operator_name, "
-        "(SELECT v.friendly_name FROM vehicles v WHERE v.sysid = f.vehicle_id LIMIT 1) "
-        "AS vehicle_name "
-        "FROM flights f WHERE " + whereSql;
+        + vehicleNameSql + " AS vehicle_name "
+        + fromSql + "WHERE " + whereSql;
 
     // Total matching records ignoring pagination.
     QSqlQuery cq(m_db);
-    cq.prepare("SELECT COUNT(*) FROM flights f WHERE " + whereSql);
+    cq.prepare("SELECT COUNT(*) " + fromSql + "WHERE " + whereSql);
     for (const QVariant &b : binds) cq.addBindValue(b);
     if (cq.exec() && cq.next())
         result[QStringLiteral("totalCount")] = cq.value(0).toInt();
@@ -3869,23 +3876,27 @@ bool DatabaseManager::updateVehicleAttributes(const QString &fingerprint, const 
     return execOrWarn(q, "updateVehicleAttributes");
 }
 
-/** @brief Accumulates flight time onto a vehicle's totals. Called by
- *         FlightSession::closeSession() so the Vehicles page shows real
- *         accumulated flight time per airframe. */
-bool DatabaseManager::incrementVehicleFlightTime(const QString &fingerprint, int durationSeconds)
+/** @brief Accumulates a non-bench flight's duration and count onto the
+ *         vehicle's totals. Called once from the recorder's close handler so
+ *         the Vehicles page shows real time per airframe, whether or not a
+ *         Flight form was filled. Keyed by the canonical device_uid. */
+bool DatabaseManager::incrementVehicleFlightTime(const QString &deviceUid, int durationSeconds)
 {
-    if (!m_initialized || fingerprint.isEmpty() || durationSeconds <= 0) return false;
+    if (!m_initialized || deviceUid.isEmpty()) return false;
+    // Every non-bench flight counts, even one disarmed inside a second;
+    // a bad (negative) duration must never subtract accumulated time.
+    const int seconds = qMax(0, durationSeconds);
     QSqlQuery q(m_db);
     q.prepare(R"(
         UPDATE vehicles SET
             total_flight_time_sec = total_flight_time_sec + ?,
             total_flight_count = total_flight_count + 1,
             total_flight_hours = (total_flight_time_sec + ?) / 3600.0
-        WHERE fingerprint = ?
+        WHERE device_uid = ?
     )");
-    q.addBindValue(durationSeconds);
-    q.addBindValue(durationSeconds);
-    q.addBindValue(fingerprint);
+    q.addBindValue(seconds);
+    q.addBindValue(seconds);
+    q.addBindValue(deviceUid);
     return execOrWarn(q, "incrementVehicleFlightTime");
 }
 
@@ -4251,7 +4262,7 @@ QString DatabaseManager::exportFlightDetailCsv(int flightId)
 
 QVariantMap DatabaseManager::getFlightStats(const QString &fromDate,
                                             const QString &toDate,
-                                            int vehicleId,
+                                            const QString &vehicleKey,
                                             const QString &mode)
 {
     assertMainThread();
@@ -4274,16 +4285,21 @@ QVariantMap DatabaseManager::getFlightStats(const QString &fromDate,
         where << QStringLiteral("f.started_at <= ?");
         binds << toDate + QStringLiteral(" 23:59:59");
     }
-    if (vehicleId > 0) {
-        where << QStringLiteral("f.vehicle_id = ?");
-        binds << vehicleId;
+    if (!vehicleKey.isEmpty()) {
+        where << QStringLiteral("COALESCE(fs.device_uid, f.device_uid) = ?");
+        binds << vehicleKey;
     }
     if (!mode.isEmpty()) {
         where << QStringLiteral("f.mode = ?");
         binds << mode;
     }
-    const QString whereSql = where.isEmpty() ? QStringLiteral("1=1")
-                                             : where.join(QStringLiteral(" AND "));
+    // Stats count real flights only: bench arms and runs that never got
+    // airborne are still in History, but must not inflate the banner.
+    // LEFT JOIN keeps legacy form rows that have no linked flight session.
+    where << QStringLiteral("COALESCE(fs.is_bench, 0) = 0");
+    where << QStringLiteral("COALESCE(f.max_altitude_m, 0) >= ?");
+    binds << PowerTypeModel::kAirborneAltM;
+    const QString whereSql = where.join(QStringLiteral(" AND "));
 
     QSqlQuery q(m_db);
     q.prepare(
@@ -4292,8 +4308,8 @@ QVariantMap DatabaseManager::getFlightStats(const QString &fromDate,
         "f.check_warn_count) > 0 THEN (f.check_pass_count * 1.0) / "
         "(f.check_pass_count + f.check_fail_count + f.check_warn_count) END), 0), "
         "COALESCE(AVG(f.anomaly_count), 0), "
-        "COUNT(DISTINCT f.vehicle_id), COUNT(DISTINCT f.operator_id) "
-        "FROM flights f WHERE " + whereSql);
+        "COUNT(DISTINCT COALESCE(fs.device_uid, f.device_uid)), COUNT(DISTINCT f.operator_id) "
+        "FROM flights f LEFT JOIN flight_sessions fs ON fs.history_flight_id = f.id WHERE " + whereSql);
     for (const QVariant &b : binds) q.addBindValue(b);
     if (!q.exec() || !q.next()) return stats;
 

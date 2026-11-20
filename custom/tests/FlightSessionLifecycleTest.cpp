@@ -40,6 +40,8 @@
 #include "VehicleRegistry.h"
 #include "DatabaseManager.h"
 #include "utils/Config.h"
+#include "utils/MonotonicClock.h"
+#include <QtCore/QScopeGuard>
 #include "MultiVehicleManager.h"
 #include "Vehicle/Vehicle.h"
 #include "Comms/MockLink/MockLink.h"
@@ -72,6 +74,7 @@ private slots:
     void testSecondFlightRecordAfterDisarm();
     void testFormFlightArmDisarmMakesOneRow();
     void testFormCloseKeepsRecorderDuration();
+    void testFormDurationUsesMonotonicClock();
     void testTwoArmsInOneFormSessionMakeTwoRows();
 
 private:
@@ -354,6 +357,46 @@ void FlightSessionLifecycleTest::testFormCloseKeepsRecorderDuration()
     QCOMPARE(q.value(1).toInt(), expected.value(QStringLiteral("fail")).toInt());
     QCOMPARE(q.value(2).toInt(), expected.value(QStringLiteral("warn")).toInt());
     QCOMPARE(q.value(3).toInt(), expectedAnomalies);
+}
+
+// A form's duration is an age, so it must come from the monotonic clock:
+// advancing that clock 65 s while almost no wall time passes still yields
+// 65 s. Closing the form never touches the vehicle's flight totals — that is
+// the recorder's job, once, at the flight's close.
+void FlightSessionLifecycleTest::testFormDurationUsesMonotonicClock()
+{
+    int vid = 0; QString fp;
+    if (!_connectAndRegister(&vid, &fp)) QSKIP("MockLink vehicle did not register a vehicle id");
+
+    TestClock clock;
+    MonotonicClock::setForTesting(&clock);
+    const auto restoreClock = qScopeGuard([] { MonotonicClock::setForTesting(nullptr); });
+
+    int opId = OperatorManager::instance()->addOperator(QStringLiteral("Clock Op"), QStringLiteral("pilot"));
+    OperatorManager::instance()->selectOperator(opId);
+
+    auto totals = []() -> QVariantList {
+        QSqlQuery q(QSqlDatabase::database());
+        if (!q.exec(QStringLiteral("SELECT COALESCE(SUM(total_flight_time_sec), 0), "
+                                   "COALESCE(SUM(total_flight_count), 0) FROM vehicles")) || !q.next())
+            return {};
+        return {q.value(0), q.value(1)};
+    };
+    const QVariantList before = totals();
+
+    FlightSession *fs = FlightSession::instance();
+    fs->setVehicle(_vehicle);
+    fs->setMode(QStringLiteral("FLIGHT"));
+    fs->startFlightSession(QStringLiteral("monotonic purpose"), QStringLiteral("loc"), QStringLiteral("notes"));
+    QVERIFY(fs->currentFlightId() > 0);
+
+    clock.advance(65000);
+    fs->closeSession();
+
+    const QVariantMap row = _formRow(vid, QStringLiteral("monotonic purpose"));
+    QVERIFY2(!row.isEmpty(), "form row missing");
+    QCOMPARE(row.value(QStringLiteral("duration_sec")).toInt(), 65);
+    QCOMPARE(totals(), before);
 }
 
 // Two arms in one form session: one flights row per arm is right. The form

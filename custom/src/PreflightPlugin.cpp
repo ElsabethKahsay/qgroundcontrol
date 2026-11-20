@@ -506,6 +506,12 @@ void PreflightPlugin::init()
             DatabaseManager::instance().clearVehicleTarget(end.deviceUid, started);
             if (FlightSession::instance())
                 FlightSession::instance()->clearTargetLocation(started);
+            // Vehicle flight time and count are accumulated here, once for
+            // every real flight — including RC arms with no Flight form.
+            // FlightSession::closeSession() deliberately does not do it: that
+            // would double-count a form flight whose row the recorder adopts.
+            DatabaseManager::instance().incrementVehicleFlightTime(
+                end.deviceUid, qRound(end.durationSec));
         }
         // Battery cycle: non-bench flights only, >= 20 % of the pack.
         if (!end.bench && end.mahUsed >= 0

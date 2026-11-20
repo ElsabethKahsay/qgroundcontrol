@@ -137,6 +137,7 @@ private slots:
     void testArmControlsCannotOpenGateInOneTap();
     void testNoColourLiteralsOutsideSingletons();
     void testNoOldMissionCheckWording();
+    void testHistoryVehicleFilterUsesDeviceUid();
 };
 
 // Core invariant: whatever custom.qrc declares at a resource path is what the
@@ -404,6 +405,25 @@ void QmlShadowTest::testNoOldMissionCheckWording()
     QVERIFY2(files > 100, qPrintable(QStringLiteral("only %1 source files found").arg(files)));
     QVERIFY2(offenders.isEmpty(), qPrintable(QStringLiteral("text still naming the old Mission check:\n")
                                              + offenders.join(QLatin1Char('\n'))));
+}
+
+// History must key vehicles by their canonical device uid: a MAVLink sysid can
+// be reused by two airframes, so filtering on sysid silently merges them.
+void QmlShadowTest::testHistoryVehicleFilterUsesDeviceUid()
+{
+    if (_sourceDir().isEmpty()) {
+        QSKIP("no source tree next to the executable (packaged run); QML lint skipped");
+    }
+    const QString path = _sourceDir() + QStringLiteral("/custom/qml/pages/FlightHistoryPage.qml");
+    const QByteArray text = _readFile(path);
+    QVERIFY2(!text.isEmpty(), qPrintable(QStringLiteral("cannot read %1").arg(path)));
+    QVERIFY2(!text.contains("filterVehicleId"),
+             "FlightHistoryPage still drives the sysid-based vehicle filter");
+    for (const char *needle : {"filterVehicleKey", "arr[i].deviceUid",
+                               "VehicleProfileManager.currentDeviceUid"}) {
+        QVERIFY2(text.contains(needle),
+                 qPrintable(QStringLiteral("FlightHistoryPage.qml is missing %1").arg(needle)));
+    }
 }
 
 UT_REGISTER_TEST(QmlShadowTest)

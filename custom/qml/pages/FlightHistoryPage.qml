@@ -115,16 +115,16 @@ AnalyzePage {
 
     function rebuildVehicleFilter() {
         vehicleFilterModel.clear()
-        vehicleFilterModel.append({ id: -1, name: qsTr("All Vehicles") })
+        vehicleFilterModel.append({ id: "", name: qsTr("All Vehicles") })
         // Known-vehicle list comes from the C++ Database module (JSON schema it defines)
         var arr = JSON.parse(Database.getAllVehiclesJson())
         for (var i = 0; i < arr.length; ++i) {
-            vehicleFilterModel.append({ id: arr[i].sysid,
+            vehicleFilterModel.append({ id: arr[i].deviceUid,
                                         name: (arr[i].friendlyName ||
-                                               (qsTr("Vehicle ") + arr[i].sysid)) })
+                                               (qsTr("Vehicle ") + arr[i].deviceUid)) })
         }
         if (typeof vehiclePicker !== "undefined" && vehiclePicker !== null) {
-            var vid = root.historyModel.filterVehicleId
+            var vid = root.historyModel.filterVehicleKey
             for (var j = 0; j < vehicleFilterModel.count; ++j) {
                 if (vehicleFilterModel.get(j).id === vid) {
                     vehiclePicker.currentIndex = j
@@ -159,9 +159,9 @@ AnalyzePage {
     Component.onCompleted: {
         rebuildVehicleFilter()
         // Start pre-filtered to the currently registered vehicle, else show all flights
-        var vid = VehicleRegistry.currentVehicleId
-        if (vid > 0)
-            historyModel.setFilterVehicleId(vid)
+        var key = VehicleProfileManager ? VehicleProfileManager.currentDeviceUid : ""
+        if (key && key !== "")
+            historyModel.setFilterVehicleKey(key)
         else
             historyModel.reload()
     }
@@ -277,10 +277,10 @@ AnalyzePage {
                         onCurrentIndexChanged: {
                             if (currentIndex >= 0) {
                                 var item = vehicleFilterModel.get(currentIndex)
-                                var targetId = (item && item.id !== undefined) ? item.id : -1
+                                var targetKey = (item && item.id !== undefined) ? item.id : ""
                                 // Avoid redundant reloads: push to the model only when the filter changed
-                                if (root.historyModel.filterVehicleId !== targetId) {
-                                    root.historyModel.setFilterVehicleId(targetId)
+                                if (root.historyModel.filterVehicleKey !== targetKey) {
+                                    root.historyModel.setFilterVehicleKey(targetKey)
                                 }
                             }
                         }
@@ -288,8 +288,8 @@ AnalyzePage {
                         // Listen to changes on the filter to update picker index
                         Connections {
                             target: root.historyModel
-                            function onFilterVehicleIdChanged() {
-                                var vid = root.historyModel.filterVehicleId
+                            function onFilterVehicleKeyChanged() {
+                                var vid = root.historyModel.filterVehicleKey
                                 for (var i = 0; i < vehicleFilterModel.count; ++i) {
                                     if (vehicleFilterModel.get(i).id === vid) {
                                         vehiclePicker.currentIndex = i
@@ -301,7 +301,7 @@ AnalyzePage {
                         }
 
                         Component.onCompleted: {
-                            var vid = root.historyModel.filterVehicleId
+                            var vid = root.historyModel.filterVehicleKey
                             for (var i = 0; i < vehicleFilterModel.count; ++i) {
                                 if (vehicleFilterModel.get(i).id === vid) {
                                     currentIndex = i
@@ -626,7 +626,7 @@ AnalyzePage {
                             }
                             Text {
                                 text: (root.historyModel.filterFromDate.length > 0
-                                       || root.historyModel.filterVehicleId > 0)
+                                       || root.historyModel.filterVehicleKey.length > 0)
                                       ? qsTr("No flights match the current filter")
                                       : qsTr("No flights recorded yet")
                                 color: Colors.textSecondary
@@ -634,7 +634,7 @@ AnalyzePage {
                             }
                             Button {
                                 visible: root.historyModel.filterFromDate.length > 0
-                                         || root.historyModel.filterVehicleId > 0
+                                         || root.historyModel.filterVehicleKey.length > 0
                                 text: qsTr("Clear Filters")
                                 anchors.horizontalCenter: parent.horizontalCenter
                                 onClicked: {

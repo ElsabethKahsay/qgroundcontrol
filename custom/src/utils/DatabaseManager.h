@@ -213,7 +213,9 @@ public:
                                              const QString &firmwareVersion, const QString &hardwareUid,
                                              int sysid, const QString &boardVersion,
                                              int frameClass, int motorCount);
-    Q_INVOKABLE bool incrementVehicleFlightTime(const QString &fingerprint, int durationSeconds);
+    /// Adds a non-bench flight's duration and one flight to the vehicle's
+    /// totals. Keyed by the canonical device_uid (not the fingerprint).
+    Q_INVOKABLE bool incrementVehicleFlightTime(const QString &deviceUid, int durationSeconds);
     Q_INVOKABLE QString exportVehiclesCsv(const QString &fromDate, const QString &toDate);
     Q_INVOKABLE QString getAllVehiclesJson();
 
@@ -371,15 +373,15 @@ public:
 
     // ── Flight history (list + detail) ─────────────────────────────
     /// Paginated, filtered flight list for the Flight History page.
-    /// Filters: fromDate/toDate (YYYY-MM-DD, inclusive), vehicleId (0 = any),
-    /// operatorId (0 = any), mode ("" = any), search (matches purpose,
-    /// location, operator name, vehicle name).  sortBy: "date_desc" (default),
+    /// Filters: fromDate/toDate (YYYY-MM-DD, inclusive), vehicleKey ("" = any,
+    /// canonical device_uid), operatorId (0 = any), mode ("" = any), search
+    /// (matches purpose, location, operator name, vehicle name).  sortBy: "date_desc" (default),
     /// "date_asc", "duration_desc", "operator", "vehicle", "pass_rate_desc".
     /// Returns { "rows": [...], "totalCount": N }.  Each row carries the full
     /// flights record plus operator_name and vehicle_name.
     Q_INVOKABLE QVariantMap queryFlights(int page, const QString &fromDate = QString(),
                                          const QString &toDate = QString(),
-                                         int vehicleId = 0, int operatorId = 0,
+                                         const QString &vehicleKey = QString(), int operatorId = 0,
                                          const QString &mode = QString(),
                                          const QString &search = QString(),
                                          const QString &sortBy = QStringLiteral("date_desc"),
@@ -419,7 +421,7 @@ public:
     /// operatorCount.
     Q_INVOKABLE QVariantMap getFlightStats(const QString &fromDate = QString(),
                                            const QString &toDate = QString(),
-                                           int vehicleId = 0,
+                                           const QString &vehicleKey = QString(),
                                            const QString &mode = QString());
 
     // ── Flight summary helpers ────────────────────────────────────

@@ -71,16 +71,16 @@ void FlightHistoryModelTest::testFilterByMode()
     QVariantMap all = db.queryFlights(0);
     QCOMPARE(all.value(QStringLiteral("totalCount")).toInt(), 3);
 
-    QVariantMap flights = db.queryFlights(0, QString(), QString(), 0, 0,
+    QVariantMap flights = db.queryFlights(0, QString(), QString(), QString(), 0,
                                           QStringLiteral("FLIGHT"));
     QCOMPARE(flights.value(QStringLiteral("totalCount")).toInt(), 1);
     QCOMPARE(flights.value(QStringLiteral("rows")).toList().size(), 1);
 
-    QVariantMap training = db.queryFlights(0, QString(), QString(), 0, 0,
+    QVariantMap training = db.queryFlights(0, QString(), QString(), QString(), 0,
                                            QStringLiteral("TRAINING"));
     QCOMPARE(training.value(QStringLiteral("totalCount")).toInt(), 1);
 
-    QVariantMap none = db.queryFlights(0, QString(), QString(), 0, 0,
+    QVariantMap none = db.queryFlights(0, QString(), QString(), QString(), 0,
                                        QStringLiteral("UNKNOWN_MODE"));
     QCOMPARE(none.value(QStringLiteral("totalCount")).toInt(), 0);
 }
@@ -112,14 +112,18 @@ void FlightHistoryModelTest::testFilterByVehicleAndOperator()
     int fB = db.openFlight(opB, 1, QStringLiteral("FLIGHT"), QString(), QString(),
                            QString(), QString());
     QVERIFY(fA > 0 && fA2 > 0 && fB > 0);
+    // Form rows carry a sysid but no canonical key; History keys on the uid.
+    QSqlQuery q(QSqlDatabase::database());
+    QVERIFY(q.exec(QStringLiteral("UPDATE flights SET device_uid = 'FP-A' WHERE id IN (%1, %2)")
+                   .arg(fA).arg(fB)));
 
-    QVariantMap byVehicle = db.queryFlights(0, QString(), QString(), 1);
+    QVariantMap byVehicle = db.queryFlights(0, QString(), QString(), QStringLiteral("FP-A"));
     QCOMPARE(byVehicle.value(QStringLiteral("totalCount")).toInt(), 2);
 
-    QVariantMap byOperator = db.queryFlights(0, QString(), QString(), 0, opA);
+    QVariantMap byOperator = db.queryFlights(0, QString(), QString(), QString(), opA);
     QCOMPARE(byOperator.value(QStringLiteral("totalCount")).toInt(), 2);
 
-    QVariantMap both = db.queryFlights(0, QString(), QString(), 1, opB);
+    QVariantMap both = db.queryFlights(0, QString(), QString(), QStringLiteral("FP-A"), opB);
     QCOMPARE(both.value(QStringLiteral("totalCount")).toInt(), 1);
 }
 
@@ -175,20 +179,23 @@ void FlightHistoryModelTest::testFilterBySearch()
     int fLoc = db.openFlight(op, 1, QStringLiteral("FLIGHT"), QString(),
                              QStringLiteral("Bole Field"), QString(), QString());
     QVERIFY(fPurpose > 0 && fLoc > 0);
+    QSqlQuery q(QSqlDatabase::database());
+    QVERIFY(q.exec(QStringLiteral("UPDATE flights SET device_uid = 'FP-B' WHERE id IN (%1, %2)")
+                   .arg(fPurpose).arg(fLoc)));
 
-    QVariantMap byPurpose = db.queryFlights(0, QString(), QString(), 0, 0, QString(),
+    QVariantMap byPurpose = db.queryFlights(0, QString(), QString(), QString(), 0, QString(),
                                             QStringLiteral("survey"));
     QCOMPARE(byPurpose.value(QStringLiteral("totalCount")).toInt(), 1);
 
-    QVariantMap byLocation = db.queryFlights(0, QString(), QString(), 0, 0, QString(),
+    QVariantMap byLocation = db.queryFlights(0, QString(), QString(), QString(), 0, QString(),
                                              QStringLiteral("bole"));
     QCOMPARE(byLocation.value(QStringLiteral("totalCount")).toInt(), 1);
 
-    QVariantMap byOperator = db.queryFlights(0, QString(), QString(), 0, 0, QString(),
+    QVariantMap byOperator = db.queryFlights(0, QString(), QString(), QString(), 0, QString(),
                                              QStringLiteral("pegasus"));
     QCOMPARE(byOperator.value(QStringLiteral("totalCount")).toInt(), 2);
 
-    QVariantMap byVehicle = db.queryFlights(0, QString(), QString(), 0, 0, QString(),
+    QVariantMap byVehicle = db.queryFlights(0, QString(), QString(), QString(), 0, QString(),
                                             QStringLiteral("skyrunner"));
     QCOMPARE(byVehicle.value(QStringLiteral("totalCount")).toInt(), 2);
 }
@@ -213,7 +220,7 @@ void FlightHistoryModelTest::testSortByDuration()
     QVERIFY(db.closeFlight(shortF, 30, 0, 0, 0, 0));
     QVERIFY(db.closeFlight(longF, 300, 0, 0, 0, 0));
 
-    QVariantMap desc = db.queryFlights(0, QString(), QString(), 0, 0, QString(),
+    QVariantMap desc = db.queryFlights(0, QString(), QString(), QString(), 0, QString(),
                                        QString(), QStringLiteral("duration_desc"));
     const QVariantList descRows = desc.value(QStringLiteral("rows")).toList();
     QCOMPARE(descRows.size(), 2);
@@ -278,9 +285,11 @@ void FlightHistoryModelTest::testRoles()
                            4, 1, 2, 1));
     QVERIFY(db.insertTelemetryEvent(fid, QStringLiteral("BATTERY_WARN"),
                                     QString(), 20.5, 30.0, 12, QString()));
+    QSqlQuery q(QSqlDatabase::database());
+    QVERIFY(q.exec(QStringLiteral("UPDATE flights SET device_uid = 'FP-C' WHERE id = %1").arg(fid)));
 
     FlightHistoryModel model;
-    model.setFilterVehicleId(1);
+    model.setFilterVehicleKey(QStringLiteral("FP-C"));
     QCOMPARE(model.rowCount(), 1);
 
     const QModelIndex idx = model.index(0, 0);
@@ -399,9 +408,11 @@ void FlightHistoryModelTest::testGetFlightDetail()
     QVERIFY(db.logSurfaceTestResult(fid, QStringLiteral("aileron"), 2, 1100, 1900, 1,
                                     QStringLiteral("PASS")));
     QVERIFY(db.insertComplianceRecord(fid, op, QStringLiteral("Clear"), QString(), QString()));
+    QSqlQuery q(QSqlDatabase::database());
+    QVERIFY(q.exec(QStringLiteral("UPDATE flights SET device_uid = 'FP-D' WHERE id = %1").arg(fid)));
 
     FlightHistoryModel model;
-    model.setFilterVehicleId(1);
+    model.setFilterVehicleKey(QStringLiteral("FP-D"));
     QCOMPARE(model.rowCount(), 1);
 
     const QVariantMap detail = model.getFlightDetail(fid);
