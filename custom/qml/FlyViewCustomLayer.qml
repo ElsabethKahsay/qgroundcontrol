@@ -918,7 +918,7 @@ Item {
             anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; margins: Config.spacingSmall }
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.Wrap
-            text: qsTr("\u26A0 A FLIGHT RECORD WRITE FAILED \u2014 %1. Records from now on may be incomplete.")
+            text: qsTr("\u26A0 A FLIGHT RECORD WRITE FAILED \u2014 %1. Records from now on may be incomplete. Details in db_write_errors.log.")
                       .arg(typeof Database !== "undefined" ? Database.runtimeError : "")
             font.pixelSize: Config.fontSizeBody
             font.bold: true

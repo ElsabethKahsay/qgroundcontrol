@@ -1064,6 +1064,46 @@ QString DatabaseManager::getHardwareTestEvents(int flightId)
     return json;
 }
 
+namespace {
+
+/// Append one line about a tracked write failure to db_write_errors.log next
+/// to the database. Every file problem is a silent no-op: leaving a trace of
+/// the failure must never affect flying. The SQL is the prepared statement
+/// (query.lastQuery()), so no bound values are written to the file.
+void appendWriteFailure(const QString &dbPath, const char *tableName,
+                        const QString &error, const QString &sql)
+{
+    if (dbPath.isEmpty() || dbPath == QLatin1String(":memory:")) return;
+    const QString dir = QFileInfo(dbPath).absolutePath();
+    if (dir.isEmpty()) return;
+    const QString logPath = QDir(dir).filePath(QStringLiteral("db_write_errors.log"));
+    const QString oldPath = logPath + QStringLiteral(".1");
+
+    auto oneLine = [](QString s) {
+        s.replace(QLatin1Char('\r'), QLatin1Char(' '));
+        s.replace(QLatin1Char('\n'), QLatin1Char(' '));
+        s.replace(QLatin1Char('\t'), QLatin1Char(' '));
+        return s;
+    };
+    const QByteArray line = (QStringList{
+        QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs),
+        QString::fromLatin1(tableName), oneLine(error), oneLine(sql)
+    }.join(QLatin1String(" | ")) + QLatin1Char('\n')).toUtf8();
+
+    // Keep one old copy when the log reaches about 100 KiB.
+    const qint64 size = QFileInfo(logPath).size();
+    if (size > 0 && size + line.size() > 100 * 1024) {
+        QFile::remove(oldPath);
+        QFile::rename(logPath, oldPath);   // best effort: never block on I/O
+    }
+
+    QFile f(logPath);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Append)) return;
+    f.write(line);
+}
+
+} // namespace
+
 /**
  * @brief Execute a query, logging a warning with the table name on failure
  * @return true if the query succeeded
@@ -1072,10 +1112,24 @@ bool DatabaseManager::execOrWarn(QSqlQuery &query, const char *tableName, bool t
 {
     assertMainThread();
     if (!query.exec()) {
-        qWarning() << "DatabaseManager:" << tableName << "error:" << query.lastError().text();
-        if (trackFailure && m_runtimeError.isEmpty()) {
-            m_runtimeError = QStringLiteral("%1: %2").arg(QLatin1String(tableName), query.lastError().text());
-            emit runtimeErrorChanged();
+        QString error = query.lastError().text();
+        if (trackFailure && !query.lastQuery().isEmpty()) {
+            // A statement that failed to prepare (a missing table or column)
+            // still gets its values bound and executed, and exec() then
+            // reports only "Parameter count mismatch". Preparing the same SQL
+            // again on a fresh query recovers the real cause. Valid SQL
+            // prepares fine here, and exec()'s own error is kept.
+            QSqlQuery probe(m_db);
+            if (!probe.prepare(query.lastQuery()))
+                error = probe.lastError().text();
+        }
+        qWarning() << "DatabaseManager:" << tableName << "error:" << error;
+        if (trackFailure) {
+            appendWriteFailure(m_db.databaseName(), tableName, error, query.lastQuery());
+            if (m_runtimeError.isEmpty()) {
+                m_runtimeError = QStringLiteral("%1: %2").arg(QLatin1String(tableName), error);
+                emit runtimeErrorChanged();
+            }
         }
         return false;
     }

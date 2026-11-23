@@ -5,6 +5,8 @@
 #include "core/PowerTypeModel.h"
 #include <QSignalSpy>
 #include <QTemporaryFile>
+#include <QFile>
+#include <QFileInfo>
 #include <QDir>
 #include <QJsonDocument>
 #include <QJsonArray>
@@ -62,6 +64,10 @@ private slots:
     void testRecorderGcsChargeForDeadSensor();
     void testRuntimeWriteErrorOnFirstFailure();
     void testRuntimeWriteErrorIgnoresExpectedFailures();
+    void testTrackedFailureIsLogged();
+    void testExecFailureKeepsItsOwnError();
+    void testUntrackedFailureWritesNothing();
+    void testWriteErrorLogRollsOver();
     void testRecorderWritesFlightHistoryAndHandovers();
     void testRecorderJoinsAFlightAlreadyArmed();
     void testBenchTestResultsLinkToFlightAndConnection();
@@ -2547,6 +2553,112 @@ void DatabaseManagerTest::testRuntimeWriteErrorIgnoresExpectedFailures()
                                          QStringLiteral("HARDWARE_UID")));
     QVERIFY(db.runtimeError().isEmpty());
     QCOMPARE(spy.count(), 0);
+}
+
+// A tracked failed write leaves one trace line next to the database: UTC time,
+// operation, SQLite error and the SQL (no bound values). The banner still
+// reports only the first failure.
+void DatabaseManagerTest::testTrackedFailureIsLogged()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    DatabaseManager &db = DatabaseManager::instance();
+    QVERIFY(db.initialize(dir.filePath(QStringLiteral("logged.db"))));
+    const QString logPath = dir.filePath(QStringLiteral("db_write_errors.log"));
+    QVERIFY(!QFile::exists(logPath));
+
+    QSqlQuery q(QSqlDatabase::database());
+    QVERIFY(q.exec(QStringLiteral("DROP TABLE flight_telemetry_events")));
+    QVERIFY(!db.insertTelemetryEvent(1, QStringLiteral("X"), QString(), 0, 0, 0, QString()));
+
+    QVERIFY(QFile::exists(logPath));
+    QFile f(logPath);
+    QVERIFY(f.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QByteArray contents = f.readAll();
+    QCOMPARE(contents.count('\n'), 1);
+    QVERIFY(contents.contains("insertTelemetryEvent"));
+    const QString errorText = db.runtimeError().section(QStringLiteral(": "), 1);
+    QVERIFY(!errorText.isEmpty());
+    QVERIFY(contents.contains(errorText.toUtf8()));
+    QVERIFY(contents.contains("INSERT INTO flight_telemetry_events"));
+
+    // The statement could not be prepared: the real cause is recorded, not
+    // the driver's "Parameter count mismatch" from executing it anyway.
+    QVERIFY2(db.runtimeError().contains(QStringLiteral("no such table")), qPrintable(db.runtimeError()));
+    QVERIFY2(contents.contains("no such table"), contents.constData());
+    QVERIFY2(!contents.contains("Parameter count mismatch"), contents.constData());
+}
+
+// Valid SQL that fails when it runs (here a trigger aborts the insert) keeps
+// the error the execution itself reported.
+void DatabaseManagerTest::testExecFailureKeepsItsOwnError()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    DatabaseManager &db = DatabaseManager::instance();
+    QVERIFY(db.initialize(dir.filePath(QStringLiteral("execfail.db"))));
+    const QString logPath = dir.filePath(QStringLiteral("db_write_errors.log"));
+
+    QSqlQuery q(QSqlDatabase::database());
+    QVERIFY(q.exec(QStringLiteral(
+        "CREATE TRIGGER block_events BEFORE INSERT ON flight_telemetry_events "
+        "BEGIN SELECT RAISE(ABORT, 'blocked by test'); END")));
+    QVERIFY(!db.insertTelemetryEvent(1, QStringLiteral("X"), QString(), 0, 0, 0, QString()));
+
+    QVERIFY2(db.runtimeError().contains(QStringLiteral("blocked by test")), qPrintable(db.runtimeError()));
+    QFile f(logPath);
+    QVERIFY(f.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QByteArray contents = f.readAll();
+    QCOMPARE(contents.count('\n'), 1);
+    QVERIFY2(contents.contains("blocked by test"), contents.constData());
+}
+
+// Expected failures (the fingerprint re-key on a reconnect, read-only
+// lookups) are untracked: no banner and no file.
+void DatabaseManagerTest::testUntrackedFailureWritesNothing()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    DatabaseManager &db = DatabaseManager::instance();
+    QVERIFY(db.initialize(dir.filePath(QStringLiteral("untracked.db"))));
+    const QString logPath = dir.filePath(QStringLiteral("db_write_errors.log"));
+
+    QSqlQuery q(QSqlDatabase::database());
+    QVERIFY(q.exec(QStringLiteral("PRAGMA foreign_keys = OFF")));
+    QVERIFY(q.exec(QStringLiteral("DROP TABLE vehicles")));
+    QVERIFY(!db.updateVehicleFingerprint(QStringLiteral("old"), QStringLiteral("new"),
+                                         QStringLiteral("HARDWARE_UID")));
+    QVERIFY(db.runtimeError().isEmpty());
+    QVERIFY(!QFile::exists(logPath));
+}
+
+// At about 100 KiB the log is rotated: one old copy is kept and the new
+// failure starts a fresh file.
+void DatabaseManagerTest::testWriteErrorLogRollsOver()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    DatabaseManager &db = DatabaseManager::instance();
+    QVERIFY(db.initialize(dir.filePath(QStringLiteral("rollover.db"))));
+    const QString logPath = dir.filePath(QStringLiteral("db_write_errors.log"));
+    const QString oldPath = logPath + QStringLiteral(".1");
+
+    QFile seed(logPath);
+    QVERIFY(seed.open(QIODevice::WriteOnly | QIODevice::Append));
+    QCOMPARE(seed.write(QByteArray(100 * 1024, 'x')), qint64(100 * 1024));
+    seed.close();
+    QVERIFY(!QFile::exists(oldPath));
+
+    QSqlQuery q(QSqlDatabase::database());
+    QVERIFY(q.exec(QStringLiteral("DROP TABLE flight_telemetry_events")));
+    QVERIFY(!db.insertTelemetryEvent(1, QStringLiteral("X"), QString(), 0, 0, 0, QString()));
+
+    QVERIFY(QFile::exists(oldPath));
+    QCOMPARE(QFileInfo(oldPath).size(), qint64(100 * 1024));
+    QVERIFY(QFileInfo(logPath).size() < 1024);
+    QFile f(logPath);
+    QVERIFY(f.open(QIODevice::ReadOnly | QIODevice::Text));
+    QCOMPARE(f.readAll().count('\n'), 1);
 }
 
 // When the hardware UID arrives for a copter registered under the sysid
