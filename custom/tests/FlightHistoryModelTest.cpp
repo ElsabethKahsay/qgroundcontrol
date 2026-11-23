@@ -30,6 +30,17 @@ private:
         return db.insertOperator(name, QStringLiteral("Pilot"));
     }
 
+    // A Flight History row is a flight only once armed (a form filled in but
+    // never armed is not listed): open the row and mark it armed now.
+    int openFlown(DatabaseManager &db, int operatorId, int vehicleId, const QString &mode,
+                  const QString &purpose, const QString &location, const QString &notes,
+                  const QString &weather) {
+        const int id = db.openFlight(operatorId, vehicleId, mode, purpose, location, notes, weather);
+        if (id > 0)
+            db.setFlightArmedAt(id, QDateTime::currentDateTimeUtc());
+        return id;
+    }
+
 private slots:
     void init() override {
         UnitTest::init();
@@ -61,11 +72,11 @@ void FlightHistoryModelTest::testFilterByMode()
     int op = seedOperator(db, QStringLiteral("Alice"));
     QVERIFY(op > 0);
 
-    int flight = db.openFlight(op, 1, QStringLiteral("FLIGHT"), QStringLiteral("p1"),
+    int flight = openFlown(db, op, 1, QStringLiteral("FLIGHT"), QStringLiteral("p1"),
                                QString(), QString(), QString());
-    int train = db.openFlight(op, 1, QStringLiteral("TRAINING"), QStringLiteral("p2"),
+    int train = openFlown(db, op, 1, QStringLiteral("TRAINING"), QStringLiteral("p2"),
                               QString(), QString(), QString());
-    int test = db.openFlight(op, 1, QStringLiteral("TESTING"), QStringLiteral("p3"),
+    int test = openFlown(db, op, 1, QStringLiteral("TESTING"), QStringLiteral("p3"),
                              QString(), QString(), QString());
     QVERIFY(flight > 0 && train > 0 && test > 0);
 
@@ -106,11 +117,11 @@ void FlightHistoryModelTest::testFilterByVehicleAndOperator()
                                   0, QString(), QString(), QStringLiteral("AlphaWing"),
                                   QStringLiteral("SYSID_TYPE_FALLBACK")));
 
-    int fA = db.openFlight(opA, 1, QStringLiteral("FLIGHT"), QString(), QString(),
+    int fA = openFlown(db, opA, 1, QStringLiteral("FLIGHT"), QString(), QString(),
                            QString(), QString());
-    int fA2 = db.openFlight(opA, 2, QStringLiteral("FLIGHT"), QString(), QString(),
+    int fA2 = openFlown(db, opA, 2, QStringLiteral("FLIGHT"), QString(), QString(),
                             QString(), QString());
-    int fB = db.openFlight(opB, 1, QStringLiteral("FLIGHT"), QString(), QString(),
+    int fB = openFlown(db, opB, 1, QStringLiteral("FLIGHT"), QString(), QString(),
                            QString(), QString());
     QVERIFY(fA > 0 && fA2 > 0 && fB > 0);
     // Form rows carry a sysid but no canonical key; History keys on the uid.
@@ -141,9 +152,9 @@ void FlightHistoryModelTest::testFilterByDateRange()
     QVERIFY(op > 0);
 
     // Manually control started_at so date filtering is deterministic.
-    int f1 = db.openFlight(op, 1, QStringLiteral("FLIGHT"), QString(), QString(),
+    int f1 = openFlown(db, op, 1, QStringLiteral("FLIGHT"), QString(), QString(),
                            QString(), QString());
-    int f2 = db.openFlight(op, 1, QStringLiteral("FLIGHT"), QString(), QString(),
+    int f2 = openFlown(db, op, 1, QStringLiteral("FLIGHT"), QString(), QString(),
                            QString(), QString());
     QVERIFY(f1 > 0 && f2 > 0);
 
@@ -175,9 +186,9 @@ void FlightHistoryModelTest::testFilterBySearch()
                                   0, QString(), QString(), QStringLiteral("SkyRunner"),
                                   QStringLiteral("SYSID_TYPE_FALLBACK")));
 
-    int fPurpose = db.openFlight(op, 1, QStringLiteral("FLIGHT"),
+    int fPurpose = openFlown(db, op, 1, QStringLiteral("FLIGHT"),
                                  QStringLiteral("survey mission"), QString(), QString(), QString());
-    int fLoc = db.openFlight(op, 1, QStringLiteral("FLIGHT"), QString(),
+    int fLoc = openFlown(db, op, 1, QStringLiteral("FLIGHT"), QString(),
                              QStringLiteral("Bole Field"), QString(), QString());
     QVERIFY(fPurpose > 0 && fLoc > 0);
     QSqlQuery q(QSqlDatabase::database());
@@ -213,13 +224,13 @@ void FlightHistoryModelTest::testSortByDuration()
     int op = seedOperator(db, QStringLiteral("Alice"));
     QVERIFY(op > 0);
 
-    int shortF = db.openFlight(op, 1, QStringLiteral("FLIGHT"), QString(), QString(),
+    int shortF = openFlown(db, op, 1, QStringLiteral("FLIGHT"), QString(), QString(),
                                QString(), QString());
-    int longF = db.openFlight(op, 1, QStringLiteral("FLIGHT"), QString(), QString(),
+    int longF = openFlown(db, op, 1, QStringLiteral("FLIGHT"), QString(), QString(),
                               QString(), QString());
     QVERIFY(shortF > 0 && longF > 0);
-    QVERIFY(db.closeFlight(shortF, 30, 0, 0, 0, 0));
-    QVERIFY(db.closeFlight(longF, 300, 0, 0, 0, 0));
+    QVERIFY(db.closeFlight(shortF, 30, 10.0, 0, 0, 0));
+    QVERIFY(db.closeFlight(longF, 300, 10.0, 0, 0, 0));
 
     QVariantMap desc = db.queryFlights(0, QString(), QString(), QString(), 0, QString(),
                                        QString(), QStringLiteral("duration_desc"));
@@ -241,7 +252,7 @@ void FlightHistoryModelTest::testPagination()
     int op = seedOperator(db, QStringLiteral("Alice"));
     QVERIFY(op > 0);
     for (int i = 0; i < 120; ++i) {
-        int fid = db.openFlight(op, 1, QStringLiteral("FLIGHT"), QString(), QString(),
+        int fid = openFlown(db, op, 1, QStringLiteral("FLIGHT"), QString(), QString(),
                                 QString(), QString());
         QVERIFY(fid > 0);
     }
@@ -275,7 +286,7 @@ void FlightHistoryModelTest::testRoles()
                                   0, QString(), QString(), QStringLiteral("DeltaOne"),
                                   QStringLiteral("SYSID_TYPE_FALLBACK")));
 
-    int fid = db.openFlight(op, 1, QStringLiteral("TRAINING"),
+    int fid = openFlown(db, op, 1, QStringLiteral("TRAINING"),
                             QStringLiteral("practice"), QStringLiteral("Home"),
                             QString(), QString());
     QVERIFY(fid > 0);
@@ -328,9 +339,9 @@ void FlightHistoryModelTest::testFiltersViaSetters()
     int opB = seedOperator(db, QStringLiteral("Bob"));
     QVERIFY(opA > 0 && opB > 0);
 
-    int fa = db.openFlight(opA, 1, QStringLiteral("FLIGHT"), QStringLiteral("alpha"),
+    int fa = openFlown(db, opA, 1, QStringLiteral("FLIGHT"), QStringLiteral("alpha"),
                            QString(), QString(), QString());
-    int fb = db.openFlight(opB, 2, QStringLiteral("TRAINING"), QStringLiteral("beta"),
+    int fb = openFlown(db, opB, 2, QStringLiteral("TRAINING"), QStringLiteral("beta"),
                            QString(), QString(), QString());
     QVERIFY(fa > 0 && fb > 0);
 
@@ -383,7 +394,7 @@ void FlightHistoryModelTest::testGetFlightDetail()
                                   0, QString(), QString(), QStringLiteral("AlphaWing"),
                                   QStringLiteral("SYSID_TYPE_FALLBACK")));
 
-    int fid = db.openFlight(op, 1, QStringLiteral("FLIGHT"),
+    int fid = openFlown(db, op, 1, QStringLiteral("FLIGHT"),
                             QStringLiteral("survey"), QString(), QString(), QString());
     QVERIFY(fid > 0);
 
@@ -456,9 +467,9 @@ void FlightHistoryModelTest::testFlightDetailExcludesOtherVehiclesMotorTests()
     initTempDb(db);
     const int op = seedOperator(db, QStringLiteral("Alice"));
     QVERIFY(op > 0);
-    const int fid = db.openFlight(op, 1, QStringLiteral("FLIGHT"), QString(), QString(),
+    const int fid = openFlown(db, op, 1, QStringLiteral("FLIGHT"), QString(), QString(),
                                   QString(), QString());
-    const int otherFid = db.openFlight(op, 1, QStringLiteral("FLIGHT"), QString(), QString(),
+    const int otherFid = openFlown(db, op, 1, QStringLiteral("FLIGHT"), QString(), QString(),
                                        QString(), QString());
     QVERIFY(fid > 0 && otherFid > 0);
 

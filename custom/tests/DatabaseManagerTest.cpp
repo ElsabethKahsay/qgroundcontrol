@@ -90,6 +90,7 @@ private slots:
     void testGetFlightStats();
     void testGetFlightStatsExcludesBenchAndGroundFlights();
     void testStatsCountFlightWithUnknownAltitude();
+    void testHistoryListsOnlyRealFlights();
     void testIncrementVehicleFlightTimeUsesDeviceUid();
     void testHistoryVehicleKeyDoesNotMergeSysid();
     void testBackupBeforeMigration();
@@ -1657,7 +1658,8 @@ void DatabaseManagerTest::testGetFlightStats()
 }
 
 // The stats banner counts real flights only: a bench arm and a flight that
-// never got airborne are left out, while both rows stay in Flight History.
+// never got airborne are left out of the stats and of Flight History alike:
+// neither is a flight.
 void DatabaseManagerTest::testGetFlightStatsExcludesBenchAndGroundFlights()
 {
     DatabaseManager &db = DatabaseManager::instance();
@@ -1695,7 +1697,7 @@ void DatabaseManagerTest::testGetFlightStatsExcludesBenchAndGroundFlights()
 
     const QVariantMap history = db.queryFlights(0, QString(), QString(), QString(), 0,
                                                 QString(), QString(), QStringLiteral("date_desc"), 50);
-    QCOMPARE(history.value(QStringLiteral("totalCount")).toInt(), 3);
+    QCOMPARE(history.value(QStringLiteral("totalCount")).toInt(), 1);
 
     db.reset();
     QFile::remove(path);
@@ -1704,7 +1706,7 @@ void DatabaseManagerTest::testGetFlightStatsExcludesBenchAndGroundFlights()
 
 // A link lost before any altitude sample leaves max_altitude_m unknown. That
 // must be stored as NULL and still count as a flight; a known low altitude
-// (below the airborne threshold) does not count. All three stay in History.
+// (below the airborne threshold) does not count, in the stats or in History.
 void DatabaseManagerTest::testStatsCountFlightWithUnknownAltitude()
 {
     DatabaseManager &db = DatabaseManager::instance();
@@ -1743,7 +1745,59 @@ void DatabaseManagerTest::testStatsCountFlightWithUnknownAltitude()
 
     const QVariantMap history = db.queryFlights(0, QString(), QString(), QString(), 0,
                                                 QString(), QString(), QStringLiteral("date_desc"), 50);
-    QCOMPARE(history.value(QStringLiteral("totalCount")).toInt(), 3);
+    QCOMPARE(history.value(QStringLiteral("totalCount")).toInt(), 2);
+}
+
+// Flight History and its CSV export list only flights that left the ground:
+// a motor test (bench arm), an arm that stayed on the ground and a Flight form
+// that was never armed are not listed. An armed flight whose altitude never
+// arrived is (a real flight with poor telemetry is not hidden).
+void DatabaseManagerTest::testHistoryListsOnlyRealFlights()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    initTempDb(db);
+    const int op = db.insertOperator(QStringLiteral("Pilot"), QStringLiteral("Pilot"));
+    QVERIFY(op > 0);
+    QVERIFY(db.upsertVehicle(QStringLiteral("UID-H"), QStringLiteral("Hist"),
+                             QStringLiteral("ArduPilot"), QStringLiteral("Quad")));
+
+    auto armed = [&](const QString &purpose, bool bench, double maxAlt, bool close) {
+        const int session = db.openFlightRecord(0, QStringLiteral("UID-H"), QString(), 0.0,
+                                                QStringLiteral("external"), true, QStringLiteral("FLIGHT"), bench);
+        QVERIFY(session > 0);
+        const int history = db.openHistoryFlight(session, op, 1, QStringLiteral("FLIGHT"), purpose, QString());
+        QVERIFY(history > 0);
+        QVERIFY(db.setFlightArmedAt(history, QDateTime::currentDateTimeUtc()));
+        if (close)
+            QVERIFY(db.closeFlight(history, bench ? 1 : 120, maxAlt, 21.0, 25.0, 0, 0, 0, 0, 0));
+    };
+    armed(QStringLiteral("real"), false, 12.0, true);
+    armed(QStringLiteral("motor test"), true, -0.6, true);
+    armed(QStringLiteral("ground arm"), false, -0.6, true);
+    armed(QStringLiteral("no altitude"), false, 0.0, false);   // still open: altitude unknown
+    const int form = db.openFlight(op, 1, QStringLiteral("FLIGHT"), QStringLiteral("form only"),
+                                   QString(), QString(), QString());
+    QVERIFY(form > 0);
+
+    const QVariantMap history = db.queryFlights(0, QString(), QString(), QString(), 0,
+                                                QString(), QString(), QStringLiteral("date_desc"), 50);
+    QStringList listed;
+    for (const QVariant &v : history.value(QStringLiteral("rows")).toList())
+        listed << v.toMap().value(QStringLiteral("notes")).toString() + v.toMap().value(QStringLiteral("purpose")).toString();
+    QCOMPARE(history.value(QStringLiteral("totalCount")).toInt(), 2);
+    QVERIFY2(listed.join(QLatin1Char('|')).contains(QStringLiteral("real")), qPrintable(listed.join(QLatin1Char('|'))));
+    QVERIFY2(listed.join(QLatin1Char('|')).contains(QStringLiteral("no altitude")), qPrintable(listed.join(QLatin1Char('|'))));
+
+    const QString csvPath = db.exportFlightsCsv(QString(), QString(), 0, QString());
+    QFile csvFile(csvPath);
+    QVERIFY2(csvFile.open(QIODevice::ReadOnly | QIODevice::Text), qPrintable(csvPath));
+    const QString csv = QString::fromUtf8(csvFile.readAll());
+    csvFile.close();
+    QFile::remove(csvPath);
+    const QStringList lines = csv.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    QCOMPARE(lines.size(), 1 + 2);   // header + the two flights
+    QVERIFY(!csv.contains(QStringLiteral("motor test")));
+    QVERIFY(!csv.contains(QStringLiteral("form only")));
 }
 
 // Vehicle totals are keyed by the canonical device_uid. A legacy fingerprint
@@ -1818,9 +1872,8 @@ void DatabaseManagerTest::testHistoryVehicleKeyDoesNotMergeSysid()
                                      QString(), QString(), QString());
     QVERIFY(legacy > 0);
     QVERIFY(q.exec(QStringLiteral("UPDATE flights SET device_uid = 'UID-C' WHERE id = %1").arg(legacy)));
-    // These two rows are about vehicle keys, not airborne flights; keep them
-    // below the threshold now that an unknown (NULL) altitude counts too.
-    QVERIFY(q.exec(QStringLiteral("UPDATE flights SET max_altitude_m = 0.4 WHERE id IN (%1, %2)")
+    // Real flights too: History lists only flights that left the ground.
+    QVERIFY(q.exec(QStringLiteral("UPDATE flights SET max_altitude_m = 100 WHERE id IN (%1, %2)")
                    .arg(unknown).arg(legacy)));
 
     auto query = [&](const QString &key) {
@@ -1856,10 +1909,11 @@ void DatabaseManagerTest::testHistoryVehicleKeyDoesNotMergeSysid()
     QCOMPARE(stats.value(QStringLiteral("totalFlights")).toInt(), 1);
     QCOMPARE(stats.value(QStringLiteral("vehicleCount")).toInt(), 1);
 
-    // Both airborne sessions used sysid 1, but they are two distinct vehicles.
+    // The two sessions used sysid 1, but they are two distinct vehicles; with
+    // the legacy row's UID-C that is three. The unkeyed row is no vehicle.
     const QVariantMap allStats = db.getFlightStats(QString(), QString(), QString(), QString());
-    QCOMPARE(allStats.value(QStringLiteral("totalFlights")).toInt(), 2);
-    QCOMPARE(allStats.value(QStringLiteral("vehicleCount")).toInt(), 2);
+    QCOMPARE(allStats.value(QStringLiteral("totalFlights")).toInt(), 4);
+    QCOMPARE(allStats.value(QStringLiteral("vehicleCount")).toInt(), 3);
 
     db.reset();
     QFile::remove(path + QStringLiteral(".v0.bak"));
@@ -2137,8 +2191,8 @@ void DatabaseManagerTest::testFlightDateFiltersUseLocalDay()
         const QDateTime utc = QDateTime::fromString(localIso, Qt::ISODate).toUTC();
         QSqlQuery q(QSqlDatabase::database());
         q.prepare(QStringLiteral("INSERT INTO flights (operator_id, vehicle_id, mode, purpose, "
-                                 "location, notes, weather_summary, started_at, duration_sec) "
-                                 "VALUES (?, 1, 'FLIGHT', '', '', '', '', ?, 0)"));
+                                 "location, notes, weather_summary, started_at, duration_sec, max_altitude_m) "
+                                 "VALUES (?, 1, 'FLIGHT', '', '', '', '', ?, 0, 10)"));
         q.addBindValue(opId);
         // Mix the legacy space-separated UTC form and the new ISO form: both
         // must be filtered by the same local calendar day.

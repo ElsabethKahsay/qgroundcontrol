@@ -2121,6 +2121,21 @@ static void addLocalDayFilters(const QString &fromDate, const QString &toDate,
     }
 }
 
+// What counts as a flight in Flight History, its CSV export and the stats
+// banner: not a bench run (motor or servo test, Testing mode, force-arm), and
+// off the ground. Off the ground is a max altitude of at least
+// kAirborneAltM; an unknown altitude counts when the vehicle was armed (a
+// link lost before the first altitude sample), so a real flight with poor
+// telemetry is not hidden. A Flight form that was filled in but never armed,
+// and an arm that never left the ground, stay in the database but are not
+// flights. Needs "fs" joined on fs.history_flight_id = f.id.
+static void addRealFlightFilter(QStringList &where, QVariantList &binds)
+{
+    where << QStringLiteral("COALESCE(fs.is_bench, 0) = 0");
+    where << QStringLiteral("(f.max_altitude_m >= ? OR (f.max_altitude_m IS NULL AND f.armed_at IS NOT NULL))");
+    binds << PowerTypeModel::kAirborneAltM;
+}
+
 int DatabaseManager::openConnectionSession(const QString &deviceUid, const QString &mode,
                                            const QString &operatorName, const QString &appVersion)
 {
@@ -3361,6 +3376,7 @@ QVariantMap DatabaseManager::queryFlights(int page, const QString &fromDate,
                  + vehicleNameSql + QStringLiteral(" LIKE ?)");
         binds << pattern << pattern << pattern << pattern;
     }
+    addRealFlightFilter(where, binds);
 
     const QString whereSql = where.isEmpty() ? QStringLiteral("1=1")
                                              : where.join(QStringLiteral(" AND "));
@@ -4181,8 +4197,8 @@ QString DatabaseManager::exportFlightsCsv(const QString &fromDate,
         where << QStringLiteral("f.mode = ?");
         binds << mode;
     }
-    const QString whereSql = where.isEmpty() ? QStringLiteral("1=1")
-                                             : where.join(QStringLiteral(" AND "));
+    addRealFlightFilter(where, binds);
+    const QString whereSql = where.join(QStringLiteral(" AND "));
 
     QSqlQuery q(m_db);
     q.prepare(
@@ -4196,7 +4212,8 @@ QString DatabaseManager::exportFlightsCsv(const QString &fromDate,
         "(SELECT op.name FROM operators op WHERE op.id = f.operator_id) AS operator_name, "
         "(SELECT v.friendly_name FROM vehicles v WHERE v.sysid = f.vehicle_id LIMIT 1) "
         "AS vehicle_name "
-        "FROM flights f WHERE " + whereSql + " ORDER BY f.started_at DESC");
+        "FROM flights f LEFT JOIN flight_sessions fs ON fs.history_flight_id = f.id "
+        "WHERE " + whereSql + " ORDER BY f.started_at DESC");
     for (const QVariant &b : binds) q.addBindValue(b);
     if (!q.exec()) {
         qWarning() << "DatabaseManager: exportFlightsCsv query failed:" << q.lastError().text();
@@ -4391,12 +4408,9 @@ QVariantMap DatabaseManager::getFlightStats(const QString &fromDate,
         where << QStringLiteral("f.mode = ?");
         binds << mode;
     }
-    // Stats count real flights only: bench arms and runs that never got
-    // airborne are still in History, but must not inflate the banner.
+    // Real flights only (addRealFlightFilter), as Flight History lists them.
     // LEFT JOIN keeps legacy form rows that have no linked flight session.
-    where << QStringLiteral("(f.max_altitude_m IS NULL OR f.max_altitude_m >= ?)");
-    where << QStringLiteral("COALESCE(fs.is_bench, 0) = 0");
-    binds << PowerTypeModel::kAirborneAltM;
+    addRealFlightFilter(where, binds);
     const QString whereSql = where.join(QStringLiteral(" AND "));
 
     QSqlQuery q(m_db);
