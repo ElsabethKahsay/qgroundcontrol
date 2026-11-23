@@ -186,6 +186,18 @@ void VehicleProfileManager::setTelemetryBridge(TelemetryBridge *bridge)
     m_telemetry = bridge;
     if (m_telemetry) {
         connect(m_telemetry, &TelemetryBridge::isConnectedChanged, this, &VehicleProfileManager::onConnectionChanged);
+        // The vehicle's key is known only once the registry has settled its
+        // identity, possibly after the link counts as connected, and changes
+        // when a hardware id arrives later. Follow it; a re-key that moved the
+        // rows already moved this manager (onVehicleReKeyed), so nothing reloads twice.
+        disconnect(VehicleRegistry::instance(), &VehicleRegistry::identitySettled, this, nullptr);
+        connect(VehicleRegistry::instance(), &VehicleRegistry::identitySettled, this, [this]() {
+            if (!m_telemetry || !m_telemetry->isConnected())
+                return;
+            const QString key = resolveDeviceUid();
+            if (!key.isEmpty() && key != m_currentDeviceUid)
+                onConnectionChanged();
+        });
         connect(m_telemetry, &TelemetryBridge::armedChanged, this, [this]() {
             _onArmedChanged(m_telemetry->armed());
         });
@@ -363,7 +375,10 @@ void VehicleProfileManager::onConnectionChanged()
     // Connected: resolve device UID
     m_currentDeviceUid = resolveDeviceUid();
     if (m_currentDeviceUid.isEmpty()) {
-        qWarning() << "VehicleProfileManager: could not resolve device UID";
+        // The registry settles the vehicle's identity on AUTOPILOT_VERSION
+        // (at most VehicleRegistry::kSettleTimeoutMs); identitySettled brings
+        // this back with the key.
+        qInfo() << "VehicleProfileManager: waiting for the vehicle's identity";
         return;
     }
 
@@ -466,22 +481,12 @@ QString VehicleProfileManager::resolveDeviceUid()
     Vehicle *v = m_telemetry->vehicle();
     if (!v) return {};
 
-    // Primary: hardware UID from AUTOPILOT_VERSION.uid — the same decimal
-    // string VehicleRegistry::registerNewVehicle keys the registry row by.
-    quint64 uid = v->vehicleUID();
-    if (uid != 0) {
-        return QString::number(uid);
-    }
-
-    // Fallback: the connection-derived fingerprint — identical to the key the
-    // vehicle registry row uses for UID-less (e.g. SITL) vehicles.
-    QString fp = VehicleRegistry::instance()->currentFingerprint();
-    if (!fp.isEmpty()) {
-        return fp;
-    }
-
-    // Last resort: MAV_SYS_ID (session-only, clearly non-ideal)
-    return QStringLiteral("sysid:%1").arg(m_telemetry->vehicle()->id());
+    // The registry's key for the connected vehicle (decimal uid, uid2 hex or
+    // fallback fingerprint), the same key its vehicles row uses. Empty until
+    // the registry has settled the identity (AUTOPILOT_VERSION or its
+    // timeout); the profile then loads on identitySettled.
+    Q_UNUSED(v)
+    return VehicleRegistry::instance()->currentDeviceKey();
 }
 
 // Resolve motor count from vehicle firmware parameters.

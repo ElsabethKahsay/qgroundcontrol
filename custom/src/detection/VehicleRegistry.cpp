@@ -37,6 +37,9 @@ VehicleRegistry::VehicleRegistry(QObject *parent)
 
     m_autopilotRequestTimer.setInterval(2000);
     m_autopilotRequestTimer.setSingleShot(true);
+    m_settleTimer.setInterval(kSettleTimeoutMs);
+    m_settleTimer.setSingleShot(true);
+    connect(&m_settleTimer, &QTimer::timeout, this, &VehicleRegistry::_onSettleTimeout);
     connect(&m_autopilotRequestTimer, &QTimer::timeout,
             this, &VehicleRegistry::_requestAutopilotCapabilities);
 
@@ -61,13 +64,16 @@ QString VehicleRegistry::computeFingerprint(quint64 uid, bool hasUid, int mavTyp
     return QString::fromLatin1(QCryptographicHash::hash(data.toUtf8(), QCryptographicHash::Sha256).toHex());
 }
 
-/// When a vehicle connects, request its AUTOPILOT_VERSION so the hardware UID
-/// (and a reliable fingerprint) is available as quickly as possible.  The
-/// vehicle is then registered immediately — using the sysid fallback identity
-/// when the UID is not yet known — and upgraded in place once the UID arrives.
+/// When a vehicle connects, request its AUTOPILOT_VERSION: it carries the
+/// hardware ids (uid, uid2) and the board id. The vehicle is looked up or
+/// registered only once that message is in (_settleIdentity), or after
+/// kSettleTimeoutMs for a vehicle that never sends it.
 void VehicleRegistry::_onVehicleAdded(Vehicle *vehicle)
 {
     if (!vehicle) return;
+    // vehicleAdded and activeVehicleChanged both report the same vehicle.
+    if (vehicle == m_currentVehicle && (m_identitySettled || m_settleTimer.isActive()))
+        return;
     qCDebug(vehicleRegistryLog) << "Vehicle added: sysid" << vehicle->id();
 
     if (m_currentVehicle && m_currentVehicle != vehicle)
@@ -75,6 +81,7 @@ void VehicleRegistry::_onVehicleAdded(Vehicle *vehicle)
 
     m_currentVehicle = vehicle;
     m_pendingVehicle = nullptr;
+    _resetIdentity();
 
     connect(vehicle, &Vehicle::vehicleUIDChanged,
             this, &VehicleRegistry::_onVehicleUidChanged, Qt::UniqueConnection);
@@ -85,18 +92,27 @@ void VehicleRegistry::_onVehicleAdded(Vehicle *vehicle)
 
     // Give the connection a moment to settle, then ask for capabilities.
     m_autopilotRequestTimer.start();
+    m_settleTimer.start();
 
     _extractVehicleInfo(vehicle);
-    _registerOrUpdateCurrentVehicle();
+    if (_hasValidUid(m_currentUid))
+        _settleIdentity();
 }
 
+/// QGC parsed AUTOPILOT_VERSION. A non-zero uid settles (or upgrades) the
+/// identity; uid = 0 waits for the message itself, which also carries uid2.
 void VehicleRegistry::_onVehicleUidChanged()
 {
     if (!m_currentVehicle) return;
     qCDebug(vehicleRegistryLog) << "Vehicle UID now known:" << m_currentVehicle->vehicleUID();
 
     _extractVehicleInfo(m_currentVehicle);
-    _registerOrUpdateCurrentVehicle();
+    if (!_hasValidUid(m_currentUid))
+        return;
+    if (!m_identitySettled)
+        _settleIdentity();
+    else if (m_currentFingerprintSource != QStringLiteral("HARDWARE_UID"))
+        _upgradeToHardwareIdentity(m_currentVehicle);
 }
 
 /// QGC parses AUTOPILOT_VERSION asynchronously (after our registration already
@@ -109,7 +125,8 @@ void VehicleRegistry::_onFirmwareVersionChanged()
                                 << m_currentFirmwareVersion;
 
     _extractVehicleInfo(m_currentVehicle);
-    _updateCurrentVehicleAttributes(m_currentVehicle);
+    if (m_identitySettled)
+        _updateCurrentVehicleAttributes(m_currentVehicle);
 }
 
 /// Explicitly request the autopilot capabilities (AUTOPILOT_VERSION).  QGC's
@@ -125,9 +142,9 @@ void VehicleRegistry::_requestAutopilotCapabilities()
     qCDebug(vehicleRegistryLog) << "Requested AUTOPILOT_VERSION for sysid" << m_currentVehicle->id();
 }
 
-/// Watch for AUTOPILOT_VERSION replies.  When one carries a hardware UID that is
-/// better than the identity we currently hold, upgrade the database record from
-/// the sysid fallback to the hardware UID fingerprint.
+/// AUTOPILOT_VERSION: read uid, uid2 and the board id from the message itself
+/// (the Vehicle may not have parsed it yet), then settle the identity, or
+/// upgrade a fallback identity once a hardware id appears.
 void VehicleRegistry::_onMavlinkMessage(const mavlink_message_t &message)
 {
     if (message.msgid != MAVLINK_MSG_ID_AUTOPILOT_VERSION) return;
@@ -140,45 +157,55 @@ void VehicleRegistry::_onMavlinkMessage(const mavlink_message_t &message)
     qCDebug(vehicleRegistryLog) << "AUTOPILOT_VERSION received: uid=" << version.uid
                                 << "uid2=" << QByteArray(reinterpret_cast<const char *>(version.uid2),
                                                          static_cast<int>(sizeof(version.uid2))).toHex()
-                                << "board=" << version.board_version;
+                                << "board=" << version.board_version << "product=" << version.product_id;
 
-    _upgradeToHardwareIdentity(m_currentVehicle, version.uid, QString::number(version.board_version));
+    if (_hasValidUid(version.uid))
+        m_currentUid = version.uid;
+    const QString uid2 = uid2Key(version.uid2, static_cast<int>(sizeof(version.uid2)));
+    if (!uid2.isEmpty())
+        m_currentUid2Key = uid2;
+    if (version.product_id != 0 || m_currentBoardVersion.isEmpty())
+        m_currentBoardVersion = QString::number(version.product_id);
+
+    if (!m_identitySettled) {
+        _settleIdentity();
+    } else if (m_currentFingerprintSource != QStringLiteral("HARDWARE_UID")
+               && (_hasValidUid(m_currentUid) || !m_currentUid2Key.isEmpty())) {
+        _upgradeToHardwareIdentity(m_currentVehicle);
+    }
 }
 
-/// If the hardware UID just arrived for a vehicle that was registered with the
-/// sysid fallback, re-key the database record so the hardware identity is used
-/// going forward.  No-op when the UID is still missing or we already have it.
-void VehicleRegistry::_upgradeToHardwareIdentity(Vehicle *vehicle, quint64 uid, const QString &boardVersion)
+/// A hardware id arrived after the identity was settled on the fallback (a late
+/// or retried AUTOPILOT_VERSION). If this connection created the fallback row,
+/// the row is renamed to the hardware identity (its records follow). A fallback
+/// row that existed before is left alone: it may be another copter's with the
+/// same sysid, frame and board model, or the simulator's. The vehicle then
+/// takes its own hardware row.
+void VehicleRegistry::_upgradeToHardwareIdentity(Vehicle *vehicle)
 {
     if (!vehicle) return;
-    if (!_hasValidUid(uid)) return;
-
-    if (m_currentFingerprintSource == QStringLiteral("HARDWARE_UID") && m_currentUid == uid)
-        return;
-
-    qCDebug(vehicleRegistryLog) << "Upgrading vehicle identity to hardware UID" << uid;
-
     const QString oldFingerprint = m_currentFingerprint;
-    m_currentUid = uid;
-    m_currentBoardVersion = boardVersion;
-    m_currentHardwareUid = QString("%1").arg(uid, 0, 16);
-    const QString newFingerprint =
-        computeFingerprint(uid, true, m_currentVehicleType, m_currentVehicleId, boardVersion);
+    const QString oldKey = currentDeviceKey();
+    _computeIdentity();
+    if (m_currentFingerprintSource != QStringLiteral("HARDWARE_UID") || oldFingerprint == m_currentFingerprint)
+        return;
+    const QString newKey = currentDeviceKey();
+    qCDebug(vehicleRegistryLog) << "Upgrading vehicle identity to hardware id" << newKey;
 
-    if (!oldFingerprint.isEmpty() && oldFingerprint != newFingerprint) {
-        const QString newKey = QString::number(uid);
-        if (DatabaseManager::instance().updateVehicleFingerprint(oldFingerprint, newFingerprint,
+    if (m_registeredNewThisConnection && !oldFingerprint.isEmpty()) {
+        if (DatabaseManager::instance().updateVehicleFingerprint(oldFingerprint, m_currentFingerprint,
                                                                  QStringLiteral("HARDWARE_UID"), newKey)) {
             qCDebug(vehicleRegistryLog) << "Re-keyed vehicle record to" << newKey;
-            emit vehicleReKeyed(oldFingerprint, newKey);
+            emit vehicleReKeyed(oldKey, newKey);
         }
+        _updateCurrentVehicleAttributes(vehicle);
+        emit knownVehicleChanged();
+    } else {
+        m_registeredNewThisConnection = false;
+        _registerOrUpdateCurrentVehicle();
     }
-
-    m_currentFingerprint = newFingerprint;
-    m_currentFingerprintSource = QStringLiteral("HARDWARE_UID");
-    _updateCurrentVehicleAttributes(vehicle);
     emit currentVehicleChanged(m_currentVehicleId);
-    emit knownVehicleChanged();
+    emit identitySettled();
 }
 
 void VehicleRegistry::_registerOrUpdateCurrentVehicle()
@@ -210,6 +237,7 @@ void VehicleRegistry::_registerOrUpdateCurrentVehicle()
                             .arg(m_currentVehicleId)
                             .arg(m_currentFingerprint.left(8));
 
+        m_registeredNewThisConnection = true;
         DatabaseManager::instance().registerNewVehicle(
             m_currentFingerprint, m_currentVehicleId, m_currentCompid,
             autopilotTypeString(m_currentAutopilotType),
@@ -307,9 +335,7 @@ void VehicleRegistry::_onVehicleRemoved(Vehicle *vehicle)
 
     m_autopilotRequestTimer.stop();
     m_currentVehicleId = 0;
-    m_currentFingerprint.clear();
-    m_currentFingerprintSource.clear();
-    m_currentHardwareUid.clear();
+    _resetIdentity();
     m_isKnownVehicle = false;
     m_vehicleName.clear();
     emit currentVehicleChanged(0);
@@ -327,9 +353,7 @@ void VehicleRegistry::_onActiveVehicleChanged(Vehicle *vehicle)
         }
         m_autopilotRequestTimer.stop();
         m_currentVehicleId = 0;
-        m_currentFingerprint.clear();
-        m_currentFingerprintSource.clear();
-        m_currentHardwareUid.clear();
+        _resetIdentity();
         m_isKnownVehicle = false;
         m_vehicleName.clear();
         emit currentVehicleChanged(0);
@@ -337,13 +361,13 @@ void VehicleRegistry::_onActiveVehicleChanged(Vehicle *vehicle)
     }
 }
 
-/// Pull hardware identifiers from the QGC Vehicle object and build the SHA-256 fingerprint.
+/// Pull the vehicle's attributes from the QGC Vehicle object. The identity
+/// (fingerprint, source, key) is not touched here: it is fixed once per
+/// connection by _settleIdentity(), so a board id or firmware version that
+/// arrives later cannot change the key under the vehicle's records.
 void VehicleRegistry::_extractVehicleInfo(Vehicle *vehicle)
 {
     if (!vehicle) return;
-
-    const QString oldFingerprint = m_currentFingerprint;
-    const QString oldSource = m_currentFingerprintSource;
 
     m_currentVehicleId = vehicle->id();
     m_currentCompid = vehicle->defaultComponentId();
@@ -351,11 +375,12 @@ void VehicleRegistry::_extractVehicleInfo(Vehicle *vehicle)
     m_currentVehicleType = static_cast<int>(vehicle->vehicleType());
     m_currentVehicleTypeName = HardwareTestController::vehicleTypeLabelFromMavType(m_currentVehicleType);
     m_currentMotorCount = HardwareTestController::motorCountFromMavType(m_currentVehicleType);
-    m_currentUid = vehicle->vehicleUID();
-    m_currentBoardVersion = QString::number(vehicle->firmwareBoardProductId());
-
-    if (_hasValidUid(m_currentUid))
-        m_currentHardwareUid = QString("%1").arg(m_currentUid, 0, 16);
+    // The AUTOPILOT_VERSION handler may have read uid and the board id from the
+    // message before the Vehicle did: never replace them with "not known yet".
+    if (_hasValidUid(vehicle->vehicleUID()))
+        m_currentUid = vehicle->vehicleUID();
+    if (vehicle->firmwareBoardProductId() != 0 || m_currentBoardVersion.isEmpty())
+        m_currentBoardVersion = QString::number(vehicle->firmwareBoardProductId());
 
     int majorVer = vehicle->firmwareMajorVersion();
     int minorVer = vehicle->firmwareMinorVersion();
@@ -363,43 +388,96 @@ void VehicleRegistry::_extractVehicleInfo(Vehicle *vehicle)
     m_currentFirmwareVersion = (majorVer >= 0 && minorVer >= 0 && patchVer >= 0)
         ? QStringLiteral("%1.%2.%3").arg(majorVer).arg(minorVer).arg(patchVer)
         : QString();
+}
 
-    // Hardware-UID fingerprint when available, otherwise a sysid-based fallback
-    // so every board still gets a distinct database record.
-    const bool hasUid = _hasValidUid(m_currentUid);
-    m_currentFingerprintSource = hasUid ? QStringLiteral("HARDWARE_UID")
-                                        : QStringLiteral("SYSID_TYPE_FALLBACK");
-    m_currentFingerprint = computeFingerprint(m_currentUid, hasUid, m_currentVehicleType,
-                                              m_currentVehicleId, m_currentBoardVersion);
-
-    // The UID arrived after we registered a sysid fallback: re-key the database
-    // record in place so the hardware identity is used from now on instead of
-    // leaving a duplicate fallback row behind.
-    if (oldSource == QStringLiteral("SYSID_TYPE_FALLBACK") &&
-        m_currentFingerprintSource == QStringLiteral("HARDWARE_UID") &&
-        oldFingerprint != m_currentFingerprint) {
-        qCDebug(vehicleRegistryLog) << "Re-keying sysid fallback record to hardware UID identity";
-        // The fallback row's key is its fingerprint; the copter's key from now
-        // on is its decimal UID (as registerNewVehicle and the profile manager
-        // use). Listeners reload only once the rows have moved.
-        const QString newKey = QString::number(m_currentUid);
-        if (DatabaseManager::instance().updateVehicleFingerprint(oldFingerprint, m_currentFingerprint,
-                                                                 QStringLiteral("HARDWARE_UID"), newKey))
-            emit vehicleReKeyed(oldFingerprint, newKey);
+void VehicleRegistry::_computeIdentity()
+{
+    if (_hasValidUid(m_currentUid)) {
+        m_currentFingerprintSource = QStringLiteral("HARDWARE_UID");
+        m_currentHardwareUid = QString("%1").arg(m_currentUid, 0, 16);
+        m_currentFingerprint = computeFingerprint(m_currentUid, true, m_currentVehicleType,
+                                                  m_currentVehicleId, m_currentBoardVersion);
+    } else if (!m_currentUid2Key.isEmpty()) {
+        m_currentFingerprintSource = QStringLiteral("HARDWARE_UID");
+        m_currentHardwareUid = m_currentUid2Key;
+        m_currentFingerprint = computeUid2Fingerprint(m_currentUid2Key, m_currentVehicleType);
+    } else {
+        m_currentFingerprintSource = QStringLiteral("SYSID_TYPE_FALLBACK");
+        m_currentHardwareUid.clear();
+        m_currentFingerprint = computeFingerprint(0, false, m_currentVehicleType,
+                                                  m_currentVehicleId, m_currentBoardVersion);
     }
-
     qCDebug(vehicleRegistryLog)
-        << "Vehicle fingerprint:"
+        << "Vehicle identity:"
         << "\n  sysid:" << m_currentVehicleId
-        << "\n  compid:" << m_currentCompid
-        << "\n  autopilot:" << autopilotTypeString(m_currentAutopilotType)
         << "\n  type:" << vehicleTypeString(m_currentVehicleType)
-        << "\n  typeName:" << m_currentVehicleTypeName
         << "\n  firmware:" << m_currentFirmwareVersion
-        << "\n  uid:" << m_currentUid
+        << "\n  uid:" << m_currentUid << " uid2:" << m_currentUid2Key
         << "\n  board:" << m_currentBoardVersion
         << "\n  source:" << m_currentFingerprintSource
         << "\n  fingerprint:" << m_currentFingerprint;
+}
+
+void VehicleRegistry::_settleIdentity()
+{
+    if (!m_currentVehicle || m_identitySettled) return;
+    m_settleTimer.stop();
+    _computeIdentity();
+    m_identitySettled = true;
+    _registerOrUpdateCurrentVehicle();
+    emit currentVehicleChanged(m_currentVehicleId);
+    emit identitySettled();
+}
+
+void VehicleRegistry::_onSettleTimeout()
+{
+    if (!m_currentVehicle || m_identitySettled) return;
+    qCDebug(vehicleRegistryLog) << "No AUTOPILOT_VERSION after" << kSettleTimeoutMs
+                                << "ms: settling the identity with what is known";
+    _extractVehicleInfo(m_currentVehicle);
+    _settleIdentity();
+}
+
+void VehicleRegistry::_resetIdentity()
+{
+    m_settleTimer.stop();
+    m_identitySettled = false;
+    m_registeredNewThisConnection = false;
+    m_currentUid = 0;
+    m_currentUid2Key.clear();
+    m_currentBoardVersion.clear();
+    m_currentFingerprint.clear();
+    m_currentFingerprintSource.clear();
+    m_currentHardwareUid.clear();
+}
+
+QString VehicleRegistry::currentDeviceKey() const
+{
+    if (!m_identitySettled || m_currentFingerprint.isEmpty())
+        return QString();
+    if (_hasValidUid(m_currentUid))
+        return QString::number(m_currentUid);
+    if (!m_currentUid2Key.isEmpty())
+        return m_currentUid2Key;
+    return m_currentFingerprint;
+}
+
+QString VehicleRegistry::uid2Key(const uint8_t *uid2, int len)
+{
+    if (!uid2 || len <= 0) return QString();
+    int end = len;
+    while (end > 0 && uid2[end - 1] == 0)
+        --end;
+    if (end == 0) return QString();
+    return QString::fromLatin1(QByteArray(reinterpret_cast<const char *>(uid2), end).toHex());
+}
+
+QString VehicleRegistry::computeUid2Fingerprint(const QString &uid2Key, int mavType)
+{
+    // No board id: the uid2 already names one processor, and the board id
+    // arrives from a different field than the one the fallback uses.
+    const QString data = QStringLiteral("uid2=%1|type=%2").arg(uid2Key).arg(mavType);
+    return QString::fromLatin1(QCryptographicHash::hash(data.toUtf8(), QCryptographicHash::Sha256).toHex());
 }
 
 /// Concatenate UID, autopilot type, and board version, then SHA-256 hash them into a hex string.

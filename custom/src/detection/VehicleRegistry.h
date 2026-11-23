@@ -14,13 +14,17 @@ class HardwareTestController;
 /// the current vehicle is known/registered in the database.
 /// Exposes QML-friendly properties for the preflight UI to display vehicle identity state.
 ///
-/// On vehicle connect the registry explicitly requests AUTOPILOT_VERSION so the
-/// hardware UID becomes available quickly.  Identity is handled in two tiers:
-///   1. HARDWARE_UID   — SHA-256 of "uid|type=MAV_TYPE|board=boardVersion"
-///   2. SYSID_TYPE_FALLBACK — SHA-256 of "sysid=N|type=MAV_TYPE|board=boardVersion"
-/// used when the UID is still unknown or the hardware reports no UID.  A vehicle
-/// is registered immediately with the fallback identity (so every board gets its
-/// own record) and is upgraded in place once a real UID arrives.
+/// On vehicle connect the registry explicitly requests AUTOPILOT_VERSION, which
+/// carries the hardware ids and the board id. Identity is handled in two tiers:
+///   1. HARDWARE_UID — AUTOPILOT_VERSION.uid when non-zero (key: its decimal),
+///      else uid2 when non-zero (key: its hex, uid2Key()). ArduPilot ChibiOS
+///      boards report uid = 0 and their STM32 id in uid2.
+///   2. SYSID_TYPE_FALLBACK — SHA-256 of "sysid=N|type=MAV_TYPE|board=productId"
+///      when the copter reports neither.
+/// The identity is settled once per connection, when AUTOPILOT_VERSION arrives
+/// (or after kSettleTimeoutMs for a vehicle that never sends it), and only then
+/// is the vehicle looked up or registered: the heartbeat alone has no board id,
+/// and registering on it made a second row once the board id arrived.
 class VehicleRegistry : public QObject
 {
     Q_OBJECT
@@ -43,6 +47,19 @@ public:
     QString currentVehicleName() const { return m_vehicleName; }
     QString currentFingerprint() const { return m_currentFingerprint; }
     QString currentFingerprintSource() const { return m_currentFingerprintSource; }
+    /// The key the connected vehicle's records use (vehicles.device_uid): the
+    /// decimal uid, the uid2 hex, or the fallback fingerprint. Empty until the
+    /// identity is settled.
+    QString currentDeviceKey() const;
+    bool isIdentitySettled() const { return m_identitySettled; }
+
+    /// AUTOPILOT_VERSION.uid2 as a key: hex of the bytes without the trailing
+    /// zero padding; empty when all zero.
+    static QString uid2Key(const uint8_t *uid2, int len);
+    /// The fingerprint of a vehicle identified by its uid2.
+    static QString computeUid2Fingerprint(const QString &uid2Key, int mavType);
+
+    static constexpr int kSettleTimeoutMs = 4000;
 
     /// Search the vehicle database by name, UID, or fingerprint substring.
     Q_INVOKABLE QString searchVehicles(const QString &query);
@@ -83,6 +100,8 @@ signals:
     /// database re-key has committed, so a listener reloading from newKey finds
     /// the copter's setup there.
     void vehicleReKeyed(const QString &oldKey, const QString &newKey);
+    /// The connected vehicle's identity is settled or changed (currentDeviceKey).
+    void identitySettled();
 
 private slots:
     void _onVehicleAdded(Vehicle *vehicle);
@@ -92,6 +111,7 @@ private slots:
     void _onFirmwareVersionChanged();
     void _requestAutopilotCapabilities();
     void _onMavlinkMessage(const mavlink_message_t &message);
+    void _onSettleTimeout();
 
 private:
     /// Read hardware identifiers from a Vehicle and populate m_currentFingerprint.
@@ -103,7 +123,13 @@ private:
     void _updateCurrentVehicleAttributes(Vehicle *vehicle);
     /// (Re)apply the fingerprint + attributes when an AUTOPILOT_VERSION message
     /// supplies a better (hardware UID) identity than the current one.
-    void _upgradeToHardwareIdentity(Vehicle *vehicle, quint64 uid, const QString &boardVersion);
+    void _upgradeToHardwareIdentity(Vehicle *vehicle);
+    /// Fix the connected vehicle's identity from what is known now (uid, uid2,
+    /// board), then look it up or register it.
+    void _settleIdentity();
+    /// Fingerprint, source and hardware id for the current uid / uid2 / board.
+    void _computeIdentity();
+    void _resetIdentity();
 
     /// A valid uid must be non-zero (the UID may also arrive as an all-zero
     /// string when the hardware never provides one).
@@ -125,8 +151,16 @@ private:
     int m_currentFrameClass = -1;
     QString m_currentFirmwareVersion;
     quint64 m_currentUid = 0;
-    QString m_currentHardwareUid;     ///< raw hex UID from AUTOPILOT_VERSION (e.g. "A1B2C3...")
+    QString m_currentUid2Key;         ///< uid2Key() of AUTOPILOT_VERSION.uid2, "" when none
+    QString m_currentHardwareUid;     ///< hex UID (uid) or the uid2 key; "" for the fallback
     QString m_currentBoardVersion;
+    bool m_identitySettled = false;
+    /// The row under the current (fallback) key was created by this connection:
+    /// only such a row is renamed when a hardware id arrives later. A fallback
+    /// row that existed before may belong to another copter with the same
+    /// sysid, frame and board model, or to the simulator.
+    bool m_registeredNewThisConnection = false;
 
     QTimer m_autopilotRequestTimer;
+    QTimer m_settleTimer;
 };

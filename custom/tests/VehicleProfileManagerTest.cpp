@@ -648,9 +648,13 @@ void VehicleProfileManagerTest::testNoMissionGpsPoorFromEstimate()
     TelemetryBridge bridge;
     vpm.setTelemetryBridge(&bridge);
     bridge.setVehicle(_vehicle);   // connected: resolves UID, kind and table link
-    for (int i = 0; i < 100 && (!bridge.parametersReady() || vpm.kind() != VehicleKind::Multirotor); ++i)
+    // The key comes once the registry has settled the vehicle's identity
+    // (AUTOPILOT_VERSION), which can be after the parameters.
+    for (int i = 0; i < 200 && (!bridge.parametersReady() || vpm.kind() != VehicleKind::Multirotor
+                                || vpm.currentDeviceUid().isEmpty()); ++i)
         QTest::qWait(50);
     QCOMPARE(vpm.kind(), VehicleKind::Multirotor);
+    QVERIFY(!vpm.currentDeviceUid().isEmpty());
     QVERIFY(vpm.linkCurrentVehicleMotorTable(MotorTable::m6215_320kv_22x78_6s().id));
 
     GpsTrust::Reading bad;
@@ -691,7 +695,9 @@ void VehicleProfileManagerTest::testHomeWithOneZeroCoordinateIsUnknown()
     TelemetryBridge bridge;
     vpm.setTelemetryBridge(&bridge);
     bridge.setVehicle(_vehicle);
-    for (int i = 0; i < 100 && (!bridge.parametersReady() || vpm.kind() != VehicleKind::Multirotor); ++i)
+    // Wait for the key too: it comes once the registry settles the identity.
+    for (int i = 0; i < 200 && (!bridge.parametersReady() || vpm.kind() != VehicleKind::Multirotor
+                                || vpm.currentDeviceUid().isEmpty()); ++i)
         QTest::qWait(50);
     QCOMPARE(vpm.kind(), VehicleKind::Multirotor);
     QVERIFY(vpm.linkCurrentVehicleMotorTable(MotorTable::m6215_320kv_22x78_6s().id));

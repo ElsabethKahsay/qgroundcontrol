@@ -45,6 +45,9 @@
 #include "MultiVehicleManager.h"
 #include "Vehicle/Vehicle.h"
 #include "Comms/MockLink/MockLink.h"
+#include "Comms/MockLink/MockConfiguration.h"
+#include "Comms/LinkManager.h"
+#include "VehicleProfileManager.h"
 
 class FlightSessionLifecycleTest : public UnitTest {
     Q_OBJECT
@@ -72,8 +75,30 @@ private slots:
     void testFormCloseKeepsRecorderDuration();
     void testFormDurationUsesMonotonicClock();
     void testTwoArmsInOneFormSessionMakeTwoRows();
+    void testUid2KeyFormat();
+    void testOneVehicleRowWhenBoardIdArrivesLate();
+    void testUid2GivesHardwareIdentity();
+    void testExistingFallbackRowIsNotMerged();
 
 private:
+    // Connects a mock ArduCopter quad whose AUTOPILOT_VERSION reports board
+    // product id @p productId (the heartbeat carries none, as on real boards),
+    // and waits until the registry has settled the copter's identity.
+    bool _connectCopterWithBoard(uint16_t productId);
+    // Feeds the registry an AUTOPILOT_VERSION as the copter would send it, with
+    // uid = 0 and the given 18-byte uid2 (the STM32's unique id, as ArduPilot
+    // ChibiOS boards report it).
+    void _sendAutopilotVersionUid2(const QByteArray &uid2, uint16_t productId);
+    static int _vehicleRowCount() {
+        QSqlQuery q(QSqlDatabase::database());
+        return q.exec(QStringLiteral("SELECT COUNT(*) FROM vehicles")) && q.next() ? q.value(0).toInt() : -1;
+    }
+    static QString _vehicleSource(const QString &deviceUid) {
+        QSqlQuery q(QSqlDatabase::database());
+        q.prepare(QStringLiteral("SELECT fingerprint_source FROM vehicles WHERE device_uid = ?"));
+        q.addBindValue(deviceUid);
+        return q.exec() && q.next() ? q.value(0).toString() : QString();
+    }
     // Connects a mock plane and returns true when a vehicle + registry id exist.
     bool _connectAndRegister(int *vehicleIdOut, QString *fingerprintOut);
     bool _waitArmed(bool armed, int ms = 10000);
@@ -433,6 +458,152 @@ void FlightSessionLifecycleTest::testTwoArmsInOneFormSessionMakeTwoRows()
             ++rows;
     }
     QCOMPARE(rows, 2);
+}
+
+// The real copter's uid2 (AUTOPILOT_VERSION, 18 bytes, the STM32 id in the
+// first 12): the key is its hex with the unused trailing zero bytes left out.
+// All zero means no uid2.
+void FlightSessionLifecycleTest::testUid2KeyFormat()
+{
+    const QByteArray real = QByteArray::fromHex("340043001551313238333439000000000000");
+    QCOMPARE(real.size(), 18);
+    QCOMPARE(VehicleRegistry::uid2Key(reinterpret_cast<const uint8_t *>(real.constData()), real.size()),
+             QStringLiteral("340043001551313238333439"));
+    const QByteArray zero(18, '\0');
+    QVERIFY(VehicleRegistry::uid2Key(reinterpret_cast<const uint8_t *>(zero.constData()), zero.size()).isEmpty());
+    // An inner zero byte is part of the id; only the trailing padding goes.
+    const QByteArray inner = QByteArray::fromHex("010000020000000000000000000000000000");
+    QCOMPARE(VehicleRegistry::uid2Key(reinterpret_cast<const uint8_t *>(inner.constData()), inner.size()),
+             QStringLiteral("01000002"));
+}
+
+bool FlightSessionLifecycleTest::_connectCopterWithBoard(uint16_t productId)
+{
+    QSignalSpy spyVehicle(MultiVehicleManager::instance(), &MultiVehicleManager::activeVehicleChanged);
+    auto *cfg = new MockConfiguration(QStringLiteral("Board %1 copter").arg(productId));
+    cfg->setFirmwareType(MAV_AUTOPILOT_ARDUPILOTMEGA);
+    cfg->setVehicleType(MAV_TYPE_QUADROTOR);
+    cfg->setBoardVendorProduct(0x1209, productId);
+    cfg->setIncrementVehicleId(false);   // the same copter (sysid) on a reconnect
+    cfg->setDynamic(true);
+    SharedLinkConfigurationPtr link = LinkManager::instance()->addConfiguration(cfg);
+    if (!LinkManager::instance()->createConnectedLink(link))
+        return false;
+    _mockLink = qobject_cast<MockLink *>(link->link());
+    if (!_mockLink || !spyVehicle.wait(10000))
+        return false;
+    _vehicle = MultiVehicleManager::instance()->activeVehicle();
+    if (!_vehicle)
+        return false;
+    QSignalSpy spyInit(_vehicle, &Vehicle::initialConnectComplete);
+    spyInit.wait(30000);
+    VehicleRegistry *reg = VehicleRegistry::instance();
+    for (int i = 0; i < 200 && !reg->isIdentitySettled(); ++i)
+        QTest::qWait(50);
+    // Let any late registration (the old duplicate) land before counting.
+    QTest::qWait(500);
+    return reg->isIdentitySettled();
+}
+
+void FlightSessionLifecycleTest::_sendAutopilotVersionUid2(const QByteArray &uid2, uint16_t productId)
+{
+    const uint8_t custom[8]{};
+    mavlink_message_t msg{};
+    mavlink_msg_autopilot_version_pack_chan(
+        static_cast<uint8_t>(_vehicle->id()), static_cast<uint8_t>(_vehicle->defaultComponentId()), 0, &msg,
+        MAV_PROTOCOL_CAPABILITY_MAVLINK2, 0, 0, 0, 0, custom, custom, custom,
+        0x1209, productId, 0 /* uid */, reinterpret_cast<const uint8_t *>(uid2.constData()));
+    emit _vehicle->mavlinkMessageReceived(msg);
+    for (int i = 0; i < 40; ++i)
+        QTest::qWait(25);
+}
+
+// A real board reports its board id only in AUTOPILOT_VERSION, after the first
+// heartbeat. The copter is registered once, under the identity it has once
+// that message is in: never first under "board 0" and again under its board.
+void FlightSessionLifecycleTest::testOneVehicleRowWhenBoardIdArrivesLate()
+{
+    const int rowsBefore = _vehicleRowCount();
+    QVERIFY(_connectCopterWithBoard(0x5741));
+    VehicleRegistry *reg = VehicleRegistry::instance();
+    const QString expected = VehicleRegistry::computeFingerprint(0, false, MAV_TYPE_QUADROTOR, _vehicle->id(),
+                                                                 QString::number(0x5741));
+    QCOMPARE(reg->currentFingerprint(), expected);
+    QCOMPARE(reg->currentDeviceKey(), expected);
+    // One new row, under the settled identity; none under the heartbeat-only
+    // identity (board 0).
+    QCOMPARE(_vehicleRowCount() - rowsBefore, 1);
+    const QString boardZero = VehicleRegistry::computeFingerprint(0, false, MAV_TYPE_QUADROTOR, _vehicle->id(),
+                                                                  QStringLiteral("0"));
+    QVERIFY2(_vehicleSource(boardZero).isEmpty(), "a row was registered before the board id was known");
+    QCOMPARE(_vehicleSource(expected), QStringLiteral("SYSID_TYPE_FALLBACK"));
+    for (int i = 0; i < 100 && VehicleProfileManager::instance()->currentDeviceUid() != expected; ++i)
+        QTest::qWait(50);
+    QCOMPARE(VehicleProfileManager::instance()->currentDeviceUid(), expected);
+}
+
+// uid = 0 with a uid2 is a hardware id: the copter gets a strong identity keyed
+// by its uid2, and the profile (pack, table) follows it. The fallback row this
+// same connection created is renamed, not left behind.
+void FlightSessionLifecycleTest::testUid2GivesHardwareIdentity()
+{
+    QVERIFY(_connectCopterWithBoard(0x5742));
+    VehicleRegistry *reg = VehicleRegistry::instance();
+    QCOMPARE(reg->currentFingerprintSource(), QStringLiteral("SYSID_TYPE_FALLBACK"));   // mock: no uid2 yet
+    const QString fallbackKey = reg->currentDeviceKey();
+    QCOMPARE(_vehicleSource(fallbackKey), QStringLiteral("SYSID_TYPE_FALLBACK"));
+
+    const QByteArray uid2 = QByteArray::fromHex("340043001551313238333439000000000000");
+    _sendAutopilotVersionUid2(uid2, 0x5742);
+    const QString key = QStringLiteral("340043001551313238333439");
+    QCOMPARE(reg->currentFingerprintSource(), QStringLiteral("HARDWARE_UID"));
+    QCOMPARE(reg->currentDeviceKey(), key);
+    for (int i = 0; i < 100 && VehicleProfileManager::instance()->currentDeviceUid() != key; ++i)
+        QTest::qWait(50);
+    QCOMPARE(VehicleProfileManager::instance()->currentDeviceUid(), key);
+    QCOMPARE(_vehicleSource(key), QStringLiteral("HARDWARE_UID"));
+    // This connection's fallback row was renamed, not left behind.
+    QVERIFY2(_vehicleSource(fallbackKey).isEmpty(), "the fallback row was left behind");
+
+    // Settings made now stay with the hardware key.
+    VehicleProfileManager *vpm = VehicleProfileManager::instance();
+    vpm->setBatteryParallelCells(8);
+    int s = 0, par = 0, mah = 0; double res = 0; QString type;
+    QVERIFY(DatabaseManager::instance().vehicleBatteryConfig(key, &s, &par, &mah, &res, &type));
+    QCOMPARE(par, 8);
+}
+
+// A fallback row that existed before this connection (another copter with the
+// same sysid, frame and board model, or the simulator) is never merged into a
+// hardware-identified copter: the copter takes its own key and the old row
+// keeps its records.
+void FlightSessionLifecycleTest::testExistingFallbackRowIsNotMerged()
+{
+    QVERIFY(_connectCopterWithBoard(0x5743));
+    VehicleRegistry *reg = VehicleRegistry::instance();
+    const QString fallbackKey = reg->currentDeviceKey();
+    QVERIFY(!fallbackKey.isEmpty());
+    VehicleProfileManager *vpm = VehicleProfileManager::instance();
+    for (int i = 0; i < 100 && vpm->currentDeviceUid() != fallbackKey; ++i)
+        QTest::qWait(50);
+    vpm->setBatteryParallelCells(3);   // the other copter's setup
+    _disconnectMockLink();
+
+    // Reconnect: the fallback row now pre-exists. Then the hardware id arrives.
+    QVERIFY(_connectCopterWithBoard(0x5743));
+    QCOMPARE(reg->currentDeviceKey(), fallbackKey);
+    _sendAutopilotVersionUid2(QByteArray::fromHex("aabb00112233445566778899000000000000"), 0x5743);
+    const QString key = QStringLiteral("aabb00112233445566778899");
+    QCOMPARE(reg->currentDeviceKey(), key);
+    for (int i = 0; i < 100 && vpm->currentDeviceUid() != key; ++i)
+        QTest::qWait(50);
+    QCOMPARE(vpm->currentDeviceUid(), key);
+    QVERIFY2(vpm->batteryParallelCells() != 3, "the other copter's pack followed the hardware id");
+    QCOMPARE(_vehicleSource(fallbackKey), QStringLiteral("SYSID_TYPE_FALLBACK"));
+    QCOMPARE(_vehicleSource(key), QStringLiteral("HARDWARE_UID"));
+    int s = 0, par = 0, mah = 0; double res = 0; QString type;
+    QVERIFY(DatabaseManager::instance().vehicleBatteryConfig(fallbackKey, &s, &par, &mah, &res, &type));
+    QCOMPARE(par, 3);
 }
 
 UT_REGISTER_TEST(FlightSessionLifecycleTest)

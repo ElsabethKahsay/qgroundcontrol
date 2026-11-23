@@ -3775,8 +3775,12 @@ bool DatabaseManager::registerNewVehicle(const QString &fingerprint, int sysid, 
     // the UID as before.  For sysid-fallback vehicles the UID is 0 and the raw
     // sysid alone would collide for two different vehicle types on the same
     // sysid (quad/fixed-wing SITL pair), so we key device_uid to the unique
-    // fingerprint instead.
-    const QString deviceUid = (uid != 0) ? QString::number(uid) : fingerprint;
+    // fingerprint instead. A board that reports uid = 0 but a uid2 (ArduPilot
+    // on ChibiOS) is hardware-identified by that uid2, passed as hardwareUid
+    // (VehicleRegistry::currentDeviceKey uses the same key).
+    const QString deviceUid = (uid != 0) ? QString::number(uid)
+        : (fingerprintSource == QLatin1String("HARDWARE_UID") && !hardwareUid.isEmpty()) ? hardwareUid
+        : fingerprint;
     q.prepare(R"(
         INSERT INTO vehicles (device_uid, friendly_name, autopilot_type, airframe_type,
                               first_seen, last_seen, identity_source,

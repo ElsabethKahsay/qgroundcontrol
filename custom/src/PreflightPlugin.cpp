@@ -975,7 +975,9 @@ void PreflightPlugin::_openConnectionSession()
         return;
     QString key = _vehicleProfileManager ? _vehicleProfileManager->currentDeviceUid() : QString();
     if (key.isEmpty())
-        key = VehicleRegistry::instance()->currentFingerprint();
+        key = VehicleRegistry::instance()->currentDeviceKey();
+    if (key.isEmpty())
+        return;   // opens once the registry settles the identity (profile currentVehicleChanged)
     OperatorManager *ops = OperatorManager::instance();
     _sessionRecorder->connectionOpened(key, sessionModeName(), ops ? ops->currentOperatorName() : QString(),
                                        QCoreApplication::applicationVersion());
