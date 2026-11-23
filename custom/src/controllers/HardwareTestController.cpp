@@ -1076,6 +1076,16 @@ void HardwareTestController::_evaluateTestResult()
 {
     if (_activeMotor < 0) return;
 
+    // The copter ends its motor test and disarms within the duration. Still
+    // armed now means someone else armed it (RC or another GCS): say so. The
+    // vehicle is left as it is; nothing is disarmed from here.
+    if (_vehicle && _vehicle->armed() && !_weArmed) {
+        _lastError = QStringLiteral("The vehicle is still armed after the motor test: it was armed by "
+                                    "the pilot or another ground station, not by the test.");
+        emit lastErrorMessageChanged();
+        qCWarning(hardwareTestLog) << "Vehicle still armed after motor test window";
+    }
+
     int idx = _activeMotor - 1;
     int channel = motorOutputChannel(_activeMotor);
     uint16_t actual = (channel > 0 && channel <= kServoCount) ? _peakFeedbackPwm[channel - 1] : 0;
@@ -1796,11 +1806,20 @@ void HardwareTestController::_onArmedChanged()
         emit isArmedChanged();
         emit testBlockedReasonChanged();
 
-        // Safety: an arm during a copter DO_MOTOR_TEST is unexpected — stop.
-        // The FW test (phase 2) is exempt: it requested the arm itself.
+        // ArduCopter reports itself armed while it runs MAV_CMD_DO_MOTOR_TEST,
+        // so an arm inside this controller's own copter test window (from the
+        // command until duration + grace, _resultTimer) is the test itself and
+        // must not stop it. The copter refuses a pilot's arm while a motor
+        // test runs, and an arm still there when the window closes is reported
+        // in _evaluateTestResult. Outside a window an arm stops the test. The
+        // FW test is exempt: it requested the arm itself.
         if (armed && _activeMotor != -1 && _fwTestIndex < 0) {
-            qCWarning(hardwareTestLog) << "Vehicle armed during active motor test — stopping all";
-            stopAll();
+            if (_resultTimer.isActive()) {
+                qCDebug(hardwareTestLog) << "Vehicle armed by its own motor test (expected)";
+            } else {
+                qCWarning(hardwareTestLog) << "Vehicle armed during active motor test — stopping all";
+                stopAll();
+            }
         }
     }
 }

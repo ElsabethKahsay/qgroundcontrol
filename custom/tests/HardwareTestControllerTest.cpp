@@ -39,6 +39,10 @@ private slots:
     void testFixedWingMotorTestArmsViaFunnelWith2989();
     void testStopAllLeavesExternallyArmedVehicleArmed();
     void testMotorTestRefusedWhileArmedExternally();
+    void testCopterMotorTestSurvivesItsOwnArm();
+    void testArmLeftAfterCopterMotorTestWarns();
+    void testCopterPwmCeiling();
+    void testCopterMotorTestHoldsForItsDuration();
 
 private:
     // Unit-test singleton owner: FlightSession::instance() is null until a
@@ -173,6 +177,11 @@ void HardwareTestControllerTest::testFixedWingMotorTestWaitsForArmBeforeSpin()
     QVERIFY(_pumpUntil([](void *ctx) {
         return static_cast<HardwareTestController *>(ctx)->motorCount() >= 1;
     }, &ctrl, 15000));
+
+    // A plane's motor test PWM goes up to 1800 µs (the copter ceiling is lower).
+    ctrl.setMotorPwm(1, 2000);
+    QCOMPARE(ctrl.motorPwmValues().value(0).toInt(), int(HardwareTestController::kFwMaxPwmUs));
+    ctrl.setMotorPwm(1, HardwareTestController::kFwDefaultPwmUs);
 
     _mockLink->clearReceivedMavCommandCounts();
 
@@ -336,6 +345,150 @@ void HardwareTestControllerTest::testMotorTestRefusedWhileArmedExternally()
     _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
                              false, 0.0f, 0.0f, 0, 0, 0, 0, 0);
     QVERIFY(_pumpUntil([](void *ctx) { return !static_cast<Vehicle *>(ctx)->armed(); }, _vehicle, 10000));
+}
+
+// ArduCopter reports itself armed while it runs MAV_CMD_DO_MOTOR_TEST. That
+// arm belongs to the test: the test must run its full duration, not stop
+// itself as if a pilot had armed. While it runs it counts as a bench test.
+void HardwareTestControllerTest::testCopterMotorTestSurvivesItsOwnArm()
+{
+    _connectMockLink(MAV_AUTOPILOT_ARDUPILOTMEGA);
+    QVERIFY(_vehicle);
+
+    HardwareTestController ctrl;
+    ctrl.setVehicle(_vehicle);
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<HardwareTestController *>(ctx)->motorCount() >= 1;
+    }, &ctrl, 15000));
+    QVERIFY(!ctrl.isFixedWing());
+    QVERIFY(!ctrl.testInProgress());
+
+    ctrl.setDurationSec(2);
+    _mockLink->clearReceivedMavCommandCounts();
+    ctrl.testMotor(1);
+    QCOMPARE(ctrl.activeMotor(), 1);
+    QVERIFY(ctrl.testInProgress());
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<MockLink *>(ctx)->receivedMavCommandCount(MAV_CMD_DO_MOTOR_TEST) >= 1;
+    }, _mockLink, 5000));
+
+    // The copter arms its outputs for the test (simulated with a plain arm).
+    _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
+                             false, 1.0f, 0.0f, 0, 0, 0, 0, 0);
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<HardwareTestController *>(ctx)->isArmed();
+    }, &ctrl, 10000));
+    QTest::qWait(300);
+    QCOMPARE(ctrl.activeMotor(), 1);   // not cancelled
+    QCOMPARE(ctrl.motorStatus(1), int(HardwareTestController::Testing));
+    QVERIFY(ctrl.testInProgress());
+
+    // The copter ends the test and disarms before the window closes.
+    _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
+                             false, 0.0f, 0.0f, 0, 0, 0, 0, 0);
+    QVERIFY(_pumpUntil([](void *ctx) { return !static_cast<Vehicle *>(ctx)->armed(); }, _vehicle, 10000));
+
+    // The window (2 s + grace) closes with a result, not a cancellation.
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<HardwareTestController *>(ctx)->activeMotor() == -1;
+    }, &ctrl, 8000));
+    const int st = ctrl.motorStatus(1);
+    QVERIFY2(st == HardwareTestController::Cooldown || st == HardwareTestController::Pass
+                 || st == HardwareTestController::Fail,
+             qPrintable(QStringLiteral("state %1").arg(st)));
+    QVERIFY2(ctrl.lastErrorMessage().isEmpty(), qPrintable(ctrl.lastErrorMessage()));
+    QVERIFY(!ctrl.testInProgress());
+}
+
+// If the copter is still armed when the test window closes, the arm was not the
+// test's (RC or another GCS): say so. Nothing is disarmed.
+void HardwareTestControllerTest::testArmLeftAfterCopterMotorTestWarns()
+{
+    _connectMockLink(MAV_AUTOPILOT_ARDUPILOTMEGA);
+    QVERIFY(_vehicle);
+
+    HardwareTestController ctrl;
+    ctrl.setVehicle(_vehicle);
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<HardwareTestController *>(ctx)->motorCount() >= 1;
+    }, &ctrl, 15000));
+
+    ctrl.setDurationSec(1);
+    ctrl.testMotor(1);
+    QCOMPARE(ctrl.activeMotor(), 1);
+    _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
+                             false, 1.0f, 0.0f, 0, 0, 0, 0, 0);
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<HardwareTestController *>(ctx)->isArmed();
+    }, &ctrl, 10000));
+
+    _mockLink->clearReceivedMavCommandCounts();
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<HardwareTestController *>(ctx)->activeMotor() == -1;
+    }, &ctrl, 8000));
+    QVERIFY2(ctrl.lastErrorMessage().contains(QStringLiteral("still armed")), qPrintable(ctrl.lastErrorMessage()));
+    QCOMPARE(_mockLink->receivedMavCommandCount(MAV_CMD_COMPONENT_ARM_DISARM), 0);
+    QVERIFY(_vehicle->armed());
+
+    _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
+                             false, 0.0f, 0.0f, 0, 0, 0, 0, 0);
+    QVERIFY(_pumpUntil([](void *ctx) { return !static_cast<Vehicle *>(ctx)->armed(); }, _vehicle, 10000));
+}
+
+// A copter motor test goes up to 1300 µs; higher values clamp.
+void HardwareTestControllerTest::testCopterPwmCeiling()
+{
+    _connectMockLink(MAV_AUTOPILOT_ARDUPILOTMEGA);
+    QVERIFY(_vehicle);
+
+    HardwareTestController ctrl;
+    ctrl.setVehicle(_vehicle);
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<HardwareTestController *>(ctx)->motorCount() >= 1;
+    }, &ctrl, 15000));
+    QVERIFY(!ctrl.isFixedWing());
+
+    ctrl.setMotorPwm(1, 1250);
+    QCOMPARE(ctrl.motorPwmValues().value(0).toInt(), 1250);
+    ctrl.setMotorPwm(1, 1800);
+    QCOMPARE(ctrl.motorPwmValues().value(0).toInt(), 1300);
+    QCOMPARE(ctrl.copterMaxPwmUs(), 1300);
+}
+
+// The duration slider sets how long a copter motor test runs: the test stays
+// active for that long (DO_MOTOR_TEST's timeout is the same durationSec), and
+// only then gives its result.
+void HardwareTestControllerTest::testCopterMotorTestHoldsForItsDuration()
+{
+    _connectMockLink(MAV_AUTOPILOT_ARDUPILOTMEGA);
+    QVERIFY(_vehicle);
+
+    HardwareTestController ctrl;
+    ctrl.setVehicle(_vehicle);
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<HardwareTestController *>(ctx)->motorCount() >= 1;
+    }, &ctrl, 15000));
+    QVERIFY(!ctrl.isFixedWing());
+
+    ctrl.setDurationSec(4);
+    QCOMPARE(ctrl.durationSec(), 4);
+    const qint64 t0 = QDateTime::currentMSecsSinceEpoch();
+    ctrl.testMotor(1);
+    QCOMPARE(ctrl.activeMotor(), 1);
+
+    // Still running 3.5 s in.
+    while (QDateTime::currentMSecsSinceEpoch() - t0 < 3500) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QTest::qWait(50);
+    }
+    QCOMPARE(ctrl.activeMotor(), 1);
+    QCOMPARE(ctrl.motorStatus(1), int(HardwareTestController::Testing));
+
+    // Ends after the duration plus the result grace.
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<HardwareTestController *>(ctx)->activeMotor() == -1;
+    }, &ctrl, 4000));
+    QVERIFY(QDateTime::currentMSecsSinceEpoch() - t0 >= 4000);
 }
 
 UT_REGISTER_TEST(HardwareTestControllerTest)

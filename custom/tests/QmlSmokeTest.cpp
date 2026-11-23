@@ -1379,6 +1379,7 @@ private slots:
     void testUnitTestRunKeepsOwnNameAndPaths();
     void testVehicleReKeyReloadsTheProfile();
     void testLinkLossKeepsDatabaseErrorClear();
+    void testCopterMotorTestArmIsBench();
 
 private:
     bool _connectPlane();
@@ -4022,6 +4023,48 @@ void LivePluginBenchTest::testUnitTestRunKeepsOwnNameAndPaths()
 // banner is bound to DatabaseManager::runtimeError(), and every flight row
 // still looks correct if one of the close writes fails. This guards the empty
 // error after that path (the banner itself did not reproduce in this harness).
+// ArduCopter reports armed for the length of a motor test. That arm, in Flight
+// mode, is a bench arm: no flight count, hours or battery cycle, and the
+// session row says is_bench = 1.
+void LivePluginBenchTest::testCopterMotorTestArmIsBench()
+{
+    QVERIFY2(_connectPlane(), "mock copter did not connect / resolve its UID");
+    FlightSession::instance()->setMode(QStringLiteral("FLIGHT"));
+    auto *hw = _pluginChild<HardwareTestController>();
+    QVERIFY(hw);
+    QVERIFY(!hw->isFixedWing());
+    for (int i = 0; i < 300 && hw->motorCount() < 1; ++i)
+        QTest::qWait(50);
+    QVERIFY(hw->motorCount() >= 1);
+
+    DatabaseManager &db = DatabaseManager::instance();
+    QSqlQuery before(QSqlDatabase::database());
+    QVERIFY(before.exec(QStringLiteral("SELECT COALESCE(MAX(id), 0) FROM flight_sessions")) && before.next());
+    const int lastId = before.value(0).toInt();
+
+    hw->setDurationSec(2);
+    hw->testMotor(1);
+    QCOMPARE(hw->activeMotor(), 1);
+    _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
+                             false, 1.0f, 0.0f, 0, 0, 0, 0, 0);
+    QVERIFY(_waitArmed(true));
+    QTest::qWait(300);
+    _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
+                             false, 0.0f, 0.0f, 0, 0, 0, 0, 0);
+    QVERIFY(_waitArmed(false));
+    for (int i = 0; i < 100 && db.recordingHistoryFlightId() > 0; ++i)
+        QTest::qWait(50);
+
+    QSqlQuery q(QSqlDatabase::database());
+    QVERIFY(q.exec(QStringLiteral("SELECT is_bench FROM flight_sessions WHERE id > %1 ORDER BY id").arg(lastId)));
+    QVERIFY2(q.next(), "the motor-test arm opened no session row");
+    QCOMPARE(q.value(0).toInt(), 1);
+
+    for (int i = 0; i < 160 && hw->activeMotor() != -1; ++i)
+        QTest::qWait(50);
+    FlightSession::instance()->setMode(QStringLiteral("NONE"));
+}
+
 void LivePluginBenchTest::testLinkLossKeepsDatabaseErrorClear()
 {
     DatabaseManager &db = DatabaseManager::instance();

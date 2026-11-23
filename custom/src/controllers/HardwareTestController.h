@@ -78,7 +78,13 @@ public:
     static constexpr int kFwMinPwmUs    = 1000;    /// Fixed-wing throttle output PWM floor
     static constexpr int kFwMaxPwmUs    = 1800;    /// Fixed-wing throttle output PWM ceiling for spin tests
     static constexpr int kFwDefaultPwmUs = 1500;   /// Default fixed-wing test PWM — SERVO3 ≈1500 µs, well above ESC start threshold
-    static constexpr int kMultiMaxPwmUs = 1200;    /// Multirotor gentle-spin ceiling
+    static constexpr int kMultiMaxPwmUs = 1300;    /// Multirotor motor test ceiling
+
+    /// The motor test PWM ceilings, for the panel's sliders.
+    Q_PROPERTY(int copterMaxPwmUs READ copterMaxPwmUs CONSTANT)
+    Q_PROPERTY(int fwMaxPwmUs READ fwMaxPwmUs CONSTANT)
+    int copterMaxPwmUs() const { return kMultiMaxPwmUs; }
+    int fwMaxPwmUs() const { return kFwMaxPwmUs; }
 
     explicit HardwareTestController(QObject *parent = nullptr);
 
@@ -132,7 +138,8 @@ public:
     Q_INVOKABLE void setTargetThrottle(int motorIndex, double pct);
     Q_INVOKABLE void setMotorDuration(int motorIndex, int sec);
 
-    /// Set the raw PWM value (1000–1200 µs) for the given motor; used by motor tests.
+    /// Set the raw PWM value for the given motor (1000–kMultiMaxPwmUs for a
+    /// multirotor, 1000–kFwMaxPwmUs for a fixed-wing); used by motor tests.
     Q_INVOKABLE void setMotorPwm(int motorIndex, int pwmUs);
 
     /// Returns the fixed-wing motor label (e.g. "M3") based on the auto-detected
@@ -205,6 +212,9 @@ public:
     Q_INVOKABLE QString getHardwareTestEvents(int flightId);
 
     bool isRunning() const { return _running; }
+    /// True while any test drives the outputs: a profile sequence, a single
+    /// motor test (copter or fixed-wing). An arm in that time is a bench arm.
+    bool testInProgress() const { return _running || _activeMotor != -1 || _fwTestIndex >= 0; }
     bool allPassed() const { return _allPassed; }
 
     /// QVariant(true) when the sequence finishes, empty QVariant otherwise.
@@ -400,7 +410,7 @@ private:
     // Per-motor settings
     QVector<double> _targetThrottle;  /// Throttle percentage (0–kMaxThrottlePct) per motor
     QVector<int> _motorDuration;      /// Per-motor test duration (seconds), overrides _durationSec
-    QVector<int> _motorPwmValues;     /// Per-motor raw PWM µs (1000–1200) for fixed-wing tests
+    QVector<int> _motorPwmValues;     /// Per-motor raw PWM µs for the motor tests (see setMotorPwm)
     int _durationSec = kDefaultDurationSec; /// Shared test duration used by copter path and profiles
 
     // ── Feedback and cooldown state ─────────────────────────────────────

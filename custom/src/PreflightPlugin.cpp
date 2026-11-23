@@ -1021,7 +1021,7 @@ void PreflightPlugin::_onGateOpened()
     start.mode = sessionModeName();
     // Bench: Testing mode, a bench force-arm, or a motor test in progress.
     start.bench = start.mode == QLatin1String("Testing") || source == ArmStateTracker::ArmSource::ForceToken
-               || (_hardwareTestController && _hardwareTestController->isRunning());
+               || (_hardwareTestController && _hardwareTestController->testInProgress());
     s_benchArm = start.bench;
     if (s_joiningArmedFlight) {
         // Who armed is unknown, so no force-arm bench flag from a stale source.

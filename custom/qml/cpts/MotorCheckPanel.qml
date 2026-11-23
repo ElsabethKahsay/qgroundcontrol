@@ -614,7 +614,8 @@ Rectangle {
                                     Slider {
                                         id: pwmSl
                                         Layout.fillWidth: true
-                                        from: 1000; to: HardwareTestController.isFixedWing ? 1800 : 1200; stepSize: 10
+                                        from: 1000; to: HardwareTestController.isFixedWing ? HardwareTestController.fwMaxPwmUs
+                                                                               : HardwareTestController.copterMaxPwmUs; stepSize: 10
                                         value: (HardwareTestController.motorPwmValues.length > mcard.index)
                                                ? HardwareTestController.motorPwmValues[mcard.index] : 1100
                                         enabled: !root._armed && HardwareTestController.activeMotor === -1
