@@ -41,8 +41,8 @@ Rectangle {
     // SOC + estimated time come from VehicleProfileManager (the shared live
     // estimate refreshed every 2 s) so the chip always agrees with the panel.
     readonly property int _soc: {
-        // The GCS's own figure while the FC's current sensor is not measuring
-        // (displaySocPct: its count in flight, the pack's resting voltage on
+        // The GCS's own figure when the estimate runs (displaySocPct: the
+        // charge counted from the arm in flight, the pack's resting voltage on
         // the ground), the FC's % otherwise.
         if (_profile && _profile.displaySocPct >= 0) return _profile.displaySocPct
         if (_profile && _profile.liveSOC >= 0) return _profile.liveSOC
@@ -120,7 +120,7 @@ Rectangle {
         _socKnown && _gateOk && _capacityAh > 0 && _iSmooth > 0
 
     // Where the shown % comes from, in words, for the detail popover.
-    readonly property string _socSource: _socFromCount ? (_armed ? qsTr("GCS's count") : qsTr("resting voltage"))
+    readonly property string _socSource: _socFromCount ? (_armed ? qsTr("charge at arming less used") : qsTr("resting voltage"))
                                                        : qsTr("flight controller")
     // A new copter starts with this default pack (6S 1P 5000 mAh LiPo) until
     // its own is set on the Vehicles page; every estimate depends on it.
@@ -227,8 +227,8 @@ Rectangle {
     readonly property string _tooltip: _chargeUnknown
         ? (_pl.chargeUnknownWhy || "Charge unknown: the GCS joined during the flight and the current sensor reads 0 A")
         : _tooltipBase + (_connected && _fresh && _soc >= 0
-           ? " \u2014 % from " + (_socFromCount ? (_armed ? "the GCS's count (current sensor reads 0 A)"
-                                                         : "the pack's resting voltage (current sensor reads 0 A)")
+           ? " \u2014 % from " + (_socFromCount ? (_armed ? "the charge at arming less what was used"
+                                                         : "the pack's resting voltage")
                                                : "the flight controller")
            : "")
 
@@ -404,9 +404,9 @@ Rectangle {
                 }
             }
 
-            // The charge and where it comes from: the GCS's own count in
-            // flight or the pack's resting voltage on the ground when the
-            // current sensor reads 0 A, the flight controller otherwise.
+            // The charge and where it comes from: counted from the arm in
+            // flight, the pack's resting voltage on the ground, the flight
+            // controller when the estimate is not running.
             DetailRow { label: qsTr("Charge");
                         objectName: "chipCharge"
                         value: root._chargeUnknown ? qsTr("unknown (joined in flight)")

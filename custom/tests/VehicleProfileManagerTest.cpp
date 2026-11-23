@@ -213,17 +213,22 @@ void VehicleProfileManagerTest::testDisplaySocPropertyExists()
     QCOMPARE(shown.toInt(), vpm.liveSOC());
 }
 
-// The % shown is the GCS's own count when the flight controller's current is
-// not measured (the sensor reads 0 A) and the count covers the flight; the
-// flight controller's % in every other case. liveSOC itself is left alone: the
-// records and the database still use the FC's figure.
+// With the estimate running, the % shown is the GCS's own: in flight the charge
+// counted from the arm (whenever the count covers the flight), on the ground the
+// pack's resting-voltage charge. It does not wait for the current sensor to be
+// found dead (that takes ~10 s airborne; until then the controller showed 100 %
+// with a dead sensor). The flight controller's % otherwise. liveSOC itself is
+// left alone: the records and the database still use the FC's figure.
 void VehicleProfileManagerTest::testDisplaySocUsesGcsCount()
 {
     QCOMPARE(VehicleProfileManager::displaySocPctFor(true, true, true, true, 82.0, 100), 82);
     QVERIFY(VehicleProfileManager::socFromGcsCount(true, true, true, true, 82.0));
 
+    // A working (or not yet judged) sensor: still the count from the arm.
+    QCOMPARE(VehicleProfileManager::displaySocPctFor(true, true, false, true, 82.0, 100), 82);
+    QVERIFY(VehicleProfileManager::socFromGcsCount(true, true, false, true, 82.0));
+
     // The flight controller's % whenever one of the conditions is missing.
-    QCOMPARE(VehicleProfileManager::displaySocPctFor(true, true, false, true, 82.0, 100), 100);  // sensor live
     QCOMPARE(VehicleProfileManager::displaySocPctFor(false, true, true, true, 82.0, 100), 100);  // no estimate
     QCOMPARE(VehicleProfileManager::displaySocPctFor(true, false, true, true, 82.0, 100), 100);  // on the ground
     QCOMPARE(VehicleProfileManager::displaySocPctFor(true, true, true, true, -1.0, 100), 100);   // count not yet
@@ -233,11 +238,12 @@ void VehicleProfileManagerTest::testDisplaySocUsesGcsCount()
     // show a plain % say "?" instead of the controller's 100.
     QCOMPARE(VehicleProfileManager::displaySocPctFor(true, true, true, false, 82.0, 100), -1);
 
-    // On the ground with a dead sensor the controller's % is 100 whatever the
-    // pack holds: the pack's resting-voltage charge is shown instead.
+    // On the ground the pack's resting-voltage charge, sensor dead or not
+    // (the real copter: controller 100 %, pack at 24.4 V).
     QCOMPARE(VehicleProfileManager::displaySocPctFor(true, false, true, true, -1.0, 100, 55.0), 55);
     QVERIFY(VehicleProfileManager::restingSocShown(true, false, true, 55.0));
-    QCOMPARE(VehicleProfileManager::displaySocPctFor(true, false, false, true, -1.0, 100, 55.0), 100);  // sensor live
+    QCOMPARE(VehicleProfileManager::displaySocPctFor(true, false, false, true, -1.0, 100, 55.0), 55);
+    QVERIFY(VehicleProfileManager::restingSocShown(true, false, false, 55.0));
     QCOMPARE(VehicleProfileManager::displaySocPctFor(false, false, true, true, -1.0, 100, 55.0), 100);  // no estimate
     QCOMPARE(VehicleProfileManager::displaySocPctFor(true, false, true, true, -1.0, 100, -1.0), 100);  // no voltage
     QCOMPARE(VehicleProfileManager::displaySocPctFor(true, true, true, true, 82.0, 100, 55.0), 82);    // armed: count

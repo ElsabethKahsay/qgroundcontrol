@@ -264,24 +264,36 @@ public:
     /// use the controller's % either (100 with a dead sensor), so nothing is
     /// costed and no RETURN NOW can be raised from a charge we cannot know.
     static QVariantMap missionLiveChargeUnknown();
+    /// In flight, the charge counted from the arm (socNowPct: the resting
+    /// charge at the arm less the mAh used, from the GCS's count or the
+    /// controller's counter) is the % shown whenever the count covers the
+    /// flight. The controller's own % assumes the pack was full when it
+    /// powered up, and reads 100 all flight when its current sensor does not
+    /// measure, so it is not used even before that sensor is found dead.
+    /// @p sensorDead no longer matters; kept for the callers.
     static bool socFromGcsCount(bool powerActive, bool armed, bool sensorDead, bool countKnown,
                                 double socNowPct)
     {
-        return powerActive && armed && sensorDead && countKnown && socNowPct >= 0.0;
+        Q_UNUSED(sensorDead)
+        return powerActive && armed && countKnown && socNowPct >= 0.0;
     }
-    /// On the ground, a copter whose current sensor does not measure still
-    /// reports 100 % whatever the pack holds. With the estimate running, the
-    /// pack's resting-voltage charge (packRestingSocPct) is shown instead.
+    /// On the ground, the pack's resting-voltage charge (packRestingSocPct)
+    /// is the % shown whenever the estimate runs and a voltage is known. The
+    /// controller's % counts down from "full at power-up", so it is not a
+    /// charge reading on the ground, sensor or not (a dead sensor keeps it at
+    /// 100). @p sensorDead no longer matters; kept for the callers.
     static bool restingSocShown(bool powerActive, bool armed, bool sensorDead, double restingSocPct)
     {
-        return powerActive && !armed && sensorDead && restingSocPct >= 0.0;
+        Q_UNUSED(sensorDead)
+        return powerActive && !armed && restingSocPct >= 0.0;
     }
     /// The % the Fly view shows:
     ///   -1 when the charge is unknown (chargeUnknown(): joined armed with a
     ///      dead sensor), so a plain % display says "?" rather than 100;
-    ///   in flight, the GCS's count when socFromGcsCount();
+    ///   in flight, the charge counted from the arm when socFromGcsCount();
     ///   on the ground, the resting-voltage charge when restingSocShown();
-    ///   the flight controller's liveSOC otherwise (-1 when it has none).
+    ///   the flight controller's liveSOC otherwise: no motor table linked, no
+    ///   voltage yet, or a count that does not cover the flight.
     static int displaySocPctFor(bool powerActive, bool armed, bool sensorDead, bool countKnown,
                                 double socNowPct, int liveSoc, double restingSocPct = -1.0)
     {

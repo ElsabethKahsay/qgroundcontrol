@@ -2575,9 +2575,11 @@ void LivePluginBenchTest::testMotorTableLiveEstimate()
     QCOMPARE(live().value(QStringLiteral("tableId")).toString(), table.id);
     QCOMPARE(live().value(QStringLiteral("chargeSource")).toString(), QStringLiteral("gcs"));
     QCOMPARE(live().value(QStringLiteral("throttleSource")).toString(), QStringLiteral("motor outputs"));
-    // The FC's current is not flagged dead yet: the chip shows its %.
-    QVERIFY(!vpm->displaySocFromCount());
-    QCOMPARE(vpm->displaySocPct(), vpm->liveSOC());
+    // The FC's current is not judged dead yet, and the chip already shows the
+    // charge counted from the arm, not the FC's %.
+    QVERIFY(!vpm->fcCurrentDead());
+    QVERIFY(vpm->displaySocFromCount());
+    QCOMPARE(vpm->displaySocPct(), qRound(live().value(QStringLiteral("socNowPct")).toDouble()));
 
     const double packV = bridge->batteryVoltage();
     QVERIFY2(packV > 0.0 && qAbs(packV - table.volts) > 1.5, qPrintable(QString::number(packV)));
