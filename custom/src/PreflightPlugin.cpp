@@ -476,6 +476,16 @@ void PreflightPlugin::init()
         }
         return s;
     });
+    // Speeds and flight mode as they change: the recorder keeps the open
+    // flight's maxima and mode changes for its Flight History row.
+    auto noteMotion = [this]() {
+        _sessionRecorder->noteMotion(_telemetryBridge->groundSpeed(), _telemetryBridge->verticalSpeed());
+    };
+    connect(_telemetryBridge, &TelemetryBridge::groundSpeedChanged, this, noteMotion);
+    connect(_telemetryBridge, &TelemetryBridge::verticalSpeedChanged, this, noteMotion);
+    connect(_telemetryBridge, &TelemetryBridge::flightModeChanged, this, [this]() {
+        _sessionRecorder->noteFlightMode(_telemetryBridge->flightMode());
+    });
     // The controller's mAh and % are 0 / 100 all flight with a dead current
     // sensor. The flight record takes the GCS's own count instead (raw, as
     // compared against the charger); when that count does not cover the

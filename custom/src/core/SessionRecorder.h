@@ -21,6 +21,7 @@
 // no CMake or moc change, and tests drive it without a vehicle or MockLink.
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <functional>
 #include <limits>
@@ -115,6 +116,30 @@ public:
     int connectionId() const { return m_connId; }
     int flightId() const { return m_flightId; }
     bool flightOpen() const { return m_flightId > 0; }
+
+    /// The vehicle's ground and vertical speed now. While a flight is open the
+    /// flight keeps their maxima (vertical by its size: climbing or descending)
+    /// for its Flight History row; between flights nothing is kept.
+    void noteMotion(double groundSpeedMs, double verticalSpeedMs)
+    {
+        if (m_flightId <= 0)
+            return;
+        if (std::isfinite(groundSpeedMs))
+            m_maxGroundSpeed = std::max(m_maxGroundSpeed, groundSpeedMs);
+        if (std::isfinite(verticalSpeedMs))
+            m_maxVerticalSpeed = std::max(m_maxVerticalSpeed, std::abs(verticalSpeedMs));
+    }
+
+    /// The vehicle's flight mode now. A change while a flight is open counts
+    /// towards the flight's mode changes; the mode at the arm is the start.
+    void noteFlightMode(const QString &mode)
+    {
+        if (mode.isEmpty())
+            return;
+        if (m_flightId > 0 && !m_lastMode.isEmpty() && mode != m_lastMode)
+            ++m_modeChanges;
+        m_lastMode = mode;
+    }
     QString deviceUid() const { return m_deviceUid; }
 
     /// The vehicle's UID is known. A different UID closes the previous
@@ -188,6 +213,11 @@ public:
         noteVoltage(s.voltage);   // ignores 0 / NaN: no battery reading yet
         m_maxAltitude = s.altitudeM;
         m_maxVoltage = s.voltage;
+        m_maxGroundSpeed = 0.0;
+        m_maxVerticalSpeed = 0.0;
+        m_modeChanges = 0;
+        if (!s.flightMode.isEmpty())
+            m_lastMode = s.flightMode;
         // The pack as it was at arm; editing it later changes no flight.
         // A dead current sensor leaves the FC's % at 100 all flight; the GCS's
         // own count, from the resting voltage at arm, is the real start charge
@@ -364,7 +394,12 @@ private:
         if (m_historyId > 0) {
             if (!atLinkLoss)
                 noteAltitude(s.altitudeM);
-            logHistoryEvent(QStringLiteral("DISARM"), reason, s);
+            // A disarm the GCS saw, or one during a lost link (found when the
+            // link came back), is a DISARM. The app closing, the vehicle going
+            // away or an arm without a disarm between end the recording while
+            // the vehicle may still be armed: that is not a disarm.
+            const bool disarmSeen = reason == QLatin1String("disarmed") || reason == QLatin1String("link_lost");
+            logHistoryEvent(disarmSeen ? QStringLiteral("DISARM") : QStringLiteral("RECORDING_STOPPED"), reason, s);
             // A link loss is discovered when the link returns; the history row
             // must show the instant it was lost, like the flight record does.
             const QDateTime lossTime = QDateTime::fromString(m_linkLostAtUtc, Qt::ISODateWithMs);
@@ -374,8 +409,8 @@ private:
             m_db.closeFlight(m_historyId, qRound(end.durationSec),
                              m_maxAltitude,   // NaN -> NULL: unknown is not 0 m
                              std::isfinite(m_minVoltage) ? m_minVoltage : 0.0,
-                             std::isfinite(m_maxVoltage) ? m_maxVoltage : 0.0, 0,
-                             0.0, 0.0, qMax(0.0, distM));
+                             std::isfinite(m_maxVoltage) ? m_maxVoltage : 0.0, m_modeChanges,
+                             m_maxGroundSpeed, m_maxVerticalSpeed, qMax(0.0, distM));
         }
         m_historyId = -1;
         m_flightId = -1;
@@ -420,4 +455,8 @@ private:
     int m_historyId = -1;          ///< flights row (Flight History)
     double m_maxAltitude = std::numeric_limits<double>::quiet_NaN();
     double m_maxVoltage = std::numeric_limits<double>::quiet_NaN();
+    double m_maxGroundSpeed = 0.0;     ///< this flight's, from noteMotion()
+    double m_maxVerticalSpeed = 0.0;   ///< this flight's, by size
+    int m_modeChanges = 0;             ///< this flight's, from noteFlightMode()
+    QString m_lastMode;
 };

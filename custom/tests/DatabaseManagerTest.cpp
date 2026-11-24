@@ -91,6 +91,8 @@ private slots:
     void testGetFlightStatsExcludesBenchAndGroundFlights();
     void testStatsCountFlightWithUnknownAltitude();
     void testHistoryListsOnlyRealFlights();
+    void testRecorderKeepsSpeedsAndModeChanges();
+    void testRecordingStoppedIsNotADisarm();
     void testIncrementVehicleFlightTimeUsesDeviceUid();
     void testHistoryVehicleKeyDoesNotMergeSysid();
     void testBackupBeforeMigration();
@@ -1746,6 +1748,94 @@ void DatabaseManagerTest::testStatsCountFlightWithUnknownAltitude()
     const QVariantMap history = db.queryFlights(0, QString(), QString(), QString(), 0,
                                                 QString(), QString(), QStringLiteral("date_desc"), 50);
     QCOMPARE(history.value(QStringLiteral("totalCount")).toInt(), 2);
+}
+
+// Closing the app (or losing the vehicle) while it is armed ends the recording,
+// not the flight: the Flight History event says the recording stopped, not that
+// the vehicle disarmed. A real disarm is still a DISARM.
+void DatabaseManagerTest::testRecordingStoppedIsNotADisarm()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    RecorderFixture f;
+    QVERIFY(f.init());
+    auto lastEvent = [&]() {
+        return row(QStringLiteral("SELECT event_type, triggered_by FROM flight_telemetry_events "
+                                  "ORDER BY id DESC LIMIT 1"));
+    };
+    {
+        SessionRecorder rec(db);
+        f.wire(rec);
+        rec.connectionOpened(QStringLiteral("UID-R"), QStringLiteral("Flight"),
+                             QStringLiteral("Pilot"), QStringLiteral("1.0"));
+        f.sample = {24.0, 0.0};
+        rec.armed(start(QStringLiteral("gcs")));
+        QVERIFY(rec.historyFlightId() > 0);
+        f.clock.advance(30000);
+        rec.disarmed();
+        QCOMPARE(lastEvent().value(QStringLiteral("event_type")).toString(), QStringLiteral("DISARM"));
+
+        rec.armed(start(QStringLiteral("gcs")));
+        f.clock.advance(30000);
+        rec.connectionClosed(QStringLiteral("vehicle_removed"));
+        QCOMPARE(lastEvent().value(QStringLiteral("event_type")).toString(), QStringLiteral("RECORDING_STOPPED"));
+        QCOMPARE(lastEvent().value(QStringLiteral("triggered_by")).toString(), QStringLiteral("vehicle_removed"));
+
+        rec.connectionOpened(QStringLiteral("UID-R"), QStringLiteral("Flight"),
+                             QStringLiteral("Pilot"), QStringLiteral("1.0"));
+        rec.armed(start(QStringLiteral("gcs")));
+        f.clock.advance(30000);
+    }   // the recorder goes away with the app: app_exit
+    QCOMPARE(lastEvent().value(QStringLiteral("event_type")).toString(), QStringLiteral("RECORDING_STOPPED"));
+    QCOMPARE(lastEvent().value(QStringLiteral("triggered_by")).toString(), QStringLiteral("app_exit"));
+}
+
+// A flight recorded from the arm keeps its maximum ground and vertical speed
+// (vertical by its size: climbing or descending) and how often the flight mode
+// changed. Nothing noted before the arm belongs to the flight, and the next
+// flight starts from zero.
+void DatabaseManagerTest::testRecorderKeepsSpeedsAndModeChanges()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    RecorderFixture f;
+    QVERIFY(f.init());
+    SessionRecorder rec(db);
+    f.wire(rec);
+    rec.connectionOpened(QStringLiteral("UID-R"), QStringLiteral("Flight"),
+                         QStringLiteral("Pilot"), QStringLiteral("1.0"));
+    rec.noteMotion(30.0, 9.0);                    // before the arm
+    rec.noteFlightMode(QStringLiteral("Loiter"));
+    f.sample = {24.0, 0.0};
+    f.sample.altitudeM = 0.0;
+    f.sample.flightMode = QStringLiteral("Guided");
+    rec.armed(start(QStringLiteral("external")));
+    QVERIFY(rec.flightId() > 0);
+    rec.noteMotion(4.5, 2.0);
+    rec.noteMotion(8.25, -3.5);
+    rec.noteMotion(6.0, 1.0);
+    rec.noteFlightMode(QStringLiteral("Guided"));   // the mode at the arm: no change
+    rec.noteFlightMode(QStringLiteral("Auto"));
+    rec.noteFlightMode(QStringLiteral("RTL"));
+    f.clock.advance(60000);
+    rec.disarmed();
+
+    QVariantMap r = row(QStringLiteral("SELECT max_ground_speed_ms, max_vertical_speed_ms, flight_mode_changes "
+                                       "FROM flights ORDER BY id DESC LIMIT 1"));
+    QCOMPARE(r.value(QStringLiteral("max_ground_speed_ms")).toDouble(), 8.25);
+    QCOMPARE(r.value(QStringLiteral("max_vertical_speed_ms")).toDouble(), 3.5);
+    QCOMPARE(r.value(QStringLiteral("flight_mode_changes")).toInt(), 2);
+
+    // Between flights nothing counts; the next flight starts from zero.
+    rec.noteMotion(12.0, 5.0);
+    rec.noteFlightMode(QStringLiteral("Land"));
+    f.sample.flightMode = QStringLiteral("Land");
+    rec.armed(start(QStringLiteral("external")));
+    f.clock.advance(10000);
+    rec.disarmed();
+    r = row(QStringLiteral("SELECT max_ground_speed_ms, max_vertical_speed_ms, flight_mode_changes "
+                           "FROM flights ORDER BY id DESC LIMIT 1"));
+    QCOMPARE(r.value(QStringLiteral("max_ground_speed_ms")).toDouble(), 0.0);
+    QCOMPARE(r.value(QStringLiteral("max_vertical_speed_ms")).toDouble(), 0.0);
+    QCOMPARE(r.value(QStringLiteral("flight_mode_changes")).toInt(), 0);
 }
 
 // Flight History and its CSV export list only flights that left the ground:

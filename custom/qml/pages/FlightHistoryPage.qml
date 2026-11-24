@@ -95,6 +95,7 @@ AnalyzePage {
     function eventColor(evt) {
         if (evt === "ARM") return Colors.statePass
         if (evt === "DISARM") return Colors.info
+        if (evt === "RECORDING_STOPPED") return Colors.checkWarn   // app closed / vehicle lost while armed
         if (evt === "MODE_CHANGE") return Colors.accent
         if (evt === "BATTERY_WARN") return Colors.checkWarn
         if (evt === "BATTERY_CRIT" || evt === "CHECK_DEGRADED") return Colors.stateFail
