@@ -919,7 +919,11 @@ double VehicleProfileManager::socNowPctFromCount(double armStartSocPct, double m
 {
     if (mahUsedMah < 0.0 || capAh <= 0.0)
         return -1.0;
-    return (capAh * std::clamp(armStartSocPct, 0.0, 100.0) / 100.0 - mahUsedMah / 1000.0 * factor) / capAh * 100.0;
+    // Past empty by the count is 0 %, never negative: -1 means "unknown", and
+    // a negative charge taken for it made the Fly view and the mission
+    // estimate fall back to the controller's % (higher) on the way home.
+    return std::max(0.0, (capAh * std::clamp(armStartSocPct, 0.0, 100.0) / 100.0
+                          - mahUsedMah / 1000.0 * factor) / capAh * 100.0);
 }
 
 // The mAh used and factor counted on this update: the GCS's own count when

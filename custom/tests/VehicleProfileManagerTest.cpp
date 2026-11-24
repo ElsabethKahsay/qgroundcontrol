@@ -52,6 +52,7 @@ private slots:
     void testLiveSOCDefault();
     void testDisplaySocPropertyExists();
     void testDisplaySocUsesGcsCount();
+    void testCountedChargeStopsAtEmpty();
     void testChargeUnknownAfterJoin();
     void testMotorTableChargerPlausibleAgainstPackCapacity();
     void testBatteryReserveBounds();
@@ -247,6 +248,21 @@ void VehicleProfileManagerTest::testDisplaySocUsesGcsCount()
     QCOMPARE(VehicleProfileManager::displaySocPctFor(false, false, true, true, -1.0, 100, 55.0), 100);  // no estimate
     QCOMPARE(VehicleProfileManager::displaySocPctFor(true, false, true, true, -1.0, 100, -1.0), 100);  // no voltage
     QCOMPARE(VehicleProfileManager::displaySocPctFor(true, true, true, true, 82.0, 100, 55.0), 82);    // armed: count
+}
+
+// Flown past what the GCS believes is in the pack, the counted charge is 0 %,
+// not a negative number: negative is the "count unknown" mark, and taking it
+// for one made the Fly view fall back to the controller's % (0 % became 22 %
+// on the way home) and the mission estimate with it.
+void VehicleProfileManagerTest::testCountedChargeStopsAtEmpty()
+{
+    // 14 % of 20 Ah at the arm (2.8 Ah), 5.51 Ah used: past empty.
+    QCOMPARE(VehicleProfileManager::socNowPctFromCount(14.0, 5510.0, 1.0, 20.0), 0.0);
+    QCOMPARE(VehicleProfileManager::displaySocPctFor(true, true, true, true,
+                 VehicleProfileManager::socNowPctFromCount(14.0, 5510.0, 1.0, 20.0), 22), 0);
+    // Not past empty: unchanged. Unknown count: still the "unknown" mark.
+    QCOMPARE(VehicleProfileManager::socNowPctFromCount(50.0, 2000.0, 1.0, 20.0), 40.0);
+    QVERIFY(VehicleProfileManager::socNowPctFromCount(50.0, -1.0, 1.0, 20.0) < 0.0);
 }
 
 // A GCS that joins an armed copter whose current sensor does not measure has
