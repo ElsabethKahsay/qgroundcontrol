@@ -93,6 +93,7 @@ private slots:
     void testHistoryListsOnlyRealFlights();
     void testRecorderKeepsSpeedsAndModeChanges();
     void testRecordingStoppedIsNotADisarm();
+    void testBatteryRefreshWithoutLabel();
     void testIncrementVehicleFlightTimeUsesDeviceUid();
     void testHistoryVehicleKeyDoesNotMergeSysid();
     void testBackupBeforeMigration();
@@ -1748,6 +1749,25 @@ void DatabaseManagerTest::testStatsCountFlightWithUnknownAltitude()
     const QVariantMap history = db.queryFlights(0, QString(), QString(), QString(), 0,
                                                 QString(), QString(), QStringLiteral("date_desc"), 50);
     QCOMPARE(history.value(QStringLiteral("totalCount")).toInt(), 2);
+}
+
+// After each flight the selected pack's row is refreshed without a label (to
+// show its new cycle count). A missing label keeps the pack's label; it used to
+// be written as NULL into a NOT NULL column, failing the write and raising the
+// "flight record write failed" banner after every flight with a pack chosen.
+void DatabaseManagerTest::testBatteryRefreshWithoutLabel()
+{
+    DatabaseManager &db = DatabaseManager::instance();
+    initTempDb(db);
+    QVERIFY(db.runtimeError().isEmpty());
+    QVERIFY(db.upsertBattery(QStringLiteral("pk-07"), QStringLiteral("Blue pack")));
+    QVERIFY(db.upsertBattery(QStringLiteral("pk-07"), QString()));   // the after-flight refresh
+    QVERIFY(db.upsertBattery(QStringLiteral("pk-09"), QString()));   // a new pack with no label
+    QVERIFY2(db.runtimeError().isEmpty(), qPrintable(db.runtimeError()));
+    QCOMPARE(row(QStringLiteral("SELECT operator_label FROM batteries WHERE serial_number = 'pk-07'"))
+                 .value(QStringLiteral("operator_label")).toString(), QStringLiteral("Blue pack"));
+    QCOMPARE(row(QStringLiteral("SELECT operator_label FROM batteries WHERE serial_number = 'pk-09'"))
+                 .value(QStringLiteral("operator_label")).toString(), QString());
 }
 
 // Closing the app (or losing the vehicle) while it is armed ends the recording,

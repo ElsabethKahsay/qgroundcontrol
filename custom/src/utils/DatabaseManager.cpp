@@ -4490,10 +4490,14 @@ bool DatabaseManager::upsertBattery(const QString &serialNumber, const QString &
             operator_label = CASE WHEN ? != '' THEN ? ELSE operator_label END,
             last_seen = CURRENT_TIMESTAMP
     )");
+    // operator_label is NOT NULL. A caller with no label (the refresh after
+    // each flight) passes a null QString, which binds as NULL and fails the
+    // whole write: bind "" instead, which keeps an existing label.
+    const QString label = operatorLabel.isNull() ? QStringLiteral("") : operatorLabel;
     q.addBindValue(serialNumber);
-    q.addBindValue(operatorLabel);
-    q.addBindValue(operatorLabel);
-    q.addBindValue(operatorLabel);
+    q.addBindValue(label);
+    q.addBindValue(label);
+    q.addBindValue(label);
     return execOrWarn(q, "upsertBattery");
 }
 
