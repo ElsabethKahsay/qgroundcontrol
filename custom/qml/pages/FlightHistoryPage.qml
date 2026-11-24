@@ -915,7 +915,10 @@ AnalyzePage {
                                         Repeater {
                                             model: root._motorTests
                                             delegate: Rectangle {
+                                                // With required properties a delegate gets only
+                                                // what it declares: index must be declared too.
                                                 required property var modelData
+                                                required property int index
                                                 property int rowIndex: index
                                                 width: parent.width
                                                 height: 40
