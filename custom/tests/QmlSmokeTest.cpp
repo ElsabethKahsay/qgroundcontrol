@@ -261,6 +261,7 @@ private slots:
     void testLoadsWithoutVehicle();
     void testDialogEntrySafeWithoutVehicle();
     void testTracksBoundFixedWingVehicle();
+    void testShowsLiveBatteryReading();
 
 private:
     QSharedPointer<QQmlApplicationEngine> _engine;
@@ -320,6 +321,28 @@ void MotorCheckPanelSmokeTest::testLoadsWithoutVehicle()
 
     // testLabel() (the dialog/card label logic) must be callable.
     QCOMPARE(callQmlFunction(_root.data(), QStringLiteral("testLabel"), { 1 }).toString(), QStringLiteral("M1"));
+}
+
+// The motor test page shows the power module's own reading (the flight
+// controller's battery voltage and current, not the GCS's estimate), so a
+// props-off motor test shows whether the current sensor measures.
+void MotorCheckPanelSmokeTest::testShowsLiveBatteryReading()
+{
+    _loadComponent();
+    QVariantMap tel;
+    tel[QStringLiteral("batteryVoltage")] = 22.54;
+    tel[QStringLiteral("batteryCurrentAmps")] = 3.46;
+    _engine->rootContext()->setContextProperty(QStringLiteral("TelemetryProvider"), tel);
+    pumpQml(50);
+    QCOMPARE(callQmlFunction(_root.data(), QStringLiteral("batteryLine"), {}).toString(),
+             QStringLiteral("Battery: 22.5 V \u00b7 3.5 A (power module)"));
+
+    // No current reading: the voltage alone, and the current as "\u2014".
+    tel[QStringLiteral("batteryCurrentAmps")] = -1.0;
+    _engine->rootContext()->setContextProperty(QStringLiteral("TelemetryProvider"), tel);
+    pumpQml(50);
+    QCOMPARE(callQmlFunction(_root.data(), QStringLiteral("batteryLine"), {}).toString(),
+             QStringLiteral("Battery: 22.5 V \u00b7 \u2014 A (power module)"));
 }
 
 void MotorCheckPanelSmokeTest::testDialogEntrySafeWithoutVehicle()

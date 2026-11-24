@@ -32,6 +32,18 @@ Rectangle {
     // The controller owns the rule (vehicle connected, not armed by
     // another source, Testing session for the fixed-wing path that arms).
     readonly property string _blockedReason: HardwareTestController.testBlockedReason
+    // The power module's own reading, as the flight controller reports it (not
+    // the GCS's motor-table estimate): during a props-off motor test the
+    // current rising shows the sensor measures; staying at 0 shows it does not.
+    readonly property var    _telp: (typeof TelemetryProvider !== "undefined" && TelemetryProvider) ? TelemetryProvider : null
+    function batteryLine() {
+        if (!_telp) return ""
+        var v = _telp.batteryVoltage
+        var a = _telp.batteryCurrentAmps
+        return qsTr("Battery: %1 V \u00b7 %2 A (power module)")
+            .arg(v > 0.1 ? Number(v).toFixed(1) : "\u2014")
+            .arg(a >= 0 ? Number(a).toFixed(1) : "\u2014")
+    }
     readonly property bool   _canOpen: _blockedReason.length === 0
     // Every entry point (button, tile click, openDialog()) goes through the
     // props-off confirmation; nothing opens the test while armed or offline.
@@ -470,6 +482,16 @@ Rectangle {
                     }
                 }
 
+
+                // ── LIVE BATTERY READING ─────────────────────────────────
+                Text {
+                    objectName: "motorTestBattery"
+                    visible: root._mc > 0 && text.length > 0
+                    text: root.batteryLine()
+                    font.pixelSize: Config.fontSizeSmall
+                    color: Colors.textSecondary
+                    Layout.fillWidth: true
+                }
 
                 // ── SHARED DURATION ──────────────────────────────────────
                 RowLayout {
