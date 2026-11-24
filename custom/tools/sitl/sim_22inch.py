@@ -76,6 +76,10 @@ KEEP = {"INS_GYRO_FILTER", "INS_ACCEL_FILTER"}
 OVERRIDES = {
     "FRAME_TYPE": 1,        # H flown as X: same positions, props turning the other way
     "MOT_PWM_TYPE": 0,      # the simulated motors take PWM, not DShot
+    # The simulator's quad has motor N on output N. The real copter's wiring
+    # may differ (since Nov 2026: SERVO1/2/3 = motors 2/3/1), which in the
+    # simulator would drive each motor from another's position.
+    "SERVO1_FUNCTION": 33, "SERVO2_FUNCTION": 34, "SERVO3_FUNCTION": 35, "SERVO4_FUNCTION": 36,
 }
 
 
@@ -107,6 +111,18 @@ def flying_params(path):
             left.append(name)
             continue
         kept[name] = int(value) if float(value).is_integer() else value
+    # Two RC channels with the same switch option make ArduCopter refuse to
+    # arm ("Duplicate Aux Switch Options"). The simulator keeps the first and
+    # clears the others so it can fly; the real file still needs fixing.
+    seen = {}
+    for name in sorted((n for n in kept if n.startswith("RC") and n.endswith("_OPTION")),
+                       key=lambda n: int(n[2:-7]) if n[2:-7].isdigit() else 99):
+        option = kept[name]
+        if option and option in seen:
+            print("note: %s=%s duplicates %s: cleared for the simulator" % (name, option, seen[option]))
+            kept[name] = 0
+        elif option:
+            seen[option] = name
     kept.update(OVERRIDES)
     return kept, sorted(left)
 
