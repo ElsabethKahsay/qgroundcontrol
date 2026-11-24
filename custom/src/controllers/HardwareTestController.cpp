@@ -654,6 +654,28 @@ int HardwareTestController::_fwDetectMotorChannel()
 }
 
 /// Returns the servo output channel driven for the given motor card (1-based).
+// The outputs that drive a copter's motors: SERVOn_FUNCTION Motor1..Motor12
+// (33-38, 82-87); outputs 1..motorCount when the parameters are not known.
+static QList<int> copterMotorOutputs(Vehicle *vehicle, int motorCount)
+{
+    QList<int> outputs;
+    ParameterManager *pm = vehicle ? vehicle->parameterManager() : nullptr;
+    if (pm && pm->parametersReady()) {
+        for (int ch = 1; ch <= HardwareTestController::kServoCount; ++ch) {
+            const QString name = QStringLiteral("SERVO%1_FUNCTION").arg(ch);
+            if (!pm->parameterExists(vehicle->defaultComponentId(), name))
+                continue;
+            const int fn = pm->getParameter(vehicle->defaultComponentId(), name)->rawValue().toInt();
+            if ((fn >= 33 && fn <= 38) || (fn >= 82 && fn <= 87))
+                outputs << ch;
+        }
+    }
+    if (outputs.isEmpty())
+        for (int ch = 1; ch <= qBound(1, motorCount, HardwareTestController::kServoCount); ++ch)
+            outputs << ch;
+    return outputs;
+}
+
 int HardwareTestController::motorOutputChannel(int motorIndex) const
 {
     if (_isFixedWing()) {
@@ -1033,11 +1055,12 @@ void HardwareTestController::_startMotorTestInternal(int motorIndex)
 
     _expectedPwm = pwmUs;
 
-    // Reset feedback capture for the motor's servo output channel
-    const int resetChannel = motorOutputChannel(motorIndex);
-    if (resetChannel > 0 && resetChannel <= kServoCount) {
-        _feedbackPwm[resetChannel - 1] = 0;
-        _peakFeedbackPwm[resetChannel - 1] = 0;
+    // Reset the feedback capture of every output: the copter's motor test
+    // numbers motors in test order, so which output moves is found from the
+    // feedback (_evaluateTestResult), not assumed.
+    for (int ch = 0; ch < kServoCount; ++ch) {
+        _feedbackPwm[ch] = 0;
+        _peakFeedbackPwm[ch] = 0;
     }
 
     qCDebug(hardwareTestLog) << "Testing motor" << motorIndex
@@ -1088,6 +1111,20 @@ void HardwareTestController::_evaluateTestResult()
 
     int idx = _activeMotor - 1;
     int channel = motorOutputChannel(_activeMotor);
+    if (!_isFixedWing()) {
+        // ArduCopter's DO_MOTOR_TEST counts motors in test order (clockwise
+        // from the front right), not by output: on a quad X test motor 2 is
+        // output 4, and the copter may be wired in yet another order. The
+        // motor output that rose highest during the test is the one tested.
+        int best = 0;
+        for (int ch : copterMotorOutputs(_vehicle, _motorCount))
+            if (ch >= 1 && ch <= kServoCount && (best == 0 || _peakFeedbackPwm[ch - 1] > _peakFeedbackPwm[best - 1]))
+                best = ch;
+        if (best > 0) {
+            channel = best;
+            qCDebug(hardwareTestLog) << "Test motor" << _activeMotor << "moved output" << channel;
+        }
+    }
     uint16_t actual = (channel > 0 && channel <= kServoCount) ? _peakFeedbackPwm[channel - 1] : 0;
     bool passed = false;
     QString resultStr;
@@ -1874,12 +1911,19 @@ void HardwareTestController::_onMavlinkMessage(const mavlink_message_t &message)
     // The monitored channel is the motor's servo output (motor index for copters,
     // auto-detected channel for fixed-wing).
     if (_activeMotor > 0) {
-        const int channel = motorOutputChannel(_activeMotor);
-        int aidx = _activeMotor - 1;
-        if (channel > 0 && channel <= kServoCount &&
-                aidx >= 0 && aidx < _state.size()) {
-            if (_state[aidx] == Testing && _feedbackPwm[channel - 1] > _peakFeedbackPwm[channel - 1])
-                _peakFeedbackPwm[channel - 1] = _feedbackPwm[channel - 1];
+        const int aidx = _activeMotor - 1;
+        if (aidx >= 0 && aidx < _state.size() && _state[aidx] == Testing) {
+            if (_isFixedWing()) {
+                const int channel = motorOutputChannel(_activeMotor);
+                if (channel > 0 && channel <= kServoCount && _feedbackPwm[channel - 1] > _peakFeedbackPwm[channel - 1])
+                    _peakFeedbackPwm[channel - 1] = _feedbackPwm[channel - 1];
+            } else {
+                // A copter test may drive any motor output (test order is not
+                // output order): keep every output's peak.
+                for (int ch = 0; ch < kServoCount; ++ch)
+                    if (_feedbackPwm[ch] > _peakFeedbackPwm[ch])
+                        _peakFeedbackPwm[ch] = _feedbackPwm[ch];
+            }
         }
     }
 }

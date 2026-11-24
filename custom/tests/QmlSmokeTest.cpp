@@ -4068,6 +4068,12 @@ void LivePluginBenchTest::testCopterMotorTestArmIsBench()
     const int lastId = before.value(0).toInt();
 
     hw->setDurationSec(2);
+    // The copter's own arm and disarm during the test are not a flight: the
+    // checklist must not be reset, which would rebuild the motor test panel
+    // and close its dialog after every motor.
+    auto *pm = _pluginChild<PreflightManager>();
+    QVERIFY(pm);
+    QSignalSpy checklistRebuilt(pm, &PreflightManager::modelChanged);
     hw->testMotor(1);
     QCOMPARE(hw->activeMotor(), 1);
     _vehicle->sendMavCommand(_vehicle->defaultComponentId(), MAV_CMD_COMPONENT_ARM_DISARM,
@@ -4079,6 +4085,9 @@ void LivePluginBenchTest::testCopterMotorTestArmIsBench()
     QVERIFY(_waitArmed(false));
     for (int i = 0; i < 100 && db.recordingHistoryFlightId() > 0; ++i)
         QTest::qWait(50);
+
+    QTest::qWait(500);
+    QCOMPARE(checklistRebuilt.count(), 0);
 
     QSqlQuery q(QSqlDatabase::database());
     QVERIFY(q.exec(QStringLiteral("SELECT is_bench FROM flight_sessions WHERE id > %1 ORDER BY id").arg(lastId)));

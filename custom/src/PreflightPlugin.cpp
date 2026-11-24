@@ -214,13 +214,18 @@ void PreflightPlugin::init()
     // Post-flight is parked for Phase 1 (Config.h kPostFlightEnabled): every
     // disarm re-runs preflight from Pending instead of marking every check
     // Skipped (which allMandatoryPassed() counted as passed).
-    if (kPostFlightEnabled) {
-        connect(FlightSession::instance(), &FlightSession::postFlightChecklistRequired,
-                _preflightManager, &PreflightManager::activatePostFlightChecks);
-    } else {
-        connect(FlightSession::instance(), &FlightSession::postFlightChecklistRequired,
-                _preflightManager, &PreflightManager::resetForNextFlight);
-    }
+    // A motor test arms and disarms the copter itself (ArduCopter reports
+    // armed for the test's length): that disarm is not the end of a flight.
+    // Resetting the checklist there would rebuild every check card, the motor
+    // test panel too, closing its dialog after each motor.
+    connect(FlightSession::instance(), &FlightSession::postFlightChecklistRequired, this, [this]() {
+        if (_hardwareTestController && _hardwareTestController->testInProgress())
+            return;
+        if (kPostFlightEnabled)
+            _preflightManager->activatePostFlightChecks();
+        else
+            _preflightManager->resetForNextFlight();
+    });
 
     // Create one proxy model per checklist category (8 max) so QML can bind
     // each category section to its own filtered view of the source checklist.

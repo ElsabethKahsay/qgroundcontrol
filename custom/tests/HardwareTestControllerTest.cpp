@@ -43,6 +43,7 @@ private slots:
     void testArmLeftAfterCopterMotorTestWarns();
     void testCopterPwmCeiling();
     void testCopterMotorTestHoldsForItsDuration();
+    void testCopterResultReadsTheOutputThatMoved();
 
 private:
     // Unit-test singleton owner: FlightSession::instance() is null until a
@@ -489,6 +490,53 @@ void HardwareTestControllerTest::testCopterMotorTestHoldsForItsDuration()
         return static_cast<HardwareTestController *>(ctx)->activeMotor() == -1;
     }, &ctrl, 4000));
     QVERIFY(QDateTime::currentMSecsSinceEpoch() - t0 >= 4000);
+}
+
+// ArduCopter numbers motor-test motors in test order (clockwise from the front
+// right), not by output: on a quad X test motor 2 drives output 4. The result is
+// judged on the motor output that actually moved, whatever the frame or wiring.
+void HardwareTestControllerTest::testCopterResultReadsTheOutputThatMoved()
+{
+    _connectMockLink(MAV_AUTOPILOT_ARDUPILOTMEGA);
+    QVERIFY(_vehicle);
+    HardwareTestController ctrl;
+    ctrl.setVehicle(_vehicle);
+    QVERIFY(_pumpUntil([](void *ctx) {
+        return static_cast<HardwareTestController *>(ctx)->motorCount() >= 4;
+    }, &ctrl, 15000));
+    QVERIFY(!ctrl.isFixedWing());
+
+    auto outputs = [&](uint16_t o1, uint16_t o2, uint16_t o3, uint16_t o4) {
+        mavlink_message_t msg{};
+        mavlink_msg_servo_output_raw_pack_chan(static_cast<uint8_t>(_vehicle->id()), 1, 0, &msg,
+                                               0, 0, o1, o2, o3, o4, 0, 0, 0, 0,
+                                               0, 0, 0, 0, 0, 0, 0, 0);
+        emit _vehicle->mavlinkMessageReceived(msg);
+    };
+    auto runAndJudge = [&](int motor, uint16_t o1, uint16_t o2, uint16_t o3, uint16_t o4) {
+        ctrl.setDurationSec(1);
+        ctrl.setMotorPwm(motor, 1150);
+        ctrl.testMotor(motor);
+        for (int i = 0; i < 10; ++i) {   // the outputs while the test runs
+            outputs(o1, o2, o3, o4);
+            QTest::qWait(100);
+        }
+        _pumpUntil([](void *ctx) {
+            return static_cast<HardwareTestController *>(ctx)->activeMotor() == -1;
+        }, &ctrl, 5000);
+        _pumpUntil([](void *ctx) {   // past the cooldown, the result stays
+            return static_cast<HardwareTestController *>(ctx)->motorStatus(1) != HardwareTestController::Cooldown
+                && static_cast<HardwareTestController *>(ctx)->motorStatus(2) != HardwareTestController::Cooldown;
+        }, &ctrl, 5000);
+    };
+
+    // Test motor 2: output 4 moves to 1150 (the quad X test order).
+    runAndJudge(2, 1000, 1000, 1000, 1150);
+    QCOMPARE(ctrl.motorStatus(2), int(HardwareTestController::Pass));
+
+    // Nothing reaches the commanded PWM: a failure, whichever output is read.
+    runAndJudge(1, 1000, 1000, 1000, 1000);
+    QCOMPARE(ctrl.motorStatus(1), int(HardwareTestController::Fail));
 }
 
 UT_REGISTER_TEST(HardwareTestControllerTest)
